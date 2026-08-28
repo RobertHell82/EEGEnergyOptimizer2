@@ -1,0 +1,26 @@
+#!/usr/bin/python3
+import config
+import opt-optlang as opt
+import pandas as pd
+from time import sleep
+
+c = config.Config()
+
+# Get the next time, when we can update the time table:
+t = pd.Timestamp(0).now('UTC')
+date = pd.Timestamp(t.date(), tz='UTC')
+seconds = (t - date).total_seconds()
+t = date + pd.Timedelta(seconds=1) * round(seconds - (seconds % c.time_res))
+
+while True:
+	c.fetch()
+	timetable = opt.opt(c, t)
+	if timetable.model.status == 'optimal':
+		c.push(timetable)
+	else:
+		print('Optimization returned', timetable.model.status, 'at', str(t))
+		c.error()
+	t = timetable.index[1]
+	sleeptime = (t - t.now('UTC')).total_seconds() - c.time_buffer
+	if sleeptime > 0:
+		sleep(sleeptime)

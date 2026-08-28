@@ -1,0 +1,2432 @@
+"""WebSocket API for EEG Energy Optimizer panel."""
+
+from __future__ import annotations
+
+import logging
+import re
+from typing import TYPE_CHECKING
+from urllib.parse import urlsplit
+
+import voluptuous as vol
+
+from homeassistant.components import websocket_api
+from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import entity_registry as er
+
+from .const import (
+    COMBINED_BATTERY_CAPACITY_SENSOR_ID,
+    COMBINED_BATTERY_POWER_SENSOR_ID,
+    COMBINED_BATTERY_SOC_SENSOR_ID,
+    COMBINED_GRID_POWER_SENSOR_ID,
+    CONF_BATTERY_CAPACITY_SENSOR,
+    CONF_BATTERY_POWER_CHARGE_SENSOR,
+    CONF_BATTERY_POWER_DISCHARGE_SENSOR,
+    CONF_BATTERY_POWER_SENSOR,
+    CONF_BATTERY_POWER_SENSOR_2,
+    CONF_BATTERY_SOC_SENSOR,
+    CONF_FRONIUS_MODBUS_HOST,
+    CONF_FRONIUS_MODBUS_PORT,
+    DEFAULT_FRONIUS_MODBUS_PORT,
+    CONF_GRID_POWER_EXPORT_SENSOR,
+    CONF_GRID_POWER_IMPORT_SENSOR,
+    CONF_GRID_EXPORT_LIMIT_ENABLED,
+    CONF_GRID_EXPORT_LIMIT_KW,
+    CONF_GRID_POWER_SENSOR,
+    CONF_HUAWEI_DEVICE_ID,
+    CONF_HUAWEI_DEVICE_IDS,
+    CONF_INVERTER_TYPE,
+    CONF_KOSTAL_MODBUS_HOST,
+    CONF_KOSTAL_MODBUS_PORT,
+    DEFAULT_KOSTAL_MODBUS_PORT,
+    CONF_PV_POWER_SENSOR,
+    CONF_PV_POWER_SENSOR_2,
+    CONF_SMA_MODBUS_HOST,
+    CONF_SMA_MODBUS_PORT,
+    DEFAULT_SMA_MODBUS_PORT,
+    CONF_TELEMETRY_ENABLED,
+    DOMAIN,
+    INVERTER_TYPE_HUAWEI,
+    INVERTER_TYPE_SOLAX,
+    INVERTER_TYPE_SOLAREDGE,
+    INVERTER_TYPE_FRONIUS,
+    INVERTER_TYPE_KOSTAL,
+    INVERTER_TYPE_SMA,
+)
+from .inverter.solax import (
+    SOLAX_CONTROL_ENTITY_PATTERNS,
+    find_solax_control_entity,
+)
+# I-4: Der shared Profile-Builder lebt in __init__.py. Da __init__.py uns
+# importiert, würde ein direkter `from . import _build_telemetry_profile`
+# einen Zirkular-Import erzeugen. Stattdessen: lazy lookup über das Modul-
+# Objekt zur Laufzeit (siehe `_get_build_telemetry_profile()` unten).
+def _get_build_telemetry_profile():
+    """Hole den shared Profile-Builder aus __init__.py.
+
+    I-4 / W-3 — eine einzige Quelle der Wahrheit. Tests können die Funktion
+    via patch.object(websocket_api, "_build_telemetry_profile", ...)
+    überschreiben — siehe `_build_telemetry_profile = ...` unter dem Import.
+    """
+    from . import _build_telemetry_profile as _impl
+    # Spiegele die aktuelle Referenz ins Modul, damit Tests via patch.object
+    # auf `websocket_api._build_telemetry_profile` zugreifen können.
+    return _impl
+
+
+# Modulvariable, die Tests via patch.object überschreiben können (I-4 / W-3
+# Single-Source-Pin in test_websocket_telemetry.py::test_enable_uses_shared_profile_helper).
+# Wird zur Laufzeit aus __init__.py gefüllt — der Import erfolgt lazy beim
+# ersten Aufruf des Befehls (siehe ws_telemetry_enable unten).
+_build_telemetry_profile = None  # type: ignore[assignment]
+
+if TYPE_CHECKING:
+    from homeassistant.core import HomeAssistant
+
+_LOGGER = logging.getLogger(__name__)
+
+
+# Known default entity IDs per inverter type.
+# If these entities exist, they are pre-selected during auto-detection.
+# Each key maps to a list of candidates — first match wins.
+HUAWEI_DEFAULTS: dict[str, list[str]] = {
+    CONF_BATTERY_SOC_SENSOR: [
+        "sensor.batteries_batterieladung",
+        "sensor.batterien_batterieladung",
+    ],
+    CONF_BATTERY_CAPACITY_SENSOR: [
+        "sensor.batterien_akkukapazitat",
+        "sensor.batteries_akkukapazitat",
+    ],
+    CONF_PV_POWER_SENSOR: [
+        "sensor.inverter_eingangsleistung",
+        "sensor.wechselrichter_eingangsleistung",
+    ],
+    CONF_GRID_POWER_SENSOR: [
+        "sensor.power_meter_wirkleistung",
+        "sensor.stromzahler_wirkleistung",
+    ],
+    CONF_BATTERY_POWER_SENSOR: [
+        "sensor.batteries_lade_entladeleistung",
+        "sensor.batterien_lade_entladeleistung",
+    ],
+}
+
+SOLAX_DEFAULTS: dict[str, list[str]] = {
+    CONF_BATTERY_SOC_SENSOR: [
+        "sensor.solax_inverter_battery_capacity",
+        "sensor.solax_battery_capacity",
+    ],
+    CONF_PV_POWER_SENSOR: [
+        "sensor.solax_energy_dashboard_solax_solar_power",
+        "sensor.solax_solar_power",
+    ],
+    CONF_GRID_POWER_SENSOR: [
+        "sensor.solax_energy_dashboard_solax_grid_power",
+        "sensor.solax_grid_power",
+    ],
+    CONF_BATTERY_POWER_SENSOR: [
+        "sensor.solax_energy_dashboard_solax_battery_power",
+        "sensor.solax_battery_power",
+    ],
+    CONF_PV_POWER_SENSOR_2: [
+        "sensor.solax_inverter_meter_2_measured_power",
+    ],
+}
+
+# SolarEdge sensor suffixes — used with detected prefix to build entity IDs.
+# Each config key maps to candidate suffixes (first existing entity wins).
+SOLAREDGE_SENSOR_SUFFIXES: dict[str, list[str]] = {
+    CONF_BATTERY_SOC_SENSOR: ["b1_state_of_energy"],
+    CONF_PV_POWER_SENSOR: ["ac_power", "dc_power"],
+    CONF_GRID_POWER_SENSOR: ["m1_ac_power", "m2_ac_power"],
+    CONF_BATTERY_POWER_SENSOR: ["b1_dc_power"],
+    CONF_BATTERY_CAPACITY_SENSOR: ["b1_maximum_energy"],
+}
+
+# SolarEdge control entity suffixes — tried in order per config key.
+SOLAREDGE_CONTROL_SUFFIXES: dict[str, list[tuple[str, str]]] = {
+    # (domain, suffix) — tried in order, first existing entity wins
+    "solaredge_storage_control_mode": [("select", "storage_control_mode")],
+    "solaredge_storage_command_mode": [("select", "storage_command_mode")],
+    "solaredge_storage_charge_limit": [("number", "storage_charge_limit")],
+    "solaredge_storage_discharge_limit": [("number", "storage_discharge_limit")],
+    "solaredge_storage_backup_reserve": [
+        ("number", "storage_backup_reserve"),
+        ("number", "backup_reserve"),
+    ],
+}
+
+# Fronius native integration sensor suffixes — used to find entities.
+# The Fronius integration creates entities like sensor.{device_name}_{key}.
+# Prefix varies by installation (e.g. "solarnet_", "power_flow_0_192_168_100_211_").
+#
+# Multiple suffixes per conf_key cover the different naming variants that
+# show up in the wild:
+#   - English unique-id style (post-2024 HA core integration default):
+#     state_of_charge, power_photovoltaics, power_grid, power_battery,
+#     capacity_maximum
+#   - Localized (DE) friendly-name slugs as seen on installations that
+#     were set up before HA stopped translating entity_ids, or where the
+#     user has manually renamed entities to the German friendly names:
+#     ladezustand, pv_leistung, leistung_netz, leistung_batterie,
+#     maximale_kapazitat, ausgelegte_kapazitat
+#   - "battery_level" / "soc" as widely-used short aliases
+#
+# Lookup order matters: first match wins, so the more specific / canonical
+# English suffixes are listed first.
+FRONIUS_SENSOR_SUFFIXES: dict[str, list[str]] = {
+    CONF_BATTERY_SOC_SENSOR: [
+        "state_of_charge",
+        "battery_state_of_charge",
+        "ladezustand",
+        "battery_level",
+        "_soc",
+    ],
+    CONF_PV_POWER_SENSOR: [
+        "power_photovoltaics",
+        "pv_power",
+        "pv_leistung",
+        "photovoltaikleistung",
+    ],
+    CONF_GRID_POWER_SENSOR: [
+        "power_grid",
+        "grid_power",
+        "leistung_netz",
+        "netzleistung",
+    ],
+    CONF_BATTERY_POWER_SENSOR: [
+        "power_battery",
+        "battery_power",
+        "leistung_batterie",
+        "batterieleistung",
+    ],
+    CONF_BATTERY_CAPACITY_SENSOR: [
+        "capacity_maximum",
+        "maximum_capacity",
+        "maximale_kapazitat",
+        "ausgelegte_kapazitat",
+        "designed_capacity",
+    ],
+}
+
+# Fronius pair-sensor suffixes — directional, always-positive sensors that
+# come in matched pairs. When both sides are detected, the wizard records
+# them in CONF_*_CHARGE/DISCHARGE / CONF_*_EXPORT/IMPORT and points the
+# canonical CONF_BATTERY_POWER_SENSOR / CONF_GRID_POWER_SENSOR at the
+# synthetic combined sensors created at setup time.
+FRONIUS_PAIR_SUFFIXES: dict[tuple[str, str], list[tuple[str, str]]] = {
+    # battery: (charge_key, discharge_key) → list of (charge_suffix, discharge_suffix)
+    (CONF_BATTERY_POWER_CHARGE_SENSOR, CONF_BATTERY_POWER_DISCHARGE_SENSOR): [
+        ("battery_power_charging", "battery_power_discharging"),
+        ("ladeleistung", "entladeleistung"),
+    ],
+    # grid: (export_key, import_key) → list of (export_suffix, import_suffix)
+    (CONF_GRID_POWER_EXPORT_SENSOR, CONF_GRID_POWER_IMPORT_SENSOR): [
+        ("leistung_netzeinspeisung", "leistung_netzbezug"),
+        ("grid_power_export", "grid_power_import"),
+    ],
+}
+
+# Kostal Plenticore (kostal_plenticore Core-Integration, REST) sensor
+# suffixes. Entity-IDs derive from the English sensor names. German
+# variants included defensively in case a localized install generated
+# translated entity ids. Detection is restricted to entities owned by
+# kostal_plenticore config entries, so loose suffixes cannot leak in
+# foreign sensors. First match wins.
+#
+# PV: "Solar Power" (Dc_P) ist auf Hybrid-Geräten die DC-GESAMTleistung
+# INKLUSIVE Batterie (Batterie hängt am DC-Bus) — bei nächtlicher
+# Entladung zeigt sie die Entladeleistung als "PV" (am Beta-Gerät
+# verifiziert 19.08.2026: solar_power 729 W bei echter PV 0 W und
+# Entladung 727 W). Der korrekte PV-Sensor ist "Sum power of all PV DC
+# inputs" (virtuelles Prozessdatum _virt_:pv_P = pv1+pv2+pv3, in HA Core
+# standardmäßig aktiviert) — daher zuerst. Dc_P bleibt als Fallback:
+# auf batterielosen Geräten ist er korrekt, und der Summensensor könnte
+# manuell deaktiviert worden sein.
+KOSTAL_SENSOR_SUFFIXES: dict[str, list[str]] = {
+    CONF_BATTERY_SOC_SENSOR: [
+        "battery_soc",
+        "batterie_soc",
+        "batterie_ladezustand",
+    ],
+    CONF_BATTERY_POWER_SENSOR: [
+        "battery_power",
+        "batterie_leistung",
+        "batterieleistung",
+    ],
+    CONF_GRID_POWER_SENSOR: [
+        "grid_power",
+        "netzleistung",
+    ],
+    CONF_PV_POWER_SENSOR: [
+        "sum_power_of_all_pv_dc_inputs",
+        "summe_leistung_aller_pv_dc_eingange",
+        "solar_power",
+        "solarleistung",
+        "pv_leistung",
+    ],
+}
+
+# Kostal exposes "PV to Battery Power" (sensor.<name>_pv_to_battery_power),
+# which also ends in "battery_power" and would race the real battery-power
+# sensor depending on state-machine iteration order. Never a valid candidate.
+KOSTAL_SENSOR_EXCLUDE_SUFFIXES: tuple[str, ...] = ("pv_to_battery_power",)
+
+
+# SMA (`sma` WebConnect Core-Integration) sensor suffixes, verified against
+# a live STP10.0-3SE-40 (entity prefix from device name, e.g.
+# sensor.stp10_0_3se_40_battery_soc_total). SMA exposes only directional
+# pairs for battery and grid — same as Fronius, so detection fills the
+# pair keys and points the canonical keys at the synthetic combined
+# sensors. IMPORTANT: sma's "grid_power" sensor is the inverter AC OUTPUT
+# power (not grid exchange!) — it must never be matched as grid sensor,
+# which is why there is no single-sensor grid suffix here.
+SMA_SENSOR_SUFFIXES: dict[str, list[str]] = {
+    CONF_BATTERY_SOC_SENSOR: ["battery_soc_total"],
+    CONF_PV_POWER_SENSOR: ["pv_power"],
+}
+
+SMA_PAIR_SUFFIXES: dict[tuple[str, str], list[tuple[str, str]]] = {
+    # battery: (charge_key, discharge_key)
+    (CONF_BATTERY_POWER_CHARGE_SENSOR, CONF_BATTERY_POWER_DISCHARGE_SENSOR): [
+        ("battery_power_charge_total", "battery_power_discharge_total"),
+    ],
+    # grid: (export_key, import_key) — supplied = Einspeisung, absorbed = Bezug
+    (CONF_GRID_POWER_EXPORT_SENSOR, CONF_GRID_POWER_IMPORT_SENSOR): [
+        ("metering_power_supplied", "metering_power_absorbed"),
+    ],
+}
+
+
+def _find_solaredge_prefix(hass: HomeAssistant) -> str | None:
+    """Auto-detect the SolarEdge entity prefix by searching multiple known suffixes.
+
+    Searches sensor and select domains for well-known SolarEdge suffixes.
+    Handles varying prefixes like 'solaredge_', 'solaredge_i1_', etc.
+    """
+    # Search suffixes in order: most specific first
+    search_targets = [
+        ("select", "storage_command_mode"),
+        ("select", "storage_control_mode"),
+        ("sensor", "b1_state_of_energy"),
+        ("sensor", "ac_power"),
+        ("sensor", "m1_ac_power"),
+    ]
+    for domain, suffix in search_targets:
+        for state in hass.states.async_all(domain):
+            if state.entity_id.endswith(suffix):
+                # e.g. "sensor.solaredge_i1_ac_power" -> "solaredge_i1_"
+                prefix = state.entity_id.replace(f"{domain}.", "").replace(suffix, "")
+                if prefix.startswith("solaredge"):
+                    return prefix
+    return None
+
+
+def _find_solaredge_additional_inverters(
+    hass: HomeAssistant, primary_prefix: str
+) -> list[str]:
+    """Find additional SolarEdge inverter prefixes beyond the primary one.
+
+    Searches for other solaredge_iN_ac_power sensors to detect multi-inverter setups.
+    Returns list of additional prefixes (e.g. ['solaredge_i2_']).
+    """
+    additional: list[str] = []
+    for state in hass.states.async_all("sensor"):
+        eid = state.entity_id
+        if (eid.endswith("ac_power")
+                and "solaredge" in eid
+                and not eid.endswith("m1_ac_power")
+                and not eid.endswith("m2_ac_power")):
+            prefix = eid.replace("sensor.", "").replace("ac_power", "")
+            if prefix.startswith("solaredge") and prefix != primary_prefix:
+                additional.append(prefix)
+    return sorted(additional)
+
+
+def _find_solax_prefix(hass: HomeAssistant) -> str | None:
+    """Auto-detect the SolaX entity prefix from the remotecontrol power-control select.
+
+    Versionstolerant: neuere solax_modbus-Versionen benennen die Entity
+    remotecontrol_power_control_mode_1 (statt remotecontrol_power_control) —
+    das Matching übernimmt find_solax_control_entity aus dem Treibermodul.
+    """
+    entity_id = find_solax_control_entity(hass, "remotecontrol_power_control")
+    if not entity_id:
+        return None
+    object_id = entity_id.split(".", 1)[1]
+    match = SOLAX_CONTROL_ENTITY_PATTERNS["remotecontrol_power_control"][1].search(object_id)
+    if not match:  # pragma: no cover — find_solax_control_entity matcht identisch
+        return None
+    # e.g. "select.solax_remotecontrol_power_control_mode_1" -> "solax_"
+    return object_id[: match.start()]
+
+
+def _find_huawei_battery_devices(hass: HomeAssistant) -> list[str]:
+    """Auto-detect all Huawei Solar battery device IDs (Master/Slave-fähig).
+
+    huawei_solar legt pro Batterie ein Gerät mit ``model == "Batteries"`` an
+    (das Aggregat mit SOC/Kapazität/Steuer-Entities) — der Modellname ist
+    huawei-intern, sprachunabhängig und vom User NICHT umbenennbar. Wir filtern
+    primär darauf; die LUNA-2000-Einzelmodule (``model == "LUNA 2000"``) und der
+    Wechselrichter werden so korrekt ausgeschlossen.
+
+    Fallback-Kette für ältere/abweichende Installationen: "batter" im Namen,
+    sonst das erste huawei_solar-Gerät überhaupt. Ergebnis ist deterministisch
+    nach Anzeigename sortiert (Master vor Slave).
+    """
+    registry = dr.async_get(hass)
+    huawei = [
+        d for d in registry.devices.values()
+        if any(domain == "huawei_solar" for domain, _ in d.identifiers)
+    ]
+
+    def _label(d) -> str:
+        return (d.name_by_user or d.name or "").lower()
+
+    battery_devs = [d for d in huawei if (d.model or "") == "Batteries"]
+    if not battery_devs:
+        battery_devs = [d for d in huawei if "batter" in _label(d)]
+    if battery_devs:
+        battery_devs.sort(key=_label)
+        return [d.id for d in battery_devs]
+    if huawei:
+        return [sorted(huawei, key=_label)[0].id]
+    return []
+
+
+def _huawei_suffix_match(name: str, suffix: str) -> bool:
+    """True wenn `name` auf `suffix` endet (Word-Boundary an ``_``).
+
+    huawei_solar hängt bei Master/Slave einen Geräte-Index an das ENDE an
+    (``batterien_batterieladung_2``) — dieses optionale ``_<zahl>`` wird vor
+    dem Vergleich entfernt, damit der Slave-Sensor genauso matcht wie der des
+    Masters. Der Word-Boundary-Check verhindert, dass z. B.
+    ``entladeleistung`` als ``ladeleistung`` durchgeht.
+    """
+    core = re.sub(r"_\d+$", "", name)
+    for cand in (name, core):
+        if cand.endswith(suffix) and (cand == suffix or cand[: -len(suffix)].endswith("_")):
+            return True
+    return False
+
+
+def _huawei_entities_by_suffix(
+    hass: HomeAssistant, suffixes: tuple[str, ...], domain: str = "sensor"
+) -> list[str]:
+    """Alle huawei_solar-Entities (über alle Geräte), deren Name auf ein Suffix
+    endet — sortiert nach entity_id für deterministische Master/Slave-Reihenfolge.
+
+    Nur Entities der huawei_solar-Config-Entries (keine Fremdintegrationen).
+    """
+    ent_reg = er.async_get(hass)
+    huawei_entry_ids = {
+        e.entry_id for e in hass.config_entries.async_entries("huawei_solar")
+    }
+    found: list[str] = []
+    for entry in ent_reg.entities.values():
+        if entry.config_entry_id not in huawei_entry_ids:
+            continue
+        eid = entry.entity_id
+        if not eid.startswith(f"{domain}."):
+            continue
+        if any(_huawei_suffix_match(eid.split(".", 1)[1], suf) for suf in suffixes):
+            found.append(eid)
+    return sorted(found)
+
+
+def _huawei_device_entity(
+    hass: HomeAssistant, device_id: str, domain: str, suffixes: tuple[str, ...]
+) -> str | None:
+    """Entity eines bestimmten Geräts (Registry-Zuordnung), Name endet auf Suffix.
+
+    Wird für die zweite Batterieleistung genutzt — device-basiert, weil ein
+    globaler Suffix-Scan sonst die leeren LUNA-Modul-Sensoren (``batterie_1_*``)
+    erwischen könnte.
+    """
+    ent_reg = er.async_get(hass)
+    for entry in ent_reg.entities.values():
+        if entry.device_id != device_id:
+            continue
+        eid = entry.entity_id
+        if not eid.startswith(f"{domain}."):
+            continue
+        if any(_huawei_suffix_match(eid.split(".", 1)[1], suf) for suf in suffixes):
+            return eid
+    return None
+
+
+def _get_entry_data(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict):
+    """Look up the config entry and its hass.data dict.
+
+    Returns (entry, data) or (None, None) with error already sent.
+    """
+    entries = hass.config_entries.async_entries(DOMAIN)
+    if not entries:
+        connection.send_error(msg["id"], "not_configured", "No config entry found")
+        return None, None
+
+    entry = entries[0]
+    data = hass.data.get(DOMAIN, {}).get(entry.entry_id, {})
+    return entry, data
+
+
+def async_register_websocket_commands(hass: HomeAssistant) -> None:
+    """Register WebSocket commands for the EEG Energy Optimizer panel."""
+    websocket_api.async_register_command(hass, ws_get_entity_ids)
+    websocket_api.async_register_command(hass, ws_get_control_state)
+    websocket_api.async_register_command(hass, ws_get_config)
+    websocket_api.async_register_command(hass, ws_save_config)
+    websocket_api.async_register_command(hass, ws_check_prerequisites)
+    websocket_api.async_register_command(hass, ws_detect_sensors)
+    websocket_api.async_register_command(hass, ws_probe_fronius)
+    websocket_api.async_register_command(hass, ws_probe_kostal)
+    websocket_api.async_register_command(hass, ws_probe_sma)
+    websocket_api.async_register_command(hass, ws_get_activity_log)
+    websocket_api.async_register_command(hass, ws_get_peakshare_communities)
+    websocket_api.async_register_command(hass, ws_get_peakshare_data)
+    websocket_api.async_register_command(hass, ws_get_oemag_tarif)
+    websocket_api.async_register_command(hass, ws_get_spot_preis)
+    websocket_api.async_register_command(hass, ws_refresh_consumption_profile)
+    # Phase 8 — Telemetry-Steuerung (D-32 / D-33)
+    websocket_api.async_register_command(hass, ws_telemetry_get_status)
+    websocket_api.async_register_command(hass, ws_telemetry_enable)
+    websocket_api.async_register_command(hass, ws_telemetry_disable)
+    websocket_api.async_register_command(hass, ws_telemetry_forget)
+    websocket_api.async_register_command(hass, ws_get_feedin_statistics)
+    # Fahrplan (chamo-Prototyp)
+    websocket_api.async_register_command(hass, ws_tagesbilanz_jetzt)
+    websocket_api.async_register_command(hass, ws_get_schedule_archive)
+    websocket_api.async_register_command(hass, ws_get_schedule)
+    websocket_api.async_register_command(hass, ws_refresh_schedule)
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "eeg_optimizer/get_config",
+    }
+)
+@websocket_api.async_response
+async def ws_get_config(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict,
+) -> None:
+    """Return current config entry data."""
+    entries = hass.config_entries.async_entries(DOMAIN)
+    if not entries:
+        connection.send_error(msg["id"], "not_configured", "No config entry found")
+        return
+
+    entry = entries[0]
+    config = {**entry.data, **entry.options}
+    config["entry_id"] = entry.entry_id
+    config["setup_complete"] = entry.data.get("setup_complete", False)
+    # Inject version from manifest. Use the shared module-level cache from
+    # __init__.py so the WS handler does NOT do blocking disk IO on every
+    # panel open — HA 2026 flags read_text inside the event loop and slow
+    # storage made this measurably stall the entire HA process.
+    try:
+        from . import _load_app_version
+        config["version"] = await _load_app_version(hass)
+    except Exception:
+        config["version"] = ""
+    connection.send_result(msg["id"], config)
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "eeg_optimizer/save_config",
+        vol.Required("config"): dict,
+    }
+)
+@websocket_api.async_response
+async def ws_save_config(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict,
+) -> None:
+    """Update config entry with new data."""
+    entries = hass.config_entries.async_entries(DOMAIN)
+    if not entries:
+        connection.send_error(msg["id"], "not_configured", "No config entry found")
+        return
+
+    entry = entries[0]
+    new_data = {**entry.data, **msg["config"]}
+
+    # Fronius: server-side validation of the Modbus endpoint. The frontend
+    # already checks "non-empty host", but we cannot trust the WebSocket
+    # client. An empty/garbage host or out-of-range port would later surface
+    # as opaque pymodbus connection errors; reject it here with a clear code.
+    if new_data.get("inverter_type") == INVERTER_TYPE_FRONIUS:
+        host = new_data.get("fronius_modbus_host", "")
+        if not isinstance(host, str) or not host.strip() or len(host) > 255:
+            connection.send_error(
+                msg["id"], "invalid_config", "Invalid Fronius Modbus host"
+            )
+            return
+        new_data["fronius_modbus_host"] = host.strip()
+        port_raw = new_data.get(CONF_FRONIUS_MODBUS_PORT, DEFAULT_FRONIUS_MODBUS_PORT)
+        try:
+            port = int(port_raw)
+        except (TypeError, ValueError):
+            connection.send_error(
+                msg["id"], "invalid_config", "Invalid Fronius Modbus port"
+            )
+            return
+        if not 1 <= port <= 65535:
+            connection.send_error(
+                msg["id"], "invalid_config", "Fronius Modbus port out of range"
+            )
+            return
+        new_data[CONF_FRONIUS_MODBUS_PORT] = port
+
+    # Kostal: server-side validation of the Modbus endpoint — same rationale
+    # as the Fronius block above (frontend input cannot be trusted).
+    if new_data.get("inverter_type") == INVERTER_TYPE_KOSTAL:
+        host = new_data.get("kostal_modbus_host", "")
+        if not isinstance(host, str) or not host.strip() or len(host) > 255:
+            connection.send_error(
+                msg["id"], "invalid_config", "Invalid Kostal Modbus host"
+            )
+            return
+        new_data["kostal_modbus_host"] = host.strip()
+        port_raw = new_data.get(CONF_KOSTAL_MODBUS_PORT, DEFAULT_KOSTAL_MODBUS_PORT)
+        try:
+            port = int(port_raw)
+        except (TypeError, ValueError):
+            connection.send_error(
+                msg["id"], "invalid_config", "Invalid Kostal Modbus port"
+            )
+            return
+        if not 1 <= port <= 65535:
+            connection.send_error(
+                msg["id"], "invalid_config", "Kostal Modbus port out of range"
+            )
+            return
+        new_data[CONF_KOSTAL_MODBUS_PORT] = port
+
+    # SMA: server-side validation of the Modbus endpoint — same rationale
+    # as the Fronius/Kostal blocks above.
+    if new_data.get("inverter_type") == INVERTER_TYPE_SMA:
+        host = new_data.get("sma_modbus_host", "")
+        if not isinstance(host, str) or not host.strip() or len(host) > 255:
+            connection.send_error(
+                msg["id"], "invalid_config", "Invalid SMA Modbus host"
+            )
+            return
+        new_data["sma_modbus_host"] = host.strip()
+        port_raw = new_data.get(CONF_SMA_MODBUS_PORT, DEFAULT_SMA_MODBUS_PORT)
+        try:
+            port = int(port_raw)
+        except (TypeError, ValueError):
+            connection.send_error(
+                msg["id"], "invalid_config", "Invalid SMA Modbus port"
+            )
+            return
+        if not 1 <= port <= 65535:
+            connection.send_error(
+                msg["id"], "invalid_config", "SMA Modbus port out of range"
+            )
+            return
+        new_data[CONF_SMA_MODBUS_PORT] = port
+
+    # Einspeisegrenze des Fahrplans: bei aktivierter Grenze muss ein
+    # positiver Wert gesetzt sein — sie fließt ins LP-Modell ein und
+    # aktiviert Guard 1; eine Grenze von 0 wäre Unsinn.
+    if new_data.get(CONF_GRID_EXPORT_LIMIT_ENABLED):
+        try:
+            limit_kw = float(new_data.get(CONF_GRID_EXPORT_LIMIT_KW, 0))
+        except (TypeError, ValueError):
+            connection.send_error(
+                msg["id"], "invalid_config", "Ungültige Einspeisegrenze (kW)"
+            )
+            return
+        if limit_kw <= 0:
+            connection.send_error(
+                msg["id"],
+                "invalid_config",
+                "Einspeisegrenze muss größer als 0 kW sein",
+            )
+            return
+        new_data[CONF_GRID_EXPORT_LIMIT_KW] = limit_kw
+
+    # Pair-sensor → synthetic-sensor redirection. If the user (or auto-detect)
+    # filled the directional pair config keys, point the canonical battery_/
+    # grid_power_sensor at the synthetic combined sensor created at setup
+    # time. Downstream consumers (Hausverbrauch, optimizer watchdog,
+    # statistics, dashboard) then read one consistent signed source —
+    # exactly like a single-sensor inverter would.
+    if (new_data.get(CONF_BATTERY_POWER_CHARGE_SENSOR)
+            and new_data.get(CONF_BATTERY_POWER_DISCHARGE_SENSOR)):
+        new_data[CONF_BATTERY_POWER_SENSOR] = COMBINED_BATTERY_POWER_SENSOR_ID
+    if (new_data.get(CONF_GRID_POWER_EXPORT_SENSOR)
+            and new_data.get(CONF_GRID_POWER_IMPORT_SENSOR)):
+        new_data[CONF_GRID_POWER_SENSOR] = COMBINED_GRID_POWER_SENSOR_ID
+
+    # Huawei Master/Slave (≥2 Batteriegeräte): SOC/Kapazität auf die treiber-
+    # seitig kombinierten Synthetik-Sensoren zeigen, damit Dashboard und
+    # Optimizer denselben kapazitätsgewichteten Wert sehen (der Optimizer
+    # übersteuert ohnehin via get_combined_battery_state, das Frontend liest
+    # battery_soc_sensor). Single-Inverter bleibt unangetastet.
+    if (new_data.get(CONF_INVERTER_TYPE) == INVERTER_TYPE_HUAWEI
+            and len(new_data.get(CONF_HUAWEI_DEVICE_IDS) or []) >= 2):
+        new_data[CONF_BATTERY_SOC_SENSOR] = COMBINED_BATTERY_SOC_SENSOR_ID
+        new_data[CONF_BATTERY_CAPACITY_SENSOR] = COMBINED_BATTERY_CAPACITY_SENSOR_ID
+
+    hass.config_entries.async_update_entry(entry, data=new_data)
+    connection.send_result(msg["id"], {"success": True})
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "eeg_optimizer/check_prerequisites",
+    }
+)
+@websocket_api.async_response
+async def ws_check_prerequisites(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict,
+) -> None:
+    """Check which prerequisite integrations are installed and loaded."""
+    check_domains = ["huawei_solar", "solax_modbus", "solaredge_modbus_multi", "fronius", "kostal_plenticore", "sma", "solcast_solar", "forecast_solar"]
+    result = {}
+
+    for domain in check_domains:
+        entries = hass.config_entries.async_entries(domain)
+        loaded = any(e.state.value == "loaded" for e in entries)
+        result[domain] = loaded
+
+    connection.send_result(msg["id"], result)
+
+
+def _source_entry_host(entry) -> str | None:
+    """Extrahiere einen reinen Host/IP aus dem Config-Entry einer Quell-
+    Integration (fronius / kostal_plenticore / sma).
+
+    Alle drei Core-Integrationen speichern den Wechselrichter unter
+    ``entry.data["host"]`` — dieselbe Adresse, unter der auch Modbus TCP
+    erreichbar ist. Fronius erlaubt bei der Einrichtung auch eine volle
+    URL (z. B. ``http://192.168.1.5/``), daher wird ein Schema/Pfad
+    abgestreift, bevor der Wert als Modbus-Host vorgeschlagen wird.
+    """
+    host = entry.data.get("host")
+    if not isinstance(host, str) or not host.strip():
+        return None
+    host = host.strip()
+    if "://" in host:
+        host = urlsplit(host).hostname or ""
+    return host.rstrip("/") or None
+
+
+def _first_loaded_entry_host(entries) -> str | None:
+    """Host des ersten geladenen Config-Entries (Fallback: erster Entry)."""
+    for entry in entries:
+        if entry.state.value == "loaded":
+            return _source_entry_host(entry)
+    return _source_entry_host(entries[0]) if entries else None
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "eeg_optimizer/detect_sensors",
+    }
+)
+@websocket_api.async_response
+async def ws_detect_sensors(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict,
+) -> None:
+    """Auto-detect inverter sensors (Huawei or SolaX)."""
+    # Check if Huawei Solar integration is loaded
+    huawei_entries = hass.config_entries.async_entries("huawei_solar")
+    huawei_loaded = any(e.state.value == "loaded" for e in huawei_entries)
+
+    if huawei_loaded:
+        # Detect Huawei sensors by checking state availability (first match wins)
+        sensors: dict[str, str] = {}
+        for conf_key, candidates in HUAWEI_DEFAULTS.items():
+            for entity_id in candidates:
+                state = hass.states.get(entity_id)
+                if state is not None:
+                    sensors[conf_key] = entity_id
+                    break
+
+        # Detect battery device(s) — Master/Slave-Setups liefern mehrere.
+        device_ids = _find_huawei_battery_devices(hass)
+
+        result: dict = {
+            CONF_INVERTER_TYPE: INVERTER_TYPE_HUAWEI,
+            "detected": True,
+            "sensors": sensors,
+        }
+        if device_ids:
+            result[CONF_HUAWEI_DEVICE_ID] = device_ids[0]  # Legacy-Single
+            result[CONF_HUAWEI_DEVICE_IDS] = device_ids
+            # Gerätenamen mitliefern, damit der Wizard pro Batterie ein
+            # Kapazitätsfeld mit verständlichem Label rendern kann.
+            devreg = dr.async_get(hass)
+            bat_devs = []
+            for did in device_ids:
+                dv = devreg.async_get(did)
+                bat_devs.append(
+                    {"id": did, "name": (dv.name_by_user or dv.name) if dv else did}
+                )
+            result["huawei_battery_devices"] = bat_devs
+
+        # Multi-Inverter: zweiten PV- und Batterieleistungs-Sensor erkennen.
+        # PV-Eingangsleistung hängt am Inverter-Gerät, Batterieleistung am
+        # Batterie-Gerät — beide existieren pro Wechselrichter getrennt. Wir
+        # nehmen jeweils den ersten, der nicht schon als primärer Sensor dient.
+        if len(device_ids) >= 2:
+            pv_sensors = _huawei_entities_by_suffix(
+                hass, ("eingangsleistung", "input_power")
+            )
+            pv_primary = sensors.get(CONF_PV_POWER_SENSOR)
+            pv_extra = next((e for e in pv_sensors if e != pv_primary), None)
+            if pv_extra:
+                sensors[CONF_PV_POWER_SENSOR_2] = pv_extra
+
+            # Zweite Batterieleistung device-basiert am zweiten Batteriegerät
+            # auflösen — ein globaler Suffix-Scan würde sonst die leeren
+            # LUNA-Modul-Sensoren (batterie_1_…) erwischen.
+            bat_extra = _huawei_device_entity(
+                hass, device_ids[1], "sensor",
+                ("lade_entladeleistung", "charge_discharge_power"),
+            )
+            if bat_extra:
+                sensors[CONF_BATTERY_POWER_SENSOR_2] = bat_extra
+
+        # "Enable battery control" prüfen: ohne diese Option registriert
+        # huawei_solar weder die forcible-Services noch das Ladelimit-Number —
+        # dann kann der Optimizer NICHT steuern (weder Single noch Master/Slave).
+        # Erkennbar an den Steuer-Services (sprachunabhängig).
+        result["huawei_battery_control"] = (
+            hass.services.has_service("huawei_solar", "forcible_discharge_soc")
+            or hass.services.has_service("huawei_solar", "stop_forcible_charge")
+            or hass.services.has_service("huawei_solar", "forcible_charge")
+        )
+
+        connection.send_result(msg["id"], result)
+        return
+
+    # Check if SolaX Modbus integration is loaded
+    solax_entries = hass.config_entries.async_entries("solax_modbus")
+    solax_loaded = any(e.state.value == "loaded" for e in solax_entries)
+
+    if solax_loaded:
+        sensors = {}
+        for conf_key, candidates in SOLAX_DEFAULTS.items():
+            for entity_id in candidates:
+                state = hass.states.get(entity_id)
+                if state is not None:
+                    sensors[conf_key] = entity_id
+                    break
+
+        result = {
+            CONF_INVERTER_TYPE: INVERTER_TYPE_SOLAX,
+            "detected": True,
+            "sensors": sensors,
+        }
+
+        # Steuer-Entities per Suffix-Scan auflösen statt aus dem Prefix zu
+        # konstruieren — neuere solax_modbus-Versionen hängen Mode-Suffixe an
+        # die Entity-Namen (z. B. remotecontrol_trigger_mode_1_7), die ein
+        # konstruierter Name nie treffen würde.
+        for control_key in (
+            "remotecontrol_power_control",
+            "remotecontrol_active_power",
+            "remotecontrol_autorepeat_duration",
+            "remotecontrol_duration",
+            "remotecontrol_trigger",
+            "selfuse_discharge_min_soc",
+        ):
+            entity_id = find_solax_control_entity(hass, control_key)
+            if entity_id:
+                result[f"solax_{control_key}"] = entity_id
+
+        prefix = _find_solax_prefix(hass)
+        if prefix:
+            result["solax_prefix"] = prefix
+
+        connection.send_result(msg["id"], result)
+        return
+
+    # Check if SolarEdge Modbus Multi integration is loaded
+    solaredge_entries = hass.config_entries.async_entries("solaredge_modbus_multi")
+    solaredge_loaded = any(e.state.value == "loaded" for e in solaredge_entries)
+
+    if solaredge_loaded:
+        # Detect prefix first — used for both sensors and control entities
+        prefix = _find_solaredge_prefix(hass)
+
+        # Detect read-only sensors using prefix + suffix candidates
+        sensors = {}
+        for conf_key, suffixes in SOLAREDGE_SENSOR_SUFFIXES.items():
+            for suffix in suffixes:
+                # Try prefix-based entity first (handles solaredge_i1_, etc.)
+                if prefix:
+                    entity_id = f"sensor.{prefix}{suffix}"
+                    state = hass.states.get(entity_id)
+                    if state is not None:
+                        sensors[conf_key] = entity_id
+                        break
+                # Fallback: scan all sensor states for this suffix
+                if conf_key not in sensors:
+                    for state in hass.states.async_all("sensor"):
+                        if (state.entity_id.endswith(suffix)
+                                and "solaredge" in state.entity_id):
+                            sensors[conf_key] = state.entity_id
+                            break
+
+        result = {
+            CONF_INVERTER_TYPE: INVERTER_TYPE_SOLAREDGE,
+            "detected": True,
+            "sensors": sensors,
+        }
+        if prefix:
+            result["solaredge_prefix"] = prefix
+            # Detect control entities — try suffix variants
+            for config_key, candidates in SOLAREDGE_CONTROL_SUFFIXES.items():
+                for domain, suffix in candidates:
+                    entity_id = f"{domain}.{prefix}{suffix}"
+                    state = hass.states.get(entity_id)
+                    if state is not None:
+                        result[config_key] = entity_id
+                        break
+
+            # Detect additional inverters (multi-inverter setups)
+            extra_inverters = _find_solaredge_additional_inverters(hass, prefix)
+            if extra_inverters:
+                # Use the first additional inverter's ac_power as second PV sensor
+                pv2_id = f"sensor.{extra_inverters[0]}ac_power"
+                state = hass.states.get(pv2_id)
+                if state is not None:
+                    sensors[CONF_PV_POWER_SENSOR_2] = pv2_id
+
+        connection.send_result(msg["id"], result)
+        return
+
+    # Check if Fronius native integration is loaded
+    fronius_entries = hass.config_entries.async_entries("fronius")
+    fronius_loaded = any(e.state.value == "loaded" for e in fronius_entries)
+
+    if fronius_loaded:
+        # Detect Fronius sensors by restricting to entities owned by the
+        # `fronius` Core integration. Pure suffix matching plus loose name
+        # heuristics (fronius/solarnet/power_flow/byd) used to leak in
+        # standalone BYD BMS entities or other integrations that happen to
+        # ship a `state_of_charge` sensor — only used as wizard suggestions
+        # but confusing for users with mixed setups.
+        fronius_entry_ids = {e.entry_id for e in fronius_entries}
+        ent_reg = er.async_get(hass)
+        fronius_entity_ids = {
+            entry.entity_id
+            for entry in ent_reg.entities.values()
+            if entry.config_entry_id in fronius_entry_ids
+        }
+
+        # Pre-collect all candidate Fronius-owned sensors for faster scanning.
+        candidate_states = [
+            s for s in hass.states.async_all("sensor")
+            if s.entity_id in fronius_entity_ids
+            and s.state not in ("unavailable", "unknown")
+        ]
+
+        # Suffix matching with word boundary check. Plain endswith() is
+        # ambiguous: "entladeleistung" endswith "ladeleistung" is True, which
+        # would mis-classify the discharge sensor as the charge sensor.
+        # Require the suffix to start its own word — preceded by "_" or "."
+        # (or to be the entire entity_id), unless the suffix already starts
+        # with "_" (then the boundary is built in).
+        def _suffix_matches(entity_id: str, suffix: str) -> bool:
+            if not entity_id.endswith(suffix):
+                return False
+            if suffix.startswith("_"):
+                return True
+            head = entity_id[: -len(suffix)]
+            return head == "" or head.endswith("_") or head.endswith(".")
+
+        sensors = {}
+        for conf_key, suffixes in FRONIUS_SENSOR_SUFFIXES.items():
+            for suffix in suffixes:
+                for state in candidate_states:
+                    if _suffix_matches(state.entity_id, suffix):
+                        sensors[conf_key] = state.entity_id
+                        break
+                if conf_key in sensors:
+                    break
+
+        # Detect directional pair sensors (charge/discharge, export/import).
+        # When a complete pair is found, fill the dedicated pair config keys
+        # AND point the canonical battery_/grid_power_sensor at the synthetic
+        # combined sensor — that sensor is created at setup time when both
+        # pair keys are present.
+        for (pos_key, neg_key), pairs in FRONIUS_PAIR_SUFFIXES.items():
+            for pos_suf, neg_suf in pairs:
+                pos_match = next(
+                    (s.entity_id for s in candidate_states
+                     if _suffix_matches(s.entity_id, pos_suf)),
+                    None,
+                )
+                neg_match = next(
+                    (s.entity_id for s in candidate_states
+                     if _suffix_matches(s.entity_id, neg_suf)),
+                    None,
+                )
+                if pos_match and neg_match:
+                    sensors[pos_key] = pos_match
+                    sensors[neg_key] = neg_match
+                    break
+            # If the pair was filled, redirect the canonical key at the
+            # synthetic combined sensor (overrides any single-sensor hit
+            # the suffix scan above might have produced).
+            if pos_key == CONF_BATTERY_POWER_CHARGE_SENSOR and pos_key in sensors:
+                sensors[CONF_BATTERY_POWER_SENSOR] = COMBINED_BATTERY_POWER_SENSOR_ID
+            if pos_key == CONF_GRID_POWER_EXPORT_SENSOR and pos_key in sensors:
+                sensors[CONF_GRID_POWER_SENSOR] = COMBINED_GRID_POWER_SENSOR_ID
+
+        result = {
+            CONF_INVERTER_TYPE: INVERTER_TYPE_FRONIUS,
+            "detected": True,
+            "sensors": sensors,
+        }
+        # Modbus-Host-Vorschlag: der Gen24 spricht Solar API und Modbus TCP
+        # über dieselbe Adresse — die kennt der fronius-Config-Entry bereits,
+        # der Nutzer muss sie nicht erneut abtippen.
+        modbus_host = _first_loaded_entry_host(fronius_entries)
+        if modbus_host:
+            result[CONF_FRONIUS_MODBUS_HOST] = modbus_host
+        connection.send_result(msg["id"], result)
+        return
+
+    # Check if Kostal Plenticore native integration is loaded
+    kostal_entries = hass.config_entries.async_entries("kostal_plenticore")
+    kostal_loaded = any(e.state.value == "loaded" for e in kostal_entries)
+
+    if kostal_loaded:
+        # Same ownership-based restriction as the Fronius block: only
+        # entities created by kostal_plenticore config entries are
+        # candidates, so the loose suffixes cannot match foreign sensors
+        # (e.g. a standalone BYD BMS exposing its own battery_soc).
+        # Entities are grouped PER config entry: with multiple Plenticores
+        # (e.g. master with battery + second battery-less PV inverter) a
+        # flat first-match scan could pick the grid/PV sensor of the wrong
+        # device (the battery-less one reports grid_power = 0 forever).
+        kostal_entry_ids = {e.entry_id for e in kostal_entries}
+        ent_reg = er.async_get(hass)
+        entity_to_entry: dict[str, str] = {
+            entry.entity_id: entry.config_entry_id
+            for entry in ent_reg.entities.values()
+            if entry.config_entry_id in kostal_entry_ids
+        }
+
+        candidates_by_entry: dict[str, list] = {}
+        for s in hass.states.async_all("sensor"):
+            entry_id = entity_to_entry.get(s.entity_id)
+            if entry_id is None or s.state in ("unavailable", "unknown"):
+                continue
+            candidates_by_entry.setdefault(entry_id, []).append(s)
+
+        def _kostal_suffix_matches(entity_id: str, suffix: str) -> bool:
+            if any(
+                entity_id.endswith(excl)
+                for excl in KOSTAL_SENSOR_EXCLUDE_SUFFIXES
+            ):
+                return False
+            if not entity_id.endswith(suffix):
+                return False
+            head = entity_id[: -len(suffix)]
+            return head == "" or head.endswith("_") or head.endswith(".")
+
+        def _find(states: list, conf_key: str) -> str | None:
+            for suffix in KOSTAL_SENSOR_SUFFIXES[conf_key]:
+                for state in sorted(states, key=lambda s: s.entity_id):
+                    if _kostal_suffix_matches(state.entity_id, suffix):
+                        return state.entity_id
+            return None
+
+        # Primary entry = the inverter WITH battery (has a battery_soc
+        # sensor). SOC, battery, grid (KSEM) and primary PV come from it.
+        # Deterministic order: sorted entry ids, so repeated detections
+        # cannot flip between devices.
+        primary_id = None
+        for entry_id in sorted(candidates_by_entry):
+            if _find(candidates_by_entry[entry_id], CONF_BATTERY_SOC_SENSOR):
+                primary_id = entry_id
+                break
+        if primary_id is None and candidates_by_entry:
+            # No battery anywhere — degrade to the old flat behavior on
+            # the first entry so the wizard still prefills something.
+            primary_id = sorted(candidates_by_entry)[0]
+
+        sensors = {}
+        if primary_id is not None:
+            primary_states = candidates_by_entry[primary_id]
+            for conf_key in KOSTAL_SENSOR_SUFFIXES:
+                match = _find(primary_states, conf_key)
+                if match:
+                    sensors[conf_key] = match
+
+            # Secondary battery-less inverters: their PV production must
+            # flow into the Hausverbrauch calculation (PV1 + PV2 − Batterie
+            # − Netz), otherwise the computed house load is short by the
+            # second inverter's output. First secondary with a solar_power
+            # sensor fills the existing pv_power_sensor_2 slot.
+            for entry_id in sorted(candidates_by_entry):
+                if entry_id == primary_id:
+                    continue
+                pv2 = _find(
+                    candidates_by_entry[entry_id], CONF_PV_POWER_SENSOR
+                )
+                if pv2:
+                    sensors[CONF_PV_POWER_SENSOR_2] = pv2
+                    break
+
+        result = {
+            CONF_INVERTER_TYPE: INVERTER_TYPE_KOSTAL,
+            "detected": True,
+            "sensors": sensors,
+        }
+        # Modbus-Host-Vorschlag: bewusst der PRIMARY-Entry (Inverter MIT
+        # Batterie) — bei Multi-Inverter-Setups muss die Modbus-Steuerung
+        # den Master mit Batterie treffen, nicht den PV-only-Slave.
+        modbus_host = None
+        if primary_id is not None:
+            primary_entry = hass.config_entries.async_get_entry(primary_id)
+            if primary_entry is not None:
+                modbus_host = _source_entry_host(primary_entry)
+        if modbus_host is None:
+            modbus_host = _first_loaded_entry_host(kostal_entries)
+        if modbus_host:
+            result[CONF_KOSTAL_MODBUS_HOST] = modbus_host
+        connection.send_result(msg["id"], result)
+        return
+
+    # Check if SMA (WebConnect) native integration is loaded
+    sma_entries = hass.config_entries.async_entries("sma")
+    sma_loaded = any(e.state.value == "loaded" for e in sma_entries)
+
+    if sma_loaded:
+        # Same ownership-based restriction as the Fronius/Kostal blocks:
+        # only entities created by `sma` config entries are candidates.
+        sma_entry_ids = {e.entry_id for e in sma_entries}
+        ent_reg = er.async_get(hass)
+        sma_entity_ids = {
+            entry.entity_id
+            for entry in ent_reg.entities.values()
+            if entry.config_entry_id in sma_entry_ids
+        }
+
+        candidate_states = [
+            s for s in hass.states.async_all("sensor")
+            if s.entity_id in sma_entity_ids
+            and s.state not in ("unavailable", "unknown")
+        ]
+
+        def _sma_suffix_matches(entity_id: str, suffix: str) -> bool:
+            if not entity_id.endswith(suffix):
+                return False
+            head = entity_id[: -len(suffix)]
+            return head == "" or head.endswith("_") or head.endswith(".")
+
+        sensors = {}
+        for conf_key, suffixes in SMA_SENSOR_SUFFIXES.items():
+            for suffix in suffixes:
+                for state in candidate_states:
+                    if _sma_suffix_matches(state.entity_id, suffix):
+                        sensors[conf_key] = state.entity_id
+                        break
+                if conf_key in sensors:
+                    break
+
+        # Directional pairs (charge/discharge, supplied/absorbed) → fill the
+        # pair keys and point the canonical keys at the synthetic combined
+        # sensors (same mechanism as Fronius).
+        for (pos_key, neg_key), pairs in SMA_PAIR_SUFFIXES.items():
+            for pos_suf, neg_suf in pairs:
+                pos_match = next(
+                    (s.entity_id for s in candidate_states
+                     if _sma_suffix_matches(s.entity_id, pos_suf)),
+                    None,
+                )
+                neg_match = next(
+                    (s.entity_id for s in candidate_states
+                     if _sma_suffix_matches(s.entity_id, neg_suf)),
+                    None,
+                )
+                if pos_match and neg_match:
+                    sensors[pos_key] = pos_match
+                    sensors[neg_key] = neg_match
+                    break
+            if pos_key == CONF_BATTERY_POWER_CHARGE_SENSOR and pos_key in sensors:
+                sensors[CONF_BATTERY_POWER_SENSOR] = COMBINED_BATTERY_POWER_SENSOR_ID
+            if pos_key == CONF_GRID_POWER_EXPORT_SENSOR and pos_key in sensors:
+                sensors[CONF_GRID_POWER_SENSOR] = COMBINED_GRID_POWER_SENSOR_ID
+
+        result = {
+            CONF_INVERTER_TYPE: INVERTER_TYPE_SMA,
+            "detected": True,
+            "sensors": sensors,
+        }
+        # Modbus-Host-Vorschlag: WebConnect und Modbus TCP laufen über
+        # dieselbe Geräteadresse aus dem sma-Config-Entry.
+        modbus_host = _first_loaded_entry_host(sma_entries)
+        if modbus_host:
+            result[CONF_SMA_MODBUS_HOST] = modbus_host
+        connection.send_result(msg["id"], result)
+        return
+
+    # Neither Huawei, SolaX, SolarEdge, Fronius, Kostal, nor SMA detected
+    connection.send_result(msg["id"], {"detected": False, "sensors": {}})
+
+
+def _registers_to_string(registers) -> str:
+    """Decode a sequence of 16-bit Modbus registers as ASCII (big-endian)."""
+    chars = []
+    for reg in registers:
+        chars.append(chr((reg >> 8) & 0xFF))
+        chars.append(chr(reg & 0xFF))
+    return "".join(chars).rstrip("\x00 ").strip()
+
+
+async def _probe_fronius_modbus(host: str, port: int, slave_id: int = 1) -> dict:
+    """Read-only probe: connect to host:port, verify SunSpec ID, read the
+    Common Block (Model 1) to identify the manufacturer and model. Closes
+    the connection at the end. No writes ever happen here.
+    """
+    import asyncio
+    result: dict = {"success": False}
+    try:
+        from pymodbus.client import AsyncModbusTcpClient
+    except ImportError:
+        result["error"] = "pymodbus nicht installiert."
+        return result
+
+    client = AsyncModbusTcpClient(host, port=port)
+    try:
+        try:
+            await asyncio.wait_for(client.connect(), timeout=5)
+        except asyncio.TimeoutError:
+            result["error"] = f"Timeout beim Verbindungsaufbau zu {host}:{port}."
+            return result
+        if not client.connected:
+            result["error"] = f"Keine Modbus-TCP-Verbindung zu {host}:{port}."
+            return result
+
+        # pymodbus 3.9+ renamed `slave` to `device_id`. Probe the signature
+        # once and use whichever keyword the active client accepts.
+        import inspect
+        try:
+            sig = inspect.signature(client.read_holding_registers)
+            slave_kw = {"device_id": slave_id} if "device_id" in sig.parameters else {"slave": slave_id}
+        except (TypeError, ValueError):
+            slave_kw = {"slave": slave_id}
+
+        # SunSpec header at 40000-40001 must read "SunS"
+        r = await asyncio.wait_for(
+            client.read_holding_registers(address=40000, count=2, **slave_kw),
+            timeout=5,
+        )
+        if r.isError():
+            result["error"] = "Modbus-Fehler beim Lesen des SunSpec-Headers."
+            return result
+        if r.registers[0] != 0x5375 or r.registers[1] != 0x6E53:
+            result["error"] = (
+                f"Kein SunSpec-Gerät unter {host}:{port} "
+                f"(Header: 0x{r.registers[0]:04X} 0x{r.registers[1]:04X})."
+            )
+            return result
+
+        # Common Block (Model 1) starts at 40002. Layout:
+        #   40002 model_id (=1)  40003 length (=66)
+        #   40004..40019 Manufacturer (16 regs / 32 chars)
+        #   40020..40035 Model (16 regs)
+        r = await asyncio.wait_for(
+            client.read_holding_registers(address=40002, count=34, **slave_kw),
+            timeout=5,
+        )
+        if r.isError():
+            result["error"] = "Modbus-Fehler beim Lesen des Common Blocks."
+            return result
+        if r.registers[0] != 1:
+            result["error"] = (
+                f"Common Block fehlt (Model-ID = {r.registers[0]}, erwartet 1)."
+            )
+            return result
+
+        manufacturer = _registers_to_string(r.registers[2:18])
+        model_name = _registers_to_string(r.registers[18:34])
+
+        result["success"] = True
+        result["manufacturer"] = manufacturer
+        result["model"] = model_name
+        result["is_fronius"] = "fronius" in manufacturer.lower()
+        return result
+    except Exception as exc:
+        result["error"] = f"Verbindungsfehler: {exc}"
+        return result
+    finally:
+        try:
+            client.close()
+        except Exception:
+            pass
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "eeg_optimizer/probe_fronius",
+        vol.Required("host"): str,
+        vol.Optional("port", default=502): int,
+    }
+)
+@websocket_api.async_response
+async def ws_probe_fronius(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict,
+) -> None:
+    """Read-only probe of a Fronius Gen24 over Modbus TCP.
+
+    Used by the wizard's "Weiter" step to verify that the entered IP
+    actually points at a Fronius inverter before saving the config.
+    """
+    host = (msg.get("host") or "").strip()
+    port = int(msg.get("port") or 502)
+    if not host:
+        connection.send_result(msg["id"], {
+            "success": False,
+            "error": "Keine IP-Adresse angegeben.",
+        })
+        return
+    result = await _probe_fronius_modbus(host, port)
+    connection.send_result(msg["id"], result)
+
+
+async def _probe_kostal_modbus(host: str, port: int) -> dict:
+    """Read-only probe of a Kostal Plenticore over Modbus TCP (unit 71).
+
+    Reads Productname (768) / Power class (800) to identify the device and
+    the battery management mode (1080: 0=internal, 1=ext. digital I/O,
+    2=external via Modbus) as onboarding check — external control is the
+    installer-only setting the driver needs. Optionally reads SOC (210) and
+    battery work capacity (1068); both may fail on inverters without a
+    battery and are reported as null then. No writes ever happen here.
+    """
+    import asyncio
+    from .inverter.kostal import (
+        BATTERY_MGMT_EXTERNAL_MODBUS,
+        KOSTAL_UNIT_ID,
+        REG_BATTERY_CAPACITY,
+        REG_BATTERY_MGMT_MODE,
+        REG_POWER_CLASS,
+        REG_PRODUCTNAME,
+        REG_SOC,
+        registers_to_float,
+        registers_to_string,
+    )
+
+    result: dict = {"success": False}
+    try:
+        from pymodbus.client import AsyncModbusTcpClient
+    except ImportError:
+        result["error"] = "pymodbus nicht installiert."
+        return result
+
+    client = AsyncModbusTcpClient(host, port=port)
+    try:
+        try:
+            await asyncio.wait_for(client.connect(), timeout=5)
+        except asyncio.TimeoutError:
+            result["error"] = f"Timeout beim Verbindungsaufbau zu {host}:{port}."
+            return result
+        if not client.connected:
+            result["error"] = f"Keine Modbus-TCP-Verbindung zu {host}:{port}."
+            return result
+
+        import inspect
+        try:
+            sig = inspect.signature(client.read_holding_registers)
+            slave_kw = (
+                {"device_id": KOSTAL_UNIT_ID}
+                if "device_id" in sig.parameters
+                else {"slave": KOSTAL_UNIT_ID}
+            )
+        except (TypeError, ValueError):
+            slave_kw = {"slave": KOSTAL_UNIT_ID}
+
+        async def _read(address: int, count: int):
+            r = await asyncio.wait_for(
+                client.read_holding_registers(
+                    address=address, count=count, **slave_kw
+                ),
+                timeout=5,
+            )
+            return None if r.isError() else r.registers
+
+        regs = await _read(REG_PRODUCTNAME, 32)
+        if regs is None:
+            result["error"] = (
+                "Modbus-Fehler beim Lesen des Produktnamens — ist Modbus TCP "
+                "im Kostal-Webserver aktiviert (Port 1502)?"
+            )
+            return result
+        product = registers_to_string(regs)
+
+        power_class_regs = await _read(REG_POWER_CLASS, 32)
+        power_class = (
+            registers_to_string(power_class_regs)
+            if power_class_regs is not None
+            else ""
+        )
+
+        mgmt_regs = await _read(REG_BATTERY_MGMT_MODE, 1)
+        mgmt_mode = mgmt_regs[0] if mgmt_regs else None
+
+        soc_regs = await _read(REG_SOC, 2)
+        soc = round(registers_to_float(soc_regs), 1) if soc_regs else None
+
+        cap_regs = await _read(REG_BATTERY_CAPACITY, 2)
+        capacity_kwh = None
+        if cap_regs:
+            cap_raw = registers_to_float(cap_regs)
+            # Spec documents Wh; guard against firmwares reporting kWh.
+            capacity_kwh = round(
+                cap_raw / 1000.0 if cap_raw > 1000 else cap_raw, 2
+            )
+
+        product_upper = product.upper()
+        result["success"] = True
+        result["product"] = product
+        result["power_class"] = power_class
+        result["is_kostal"] = (
+            "PLENTICORE" in product_upper or "KOSTAL" in product_upper
+        )
+        result["battery_mgmt_mode"] = mgmt_mode
+        result["battery_control_external"] = (
+            mgmt_mode == BATTERY_MGMT_EXTERNAL_MODBUS
+        )
+        result["soc"] = soc
+        result["battery_capacity_kwh"] = capacity_kwh
+        return result
+    except Exception as exc:
+        result["error"] = f"Verbindungsfehler: {exc}"
+        return result
+    finally:
+        try:
+            client.close()
+        except Exception:
+            pass
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "eeg_optimizer/probe_kostal",
+        vol.Required("host"): str,
+        vol.Optional("port", default=1502): int,
+    }
+)
+@websocket_api.async_response
+async def ws_probe_kostal(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict,
+) -> None:
+    """Read-only probe of a Kostal Plenticore over Modbus TCP.
+
+    Used by the wizard's "Weiter" step to verify the entered IP points at a
+    Kostal inverter and to report whether external battery control (the
+    installer-only service-menu setting) is already active.
+    """
+    host = (msg.get("host") or "").strip()
+    port = int(msg.get("port") or 1502)
+    if not host:
+        connection.send_result(msg["id"], {
+            "success": False,
+            "error": "Keine IP-Adresse angegeben.",
+        })
+        return
+    result = await _probe_kostal_modbus(host, port)
+    connection.send_result(msg["id"], result)
+
+
+async def _probe_sma_modbus(host: str, port: int) -> dict:
+    """Read-only probe of an SMA inverter over Modbus TCP (unit 3).
+
+    Reads device class/type + serial (30051/30053/30057), battery SOC
+    (30845) and current battery powers (31393/31395) for a reachability
+    and plausibility check, plus CmpBMS.OpMod (40236) to verify the
+    control register exists on this firmware (beta checklist item 2 —
+    some devices use 41259 instead). Never writes anything.
+    """
+    import asyncio
+
+    from .inverter.sma import (
+        REG_BATTERY_CHARGE_W,
+        REG_BATTERY_DISCHARGE_W,
+        REG_BATTERY_SOC,
+        REG_CMPBMS_OPMOD,
+        REG_DEVICE_TYPE,
+        REG_SERIAL,
+        SMA_UNIT_ID,
+        U32_NAN,
+        registers_to_u32,
+    )
+
+    REG_DEVICE_CLASS = 30051  # U32 enum — 8001=Solar-WR, 8007=Batterie-WR
+
+    result: dict = {"success": False}
+    try:
+        from pymodbus.client import AsyncModbusTcpClient
+    except ImportError:
+        result["error"] = "pymodbus nicht installiert."
+        return result
+
+    client = AsyncModbusTcpClient(host, port=port)
+    try:
+        try:
+            await asyncio.wait_for(client.connect(), timeout=5)
+        except asyncio.TimeoutError:
+            result["error"] = f"Timeout beim Verbindungsaufbau zu {host}:{port}."
+            return result
+        if not client.connected:
+            result["error"] = f"Keine Modbus-TCP-Verbindung zu {host}:{port}."
+            return result
+
+        import inspect
+        try:
+            sig = inspect.signature(client.read_holding_registers)
+            slave_kw = (
+                {"device_id": SMA_UNIT_ID}
+                if "device_id" in sig.parameters
+                else {"slave": SMA_UNIT_ID}
+            )
+        except (TypeError, ValueError):
+            slave_kw = {"slave": SMA_UNIT_ID}
+
+        async def _read_u32(address: int) -> int | None:
+            try:
+                r = await asyncio.wait_for(
+                    client.read_holding_registers(
+                        address=address, count=2, **slave_kw
+                    ),
+                    timeout=5,
+                )
+            except asyncio.TimeoutError:
+                return None
+            if r.isError():
+                return None
+            value = registers_to_u32(r.registers)
+            return None if value == U32_NAN else value
+
+        serial = await _read_u32(REG_SERIAL)
+        if serial is None:
+            result["error"] = (
+                "Modbus-Fehler beim Lesen der Seriennummer — ist der "
+                "Modbus-TCP-Server im SMA-Webinterface aktiviert (Port 502)?"
+            )
+            return result
+
+        device_class = await _read_u32(REG_DEVICE_CLASS)
+        device_type = await _read_u32(REG_DEVICE_TYPE)
+        soc = await _read_u32(REG_BATTERY_SOC)
+        charge_w = await _read_u32(REG_BATTERY_CHARGE_W)
+        discharge_w = await _read_u32(REG_BATTERY_DISCHARGE_W)
+        # CmpBMS.OpMod readable → the 40236 control path exists on this
+        # firmware. Read-only check; a failure is a warning, not a blocker
+        # (alternate address 41259 — see driver docstring).
+        opmod = await _read_u32(REG_CMPBMS_OPMOD)
+
+        result["success"] = True
+        result["is_sma"] = serial > 0
+        result["serial"] = serial
+        result["device_class"] = device_class
+        result["device_type"] = device_type
+        result["soc"] = soc
+        result["battery_charge_w"] = charge_w
+        result["battery_discharge_w"] = discharge_w
+        result["has_battery"] = soc is not None
+        result["opmod_register_ok"] = opmod is not None
+        result["opmod"] = opmod
+        return result
+    except Exception as exc:
+        result["error"] = f"Verbindungsfehler: {exc}"
+        return result
+    finally:
+        try:
+            client.close()
+        except Exception:
+            pass
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "eeg_optimizer/probe_sma",
+        vol.Required("host"): str,
+        vol.Optional("port", default=502): int,
+    }
+)
+@websocket_api.async_response
+async def ws_probe_sma(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict,
+) -> None:
+    """Read-only probe of an SMA inverter over Modbus TCP.
+
+    Used by the wizard's "Weiter" step to verify the entered IP points at
+    an SMA device with battery, and whether the CmpBMS control register
+    (40236) exists on this firmware.
+    """
+    host = (msg.get("host") or "").strip()
+    port = int(msg.get("port") or 502)
+    if not host:
+        connection.send_result(msg["id"], {
+            "success": False,
+            "error": "Keine IP-Adresse angegeben.",
+        })
+        return
+    result = await _probe_sma_modbus(host, port)
+    connection.send_result(msg["id"], result)
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "eeg_optimizer/get_activity_log",
+        vol.Optional("offset", default=0): int,
+        vol.Optional("limit", default=100): int,
+    }
+)
+@websocket_api.async_response
+async def ws_get_activity_log(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict,
+) -> None:
+    """Return a page of the activity log (newest first)."""
+    entry, data = _get_entry_data(hass, connection, msg)
+    if entry is None:
+        return
+
+    log = data.get("activity_log")
+    if not log:
+        connection.send_result(msg["id"], {"entries": [], "total": 0})
+        return
+
+    total = len(log)
+    # Convert deque to list in reverse (newest first), then slice
+    all_entries = list(reversed(log))
+    offset = msg.get("offset", 0)
+    limit = msg.get("limit", 100)
+    page = all_entries[offset:offset + limit]
+    connection.send_result(msg["id"], {
+        "entries": page,
+        "total": total,
+        "offset": offset,
+        "has_more": offset + limit < total,
+    })
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "eeg_optimizer/get_peakshare_communities",
+    }
+)
+@websocket_api.async_response
+async def ws_get_peakshare_communities(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict,
+) -> None:
+    """Return list of PeakShare community names for the dropdown."""
+    entry, data = _get_entry_data(hass, connection, msg)
+    if entry is None:
+        return
+
+    peakshare = data.get("peakshare")
+    if not peakshare:
+        # Fetch directly if no provider yet (during setup wizard)
+        from .peakshare import PeakShareProvider
+
+        temp = PeakShareProvider(hass, "temp")
+        api_data = await temp.async_fetch()
+        communities = [
+            c["name"]
+            for c in (api_data or {}).get("communities", [])
+            if isinstance(c, dict) and "name" in c
+        ]
+    else:
+        communities = peakshare.get_communities()
+        if not communities:
+            await peakshare.async_fetch()
+            communities = peakshare.get_communities()
+
+    connection.send_result(msg["id"], {"communities": communities})
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "eeg_optimizer/get_peakshare_data",
+    }
+)
+@websocket_api.async_response
+async def ws_get_peakshare_data(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict,
+) -> None:
+    """Return PeakShare forecast data for dashboard display."""
+    entry, data = _get_entry_data(hass, connection, msg)
+    if entry is None:
+        return
+
+    peakshare = data.get("peakshare")
+    config = dict(entry.data)
+    community_name = config.get("peakshare_community", "BEG")
+    # Beide konfigurierten Gemeinschaften — der Fahrplan rechnet mit beiden,
+    # also gehören auch beide ins Diagramm. Ein Abruf hat ohnehin alle geholt.
+    namen = [community_name]
+    zweite = config.get("peakshare_community_2")
+    if zweite and zweite != community_name:
+        namen.append(zweite)
+
+    if not peakshare or not peakshare._cache:
+        connection.send_result(msg["id"], {
+            "community": community_name,
+            "intervals": [],
+            "communities": [
+                {"name": n, "intervals": [], "warnings": []} for n in namen
+            ],
+            "cache_age_minutes": None,
+            "discharge_plan": None,
+        })
+        return
+
+    # Viertelstundenwerte über 48 Stunden, direkt aus der API (V2). Der
+    # Planungshorizont ist damit vollständig abgedeckt — die Wiederholung des
+    # Tagesverlaufs, die V1 nötig machte, gibt es nicht mehr. Jeder Eintrag
+    # trägt ``saldoKwh``: positiv = Bedarf, negativ = Überschuss.
+    serien = [
+        {
+            "name": name,
+            "intervals": peakshare.get_intervals(name),
+            "warnings": peakshare.get_warnings(name),
+        }
+        for name in namen
+    ]
+    intervals = serien[0]["intervals"]
+
+    # Cache age
+    cache_age = None
+    if peakshare._cache_time:
+        from datetime import datetime, timezone
+        age_sec = (datetime.now(timezone.utc) - peakshare._cache_time).total_seconds()
+        cache_age = round(age_sec / 60)
+
+    # Kein Entladefenster mehr — die Steuerung übernimmt der Fahrplan.
+    # ``intervals`` bleibt zusätzlich die erste Gemeinschaft: die Datenansicht
+    # im Panel liest sie so.
+    connection.send_result(msg["id"], {
+        "community": community_name,
+        "intervals": intervals,
+        "communities": serien,
+        "cache_age_minutes": cache_age,
+        "discharge_plan": None,
+    })
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "eeg_optimizer/get_oemag_tarif",
+        vol.Optional("refresh"): bool,
+    }
+)
+@websocket_api.async_response
+async def ws_get_oemag_tarif(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict,
+) -> None:
+    """Monatlicher Einspeisetarif der OeMAG samt Alter und letztem Fehler.
+
+    Das Panel zeigt beides an: der Wert kommt aus einer HTML-Tabelle, und wenn
+    die Seite umgebaut wird, bleibt der letzte gelesene Wert stehen. Ohne Alter
+    wäre das nicht zu erkennen. ``refresh`` erzwingt einen Abruf — für den
+    Knopf „Jetzt holen" in den Einstellungen.
+    """
+    entry, data = _get_entry_data(hass, connection, msg)
+    if entry is None:
+        return
+
+    provider = data.get("oemag")
+    if provider is None:
+        connection.send_result(
+            msg["id"], {"preis": None, "fehler": "Anbieter nicht geladen"}
+        )
+        return
+
+    if msg.get("refresh"):
+        await provider.async_fetch(force=True)
+
+    connection.send_result(msg["id"], provider.status())
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "eeg_optimizer/get_spot_preis",
+        vol.Optional("refresh"): bool,
+    }
+)
+@websocket_api.async_response
+async def ws_get_spot_preis(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict,
+) -> None:
+    """Spotpreis-Status: aktueller Preis, Datenreichweite, Alter, Fehler.
+
+    ``refresh`` erzwingt einen Abruf — für den Knopf „Jetzt holen" in den
+    Einstellungen, auch solange die Quelle noch nicht auf Spot umgestellt ist.
+    """
+    entry, data = _get_entry_data(hass, connection, msg)
+    if entry is None:
+        return
+
+    provider = data.get("spot")
+    if provider is None:
+        connection.send_result(
+            msg["id"], {"preis": None, "fehler": "Anbieter nicht geladen"}
+        )
+        return
+
+    if msg.get("refresh"):
+        await provider.async_fetch(force=True)
+    elif provider.preis_jetzt() is None:
+        # Erstes Öffnen im Panel: ohne Daten wäre der Status eine leere
+        # Behauptung — einmal holen, die Frische-Frist drosselt Wiederholungen.
+        await provider.async_fetch()
+
+    connection.send_result(msg["id"], provider.status())
+
+
+def _consumption_status_payload(coordinator) -> dict:
+    return {
+        "last_refresh": coordinator.last_update_iso,
+        "duration_ms": coordinator.last_duration_ms,
+        "stats_count": coordinator.stats_count,
+        "lookback_weeks": coordinator.lookback_weeks,
+        "is_running": coordinator.is_running,
+    }
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "eeg_optimizer/refresh_consumption_profile",
+    }
+)
+@websocket_api.async_response
+async def ws_refresh_consumption_profile(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict,
+) -> None:
+    """Verbrauchsprofil komplett neu aus dem Recorder berechnen.
+
+    Berücksichtigt das aktuell gespeicherte Lookback-Fenster (lookback_weeks).
+    Liefert nach Abschluss den aktualisierten Status. Wenn bereits ein
+    Refresh läuft, wird sofort mit busy=True geantwortet (kein Warten).
+    """
+    entry, data = _get_entry_data(hass, connection, msg)
+    if entry is None:
+        return
+
+    refresh = data.get("refresh_consumption_profile")
+    coordinator = data.get("coordinator")
+    lock = data.get("consumption_refresh_lock")
+
+    if refresh is None or coordinator is None:
+        connection.send_result(msg["id"], {
+            "success": False,
+            "error": "Verbrauchsprofil-Komponente nicht initialisiert.",
+        })
+        return
+
+    if lock is not None and lock.locked():
+        payload = _consumption_status_payload(coordinator)
+        payload["success"] = False
+        payload["busy"] = True
+        connection.send_result(msg["id"], payload)
+        return
+
+    try:
+        await refresh()
+    except Exception as exc:
+        _LOGGER.exception("Consumption profile refresh failed")
+        connection.send_result(msg["id"], {
+            "success": False,
+            "error": f"Fehler bei der Neuberechnung: {exc}",
+        })
+        return
+
+    payload = _consumption_status_payload(coordinator)
+    payload["success"] = True
+    connection.send_result(msg["id"], payload)
+
+
+# ---------------------------------------------------------------------------
+# Phase 8 — Telemetry control (D-32 / D-33)
+# ---------------------------------------------------------------------------
+#
+# 4 neue WebSocket-Befehle, die das Panel (08-04) ansteuert:
+#   - telemetry_get_status   → Status-Anzeige (registered? enabled? buffer?)
+#   - telemetry_enable       → Initial-Register, setzt CONF_TELEMETRY_ENABLED=True
+#   - telemetry_disable      → Pausiert Senden, Identity bleibt erhalten
+#   - telemetry_forget       → DELETE Backend + lokale Cleanup
+#
+# I-4 / W-3: ws_telemetry_enable nutzt den OBEN importierten
+# `_build_telemetry_profile` aus __init__.py — KEIN lokaler Profile-Builder.
+
+
+@websocket_api.websocket_command(
+    {vol.Required("type"): "eeg_optimizer/telemetry_get_status"}
+)
+@websocket_api.async_response
+async def ws_telemetry_get_status(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict,
+) -> None:
+    """Liefert den aktuellen Telemetrie-Status für die Panel-Anzeige."""
+    entry, data = _get_entry_data(hass, connection, msg)
+    if entry is None:
+        return
+    reporter = data.get("telemetry_reporter") if data else None
+    buffer = data.get("telemetry_buffer") if data else None
+    config = {**entry.data, **entry.options}
+    identity = buffer.get_identity() if buffer is not None else None
+    full_id = identity["installation_id"] if identity else None
+    prefix = full_id[:8] if full_id else None
+    buf_size = buffer.size() if buffer is not None else 0
+    connection.send_result(msg["id"], {
+        "configured": bool(reporter and getattr(reporter, "is_configured", False)),
+        "enabled": bool(config.get(CONF_TELEMETRY_ENABLED, False)),
+        "registered": bool(identity),
+        "installation_id": full_id,
+        "installation_id_prefix": prefix,
+        "registered_at": identity.get("registered_at") if identity else None,
+        "buffer_size": buf_size,
+        "last_send_at": (
+            getattr(reporter, "last_success_at", None) if reporter is not None else None
+        ),
+    })
+
+
+@websocket_api.websocket_command(
+    {vol.Required("type"): "eeg_optimizer/telemetry_enable"}
+)
+@websocket_api.async_response
+async def ws_telemetry_enable(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict,
+) -> None:
+    """Aktiviert die Telemetrie — Initial-Register beim Backend (D-30)."""
+    entry, data = _get_entry_data(hass, connection, msg)
+    if entry is None:
+        return
+    reporter = data.get("telemetry_reporter") if data else None
+    buffer = data.get("telemetry_buffer") if data else None
+    if reporter is None or buffer is None:
+        connection.send_result(msg["id"], {
+            "success": False, "error": "telemetry_unavailable",
+        })
+        return
+    if not getattr(reporter, "is_configured", False):
+        connection.send_result(msg["id"], {
+            "success": False, "error": "backend_not_configured",
+        })
+        return
+    # I-4 / W-3 — der gemeinsame Profile-Builder. Modulvariable wird beim
+    # ersten Aufruf gefüllt (kein Zirkular-Import zur Laufzeit, weil
+    # __init__.py jetzt vollständig geladen ist). Tests können die
+    # Modulvariable via patch.object überschreiben.
+    global _build_telemetry_profile
+    if _build_telemetry_profile is None:
+        _build_telemetry_profile = _get_build_telemetry_profile()
+
+    # Pause→Resume (D-33): Wenn die Identity lokal bekannt ist, KEIN erneutes
+    # Register. Ein zweites Register würde am Backend einen neuen Datensatz
+    # anlegen und die alten Daten verwaisen lassen. Stattdessen nur das Flag
+    # wieder aktivieren und das Profil aktualisieren.
+    if buffer.identity_known():
+        already_active = bool(entry.data.get(CONF_TELEMETRY_ENABLED))
+        if not already_active:
+            new_data = {**entry.data, CONF_TELEMETRY_ENABLED: True}
+            hass.config_entries.async_update_entry(entry, data=new_data)
+        ident = buffer.get_identity() or {}
+        try:
+            profile = _build_telemetry_profile(
+                hass, entry, identity_registered_at=ident.get("registered_at"),
+            )
+            await reporter.update_profile(profile)
+            if data is not None:
+                data["telemetry_last_profile_capacity_kwh"] = (
+                    profile.get("battery_capacity_kwh")
+                )
+        except Exception:  # pragma: no cover
+            _LOGGER.exception("Telemetry resume: update_profile failed")
+        prefix = ident.get("installation_id", "")[:8] or None
+        connection.send_result(msg["id"], {
+            "success": True,
+            "already_active": already_active,
+            "installation_id_prefix": prefix,
+        })
+        return
+
+    profile = _build_telemetry_profile(
+        hass, entry, identity_registered_at=None,
+    )
+    try:
+        ok = await reporter.register(profile)
+    except Exception:
+        _LOGGER.exception("Telemetry: register call raised")
+        ok = False
+    if not ok:
+        connection.send_result(msg["id"], {
+            "success": False, "error": "register_failed",
+        })
+        return
+
+    new_data = {**entry.data, CONF_TELEMETRY_ENABLED: True}
+    hass.config_entries.async_update_entry(entry, data=new_data)
+    if data is not None:
+        data["telemetry_last_profile_capacity_kwh"] = (
+            profile.get("battery_capacity_kwh")
+        )
+    ident = buffer.get_identity() or {}
+    prefix = ident.get("installation_id", "")[:8] if ident else None
+    connection.send_result(msg["id"], {
+        "success": True,
+        "installation_id_prefix": prefix,
+    })
+
+
+@websocket_api.websocket_command(
+    {vol.Required("type"): "eeg_optimizer/telemetry_disable"}
+)
+@websocket_api.async_response
+async def ws_telemetry_disable(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict,
+) -> None:
+    """Pausiert die Telemetrie — Identity bleibt erhalten (D-32)."""
+    entry, data = _get_entry_data(hass, connection, msg)
+    if entry is None:
+        return
+    new_data = {**entry.data, CONF_TELEMETRY_ENABLED: False}
+    hass.config_entries.async_update_entry(entry, data=new_data)
+    connection.send_result(msg["id"], {"success": True})
+
+
+@websocket_api.websocket_command(
+    {vol.Required("type"): "eeg_optimizer/telemetry_forget"}
+)
+@websocket_api.async_response
+async def ws_telemetry_forget(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict,
+) -> None:
+    """Vergisst die Installation — DELETE Backend + lokale Cleanup (D-31, D-33)."""
+    entry, data = _get_entry_data(hass, connection, msg)
+    if entry is None:
+        return
+    reporter = data.get("telemetry_reporter") if data else None
+    backend_deleted = False
+    if reporter is not None:
+        try:
+            backend_deleted = bool(await reporter.forget())
+        except Exception:
+            _LOGGER.exception("Telemetry: forget call raised")
+            backend_deleted = False
+    new_data = {**entry.data, CONF_TELEMETRY_ENABLED: False}
+    hass.config_entries.async_update_entry(entry, data=new_data)
+    # Erfolg auch bei Backend-Fehler (lokale Cleanup ist passiert)
+    connection.send_result(msg["id"], {
+        "success": True,
+        "backend_deleted": backend_deleted,
+    })
+
+
+# ---------------------------------------------------------------------------
+# Fahrplan (chamo-Prototyp)
+# ---------------------------------------------------------------------------
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "eeg_optimizer/get_schedule",
+    }
+)
+@websocket_api.async_response
+async def ws_get_schedule(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict,
+) -> None:
+    """Liefert den zuletzt gerechneten Fahrplan für die Anzeige im Panel."""
+    entry, data = _get_entry_data(hass, connection, msg)
+    if entry is None:
+        return
+
+    runner = data.get("schedule")
+    if runner is None:
+        connection.send_result(
+            msg["id"],
+            {
+                "available": False,
+                "error": "Fahrplan-Modul nicht aktiv (Setup noch nicht abgeschlossen?)",
+            },
+        )
+        return
+
+    connection.send_result(msg["id"], runner.to_dict())
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "eeg_optimizer/refresh_schedule",
+    }
+)
+@websocket_api.async_response
+async def ws_refresh_schedule(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict,
+) -> None:
+    """Rechnet den Fahrplan sofort neu, statt auf den 15-Minuten-Takt zu warten."""
+    entry, data = _get_entry_data(hass, connection, msg)
+    if entry is None:
+        return
+
+    runner = data.get("schedule")
+    if runner is None:
+        connection.send_error(
+            msg["id"], "not_available", "Fahrplan-Modul nicht aktiv"
+        )
+        return
+
+    await runner.async_run()
+    connection.send_result(msg["id"], runner.to_dict())
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "eeg_optimizer/get_feedin_statistics",
+        vol.Optional("days", default=0): vol.Coerce(int),
+    }
+)
+@websocket_api.async_response
+async def ws_get_feedin_statistics(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict,
+) -> None:
+    """Einspeise-Statistik für die Panel-Karte.
+
+    Antwortformat unverändert gegenüber der Zeit vor dem Umbau, samt der
+    ``morning``-Abschnitte: Tage von damals tragen dort noch Werte, und sie
+    verschwinden zu lassen, weil das Feature weg ist, wäre ein zweiter
+    Datenverlust. Neu geschrieben wird nur noch ``evening`` (siehe
+    statistics.py).
+
+    ``days = 0`` heißt: alle Tage.
+    """
+    entry, data = _get_entry_data(hass, connection, msg)
+    if entry is None:
+        return
+
+    leer_je_schluessel = {"kwh": 0.0, "count": 0, "duration_min": 0}
+    leer = {
+        "morning": dict(leer_je_schluessel),
+        "evening": dict(leer_je_schluessel),
+    }
+
+    stats = data.get("feedin_stats")
+    if not stats:
+        connection.send_result(msg["id"], {
+            "daily": {}, "today": leer, "week": leer,
+            "month": leer, "year": leer, "total": leer,
+            "zaehlweise": None, "umgestellt_am": None,
+        })
+        return
+
+    from datetime import timedelta
+
+    from homeassistant.util import dt as dt_util
+
+    from .statistics import UMGESTELLT_AM, ZAEHLWEISE
+
+    tage = msg.get("days", 0)
+    jetzt = dt_util.now()
+    heute = jetzt.strftime("%Y-%m-%d")
+    if tage > 0:
+        von = (jetzt - timedelta(days=tage - 1)).strftime("%Y-%m-%d")
+        daily = stats.get_daily_stats(start_date=von, end_date=heute)
+    else:
+        daily = stats.get_daily_stats()
+
+    connection.send_result(msg["id"], {
+        "daily": daily,
+        "today": stats.get_summary(days=1),
+        "week": stats.get_summary(days=7),
+        "month": stats.get_summary(days=30),
+        "year": stats.get_summary(days=365),
+        "total": stats.get_summary(days=None),
+        # Damit die Karte den Bedeutungswechsel benennen kann, statt zwei
+        # verschiedene Größen als eine Reihe zu zeichnen.
+        "zaehlweise": ZAEHLWEISE,
+        "umgestellt_am": UMGESTELLT_AM,
+    })
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "eeg_optimizer/tagesbilanz_jetzt",
+    }
+)
+@websocket_api.async_response
+async def ws_tagesbilanz_jetzt(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict,
+) -> None:
+    """Tagesbilanz des letzten abgeschlossenen Tages sofort rechnen.
+
+    Sonst entsteht sie nur nachts um 00:15 — ohne diesen Weg ließe sich weder
+    prüfen, ob sie funktioniert, noch nachsehen, wie gut die Prognose von
+    gestern war.
+
+    Gerechnet wird **immer**, gesendet nur bei aktiver Telemetrie. Damit ist der
+    Knopf auch ohne Telemetrie brauchbar: die Prognosegüte des Vortags steht
+    dann direkt im Panel, ohne Umweg über ein Dashboard.
+
+    Denselben Tag mehrfach zu melden ist unschädlich — das Backend hält
+    Outcomes als Ereigniszeilen, und die Auswertung mittelt über sie. Ein
+    Doppeleintrag verschiebt einen MAE über dreißig Tage nicht messbar.
+    """
+    entry, data = _get_entry_data(hass, connection, msg)
+    if entry is None:
+        return
+
+    from homeassistant.util import dt as dt_util
+
+    from .tagesbilanz import async_baue_tagesbilanzen, tagesfenster
+
+    von, bis = tagesfenster(dt_util.now())
+    try:
+        bilanzen = await async_baue_tagesbilanzen(
+            hass, entry.entry_id, data.get("schedule_archive"), von, bis
+        )
+    except Exception as err:  # noqa: BLE001 - Diagnose darf nichts reißen
+        _LOGGER.exception("Tagesbilanz: Aufbau über WebSocket fehlgeschlagen")
+        connection.send_result(
+            msg["id"],
+            {"tag": von.date().isoformat(), "bilanzen": [], "gesendet": 0,
+             "telemetrie_aktiv": False, "fehler": str(err)},
+        )
+        return
+
+    reporter = data.get("telemetry_reporter")
+    puffer = data.get("telemetry_buffer")
+    # HA-Konvention: data + options gemerged — ein per Optionen umgeschalteter
+    # Wert stünde sonst nicht in entry.data.
+    config = {**(entry.data or {}), **(entry.options or {})}
+    aktiv = bool(
+        config.get(CONF_TELEMETRY_ENABLED, False)
+        and reporter is not None
+        and reporter.is_configured
+        and puffer is not None
+        and puffer.identity_known()
+    )
+
+    gesendet = 0
+    fehler: str | None = None
+    if aktiv:
+        for bilanz in bilanzen:
+            try:
+                await reporter.send_outcome(bilanz)
+                gesendet += 1
+            except Exception as err:  # noqa: BLE001
+                _LOGGER.exception("Tagesbilanz: Senden über WebSocket fehlgeschlagen")
+                fehler = str(err)
+                break
+
+    connection.send_result(
+        msg["id"],
+        {
+            "tag": von.date().isoformat(),
+            "bilanzen": bilanzen,
+            "gesendet": gesendet,
+            "telemetrie_aktiv": aktiv,
+            "fehler": fehler,
+        },
+    )
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "eeg_optimizer/get_schedule_archive",
+    }
+)
+@websocket_api.async_response
+async def ws_get_schedule_archive(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict,
+) -> None:
+    """Zustand des Fahrplan-Archivs und eine URL zum Herunterladen.
+
+    Die URL ist signiert und nur wenige Minuten gültig: ein Download kann
+    keinen Authorization-Header mitschicken, und ein dauerhaft offener Pfad
+    wäre ein Datenabfluss ohne Anmeldung.
+    """
+    entry, data = _get_entry_data(hass, connection, msg)
+    if entry is None:
+        return
+
+    archiv = data.get("schedule_archive")
+    if archiv is None:
+        connection.send_result(msg["id"], {"aktiv": False, "eintraege": 0})
+        return
+
+    from .schedule_archive_view import async_signed_url
+
+    status = await archiv.async_status()
+    url = async_signed_url(hass, getattr(connection, "refresh_token_id", None))
+    connection.send_result(
+        msg["id"], {**status, "aktiv": True, "download_url": url}
+    )
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "eeg_optimizer/get_entity_ids",
+    }
+)
+@websocket_api.async_response
+async def ws_get_entity_ids(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict,
+) -> None:
+    """Löst unsere unique_ids über die Entity-Registry auf echte entity_ids auf.
+
+    Home Assistant bildet die entity_id beim erstmaligen Anlegen aus dem
+    ANZEIGENAMEN, nicht aus der unique_id. Nach einer Umbenennung laufen beide
+    Welten deshalb auseinander: Bestandsinstallationen behalten die alte
+    entity_id, frisch angelegte Entitäten bekommen eine aus dem neuen Namen
+    („Entscheidung" → `..._entscheidung`, „Fahrplan-Status" →
+    `..._fahrplan_status`). Aus dem Namen lässt sich die entity_id also nicht
+    erraten — verlässlich ist nur die Registry.
+
+    Die liegt im Backend: `config/entity_registry/list` würde im Frontend
+    Admin-Rechte verlangen, dieser Befehl nicht.
+
+    Rückgabe: {"<suffix>": "<entity_id>"} — der Suffix ist die unique_id ohne
+    das Präfix ``{DOMAIN}_{entry_id}_``, also genau der Teil, den sensor.py und
+    select.py vergeben.
+    """
+    entries = hass.config_entries.async_entries(DOMAIN)
+    if not entries:
+        connection.send_error(msg["id"], "not_configured", "No config entry found")
+        return
+
+    entry = entries[0]
+    prefix = f"{DOMAIN}_{entry.entry_id}_"
+    registry = er.async_get(hass)
+
+    mapping: dict[str, str] = {}
+    for reg_entry in er.async_entries_for_config_entry(registry, entry.entry_id):
+        unique_id = reg_entry.unique_id or ""
+        if not unique_id.startswith(prefix):
+            continue
+        suffix = unique_id[len(prefix):]
+        if suffix:
+            mapping[suffix] = reg_entry.entity_id
+
+    connection.send_result(msg["id"], {"entity_ids": mapping})
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "eeg_optimizer/get_control_state",
+    }
+)
+@websocket_api.async_response
+async def ws_get_control_state(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict,
+) -> None:
+    """Was die Steuerung gerade stellt — Stellgröße für Stellgröße.
+
+    Für die Transparenz-Ansicht im Panel: nebeneinander der Ist-Wert im
+    Wechselrichter und der Wert, den wir zuletzt geschrieben haben. Weichen
+    beide ab, hat entweder jemand anderes gestellt oder ein Schreibbefehl ist
+    nicht angekommen — sonst sucht man das lange.
+    """
+    entry, data = _get_entry_data(hass, connection, msg)
+    if entry is None:
+        return
+
+    inverter = data.get("inverter")
+    executor = data.get("executor")
+    if inverter is None:
+        connection.send_result(
+            msg["id"], {"supported": False, "rows": [], "error": "Kein Wechselrichter aktiv"}
+        )
+        return
+
+    status = executor.status() if executor is not None else {}
+    # Was wir je Rolle zuletzt geschrieben haben.
+    written = {
+        "charge_limit": status.get("written_charge_limit_kw"),
+        "discharge_limit": status.get("written_discharge_kw"),
+    }
+    units = {"charge_limit": "kW", "discharge_limit": "kW"}
+
+    rows = []
+    for row in inverter.get_control_entities():
+        state = hass.states.get(row["entity_id"])
+        role = row.get("role")
+        rows.append(
+            {
+                "label": row.get("label"),
+                "entity_id": row["entity_id"],
+                "role": role,
+                "value": None if state is None else state.state,
+                "unit": None
+                if state is None
+                else state.attributes.get("unit_of_measurement"),
+                "max": None if state is None else state.attributes.get("max"),
+                "written": written.get(role),
+                "written_unit": units.get(role),
+            }
+        )
+
+    connection.send_result(
+        msg["id"],
+        {
+            "supported": bool(getattr(inverter, "supports_schedule_control", False)),
+            "mode": status.get("mode"),
+            "active_kind": status.get("active_kind"),
+            "target_soc": status.get("written_target_soc"),
+            "last_run": status.get("last_run"),
+            "status": status.get("status"),
+            "rows": rows,
+        },
+    )

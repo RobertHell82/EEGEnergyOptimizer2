@@ -1,0 +1,34 @@
+{
+  "domain": "eeg_energy_optimizer",
+  "name": "EEG Energy Optimizer",
+  "version": "2.0.0",
+  "documentation": "https://github.com/RobertHell82/EEGEnergyOptimizer2",
+  "issue_tracker": "https://github.com/RobertHell82/EEGEnergyOptimizer2/issues",
+  "dependencies": [
+    "recorder",
+    "sun",
+    "http",
+    "frontend",
+    "websocket_api"
+  ],
+  "requirements": [
+    "pymodbus>=3.6.0",
+    "pandas>=2.3,<3",
+    "highspy>=1.15.1",
+    "holidays>=0.60"
+  ],
+  "after_dependencies": [
+    "huawei_solar",
+    "solax_modbus",
+    "solaredge_modbus_multi",
+    "fronius",
+    "kostal_plenticore",
+    "sma",
+    "solcast_solar",
+    "forecast_solar"
+  ],
+  "codeowners": [],
+  "iot_class": "local_push",
+  "integration_type": "hub",
+  "config_flow": true
+}

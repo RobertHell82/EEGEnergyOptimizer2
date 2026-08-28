@@ -1,0 +1,10 @@
+# Test-Abhängigkeiten für lokale Läufe (nicht Teil der Integration).
+pytest
+pytest-asyncio
+pytest-timeout
+pandas>=2.3,<3
+highspy>=1.15.1
+holidays>=0.60
+# Nur für den Referenzvergleich GLPK vs. HiGHS in test_chamo_highs_adapter.py.
+# Auf Alpine/musl nicht installierbar — der Test überspringt sich dort.
+optlang

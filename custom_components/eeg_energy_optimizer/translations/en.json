@@ -1,0 +1,84 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Inverter Type",
+        "description": "Select the inverter type for battery control.",
+        "data": {
+          "inverter_type": "Inverter"
+        }
+      },
+      "sensors": {
+        "title": "Sensor Mapping",
+        "description": "Map the sensors for SOC, capacity, and PV power.",
+        "data": {
+          "battery_soc_sensor": "Current Battery State of Charge (SOC)",
+          "battery_capacity_sensor": "Battery Capacity (Sensor)",
+          "battery_capacity_kwh": "Battery Capacity (Manual)",
+          "pv_power_sensor": "Current PV Production (Solar Power)"
+        },
+        "data_description": {
+          "battery_soc_sensor": "Sensor showing the current charge level of the home battery in %.",
+          "battery_capacity_sensor": "Sensor for the total battery capacity in Wh. For Huawei: enable the 'Storage Rated Capacity' sensor under Settings → Devices → Entities (disabled by default).",
+          "battery_capacity_kwh": "Alternatively: enter the total battery capacity in kWh manually (e.g. 10 for LUNA2000-10, 15 for LUNA2000-15).",
+          "pv_power_sensor": "Sensor showing the current solar panel output power in kW."
+        }
+      },
+      "forecast": {
+        "title": "Forecast Source",
+        "description": "Select the PV forecast source. The chosen integration must be installed and loaded.",
+        "data": {
+          "forecast_source": "Forecast Integration",
+          "forecast_remaining_entity": "PV Forecast Remaining Today",
+          "forecast_tomorrow_entity": "PV Forecast Tomorrow"
+        },
+        "data_description": {
+          "forecast_source": "Solcast Solar (HACS) or Forecast.Solar (HA Core) as source for PV production forecasts.",
+          "forecast_remaining_entity": "Sensor showing the remaining PV production for today in kWh.",
+          "forecast_tomorrow_entity": "Sensor showing the forecasted PV production for tomorrow in kWh."
+        }
+      },
+      "consumption": {
+        "title": "Consumption Measurement",
+        "description": "Configure the calculation parameters for consumption profiles.",
+        "data": {
+          "lookback_weeks": "Lookback Period",
+          "update_interval_fast_min": "Fast Update Interval",
+          "update_interval_slow_min": "Slow Update Interval"
+        },
+        "data_description": {
+          "lookback_weeks": "Number of weeks for the rolling consumption average (default: 8 weeks).",
+          "update_interval_fast_min": "Update interval for PV forecast and battery sensors in minutes (default: 1 min).",
+          "update_interval_slow_min": "Update interval for the consumption profile in minutes (default: 15 min)."
+        }
+      }
+    },
+    "error": {
+      "prerequisite_not_installed": "The {integration_name} integration must be installed and loaded.",
+      "forecast_not_installed": "The selected forecast integration is not installed or not loaded. Please install it first.",
+      "capacity_required": "Please either select a capacity sensor or enter the capacity manually.",
+      "unknown": "Unexpected error. Please try again."
+    },
+    "abort": {
+      "already_configured": "EEG Energy Optimizer is already configured."
+    }
+  },
+  "panel": {
+    "telemetry": {
+      "title": "Community Statistics",
+      "description": "Help the EEG community: your installation sends anonymized diagnostics and effectiveness data to a Cloudflare backend. No personally identifiable data, no sensor IDs, no IP addresses. You can disable this at any time or delete all data.",
+      "toggle_label": "Enable Community Statistics",
+      "status_registered": "Registered as anonymous installation {prefix} since {date}",
+      "status_not_registered": "Not registered",
+      "status_disabled": "Paused — identity remains stored",
+      "status_not_configured": "Backend URL not configured yet (DEV build)",
+      "delete_button": "Delete data",
+      "delete_confirm_title": "Really delete all data?",
+      "delete_confirm_body": "All transmitted telemetry data will be removed from the server and the local registration will be cleared. This action cannot be undone.",
+      "delete_confirm_ok": "Delete permanently",
+      "delete_confirm_cancel": "Cancel",
+      "enable_error": "Activation failed",
+      "forget_warning": "Backend call failed — local data was deleted anyway."
+    }
+  }
+}

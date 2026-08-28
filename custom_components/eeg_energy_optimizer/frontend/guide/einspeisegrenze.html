@@ -1,0 +1,49 @@
+<!-- GENERATED FILE - DO NOT EDIT.
+     Quelle: docs/guides/einspeisegrenze.md
+     Neu generieren mit: python scripts/build_guides.py -->
+<h2 class="guide-title">Einspeisegrenze</h2>
+<p>Viele Netzbetreiber begrenzen, wie viel Leistung deine PV-Anlage ins Netz einspeisen darf (z. B. 4 kW). Normalerweise lädt die Batterie zuerst mit voller Leistung — ist sie voll, <strong>regelt der Wechselrichter alles über der Grenze ab, und diese Energie geht verloren</strong>.</p>
+<p>Kennt der Fahrplan diese Grenze, rechnet er sie in jeden Lade- und Entladeplan ein: Der PV-Überschuss geht bis zur erlaubten Grenze ins Netz, und die Batterie lädt bevorzugt in den Stunden, in denen die Erzeugung über der Grenze liegt. So wird maximal in die Energiegemeinschaft eingespeist, möglichst nichts abgeregelt, und die Batterie füllt sich trotzdem — verteilt über den Tag.</p>
+<h3>Voraussetzungen</h3>
+<ul>
+<li>Ein korrekt konfigurierter <strong>Netzleistungs-Sensor</strong> (misst Einspeisung/Bezug)</li>
+<li>Eine <strong>PV-Prognose</strong> (Solcast / Forecast.Solar)</li>
+<li>Die hier eingetragene Grenze muss dem Wert <strong>im Wechselrichter</strong> entsprechen</li>
+</ul>
+<p>Die Grenze fließt bei <strong>allen Wechselrichtern</strong> in die Fahrplan-Berechnung ein. Aktiv nachgeführt wird das Ladelimit derzeit nur bei <strong>Huawei SUN2000</strong> — bei den anderen Treibern bleibt es bei Berechnung und Anzeige.</p>
+<h3>So funktioniert es</h3>
+<p>Die Einspeisegrenze wirkt an zwei Stellen:</p>
+<p><strong>1. In der Planung.</strong> Der Fahrplan weiß, dass am Netzanschluss nie mehr als die Grenze eingespeist werden kann. Liegt die PV-Erzeugung laut Prognose darüber, verschiebt er das Laden der Batterie gezielt in diese Stunden — statt abzuregeln, nimmt die Batterie genau den Anteil oberhalb der Grenze auf.</p>
+<p><strong>2. In der Steuerung (Ladelimit-Nachführung, nur Huawei).</strong> Prognosen sind nie exakt. Klebt die gemessene Einspeisung an der Grenze (±100 W) — das Anzeichen dafür, dass der Wechselrichter abregelt —, hebt die Steuerung das Ladelimit der Batterie alle 30 Sekunden um 0,5 kW an, bis der Überschuss in die Batterie fließt und die Einspeisung an der Grenze bleibt. Fällt die Einspeisung deutlich unter die Grenze (mehr als 0,3 kW darunter), wird das Ladelimit schrittweise auf den Planwert zurückgenommen. Das asymmetrische tote Band dazwischen verhindert ein Pendeln.</p>
+<h3>Konfiguration</h3>
+<table>
+<thead>
+<tr>
+<th>Feld</th>
+<th>Bedeutung</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Einspeisegrenze beachten</strong></td>
+<td>Schaltet die Funktion ein/aus (Standard: aus)</td>
+</tr>
+<tr>
+<td><strong>Höhe der Grenze (kW)</strong></td>
+<td>Die maximale Einspeiseleistung laut Vorgabe deines Netzbetreibers (z. B. 4)</td>
+</tr>
+<tr>
+<td><strong>AC-Grenzleistung (kW)</strong></td>
+<td>Optional. Nennleistung des Wechselrichters auf der Netzseite — begrenzt im Fahrplan die Summe aus Einspeisung und Hausverbrauch. Ohne Angabe wird die PV-Spitzenleistung als Näherung verwendet</td>
+</tr>
+<tr>
+<td><strong>PV-Spitzenleistung (kWp)</strong></td>
+<td>Optional. Dient der Plausibilitätsprüfung der Prognosewerte und als Rückfall für die AC-Grenzleistung</td>
+</tr>
+</tbody>
+</table>
+<div class="guide-alert warning"><p><strong>Die Grenze muss stimmen:</strong> Eine Grenze, die es im Wechselrichter nicht gibt, verschenkt Einspeisung — der Fahrplan plant dann vorsichtiger als nötig. Eine Grenze, die wir nicht kennen, kostet Ertrag durch stille Abregelung. Bei Huawei prüft das Panel den Sensor <code>active_power_control</code> und warnt, wenn Konfiguration und Gerät nicht zusammenpassen.</p></div>
+
+<div class="guide-alert note"><p><strong>Hinweis:</strong> Diese Einstellung ersetzt nicht die harte, netzseitig verpflichtende Einspeisebegrenzung deines Wechselrichters — die bleibt beim Gerät. Sie teilt dem Fahrplan nur mit, was das Gerät ohnehin tut, damit er darum herum planen kann.</p></div>
+
+<div class="guide-alert note"><p><strong>Volle Batterie:</strong> Ist die Batterie voll, kann kein Überschuss mehr aufgenommen werden — dann regelt der Wechselrichter wie gewohnt ab. Das ist unvermeidbar und kein Fehler.</p></div>

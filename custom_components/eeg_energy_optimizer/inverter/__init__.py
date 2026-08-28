@@ -1,0 +1,44 @@
+"""Inverter factory module for EEG Energy Optimizer."""
+
+from __future__ import annotations
+
+from typing import Any
+
+from .base import InverterBase
+from .huawei import HuaweiInverter
+from .solax import SolaXInverter
+from .solaredge import SolarEdgeInverter
+from .fronius import FroniusInverter
+from .kostal import KostalInverter
+from .sma import SMAInverter
+
+INVERTER_TYPES: dict[str, type[InverterBase]] = {
+    "huawei_sun2000": HuaweiInverter,
+    "solax_gen4": SolaXInverter,
+    "solaredge_storedge": SolarEdgeInverter,
+    "fronius_gen24": FroniusInverter,
+    "kostal_plenticore": KostalInverter,
+    "sma_smart_energy": SMAInverter,
+}
+
+
+def create_inverter(
+    inverter_type: str, hass: Any, config: dict
+) -> InverterBase:
+    """Create an inverter instance based on the configured type.
+
+    Args:
+        inverter_type: The inverter type identifier string.
+        hass: Home Assistant instance.
+        config: Integration configuration dictionary.
+
+    Returns:
+        An InverterBase subclass instance.
+
+    Raises:
+        ValueError: If the inverter type is not registered.
+    """
+    cls = INVERTER_TYPES.get(inverter_type)
+    if cls is None:
+        raise ValueError(f"Unknown inverter type: {inverter_type}")
+    return cls(hass, config)

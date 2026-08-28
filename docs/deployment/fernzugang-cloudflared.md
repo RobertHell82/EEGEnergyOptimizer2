@@ -1,0 +1,101 @@
+# Fernzugang einrichten (Cloudflare Tunnel)
+
+Mit dieser Anleitung machst du deinen Home Assistant direkt unter einer eigenen Internetadresse verfügbar - ohne zusätzliche Kosten.
+Der Zugang läuft über einen sogenannten **Cloudflare Tunnel**: Dein Home Assistant baut die Verbindung selbst nach außen auf und bleibt von außen unsichtbar.
+
+> [!NOTE]
+> Du musst **kein Konto bei Cloudflare** anlegen und dort nichts einstellen. Den
+> technischen Teil übernimmt deine Energiegemeinschaft.
+
+
+## Voraussetzungen
+- Home Assistant **OS** oder **Supervised** in **aktueller Version** (mit App Store)
+- Zugriff auf Home Assistant als **Administrator**
+- Von der Energiegemeinschaft EW Ansfelden erhalten. Falls Du noch keine Zugangsdaten erhalten hast und Interesse hast, melde Dich unter: info@ew-ansfelden.at
+  - ein **Tunnel-Token** (eine lange Zeichenkette)
+  - deine **Adresse** (z.B. `sicherer_name.ew-ansfelden.cc`)
+
+---
+
+## Schritt 1: Cloudflared App installieren
+
+1. Öffne **Einstellungen → Apps**.
+2. Klicke rechts unten auf **App installieren**.
+3. Klicke oben rechts auf die **drei Punkte** und wähle **Repositories**.
+4. Trage folgende Adresse ein und klicke auf **Hinzufügen**:
+
+   ```
+   https://github.com/homeassistant-apps/repository
+   ```
+
+5. Suche nach **„Cloudflared"** (ggf. Seite mit Strg+F5 neu laden) und klicke
+   auf **Installieren**.
+
+---
+
+## Schritt 2: Token eintragen
+
+1. Öffne in der **Cloudflared**-App den Tab **„Konfiguration"**.
+2. Klicke auf **„Nicht verwendete Konfigurationsoptionen einblenden"**.
+3. Trage im Feld **„Cloudflare Tunnel Token"** den von der Energiegemeinschaft
+   erhaltenen **Token** ein.
+4. Klicke auf **Speichern**.
+
+> [!WARNING]
+> Der Token ist der Schlüssel zu deinem Fernzugang. Gib ihn nicht weiter und
+> teile keine Screenshots davon.
+
+---
+
+## Schritt 3: Starten und testen
+
+1. Öffne wieder die **Cloudflared**-App, Tab **„Info"**.
+2. Aktiviere **„Beim Systemstart starten"**.
+3. Aktiviere **„Automatische Updates"**.
+4. Aktiviere **„Watchdog"** (damit der Zugang zuverlässig läuft).
+5. Klicke auf **Starten**.
+
+Der Home Assistant ist nun mit Cloudflare verbunden. Zum Prüfen:
+
+6. Rufe im Browser deine Adresse auf, z.B. `https://deinname.ew-ansfelden.cc`.
+7. Es erscheint deine gewohnte Home-Assistant-Anmeldeseite — **fertig.** ✅
+
+---
+
+## Häufige Probleme
+
+| Problem | Lösung |
+|---|---|
+| „Cloudflared" erscheint nicht im Store | Seite neu laden (Strg+F5); prüfen, ob das Repository hinterlegt ist (Schritt 1 erneut ausführen) |
+| „400: Bad Request" beim Aufruf über die neue URL aus dem Internet | Tritt nur bei älteren Home-Assistant-Versionen auf — siehe unten |
+| Adresse lädt nicht / Tunnel offline | Im Protokoll (Log) der **Cloudflared**-App prüfen, ob der Token korrekt eingetragen ist; App neu starten |
+
+### „400: Bad Request" — nur bei älteren Home-Assistant-Versionen
+
+Aktuelle Home-Assistant-Versionen akzeptieren den Zugriff über den Tunnel von
+sich aus. Erscheint beim Aufruf von außen trotzdem „400: Bad Request", läuft
+eine ältere Version, die den Tunnel noch nicht selbst als vertrauenswürdig
+einstuft. Dann hilft der frühere Zusatzeintrag:
+
+1. Installiere die App **„File editor"**: **Einstellungen → Apps →** rechts unten
+   **App installieren →** nach **„File editor"** suchen → **Installieren**.
+   Aktiviere anschließend **„Im Menü anzeigen"** und klicke auf **Starten**.
+2. Öffne **„File editor"**, klicke oben links auf das **Ordner-Symbol** 📁 und
+   wähle im Hauptverzeichnis die Datei **`configuration.yaml`**.
+3. Füge diesen Block ein. Ist bereits ein `http:`-Abschnitt vorhanden, ergänze
+   nur die Zeilen darunter:
+
+   ```yaml
+   http:
+     use_x_forwarded_for: true
+     trusted_proxies:
+       - 172.30.33.0/24
+   ```
+
+4. Speichern (💾 oder Strg+S) und Home Assistant neu starten:
+   **Einstellungen → System →** Power-Symbol oben rechts **→ Home Assistant
+   neu starten**.
+
+> [!TIP]
+> Besser als der Zusatzeintrag ist ein Update auf die aktuelle
+> Home-Assistant-Version — dann wird er gar nicht gebraucht.

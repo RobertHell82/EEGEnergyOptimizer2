@@ -1,0 +1,10 @@
+.claude/
+# Planungsartefakte der 1.x-Entwicklung — bleiben lokal, im Repo nicht mehr
+# versioniert. Vollstaendig erhalten in EEGEnergyOptimizer-chamo.
+.planning/
+__pycache__/
+*.pyc
+.pytest_cache/
+Screenshot.png
+.wrangler/
+.venv/
