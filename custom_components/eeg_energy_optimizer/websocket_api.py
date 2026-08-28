@@ -485,6 +485,7 @@ def async_register_websocket_commands(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_get_peakshare_communities)
     websocket_api.async_register_command(hass, ws_get_peakshare_data)
     websocket_api.async_register_command(hass, ws_get_oemag_tarif)
+    websocket_api.async_register_command(hass, ws_get_bilanz)
     websocket_api.async_register_command(hass, ws_get_spot_preis)
     websocket_api.async_register_command(hass, ws_refresh_consumption_profile)
     # Phase 8 — Telemetry-Steuerung (D-32 / D-33)
@@ -1734,6 +1735,70 @@ async def ws_get_peakshare_data(
         "communities": serien,
         "cache_age_minutes": cache_age,
         "discharge_plan": None,
+    })
+
+
+@websocket_api.websocket_command(
+    {vol.Required("type"): "eeg_optimizer/get_bilanz"}
+)
+@websocket_api.async_response
+async def ws_get_bilanz(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict,
+) -> None:
+    """Was die PV gebracht hat — heute, diesen Monat, dieses Jahr.
+
+    Dieselben Zahlen wie die Sensoren, aber in einem Zug: Das Panel braucht
+    für seine Karte sechs Werte plus die Aufschlüsselung des Tages, und sechs
+    Entitäten einzeln über den Zustandsspeicher zu suchen wäre umständlich und
+    von den Anzeigenamen abhängig.
+
+    ``opt_vorteil`` ist in ``pv_ersparnis`` bereits enthalten — die Karte weist
+    ihn als Anteil aus, nicht als Summanden.
+    """
+    entry, data = _get_entry_data(hass, connection, msg)
+    if entry is None:
+        return
+
+    bilanz = data.get("bilanz")
+    if bilanz is None:
+        connection.send_result(msg["id"], {"verfuegbar": False})
+        return
+
+    runner = data.get("schedule")
+    inputs = getattr(runner, "last_inputs", None)
+    try:
+        heute = bilanz.heute(inputs)
+    except Exception:  # noqa: BLE001 - Anzeige darf nie den Zugriff kippen
+        _LOGGER.exception("Bilanz: Tageswerte nicht berechenbar")
+        connection.send_result(msg["id"], {"verfuegbar": False})
+        return
+
+    from homeassistant.util import dt as dt_util
+
+    jetzt = dt_util.now()
+    monat_key = jetzt.strftime("%Y-%m")
+    jahr_key = jetzt.strftime("%Y")
+
+    def _zeitraum(feld: str) -> dict:
+        heute_wert = heute.get(feld)
+        return {
+            "heute": heute_wert,
+            "monat": round(
+                bilanz.summe(feld, monat=monat_key) + float(heute_wert or 0.0), 2
+            ),
+            "jahr": round(
+                bilanz.summe(feld, jahr=jahr_key) + float(heute_wert or 0.0), 2
+            ),
+        }
+
+    connection.send_result(msg["id"], {
+        "verfuegbar": True,
+        "pv_ersparnis": _zeitraum("pv_ersparnis"),
+        "opt_vorteil": _zeitraum("opt_vorteil"),
+        "heute": heute,
+        "waehrung": getattr(hass.config, "currency", None) or "EUR",
     })
 
 

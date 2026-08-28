@@ -398,6 +398,14 @@ class EegOptimizerPanel extends HTMLElement {
     this._lastScheduleReload = 0;
     this._lastPeakshareReload = 0;
 
+    // Karte „Was deine PV bringt": Geldwerte aus der Energiebilanz. Details
+    // flüchtig, die Karte selbst ist immer offen — sie ist die Antwort auf
+    // die häufigste Frage überhaupt.
+    this._bilanz = null;
+    this._bilanzBusy = false;
+    this._bilanzGeholt = 0;
+    this._bilanzDetailsOpen = false;
+
     this._settingsData = {};
     this._settingsFehler = null;
     // Monatlicher OeMAG-Einspeisetarif — Wert, Monat, Alter und letzter
@@ -751,6 +759,31 @@ class EegOptimizerPanel extends HTMLElement {
     if (this._oemagStatus !== null || this._oemagBusy || this._oemagRequested) return;
     this._oemagRequested = true;
     this._loadOemagTarif();
+  }
+
+  // Geldwerte der Energiebilanz. Kein eigener Timer: Ein Render stößt das
+  // Nachladen an, wenn die Werte älter als eine Minute sind — und weil das
+  // Laden den Zeitstempel setzt, kann daraus keine Schleife werden.
+  _ensureBilanz() {
+    if (this._bilanzBusy || !this._hass) return;
+    const alter = Date.now() - this._bilanzGeholt;
+    if (this._bilanz !== null && alter < 60000) return;
+    this._loadBilanz();
+  }
+
+  async _loadBilanz() {
+    if (this._bilanzBusy || !this._hass) return;
+    this._bilanzBusy = true;
+    try {
+      this._bilanz = await this._hass.callWS({ type: "eeg_optimizer/get_bilanz" });
+    } catch (e) {
+      console.warn("Energiebilanz nicht abrufbar:", e);
+      this._bilanz = { verfuegbar: false };
+    } finally {
+      this._bilanzBusy = false;
+      this._bilanzGeholt = Date.now();
+      this._render();
+    }
   }
 
   _ensureSpotStatus() {
@@ -1448,6 +1481,10 @@ class EegOptimizerPanel extends HTMLElement {
         break;
       case "toggle-gewinn-details":
         this._gewinnDetailsOpen = !this._gewinnDetailsOpen;
+        this._render();
+        break;
+      case "toggle-bilanz-details":
+        this._bilanzDetailsOpen = !this._bilanzDetailsOpen;
         this._render();
         break;
       case "toggle-gewinn-karte":
@@ -3194,6 +3231,94 @@ class EegOptimizerPanel extends HTMLElement {
   // EEG-Serien), aber mit derselben Messregel für die kW-Achse wie der
   // Optimierungsplan (Plan- UND Referenzwerte), damit beide Karten dieselbe
   // Skala zeigen, solange dort kein Verlauf eingeblendet ist.
+  // Was die PV gebracht hat — heute, diesen Monat, dieses Jahr.
+  //
+  // Der Optimierungs-Vorteil steht bewusst als „davon"-Zeile und NICHT als
+  // eigene Summe daneben: Er ist Teil der PV-Ersparnis, nicht zusaetzlich zu
+  // ihr. Zwei gleichrangige Betraege wuerden zum Zusammenzaehlen einladen,
+  // und das waere doppelt gezaehlt.
+  //
+  // Unterschied zur Karte „Optimierungsgewinn": Die schaut mit Prognosen 48
+  // Stunden VORAUS, diese hier schaut auf Gemessenes ZURUECK.
+  _renderBilanzKarte() {
+    const b = this._bilanz;
+    if (!b || !b.verfuegbar) return "";
+    const pv = b.pv_ersparnis || {};
+    const opt = b.opt_vorteil || {};
+    const heute = b.heute || {};
+    const waehrung = b.waehrung === "EUR" ? "€" : (b.waehrung || "€");
+    const eur = (v) =>
+      v == null ? "—" : `${v < 0 ? "−" : ""}${fmtDe(Math.abs(Number(v)), 2)}&nbsp;${waehrung}`;
+
+    const spalte = (titel, wert, gross) => `
+      <div style="flex:1;min-width:0;text-align:center">
+        <div style="font-size:${gross ? "26px" : "17px"};font-weight:600;color:var(--success-color,#0f9d58);white-space:nowrap">${eur(wert)}</div>
+        <div style="font-size:12px;color:var(--secondary-text-color);margin-top:2px">${titel}</div>
+      </div>`;
+
+    // Die „davon"-Zeile nur, wenn der Vorteil wirklich gerechnet werden
+    // konnte — eine Null saehe aus wie ein Messergebnis.
+    const vorteilHeute = opt.heute;
+    const davon = vorteilHeute == null ? `
+      <div style="font-size:12px;color:var(--secondary-text-color);text-align:center;margin-top:10px">
+        Der Anteil der Optimierung lässt sich heute noch nicht beziffern — dafür fehlt der Ladestand vom Tagesbeginn.
+      </div>` : `
+      <div style="font-size:13px;color:var(--secondary-text-color);text-align:center;margin-top:10px">
+        davon durch die Optimierung
+        <strong style="color:${Number(vorteilHeute) >= 0 ? "var(--success-color,#0f9d58)" : "#e53935"}">${eur(vorteilHeute)}</strong>
+        <span style="white-space:nowrap">(Monat ${eur(opt.monat)}, Jahr ${eur(opt.jahr)})</span>
+      </div>`;
+
+    let details = "";
+    if (this._bilanzDetailsOpen) {
+      const zeile = (name, wert, einheit) => `
+        <tr>
+          <td style="padding:3px 0;color:var(--secondary-text-color)">${name}</td>
+          <td style="padding:3px 0;text-align:right;white-space:nowrap">${wert == null ? "—" : fmtDe(Number(wert), einheit === "kWh" ? 1 : 2)}&nbsp;${einheit === "kWh" ? "kWh" : waehrung}</td>
+        </tr>`;
+      const eegKwh = Number(heute.eeg_kwh || 0);
+      const exportKwh = Number(heute.export_kwh || 0);
+      const eegZeile = exportKwh > 0 ? `
+        <div style="font-size:12px;color:var(--secondary-text-color);margin-top:8px;line-height:1.5">
+          Zum Satz der Energiegemeinschaft vergütet: <strong>${fmtDe(eegKwh, 1)} kWh</strong>
+          von ${fmtDe(exportKwh, 1)} kWh Einspeisung.
+          Das beruht auf der Bedarfsprognose der Gemeinschaft — endgültig steht es erst mit der EEG-Abrechnung fest.
+        </div>` : "";
+      details = `
+        <table style="width:100%;border-collapse:collapse;font-size:13px;margin-top:12px">
+          ${zeile("Nicht gekaufter Strom", heute.vermieden, "eur")}
+          ${zeile("Einspeiseerlös", heute.erloes, "eur")}
+          ${zeile("Selbst verbraucht", heute.eigen_kwh, "kWh")}
+          ${zeile("Eingespeist", heute.export_kwh, "kWh")}
+          ${zeile("Aus dem Netz bezogen", heute.bezug_kwh, "kWh")}
+          ${zeile("Erzeugt", heute.pv_kwh, "kWh")}
+        </table>
+        ${eegZeile}
+        <div style="font-size:12px;color:var(--secondary-text-color);margin-top:8px;line-height:1.5">
+          Der Anteil der Optimierung ist ein Vergleich mit einem simulierten Betrieb ohne Vorausschau,
+          gerechnet über die gemessenen Werte des Tages — keine Messung, sondern eine Rechnung.
+        </div>`;
+    }
+
+    return `
+      <div class="card">
+        <h3 style="margin:0 0 4px">
+          <ha-icon icon="mdi:piggy-bank-outline" style="--mdc-icon-size:20px;color:var(--primary-color,#03a9f4);vertical-align:middle"></ha-icon>
+          Was deine PV bringt
+        </h3>
+        <div style="display:flex;gap:8px;align-items:flex-end;margin-top:14px">
+          ${spalte("heute", pv.heute, true)}
+          ${spalte("diesen Monat", pv.monat, false)}
+          ${spalte("dieses Jahr", pv.jahr, false)}
+        </div>
+        ${davon}
+        <div data-action="toggle-bilanz-details" style="margin-top:12px;font-size:13px;color:var(--primary-color,#03a9f4);cursor:pointer;user-select:none;text-align:center">
+          ${this._bilanzDetailsOpen ? "Weniger anzeigen" : "Woraus setzt sich das zusammen?"}
+        </div>
+        ${details}
+      </div>`;
+  }
+
   _renderGewinnKarte() {
     const d = this._scheduleData;
     const gewinn = d && d.gewinn;
@@ -7056,6 +7181,9 @@ class EegOptimizerPanel extends HTMLElement {
     const h = this._hass;
     if (!h) return "<p>Lade...</p>";
 
+    // Geldwerte nachziehen, wenn sie älter als eine Minute sind.
+    this._ensureBilanz();
+
     // --- Status card ---
     const modeState = this._readState(this._entityIds?.select || "select.eeg_energy_optimizer_optimizer");
     const modeValue = modeState ? modeState.state : "---";
@@ -7305,6 +7433,9 @@ class EegOptimizerPanel extends HTMLElement {
           </div>
           ${this._scheduleOpen ? this._renderSchedule() : ""}
         </div>
+
+        <!-- Was die PV gebracht hat: Rückblick auf Gemessenes -->
+        ${this._renderBilanzKarte()}
 
         <!-- Optimierungsgewinn: was die Optimierung gegenüber Standardbetrieb bringt -->
         ${this._renderGewinnKarte()}

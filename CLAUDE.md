@@ -169,7 +169,7 @@ three intents. `Fahrplan-Status` shows what actually happened:
 - **API**: Paginated WebSocket endpoint (`get_activity_log` with `offset`/`limit`)
 - **Frontend**: Loads 100 entries initially, "Mehr laden" fetches 100 more per click, live events via subscription
 
-### WebSocket API (24 commands)
+### WebSocket API (25 commands)
 
 | Command | Description |
 |---------|-------------|
@@ -189,6 +189,7 @@ three intents. `Fahrplan-Status` shows what actually happened:
 | `eeg_optimizer/get_peakshare_communities` | List of PeakShare community names for dropdown |
 | `eeg_optimizer/get_peakshare_data` | PeakShare community demand forecast |
 | `eeg_optimizer/get_oemag_tarif` | Current OeMAG market price (base tariff option) |
+| `eeg_optimizer/get_bilanz` | Money balance for the "Was deine PV bringt" card — PV saving and optimiser share for today / month / year plus the day's breakdown |
 | `eeg_optimizer/get_spot_preis` | Current exchange spot price, data range, age (base tariff option; `refresh` forces a fetch) |
 | `eeg_optimizer/get_feedin_statistics` | Feed-in statistics for the panel card (daily + period summaries) |
 | `eeg_optimizer/tagesbilanz_jetzt` | Build yesterday's daily balance now instead of waiting for 00:15 |
