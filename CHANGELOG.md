@@ -10,6 +10,22 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
+## [2.0.1] - 2026-08-28
+
+### Behoben
+
+- **Das Nachtfenster fehlte, obwohl ein Nachtsatz eingetragen war.** Es wurde
+  erst eingeblendet, wenn die Oberfläche aus anderem Anlass neu gezeichnet
+  wurde — etwa beim Umschalten des Expertenmodus. Beide Nachtfenster (Standard­
+  vergütung und Gemeinschaften) stehen jetzt dauerhaft da; ein Pflicht-Stern
+  erscheint nur, wenn ein Nachtsatz eingetragen ist. Bei den Quellen OeMAG und
+  Spotpreis bleibt das Fenster der Standardvergütung wie bisher ausgeblendet,
+  weil dort kein eigener Nachtsatz wirkt.
+- **Der „Weiter"-Knopf im Einrichtungsassistenten blieb nach der letzten
+  Pflichteingabe gesperrt** (z. B. nach der PV-Spitzenleistung). Sein Zustand
+  entstand nur beim Neuzeichnen, und Zahlenfelder zeichnen bewusst nicht neu.
+  Er wird jetzt bei jeder Eingabe nachgezogen — auch bei den Sensorfeldern.
+
 ## [2.0.0] - 2026-08-28
 
 Erste 2.0: Die Steuerung ist gegenüber der 1.x-Reihe **vollständig ersetzt**.

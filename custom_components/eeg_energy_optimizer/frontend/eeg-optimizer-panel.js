@@ -615,6 +615,10 @@ class EegOptimizerPanel extends HTMLElement {
         } else {
           this._wizardData[field] = target.value;
         }
+        // Pflichtfeld gerade ausgefüllt? Dann muss der Weiter-Knopf sofort
+        // klickbar werden, ohne dass erst irgendwo anders ein Render ausgelöst
+        // wird.
+        this._syncWeiterKnopf();
       }
     });
 
@@ -647,21 +651,13 @@ class EegOptimizerPanel extends HTMLElement {
             // a value triggers blur→change→render, which replaces the save button DOM node and swallows the click.
             this._render();
           } else if (type === "number") {
-            const vorher = this._settingsData[realField];
             this._settingsData[realField] = leseZahl(target);
-            // Das Nachtfenster ist nur sichtbar, solange irgendwo eine
-            // Nachtvergütung steht — beim Verlassen des Feldes nachziehen.
-            // Aber NUR, wenn die Sichtbarkeit wirklich umschlägt (0 ↔ >0):
-            // ein Render hier ersetzt den Speichern-Knopf zwischen mousedown
-            // und mouseup, und der Klick verpufft (siehe Kommentar oben).
-            // Beim bloßen Ändern eines Nachtsatzes von 10,2 auf 11,2 darf
-            // deshalb nichts passieren.
-            if (
-              realField.includes("price_night")
-              && (Number(vorher ?? 0) > 0) !== (Number(this._settingsData[realField] ?? 0) > 0)
-            ) {
-              this._render();
-            }
+            // KEIN Render bei Zahlenfeldern. Früher wurde hier fürs
+            // Nachtfenster nachgezogen, weil es nur mit eingetragenem
+            // Nachtsatz sichtbar war; beide Nachtfenster stehen jetzt immer
+            // da, der Nachzug ist damit weg. Das ist auch der sichere
+            // Zustand: ein Render zwischen mousedown und mouseup ersetzt den
+            // Speichern-Knopf, und der Klick verpufft (siehe oben).
           } else {
             this._settingsData[realField] = target.value;
             // Ein <select> ist weder checkbox noch number und landete hier
@@ -692,13 +688,10 @@ class EegOptimizerPanel extends HTMLElement {
           this._render();
           return;
         }
-        // Wizard-Zahlenfelder speichert der input-Handler; hier nur der
-        // Sichtbarkeits-Nachzug fürs konditionale Nachtfenster (wie oben
-        // bei den Einstellungen).
-        if (field.includes("price_night")) {
-          this._render();
-          return;
-        }
+        // Wizard-Zahlenfelder speichert der input-Handler. Hier stand früher
+        // ein Render-Nachzug fürs konditionale Nachtfenster — es steht jetzt
+        // immer da, und ein Render beim Verlassen des Feldes würde nur den
+        // gerade angeklickten Knopf unter dem Mauszeiger austauschen.
         if (target.tagName === "SELECT") {
           this._wizardData[field] = target.value;
           if (field === "forecast_source") {
@@ -4241,6 +4234,8 @@ class EegOptimizerPanel extends HTMLElement {
       input.addEventListener("input", () => {
         this._wizardData[field] = input.value;
         showDropdown(input.value);
+        // Sensorfelder sind im Wechselrichter-Schritt Pflicht — Knopf nachziehen.
+        this._syncWeiterKnopf();
       });
 
       const updatePreview = (entityId) => {
@@ -4276,6 +4271,7 @@ class EegOptimizerPanel extends HTMLElement {
           this._wizardData[field] = opt.dataset.value;
           dropdown.style.display = "none";
           updatePreview(opt.dataset.value);
+          this._syncWeiterKnopf();
         }
       });
 
@@ -4396,6 +4392,20 @@ class EegOptimizerPanel extends HTMLElement {
       return true;
     }
     return false;
+  }
+
+  // Der Weiter-Knopf haengt an den Pflichtfeldern des Schritts, sein Zustand
+  // entsteht aber nur beim Rendern — und Wizard-Zahlenfelder rendern bewusst
+  // nicht (ein Render beim Tippen kostet den Fokus, und ein Render zwischen
+  // mousedown und mouseup verschluckt den Klick). Ohne diesen Nachzug blieb
+  // der Knopf nach der letzten Pflichteingabe noch gesperrt: btn-disabled
+  // traegt pointer-events:none, der Knopf ist dann wirklich tot und nicht nur
+  // ausgegraut. Hier wird deshalb NUR die Klasse getauscht, kein Neuaufbau.
+  _syncWeiterKnopf() {
+    const btn = this._shadow?.querySelector('button[data-action="next-step"]');
+    if (!btn) return;
+    const probing = !!this._froniusProbing || !!this._kostalProbing || !!this._smaProbing;
+    btn.classList.toggle("btn-disabled", this._isNextDisabled() || probing);
   }
 
   /* ── Schritt: Willkommen ──────────────────────── */
@@ -5274,19 +5284,28 @@ class EegOptimizerPanel extends HTMLElement {
     // allein dem Nachtsatz der Standardvergütung — und der wirkt nur bei
     // Quelle „Fester Wert". Bei Spot/OeMAG erscheint hier nichts mehr.
     const quelleManual = (d.schedule_feedin_source || "manual") === "manual";
-    if (!(quelleManual && Number(d.schedule_feedin_price_night ?? 0) > 0)) return "";
+    if (!quelleManual) return "";
+    // Das Fenster steht IMMER da, sobald die Quelle „Fester Wert" ist — auch
+    // ohne eingetragenen Nachtsatz. Früher hing es zusätzlich am Nachtsatz
+    // (> 0) und musste beim Tippen per Render nachgezogen werden; blieb der
+    // Nachzug aus, fehlte das Fenster scheinbar grundlos und tauchte erst
+    // beim nächsten Render auf (z. B. beim Umschalten des Expertenmodus).
+    // Ein dauerhaft sichtbares Feld kann nicht klemmen. Pflicht ist es nur
+    // mit Nachtsatz — nur dann trägt es den Stern.
+    const nachtsatz = Number(d.schedule_feedin_price_night ?? 0) > 0;
+    const stern = nachtsatz ? " *" : "";
     return `
       <div style="display:flex;gap:12px">
         <div class="field-group" style="flex:1">
-          <label>Nachtfenster von *</label>
+          <label>Nachtfenster von${stern}</label>
           <input type="time" data-field="${prefix}schedule_night_start" value="${d.schedule_night_start || "20:00"}">
         </div>
         <div class="field-group" style="flex:1">
-          <label>Nachtfenster bis *</label>
+          <label>Nachtfenster bis${stern}</label>
           <input type="time" data-field="${prefix}schedule_night_end" value="${d.schedule_night_end || "06:00"}">
         </div>
       </div>
-      <div class="help-text" style="margin-bottom:16px">Wann der Nachtsatz der Standardvergütung gilt. Darf über Mitternacht gehen — das Nachtfenster der Gemeinschaften stellst du bei deren Nachtsätzen ein.</div>`;
+      <div class="help-text" style="margin-bottom:16px">Wann der Nachtsatz der Standardvergütung gilt. Darf über Mitternacht gehen. ${nachtsatz ? "" : "Ohne eingetragenen Nachtsatz wirkt das Fenster nicht — es gilt dann rund um die Uhr die Tagvergütung. "}Das Nachtfenster der Gemeinschaften stellst du bei deren Nachtsätzen ein.</div>`;
   }
 
   _kostenFields(d, prefix) {
@@ -5535,22 +5554,27 @@ class EegOptimizerPanel extends HTMLElement {
     // (Nutzerwunsch 27.08.). Vorbelegt mit dem bisher wirksamen Fenster
     // (Fallback des Backends ist das Standard-Fenster), damit sich
     // Bestandsanlagen beim bloßen Speichern nicht ändern.
+    // Wie beim Nachtfenster der Standardvergütung steht es IMMER da, sobald
+    // die Gemeinschafts-Sektion sichtbar ist — nicht erst mit eingetragenem
+    // Nachtsatz. Ein konditionales Feld muss beim Tippen nachgezogen werden,
+    // und genau dieser Nachzug klemmte.
     const nachtGesetzt = Number(d.peakshare_price_night ?? 0) > 0
       || Number(d.peakshare_price_night_2 ?? 0) > 0;
-    const nachtfenster = !nachtGesetzt ? "" : `
+    const gemStern = nachtGesetzt ? " *" : "";
+    const nachtfenster = `
         <div style="display:flex;gap:12px;margin-top:8px">
           <div class="field-group" style="flex:1">
-            <label>Nachtfenster der Gemeinschaften von *</label>
+            <label>Nachtfenster der Gemeinschaften von${gemStern}</label>
             <input type="time" data-field="${prefix}peakshare_night_start"
                    value="${d.peakshare_night_start || d.schedule_night_start || "20:00"}">
           </div>
           <div class="field-group" style="flex:1">
-            <label>Nachtfenster bis *</label>
+            <label>Nachtfenster bis${gemStern}</label>
             <input type="time" data-field="${prefix}peakshare_night_end"
                    value="${d.peakshare_night_end || d.schedule_night_end || "06:00"}">
           </div>
         </div>
-        <div class="help-text" style="margin-bottom:8px">Wann die Nachtvergütung der Gemeinschaften gilt. Darf über Mitternacht gehen — und darf sich vom Nachtfenster der Standardvergütung unterscheiden.</div>`;
+        <div class="help-text" style="margin-bottom:8px">Wann die Nachtvergütung der Gemeinschaften gilt. Darf über Mitternacht gehen — und darf sich vom Nachtfenster der Standardvergütung unterscheiden.${nachtGesetzt ? "" : " Ohne eingetragenen Nachtsatz wirkt es nicht."}</div>`;
 
     return this._featureCard({
       on,
