@@ -95,6 +95,10 @@ except ImportError:
             return self._attr_native_value
 
         @property
+        def native_unit_of_measurement(self) -> str | None:
+            return self._attr_native_unit_of_measurement
+
+        @property
         def extra_state_attributes(self) -> dict:
             return self._attr_extra_state_attributes
 
@@ -108,6 +112,7 @@ except ImportError:
         ENERGY = "energy"
         POWER = "power"
         BATTERY = "battery"
+        MONETARY = "monetary"
 
     class SensorStateClass:  # type: ignore[no-redef]
         MEASUREMENT = "measurement"
@@ -1024,6 +1029,171 @@ class EntladungInsNetzSensor(SensorEntity):
 
 
 # ---------------------------------------------------------------------------
+# Energiebilanz: was die PV bringt, und welcher Anteil daran die Optimierung ist
+# ---------------------------------------------------------------------------
+
+
+class _BilanzSensor(SensorEntity):
+    """Gemeinsames für die sechs Geld-Sensoren.
+
+    ``feld`` ist der Schlüssel aus ``bilanz.bewerte_tag``, ``zeitraum`` einer
+    von „heute", „monat", „jahr". Monat und Jahr zählen den laufenden Tag
+    dazu: Er steht noch nicht im Archiv, und ein Monatswert, der den heutigen
+    Ertrag unterschlägt, wäre den ganzen Tag über falsch.
+    """
+
+    _attr_has_entity_name = True
+    _attr_device_class = SensorDeviceClass.MONETARY
+    _attr_state_class = SensorStateClass.TOTAL
+    _attr_suggested_display_precision = 2
+
+    def __init__(self, hass: Any, entry: Any, feld: str, zeitraum: str) -> None:
+        self.hass = hass
+        self._entry_id = entry.entry_id
+        self._feld = feld
+        self._zeitraum = zeitraum
+        self._attr_unique_id = f"{DOMAIN}_{entry.entry_id}_bilanz_{feld}_{zeitraum}"
+        self._attr_device_info = _device_info(entry.entry_id)
+        self._attr_native_value: float | None = None
+        self._attr_extra_state_attributes: dict[str, Any] = {}
+        # Währung aus der Home-Assistant-Konfiguration; device_class MONETARY
+        # verlangt eine echte Währungseinheit, kein Symbol.
+        waehrung = getattr(getattr(hass, "config", None), "currency", None)
+        self._attr_native_unit_of_measurement = waehrung or "EUR"
+
+    def _bilanz(self) -> Any:
+        return (
+            self.hass.data.get(DOMAIN, {})
+            .get(self._entry_id, {})
+            .get("bilanz")
+        )
+
+    def _inputs(self) -> Any:
+        runner = (
+            self.hass.data.get(DOMAIN, {}).get(self._entry_id, {}).get("schedule")
+        )
+        return getattr(runner, "last_inputs", None)
+
+    async def async_update(self) -> None:
+        bilanz = self._bilanz()
+        if bilanz is None:
+            return
+        heute = bilanz.heute(self._inputs())
+        heute_wert = heute.get(self._feld)
+
+        if self._zeitraum == "heute":
+            self._attr_native_value = (
+                None if heute_wert is None else round(float(heute_wert), 2)
+            )
+        else:
+            jetzt = _now_local()
+            if self._zeitraum == "monat":
+                archiv = bilanz.summe(self._feld, monat=jetzt.strftime("%Y-%m"))
+            else:
+                archiv = bilanz.summe(self._feld, jahr=jetzt.strftime("%Y"))
+            self._attr_native_value = round(
+                archiv + float(heute_wert or 0.0), 2
+            )
+
+        self._attr_extra_state_attributes = self._attribute(heute)
+
+    def _attribute(self, heute: dict) -> dict[str, Any]:
+        return {}
+
+
+class PVErsparnisSensor(_BilanzSensor):
+    """Was die PV heute/diesen Monat/dieses Jahr gebracht hat.
+
+    Vermiedener Netzbezug plus Einspeiseerlös — beides gemessen. Der
+    Optimierungs-Vorteil steckt hier bereits drin; er steht im Attribut
+    ``davon_optimierung`` und darf NICHT dazuaddiert werden.
+    """
+
+    _attr_icon = "mdi:solar-power-variant"
+
+    def __init__(self, hass: Any, entry: Any, zeitraum: str) -> None:
+        super().__init__(hass, entry, "pv_ersparnis", zeitraum)
+        self._attr_name = {
+            "heute": "Ersparnis durch PV heute",
+            "monat": "Ersparnis durch PV diesen Monat",
+            "jahr": "Ersparnis durch PV dieses Jahr",
+        }[zeitraum]
+
+    def _attribute(self, heute: dict) -> dict[str, Any]:
+        if self._zeitraum != "heute":
+            return {}
+        attrs: dict[str, Any] = {
+            "last_reset": _now_local()
+            .replace(hour=0, minute=0, second=0, microsecond=0)
+            .isoformat(),
+            "vermiedener_bezug": heute.get("vermieden"),
+            "einspeiseerloes": heute.get("erloes"),
+            "eigenverbrauch_kwh": heute.get("eigen_kwh"),
+            "einspeisung_kwh": heute.get("export_kwh"),
+            "netzbezug_kwh": heute.get("bezug_kwh"),
+            "erzeugung_kwh": heute.get("pv_kwh"),
+            "davon_optimierung": heute.get("opt_vorteil"),
+            "hinweis": (
+                "Vermiedener Bezug plus Einspeiseerloes. Der Anteil der "
+                "Optimierung ist darin enthalten und darf nicht dazugezaehlt "
+                "werden."
+            ),
+        }
+        # Transparenz beim EEG-Anteil: Wie viel wirklich zum
+        # Gemeinschaftssatz gerechnet wurde, und woran das haengt.
+        eeg_kwh = float(heute.get("eeg_kwh") or 0.0)
+        export = float(heute.get("export_kwh") or 0.0)
+        if export > 0:
+            attrs["eeg_kwh"] = round(eeg_kwh, 2)
+            attrs["eeg_anteil_pct"] = round(100.0 * eeg_kwh / export, 1)
+        if eeg_kwh > 0:
+            attrs["eeg_hinweis"] = (
+                "Der Anteil zum Gemeinschaftssatz beruht auf der "
+                "Bedarfsprognose der Gemeinschaft. Endgueltig steht er erst "
+                "mit der EEG-Abrechnung fest."
+            )
+        return attrs
+
+
+class OptimierungsVorteilSensor(_BilanzSensor):
+    """Was die Optimierung gegenüber Standardbetrieb gebracht hat.
+
+    Anders als der PV-Sensor ist das keine Messung, sondern eine Differenz zu
+    einem simulierten Betrieb ohne Vorausschau — gerechnet über die gemessenen
+    PV- und Verbrauchsreihen des Tages. Im Modus Aus muss der Wert gegen null
+    gehen; das Attribut ``modus_ein_anteil`` macht prüfbar, ob er das tut.
+    """
+
+    _attr_icon = "mdi:chart-line-variant"
+
+    def __init__(self, hass: Any, entry: Any, zeitraum: str) -> None:
+        super().__init__(hass, entry, "opt_vorteil", zeitraum)
+        self._attr_name = {
+            "heute": "Ersparnis durch Optimierung heute",
+            "monat": "Ersparnis durch Optimierung diesen Monat",
+            "jahr": "Ersparnis durch Optimierung dieses Jahr",
+        }[zeitraum]
+
+    def _attribute(self, heute: dict) -> dict[str, Any]:
+        if self._zeitraum != "heute":
+            return {}
+        return {
+            "last_reset": _now_local()
+            .replace(hour=0, minute=0, second=0, microsecond=0)
+            .isoformat(),
+            "mit_optimierung": heute.get("ist_summe"),
+            "ohne_optimierung": heute.get("ref_summe"),
+            "modus_ein_anteil": heute.get("ein_anteil"),
+            "hinweis": (
+                "Modellrechnung: Vergleich mit einem simulierten "
+                "Standardbetrieb ueber die gemessenen PV- und "
+                "Verbrauchswerte des Tages. Im Modus Aus muss der Wert nahe "
+                "null liegen."
+            ),
+        }
+
+
+# ---------------------------------------------------------------------------
 # Fahrplan (chamo-Prototyp)
 # ---------------------------------------------------------------------------
 
@@ -1294,6 +1464,16 @@ async def async_setup_entry(
             FahrplanBatterieleistungSensor(hass, entry),
             FahrplanNetzleistungSensor(hass, entry),
             EntladungInsNetzSensor(hass, entry),
+        ]
+        # Energiebilanz in Geld. Im fast-Takt, damit „heute" mitläuft; die
+        # Rechnung dahinter ist eine Schleife über 96 Slots und kostet nichts.
+        + [
+            PVErsparnisSensor(hass, entry, zeitraum)
+            for zeitraum in ("heute", "monat", "jahr")
+        ]
+        + [
+            OptimierungsVorteilSensor(hass, entry, zeitraum)
+            for zeitraum in ("heute", "monat", "jahr")
         ]
     )
 

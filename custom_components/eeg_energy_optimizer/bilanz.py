@@ -411,6 +411,8 @@ class EnergieBilanz:
             "pv_kwh": 0.0,
             "eeg_kwh": 0.0,
             "ein_anteil": 0.0,
+            "ist_summe": None,
+            "ref_summe": None,
         }
         if not slots:
             return leer
@@ -462,8 +464,14 @@ class EnergieBilanz:
             ergebnis["vermieden"] + ergebnis["erloes"], 4
         )
 
-        vorteil = self._optimierungs_vorteil(ist_slots, slots, inputs, bewertung)
+        vorteil, referenz = self._optimierungs_vorteil(
+            ist_slots, slots, inputs, bewertung
+        )
         ergebnis["opt_vorteil"] = vorteil
+        # Beide Seiten der Differenz mit ausweisen — sonst steht im Panel eine
+        # Zahl, die niemand nachrechnen kann.
+        ergebnis["ist_summe"] = round(float(bewertung.get("summe", 0.0)), 4)
+        ergebnis["ref_summe"] = referenz
         return ergebnis
 
     def _sortierte_slots(self, tag: dict[str, Any]) -> list[dict[str, Any]]:
@@ -549,7 +557,7 @@ class EnergieBilanz:
         slots: list[dict[str, Any]],
         inputs: Any,
         ist_bewertung: dict[str, float],
-    ) -> float | None:
+    ) -> tuple[float | None, float | None]:
         """Ist gegen simulierten Standardbetrieb — beide am selben Tag gemessen.
 
         Der Referenzlauf bekommt die GEMESSENEN PV- und Verbrauchsreihen, nicht
@@ -567,7 +575,7 @@ class EnergieBilanz:
                 start_soc = float(slot["soc_a"])
                 break
         if start_soc is None:
-            return None
+            return None, None
 
         try:
             from .schedule import bewerte_geldfluesse, simuliere_standardbetrieb
@@ -579,12 +587,11 @@ class EnergieBilanz:
             referenz = bewerte_geldfluesse(referenz_slots, angepasst)
         except Exception:  # noqa: BLE001
             _LOGGER.debug("Bilanz: Referenzlauf fehlgeschlagen", exc_info=True)
-            return None
+            return None, None
 
-        return round(
-            float(ist_bewertung.get("summe", 0.0)) - float(referenz.get("summe", 0.0)),
-            4,
-        )
+        ref_summe = round(float(referenz.get("summe", 0.0)), 4)
+        vorteil = round(float(ist_bewertung.get("summe", 0.0)) - ref_summe, 4)
+        return vorteil, ref_summe
 
     # ------------------------------------------------------------------
     # Abfrage (fuer die Sensoren)

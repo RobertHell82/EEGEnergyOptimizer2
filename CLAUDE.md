@@ -74,7 +74,8 @@ schedule_executor.py: ScheduleExecutor (execution, 30 s)
 | `schedule_archive.py` | Rolling archive of computed plans (7 days, gzip, ~8 KB each) for after-the-fact debugging |
 | `schedule_archive_view.py` | HTTP view that packs archive + settings + measured history into a downloadable ZIP |
 | `chamo/` | **Upstream, unmodified** — Harald Geyer's LP optimizer (`opt_highs.py`, `timetableopt`) plus a HiGHS adapter |
-| `sensor.py` | 19 sensors (+4 conditional): consumption profile, forecasts, power flows, plan values, grid discharge energy, register writes, Fahrplan-Status |
+| `sensor.py` | 25 sensors (+4 conditional): consumption profile, forecasts, power flows, plan values, grid discharge energy, register writes, Fahrplan-Status, money balance |
+| `bilanz.py` | Energy balance in money — records 96 quarter-hours per day (energy, SOC, **frozen** prices and community balances), evaluates them with `bewerte_geldfluesse`, and derives the optimiser advantage against a simulated standard operation over the measured series |
 | `coordinator.py` | Loads hourly consumption averages from recorder (rolling, weekday split) |
 | `forecast_provider.py` | Abstract PV forecast provider — Solcast and Forecast.Solar implementations |
 | `config_flow.py` | Single-click config flow (full setup happens in panel) |
@@ -94,7 +95,7 @@ schedule_executor.py: ScheduleExecutor (execution, 30 s)
 | `const.py` | All constants, defaults, mode enums, state names |
 | `frontend/eeg-optimizer-panel.js` | Dashboard + onboarding panel (plain HTMLElement, Shadow DOM) |
 
-### Sensors (19 always + up to 4 conditional)
+### Sensors (25 always + up to 4 conditional)
 
 | # | Sensor | Update | Description |
 |---|--------|--------|-------------|
@@ -111,6 +112,15 @@ schedule_executor.py: ScheduleExecutor (execution, 30 s)
 | 17 | Fahrplan Netzleistung | fast | **Planned** grid power for the current slot |
 | 18 | Entladung ins Netz | fast | Battery energy that actually reached the grid (kWh, TOTAL with `last_reset`) — the basis of the feed-in statistics card |
 | 19 | Fahrplan-Status | 30s | Executor state ("Laden begrenzt auf 2,0 kW", "Entladung 2,8 kW bis 43 %", "Normalbetrieb", "Anzeige-Modus") + plan/written-value attributes |
+| 20–22 | Ersparnis durch PV — heute / Monat / Jahr | fast | Avoided grid purchase + feed-in revenue (MONETARY, TOTAL). A **measurement**: every kWh is metered, prices come frozen per quarter-hour from `bilanz.py` |
+| 23–25 | Ersparnis durch Optimierung — heute / Monat / Jahr | fast | Actual vs. simulated standard operation over the **measured** PV/load series (MONETARY, TOTAL). A **model**, not a measurement — `None` when the day's starting SOC is unknown |
+
+> **Never add sensors 20–22 and 23–25 together.** The optimiser advantage is
+> already contained in the PV saving — it is the share of it that stems from
+> the steering, exposed as attribute `davon_optimierung`. Adding both
+> double-counts. The self-check: in mode "Aus" the optimiser advantage must
+> approach zero, since the plant then runs standard operation itself
+> (attribute `modus_ein_anteil` makes this verifiable).
 
 Conditional, created only when the setup calls for them: *Batterieleistung* /
 *Netzleistung* combined-pair sensors (split-sensor inverters like Fronius) and
