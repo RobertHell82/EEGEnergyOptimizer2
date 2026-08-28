@@ -10,6 +10,18 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
+## [Unreleased]
+
+### Behoben
+
+- **Im Einrichtungsassistenten war der OeMAG-Tarif nicht abrufbar** („Kein
+  Tarif gelesen (Anbieter nicht geladen)", auch nach Klick auf *Jetzt holen*).
+  Die Preis-Anbieter für OeMAG und Spotpreis wurden erst nach abgeschlossener
+  Einrichtung geladen — der Assistent lässt die Standardvergütung aber schon
+  vorher auswählen, und OeMAG ist die Vorgabe. Beide werden jetzt geladen,
+  bevor die Einrichtung abgeschlossen ist; sie hängen an keiner Anlage und an
+  keinem Sensor.
+
 ## [2.0.1] - 2026-08-28
 
 ### Behoben

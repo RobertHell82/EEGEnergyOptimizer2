@@ -94,3 +94,37 @@ def test_preis_lesen(text, erwartet):
         assert ergebnis is None
     else:
         assert ergebnis == pytest.approx(erwartet)
+
+
+def test_preisanbieter_werden_vor_dem_wizard_abbruch_geladen():
+    """OeMAG und Spot müssen schon im Einrichtungsassistenten verfügbar sein.
+
+    ``async_setup_entry`` steigt bei unvollständiger Einrichtung früh aus
+    (``if not setup_complete``) und registriert nur das Panel. Standen die
+    Preis-Anbieter hinter diesem Ausstieg, meldete das Panel im Assistenten
+    „Anbieter nicht geladen" — und der Knopf „Jetzt holen" konnte daran
+    nichts ändern, weil der WebSocket-Befehl den Anbieter gar nicht findet.
+    Das traf jede Neuinstallation, weil OeMAG die Vorgabe der Standard-
+    vergütung ist.
+
+    Beide Anbieter hängen an keiner Anlage und an keinem Sensor — sie holen
+    nur eine Website und dürfen deshalb vor dem Ausstieg stehen.
+    """
+    from pathlib import Path
+
+    quelle = (
+        Path(__file__).resolve().parents[1]
+        / "custom_components" / "eeg_energy_optimizer" / "__init__.py"
+    ).read_text(encoding="utf-8")
+
+    abbruch = quelle.index("if not setup_complete:")
+    for marker, name in (
+        ('["oemag"] = oemag_provider', "OeMAG"),
+        ('["spot"] = spot_provider', "Spot"),
+    ):
+        stelle = quelle.index(marker)
+        assert stelle < abbruch, (
+            f"Der {name}-Anbieter wird erst nach dem Ausstieg bei "
+            "unvollständiger Einrichtung angelegt — im Einrichtungs"
+            "assistenten meldet das Panel dann 'Anbieter nicht geladen'."
+        )

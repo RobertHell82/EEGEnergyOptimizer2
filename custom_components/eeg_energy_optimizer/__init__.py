@@ -1258,6 +1258,34 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "platforms_loaded": False,
     }
 
+    # Preis-Anbieter VOR dem Wizard-Abbruch: Sie hängen an keiner Anlage und
+    # an keinem Sensor, holen nur eine Website — der Einrichtungsassistent
+    # braucht sie aber schon, weil er die Standardvergütung dort auswählen
+    # lässt. Standen sie erst im vollständigen Setup, meldete das Panel im
+    # Wizard „Anbieter nicht geladen", und „Jetzt holen" konnte daran nichts
+    # ändern (der WebSocket-Befehl findet den Anbieter dann schlicht nicht).
+    # Das traf jede Neuinstallation, weil OeMAG die Vorgabe ist.
+    from .oemag import OemagProvider
+    oemag_provider = OemagProvider(hass, entry.entry_id)
+    await oemag_provider.async_load()
+    hass.data[DOMAIN][entry.entry_id]["oemag"] = oemag_provider
+    # Nicht im Setup abrufen: eine langsame Website würde den Start des
+    # Integrationsaufbaus verzögern. Der erste Lauf kommt als Task.
+    hass.async_create_task(oemag_provider.async_fetch())
+
+    # Spotpreis (EPEX Day-Ahead über aWATTar), falls als Basistarif gewählt.
+    # Immer geladen (fürs Panel), aber nur automatisch abgerufen, wenn die
+    # Quelle wirklich „spot" ist — kein Dauerverkehr für Nutzer, die die
+    # Börse nie gewählt haben. Der „Jetzt holen"-Knopf holt per WS trotzdem.
+    from .spot import SpotProvider
+    spot_provider = SpotProvider(
+        hass, entry.entry_id, market=str(config.get("spot_market_area") or "at")
+    )
+    await spot_provider.async_load()
+    hass.data[DOMAIN][entry.entry_id]["spot"] = spot_provider
+    if str(config.get("schedule_feedin_source") or "manual").lower() == "spot":
+        hass.async_create_task(spot_provider.async_fetch())
+
     # If setup not complete, register panel only — skip platforms and optimizer
     if not setup_complete:
         entry.async_on_unload(entry.add_update_listener(_async_update_listener))
@@ -1337,30 +1365,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await peakshare_provider.async_load()
     await peakshare_provider.async_fetch()
     data["peakshare"] = peakshare_provider
-
-    # OeMAG: monatlicher Einspeisetarif, falls als Basistarif gewählt. Wird
-    # immer geholt, damit das Panel den Wert auch zeigen kann, bevor jemand
-    # umschaltet.
-    from .oemag import OemagProvider
-    oemag_provider = OemagProvider(hass, entry.entry_id)
-    await oemag_provider.async_load()
-    data["oemag"] = oemag_provider
-    # Nicht im Setup abrufen: eine langsame Website würde den Start des
-    # Integrationsaufbaus verzögern. Der erste Lauf kommt als Task.
-    hass.async_create_task(oemag_provider.async_fetch())
-
-    # Spotpreis (EPEX Day-Ahead über aWATTar), falls als Basistarif gewählt.
-    # Immer geladen (fürs Panel), aber nur automatisch abgerufen, wenn die
-    # Quelle wirklich „spot" ist — kein Dauerverkehr für Nutzer, die die
-    # Börse nie gewählt haben. Der „Jetzt holen"-Knopf holt per WS trotzdem.
-    from .spot import SpotProvider
-    spot_provider = SpotProvider(
-        hass, entry.entry_id, market=str(config.get("spot_market_area") or "at")
-    )
-    await spot_provider.async_load()
-    data["spot"] = spot_provider
-    if str(config.get("schedule_feedin_source") or "manual").lower() == "spot":
-        hass.async_create_task(spot_provider.async_fetch())
 
     if coordinator and provider:
         # ----------------------------------------------------------
