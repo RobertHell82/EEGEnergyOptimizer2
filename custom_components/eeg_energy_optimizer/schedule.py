@@ -1629,6 +1629,11 @@ class ScheduleRunner:
         self.error: str | None = None
         self.last_run_iso: str | None = None
         self.is_running = False
+        # Die zuletzt gesammelten Inputs. Die Energiebilanz friert daraus die
+        # Preise der laufenden Viertelstunde ein — über dieselben Werte, mit
+        # denen der Fahrplan rechnet. Ein zweiter Preis-Pfad daneben würde bei
+        # der nächsten Tarifänderung auseinanderlaufen.
+        self.last_inputs: ScheduleInputs | None = None
 
     async def async_run(self) -> None:
         """Ein Durchlauf: sammeln im Loop, rechnen im Executor."""
@@ -1644,6 +1649,7 @@ class ScheduleRunner:
                 self.result = None
                 _LOGGER.info("Fahrplan nicht berechenbar: %s", problem)
                 return
+            self.last_inputs = inputs
 
             result = await self._hass.async_add_executor_job(solve, inputs)
             self.result = result

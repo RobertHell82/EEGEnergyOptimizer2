@@ -1549,6 +1549,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         await feedin_stats.async_load()
         data["feedin_stats"] = feedin_stats
 
+        # ----------------------------------------------------------
+        # Energiebilanz: was die PV in Geld bringt, und welcher Anteil daran
+        # auf die Optimierung zurückgeht. Zeichnet 96 Viertelstunden je Tag
+        # auf und friert dabei die Preise ein — Einzelheiten in bilanz.py.
+        # ----------------------------------------------------------
+        from .bilanz import EnergieBilanz
+
+        bilanz = EnergieBilanz(hass, entry.entry_id, config)
+        await bilanz.async_load()
+        data["bilanz"] = bilanz
+
         # Telemetrie-Hooks im Closure-Scope für späteren Zugriff (Tests)
         data["_check_sensor_unavailability"] = _check_sensor_unavailability
         data["_check_forecast_streak"] = _check_forecast_streak
@@ -1736,6 +1747,19 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 await feedin_stats.async_flush()
             except Exception:  # pragma: no cover — Statistik darf nie kippen
                 _LOGGER.exception("Einspeise-Statistik: Takt fehlgeschlagen")
+
+            # Energiebilanz führen. Sie zählt IMMER, auch im Modus Aus — der
+            # Ertrag der PV entsteht unabhängig davon, ob gesteuert wird. Die
+            # Preise kommen aus den zuletzt gesammelten Fahrplan-Inputs, damit
+            # Bilanz und Fahrplan garantiert dieselben Zahlen verwenden.
+            try:
+                runner = data.get("schedule")
+                await bilanz.async_update(
+                    mode, _now_utc(), getattr(runner, "last_inputs", None)
+                )
+                await bilanz.async_flush()
+            except Exception:  # pragma: no cover — Bilanz darf nie kippen
+                _LOGGER.exception("Energiebilanz: Takt fehlgeschlagen")
 
             # Persist activity log to disk if changed
             await _flush_activity_log()
@@ -2206,6 +2230,13 @@ async def async_unload_entry(
                 _LOGGER.exception(
                     "EEG Energy Optimizer: error flushing feed-in statistics"
                 )
+        # Dasselbe für die Energiebilanz: der angebrochene Slot ist sonst weg.
+        bilanz = data.get("bilanz")
+        if bilanz is not None:
+            try:
+                await bilanz.async_flush()
+            except Exception:
+                _LOGGER.exception("EEG Energy Optimizer: error flushing bilanz")
         # Fahrplan-Steuerung freigeben: erzwungene Entladung stoppen und das
         # Ladelimit zurücksetzen — sonst bleibt das letzte geschriebene Limit
         # im Wechselrichter stehen (Risiko 2 des Umbauplans).
