@@ -91,6 +91,17 @@ const INVERTER_LABELS = {
 // an ("nur Anzeige").
 const SCHEDULE_CONTROL_INVERTERS = ["fronius_gen24", "huawei_sun2000"];
 
+// Summe der Aufteilungsschluessel — es zaehlt nur, was auch eine gewaehlte
+// Gemeinschaft hat. Der Prozentsatz bleibt im Formular stehen, wenn der
+// Nutzer die Gemeinschaft wieder abwaehlt (Vorgabe 50 %); blind mitgezaehlt
+// riss er eine 100-%-Grenze, die es gar nicht gibt. Das Backend sieht es
+// genauso: gemeinschaften_aus_config verwirft jeden Eintrag ohne Namen,
+// unabhaengig vom Anteil.
+const anteilssummePct = (d) =>
+  (d?.peakshare_community ? Number(d.peakshare_share_pct ?? 0) : 0)
+  + (d?.peakshare_community_2 ? Number(d.peakshare_share_pct_2 ?? 0) : 0);
+
+
 // Kostal ist im Wizard wieder in allen Builds auswählbar (seit 1.3.13-dev).
 // Der Flag bleibt als Schalter erhalten, falls ein Treiber künftig erneut
 // vorübergehend aus Release-Builds ausgeblendet werden soll (DEV-Erkennung
@@ -1948,8 +1959,7 @@ class EegOptimizerPanel extends HTMLElement {
         }
         // Dieselbe Regel wie beim Speichern der Einstellungen: der
         // Aufteilungsschlüssel ist vertraglich, über 100 % geht nicht.
-        const anteile = Number(this._wizardData.peakshare_share_pct ?? 0)
-          + Number(this._wizardData.peakshare_share_pct_2 ?? 0);
+        const anteile = anteilssummePct(this._wizardData);
         if (anteile > 100) {
           this._showValidationError(
             `Die Anteile der Gemeinschaften ergeben zusammen ${fmtDe(anteile, 0)} % — mehr als 100 % ist nicht möglich.`);
@@ -2074,7 +2084,7 @@ class EegOptimizerPanel extends HTMLElement {
     }
     // Der Aufteilungsschlüssel ist eine vertragliche Größe: über 100 % kann er
     // nicht gehen. Darunter ist erlaubt — der Rest geht an den Energieversorger.
-    const anteile = Number(d.peakshare_share_pct ?? 0) + Number(d.peakshare_share_pct_2 ?? 0);
+    const anteile = anteilssummePct(d);
     if (anteile > 100) {
       fehlt.push(`Anteile der Gemeinschaften (Summe ${fmtDe(anteile, 0)} % statt maximal 100 %)`);
     }
