@@ -12,6 +12,7 @@ import pytest
 
 from custom_components.eeg_energy_optimizer.inverter.base import InverterBase
 from custom_components.eeg_energy_optimizer.inverter.solax import (
+    DISCHARGE_FLOOR_MARGIN_PCT,
     SOLAX_DOMAIN,
     SOLAX_ENTITY_DEFAULTS,
     SolaXInverter,
@@ -25,6 +26,22 @@ DURATION_ENTITY = SOLAX_ENTITY_DEFAULTS["remotecontrol_duration"]
 AUTOREPEAT_ENTITY = SOLAX_ENTITY_DEFAULTS["remotecontrol_autorepeat_duration"]
 TRIGGER_ENTITY = SOLAX_ENTITY_DEFAULTS["remotecontrol_trigger"]
 MAX_CURRENT_ENTITY = SOLAX_ENTITY_DEFAULTS["battery_charge_max_current"]
+FLOOR_ENTITY = "number.solax_inverter_selfuse_discharge_min_soc"
+
+
+def _states(werte: dict[str, str], attribute: dict[str, dict] | None = None):
+    """State-Getter, der je Entity einen eigenen Wert liefert."""
+    attribute = attribute or {}
+
+    def _get(entity_id):
+        if entity_id not in werte:
+            return None
+        st = MagicMock()
+        st.state = werte[entity_id]
+        st.attributes = attribute.get(entity_id, {})
+        return st
+
+    return _get
 
 
 def _calls_by_entity(mock_hass) -> dict[str, dict]:
@@ -260,11 +277,62 @@ class TestAsyncSetDischarge:
             {"entity_id": TRIGGER_ENTITY},
         )
 
-    async def test_target_soc_argument_is_ignored(self, inverter, mock_hass):
-        """target_soc is part of the InverterBase contract but unused on SolaX."""
+    async def test_target_soc_senkt_den_entladeboden(self, inverter, mock_hass):
+        """Ohne Absenken stoppt der Wechselrichter an seinem eigenen Boden —
+        der Entladebefehl laeuft weiter, die Batterie liefert 0,00 kW."""
+        mock_hass.states.get = MagicMock(
+            side_effect=_states({FLOOR_ENTITY: "30.0"})
+        )
         result = await inverter.async_set_discharge(2.0, target_soc=20)
         assert result is True
-        assert len(mock_hass.services.async_call.call_args_list) == 5
+
+        payloads = _calls_by_entity(mock_hass)
+        assert payloads[FLOOR_ENTITY]["value"] == 20 - DISCHARGE_FLOOR_MARGIN_PCT
+
+    async def test_ohne_target_soc_bleibt_der_boden_unangetastet(
+        self, inverter, mock_hass
+    ):
+        """Kein Ziel, kein Eingriff — sonst senkten wir ins Blaue."""
+        mock_hass.states.get = MagicMock(
+            side_effect=_states({FLOOR_ENTITY: "30.0"})
+        )
+        await inverter.async_set_discharge(2.0)
+        assert FLOOR_ENTITY not in _calls_by_entity(mock_hass)
+
+    async def test_tiefer_boden_wird_nicht_angehoben(self, inverter, mock_hass):
+        """Liegt der Geraetewert schon tief genug, bleibt er stehen — wir
+        senken nur, wo es noetig ist."""
+        mock_hass.states.get = MagicMock(
+            side_effect=_states({FLOOR_ENTITY: "5.0"})
+        )
+        await inverter.async_set_discharge(2.0, target_soc=20)
+        assert FLOOR_ENTITY not in _calls_by_entity(mock_hass)
+
+    async def test_boden_wird_im_store_gesichert(self, inverter, mock_hass):
+        noop = _install_noop_store(inverter)
+        mock_hass.states.get = MagicMock(
+            side_effect=_states({FLOOR_ENTITY: "30.0"})
+        )
+        await inverter.async_set_discharge(2.0, target_soc=20)
+        assert any(
+            d.get("selfuse_discharge_min_soc_original") == 30.0 for d in noop.saved
+        )
+
+    async def test_zweiter_aufruf_ueberschreibt_den_vorwert_nicht(
+        self, inverter, mock_hass
+    ):
+        """Beim zweiten Aufruf steht unser abgesenkter Wert im Geraet — ihn als
+        Original zu sichern hiesse, den echten zu verlieren."""
+        _install_noop_store(inverter)
+        mock_hass.states.get = MagicMock(
+            side_effect=_states({FLOOR_ENTITY: "30.0"})
+        )
+        await inverter.async_set_discharge(2.0, target_soc=20)
+        mock_hass.states.get = MagicMock(
+            side_effect=_states({FLOOR_ENTITY: "15.0"})
+        )
+        await inverter.async_set_discharge(2.0, target_soc=20)
+        assert inverter._state_store.original_discharge_floor == 30.0
 
     async def test_positive_input_still_emits_negative_power(self, inverter, mock_hass):
         """Positive power input is still encoded as negative discharge."""
@@ -670,3 +738,100 @@ class TestFindSolaxPrefix:
         from custom_components.eeg_energy_optimizer.websocket_api import _find_solax_prefix
         _install_states(mock_hass, {})
         assert _find_solax_prefix(mock_hass) is None
+
+
+class TestEntladebodenRestore:
+    """Der abgesenkte Boden muss zurueck — sonst entlaedt der Wechselrichter
+    auch im Automatikbetrieb tiefer, als der Betreiber eingestellt hat."""
+
+    async def test_stop_restauriert_den_boden(self, inverter, mock_hass):
+        _install_noop_store(inverter)
+        mock_hass.states.get = MagicMock(side_effect=_states({FLOOR_ENTITY: "30.0"}))
+        await inverter.async_set_discharge(2.0, target_soc=20)
+
+        mock_hass.services.async_call.reset_mock()
+        mock_hass.states.get = MagicMock(side_effect=_states({FLOOR_ENTITY: "15.0"}))
+        await inverter.async_stop_forcible()
+
+        assert _calls_by_entity(mock_hass)[FLOOR_ENTITY]["value"] == 30.0
+
+    async def test_store_wird_nach_restore_geleert(self, inverter, mock_hass):
+        _install_noop_store(inverter)
+        mock_hass.states.get = MagicMock(side_effect=_states({FLOOR_ENTITY: "30.0"}))
+        await inverter.async_set_discharge(2.0, target_soc=20)
+        await inverter.async_stop_forcible()
+        assert inverter._state_store.original_discharge_floor is None
+
+    async def test_stop_ohne_vorwert_schreibt_nichts(self, inverter, mock_hass):
+        """Ein Stopp ohne vorherige Entladung darf den Boden nicht anfassen."""
+        _install_noop_store(inverter)
+        mock_hass.states.get = MagicMock(side_effect=_states({FLOOR_ENTITY: "30.0"}))
+        await inverter.async_stop_forcible()
+        assert FLOOR_ENTITY not in _calls_by_entity(mock_hass)
+
+
+class TestScheduleControlInterface:
+    """Der Executor steuert nur Treiber, die die Schnittstelle anbieten."""
+
+    def test_supports_schedule_control(self, inverter):
+        assert inverter.supports_schedule_control is True
+
+    async def test_ladelimit_wird_aus_ampere_umgerechnet(self, inverter, mock_hass):
+        """SolaX begrenzt ueber Strom, der Fahrplan rechnet in Leistung."""
+        mock_hass.states.get = MagicMock(
+            side_effect=_states({
+                MAX_CURRENT_ENTITY: "10.0",
+                "sensor.solax_inverter_battery_voltage_charge": "400.0",
+            })
+        )
+        assert await inverter.async_get_charge_limit_kw() == 4.0
+
+    async def test_ladelimit_none_wenn_nicht_lesbar(self, inverter, mock_hass):
+        mock_hass.states.get = MagicMock(side_effect=_states({}))
+        assert await inverter.async_get_charge_limit_kw() is None
+
+    def test_ladelimit_maximum_aus_attribut(self, inverter, mock_hass):
+        mock_hass.states.get = MagicMock(
+            side_effect=_states(
+                {
+                    MAX_CURRENT_ENTITY: "10.0",
+                    "sensor.solax_inverter_battery_voltage_charge": "400.0",
+                },
+                {MAX_CURRENT_ENTITY: {"max": 30}},
+            )
+        )
+        assert inverter.get_charge_limit_max_kw() == 12.0
+
+    def test_max_entladeleistung_aus_mode1_attribut(self, inverter, mock_hass):
+        """Guard 2 darf die Grenze der Mode-1-Entitaet nicht ueberschreiten."""
+        mock_hass.states.get = MagicMock(
+            side_effect=_states(
+                {ACTIVE_POWER_ENTITY: "0"},
+                {ACTIVE_POWER_ENTITY: {"max": 5000}},
+            )
+        )
+        assert inverter.get_max_discharge_power_kw() == 5.0
+
+    def test_entladeboden_als_planungsgrenze(self, inverter, mock_hass):
+        mock_hass.states.get = MagicMock(side_effect=_states({FLOOR_ENTITY: "30.0"}))
+        assert inverter.get_backup_reserve_soc_pct() == 30.0
+
+    async def test_eigener_boden_wird_nicht_als_geraetegrenze_gemeldet(
+        self, inverter, mock_hass
+    ):
+        """Waehrend der Entladung steht unser abgesenkter Wert im Geraet.
+        Gemeldet werden muss der Vorwert, sonst plant der Fahrplan mit jeder
+        Entladung tiefer."""
+        _install_noop_store(inverter)
+        mock_hass.states.get = MagicMock(side_effect=_states({FLOOR_ENTITY: "30.0"}))
+        await inverter.async_set_discharge(2.0, target_soc=20)
+
+        mock_hass.states.get = MagicMock(side_effect=_states({FLOOR_ENTITY: "15.0"}))
+        assert inverter.get_backup_reserve_soc_pct() == 30.0
+
+    def test_control_entities_nur_vorhandene(self, inverter, mock_hass):
+        mock_hass.states.get = MagicMock(
+            side_effect=_states({MAX_CURRENT_ENTITY: "10.0", FLOOR_ENTITY: "30.0"})
+        )
+        rollen = {r["role"] for r in inverter.get_control_entities()}
+        assert rollen == {"charge_limit", "backup_soc"}

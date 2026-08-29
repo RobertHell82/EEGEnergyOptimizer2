@@ -89,7 +89,7 @@ const INVERTER_LABELS = {
 
 // Vom Fahrplan gesteuerte Wechselrichter — alle anderen rechnen und zeigen
 // an ("nur Anzeige").
-const SCHEDULE_CONTROL_INVERTERS = ["fronius_gen24", "huawei_sun2000"];
+const SCHEDULE_CONTROL_INVERTERS = ["fronius_gen24", "huawei_sun2000", "solax_gen4"];
 
 // Summe der Aufteilungsschluessel — es zaehlt nur, was auch eine gewaehlte
 // Gemeinschaft hat. Der Prozentsatz bleibt im Formular stehen, wenn der
@@ -4597,13 +4597,14 @@ class EegOptimizerPanel extends HTMLElement {
       </p>
       <h3 style="margin-bottom:8px">Was du brauchst</h3>
       <ul style="line-height:1.8;margin-bottom:20px;padding-left:20px">
-        <li>Einen Fronius Gen24 oder Huawei SUN2000 mit Batteriespeicher</li>
+        <li>Einen Fronius Gen24, Huawei SUN2000 oder SolaX Gen4+ mit Batteriespeicher</li>
         <li>Eine PV-Prognose-Integration (Solcast Solar oder Forecast.Solar)</li>
       </ul>
       <h3 style="margin-bottom:8px">Getestete Setups</h3>
       <ul style="line-height:1.8;padding-left:20px">
         <li>Fronius Gen24 mit BYD Batteriespeicher</li>
         <li>Huawei SUN2000 mit LUNA2000 Batteriespeicher</li>
+        <li>SolaX Gen4+ mit Triple Power Batteriespeicher</li>
       </ul>`;
   }
 
@@ -4684,15 +4685,15 @@ class EegOptimizerPanel extends HTMLElement {
     const inverterDefs = [
       { key: "huawei_sun2000", label: "Huawei SUN2000", subtitle: "", detected: huaweiOk, badge: huaweiBadge, dialog: "huawei",
         logo: `<img src="https://brands.home-assistant.io/huawei_solar/logo.png" alt="Huawei" style="max-width:120px;max-height:60px;height:auto" onerror="this.style.display='none'">` },
-      { key: "solax_gen4", label: "SolaX Gen4+", subtitle: "Gen4, Gen5, Gen6 · nur Anzeige — Steuerung derzeit nur Fronius und Huawei", detected: solaxOk, badge: solaxBadge, dialog: "solax",
+      { key: "solax_gen4", label: "SolaX Gen4+", subtitle: "Gen4, Gen5, Gen6", detected: solaxOk, badge: solaxBadge, dialog: "solax",
         logo: `<span style="font-size:32px">SolaX</span>` },
-      { key: "solaredge_storedge", label: "SolarEdge", subtitle: "StorEdge Batteriespeicher · nur Anzeige — Steuerung derzeit nur Fronius und Huawei", detected: solaredgeOk, badge: solaredgeBadge, dialog: "solaredge",
+      { key: "solaredge_storedge", label: "SolarEdge", subtitle: "StorEdge Batteriespeicher · nur Anzeige — Steuerung derzeit nur Fronius, Huawei und SolaX", detected: solaredgeOk, badge: solaredgeBadge, dialog: "solaredge",
         logo: `<img src="https://brands.home-assistant.io/_/solaredge/logo.png" alt="SolarEdge" style="max-width:120px;max-height:60px;height:auto" onerror="this.outerHTML='<span style=font-size:32px>SolarEdge</span>'">` },
       { key: "fronius_gen24", label: "Fronius Gen24", subtitle: "mit BYD Batteriespeicher", detected: froniusOk, badge: froniusBadge, dialog: "fronius",
         logo: `<img src="https://brands.home-assistant.io/fronius/logo.png" alt="Fronius" style="max-width:120px;max-height:60px;height:auto" onerror="this.outerHTML='<span style=font-size:32px>Fronius</span>'">` },
-      { key: "kostal_plenticore", label: "Kostal Plenticore", subtitle: "mit BYD Batteriespeicher · nur Anzeige — Steuerung derzeit nur Fronius und Huawei", detected: kostalOk, badge: kostalBadge, dialog: "kostal",
+      { key: "kostal_plenticore", label: "Kostal Plenticore", subtitle: "mit BYD Batteriespeicher · nur Anzeige — Steuerung derzeit nur Fronius, Huawei und SolaX", detected: kostalOk, badge: kostalBadge, dialog: "kostal",
         logo: `<img src="https://brands.home-assistant.io/kostal_plenticore/logo.png" alt="Kostal" style="max-width:120px;max-height:60px;height:auto" onerror="this.outerHTML='<span style=font-size:32px>Kostal</span>'">` },
-      { key: "sma_smart_energy", label: "SMA Smart Energy", subtitle: "Tripower/Sunny Boy mit Batteriespeicher · nur Anzeige — Steuerung derzeit nur Fronius und Huawei", detected: smaOk, badge: smaBadge, dialog: "sma",
+      { key: "sma_smart_energy", label: "SMA Smart Energy", subtitle: "Tripower/Sunny Boy mit Batteriespeicher · nur Anzeige — Steuerung derzeit nur Fronius, Huawei und SolaX", detected: smaOk, badge: smaBadge, dialog: "sma",
         logo: `<img src="https://brands.home-assistant.io/sma/logo.png" alt="SMA" style="max-width:120px;max-height:60px;height:auto" onerror="this.outerHTML='<span style=font-size:32px>SMA</span>'">` },
     ].filter(inv =>
       inv.key !== "kostal_plenticore" || KOSTAL_UI_ENABLED || kostalSelected
@@ -5315,7 +5316,7 @@ class EegOptimizerPanel extends HTMLElement {
     if (SCHEDULE_CONTROL_INVERTERS.includes(inverterType)) return "";
     return `<div class="help-text" style="margin-bottom:16px;padding:10px 12px;background:var(--info-color,#2196f3)18;border-left:3px solid var(--info-color,#2196f3);border-radius:4px">
            <ha-icon icon="mdi:information-outline" style="--mdc-icon-size:16px;vertical-align:middle"></ha-icon>
-           Für diesen Wechselrichter wird der Optimierungsplan nur berechnet und angezeigt — die Steuerung ist derzeit nur für Fronius und Huawei verfügbar.
+           Für diesen Wechselrichter wird der Optimierungsplan nur berechnet und angezeigt — die Steuerung ist derzeit nur für Fronius, Huawei und SolaX verfügbar.
          </div>`;
   }
 

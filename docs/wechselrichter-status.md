@@ -5,10 +5,10 @@ unterstützt wird. README und Doku verweisen hierher, statt eigene Listen zu
 führen.
 
 > [!IMPORTANT]
-> **Unterstützt werden derzeit Fronius Gen24 und Huawei SUN2000.**
-> Nur diese beiden steuert der Fahrplan, und nur sie stehen im
-> Einrichtungsassistenten zur Auswahl. Fronius ist neu dazugekommen und
-> im Feldtest — siehe unten.
+> **Unterstützt werden derzeit Fronius Gen24, Huawei SUN2000 und SolaX Gen4+.**
+> Nur diese drei steuert der Fahrplan, und nur sie stehen im
+> Einrichtungsassistenten zur Auswahl. Fronius und SolaX sind neu
+> dazugekommen und im Feldtest — siehe unten.
 
 ## Übersicht
 
@@ -19,7 +19,7 @@ führen.
 | Kostal Plenticore | vorhanden | nein | nein |
 | SMA Smart Energy | vorhanden | nein | nein |
 | SolarEdge StorEdge | vorhanden | nein | nein |
-| SolaX Gen4+ | vorhanden | nein | nein |
+| **SolaX Gen4+** | vorhanden | **ja** (Feldtest) | **ja** |
 
 Die Treiber der übrigen Wechselrichter sind **vollständig erhalten und nur
 stillgelegt** — nichts davon wurde entfernt. Sie werden Schritt für Schritt
@@ -146,11 +146,24 @@ Guide: [solaredge.md](guides/solaredge.md)
 
 ### SolaX Gen4+
 
-Steuerung über die
+**Freigegeben, im Feldtest.** Steuerung über die
 [SolaX Modbus](https://github.com/wills106/homeassistant-solax-modbus)
-Integration (RemoteControl Mode 1). Bekannte Eigenheit: Der Wechselrichter
-stoppt die Entladung bei Erreichen von `selfuse_discharge_min_soc` auch im
-Mode 1, und der Treiber schreibt dieses Register nicht — der geplante
-Ziel-Ladestand wird darunter nicht erreicht. Das ist vor einer Freigabe zu
-lösen.
+Integration (RemoteControl Mode 1).
+
+**Entladeboden:** Der Wechselrichter stoppt die Entladung bei
+`selfuse_discharge_min_soc` — auch mitten in einer befohlenen Zwangsentladung,
+ohne das zu melden. Der Treiber senkt den Wert deshalb für die Dauer der
+Entladung ab und schreibt danach den Vorwert zurück; der Fahrplan kennt ihn
+außerdem als Untergrenze und plant nicht tiefer. Es ist also **keine** manuelle
+Einstellung nötig. Wer den Wert im SolaX-Portal ändert, verschiebt damit die
+Untergrenze der Planung — nach unten bringt das Ertrag, nach oben kostet es
+welchen.
+
+**Ladelimit in Ampere:** SolaX begrenzt die Ladung über einen Strom, der
+Fahrplan rechnet in Leistung. Umgerechnet wird über die Batteriespannung
+(Rückfallwert 400 V, wenn der Spannungssensor fehlt) — bei einer fehlenden
+Spannung ist das Limit entsprechend ungenau.
+
+Offen: Feldtest der Nachführung, insbesondere ob der abgesenkte Entladeboden
+am Gerät greift und nach dem Stopp sauber zurückkommt.
 Guide: [solax.md](guides/solax.md)

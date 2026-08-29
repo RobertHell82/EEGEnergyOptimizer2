@@ -10,6 +10,16 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
+## [Unveröffentlicht]
+
+### Hinzugefügt
+
+- **SolaX Gen4+ wird wieder gesteuert.** Der Treiber bietet die vollständige Fahrplan-Steuerschnittstelle an und ist im Einrichtungsassistenten wieder auswählbar.
+
+### Behoben
+
+- **SolaX: Entladung blieb am Entladeboden des Geräts stehen.** Der Wechselrichter stoppt die Batterieentladung bei `selfuse_discharge_min_soc` — auch mitten in einer befohlenen Zwangsentladung, ohne das zu melden: Der Befehl läuft weiter, die Batterie liefert 0,00 kW. An einer Anlage gemessen: 40 Sekunden Einspeisung, dann 1 h 47 Stillstand, während das Haus 2,6 kW aus dem Netz zog. Der Treiber senkt den Wert jetzt für die Dauer der Entladung ab und schreibt danach den Vorwert zurück; der Fahrplan kennt ihn außerdem als Untergrenze und plant nicht tiefer.
+
 ## [2.0.3-devfronius.3] - 2026-08-29
 
 ### Behoben
