@@ -10,6 +10,14 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
+## [2.0.3-devfronius.5] - 2026-08-29
+
+### Geändert
+
+- **Pause bis Ladestand.** Die Pause kann jetzt statt für eine Dauer auch „bis Ladestand xx %" gesetzt werden (50 bis 100 %): Die Steuerung setzt aus, die Batterie lädt in der Wechselrichter-Automatik aus dem PV-Überschuss, und sobald der gemessene Ladestand das Ziel erreicht, übernimmt der Fahrplan wieder — der Fall „Auto kommt um 14 Uhr, Batterie soll bis dahin voll sein". Als Sicherheitsnetz endet auch eine Ladestand-Pause spätestens nach 48 h (trüber Tag, Sensor ausgefallen). Läuft nach einem Neustart weiter und wird dann korrekt beendet. Im Service `eeg_energy_optimizer.pause` heißt das Feld `bis_soc_pct`; `stunden` ist jetzt optional (beides zusammen = was zuerst eintritt).
+- **Reserve entfernt.** Der Eingriff „Reserve" (befristet höherer Mindest-Ladestand) ist wieder weg — er hielt nur zurück, lud aber nicht aktiv nach, und genau das wollte man in der Praxis. Die Pause bis Ladestand deckt den Fall ab. Der Service `eeg_energy_optimizer.reserve` entfällt; eine noch gespeicherte Reserve wird beim Update still verworfen.
+- **Kürzere Begründung bei negativem Optimierungs-Vorteil.** Höchstens zwei Posten, je ein Satz; das Gewitter-Beispiel aus den Texten ist raus.
+
 ## [2.0.3-devfronius.4] - 2026-08-29
 
 ### Hinzugefügt
