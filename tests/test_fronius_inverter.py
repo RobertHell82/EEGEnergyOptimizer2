@@ -1055,3 +1055,65 @@ class TestScheduleControlInterface:
     def test_no_control_entities(self, inverter):
         """Der Gen24 wird über Modbus gestellt, nicht über HA-Entitäten."""
         assert inverter.get_control_entities() == []
+
+
+class TestBackupReserve:
+    """MinRsvPct als Planungs-Untergrenze — ohne sie plant der Fahrplan
+    Entladungen, die das Gerät verweigert."""
+
+    def test_unknown_before_first_read(self, mock_hass, fronius_config):
+        inv = FroniusInverter(mock_hass, fronius_config)
+        assert inv.get_backup_reserve_soc_pct() is None
+
+    async def test_read_with_wchamax_block(self, inverter, mock_modbus_client):
+        """Der tägliche WChaMax-Block reicht bis MinRsvPct — ein Roundtrip."""
+        inverter._wchamax = None
+        inverter._wchamax_date = None
+        inverter._sf_loaded = True
+        # WChaMax, WChaGra, WDisChaGra, StorCtl_Mod, VAChaMax, MinRsvPct
+        mock_modbus_client.read_holding_registers = AsyncMock(
+            return_value=_ok_response([5000, 0, 0, 0, 0, 1500])
+        )
+        await inverter._read_wchamax()
+        assert inverter.get_backup_reserve_soc_pct() == 15.0
+
+    async def test_short_response_does_not_crash(self, inverter, mock_modbus_client):
+        """Antwortet das Gerät kürzer als angefragt, bleibt WChaMax gültig."""
+        inverter._wchamax = None
+        inverter._wchamax_date = None
+        inverter._sf_loaded = True
+        mock_modbus_client.read_holding_registers = AsyncMock(
+            return_value=_ok_response([5000])
+        )
+        assert await inverter._read_wchamax() == 5000
+        assert inverter.get_backup_reserve_soc_pct() is None
+
+    async def test_own_floor_is_not_reported_as_device_reserve(
+        self, inverter, mock_modbus_client
+    ):
+        """Während der Entladung steht unser abgesenkter Floor im Register.
+        Gemeldet werden muss trotzdem der Vorwert — sonst wandert die
+        Planungsgrenze mit unserem eigenen Eingriff mit."""
+        inverter._sf_loaded = True
+        inverter._minrsvpct_idle = 1500  # 15 % Ruhewert
+        mock_modbus_client.read_holding_registers = AsyncMock(
+            return_value=_ok_response([1500])
+        )
+        await inverter.async_set_discharge(2.5, target_soc=20)
+        inverter._cancel_keepalive()
+        # Der Treiber hat gerade MinRsvPct auf 15 % (= 20 − 5) abgesenkt …
+        assert inverter._minrsvpct_pre_discharge == 1500
+        # … gemeldet wird der Vorwert, nicht der Floor.
+        assert inverter.get_backup_reserve_soc_pct() == 15.0
+
+    async def test_idle_value_not_overwritten_during_discharge(self, inverter):
+        """Ein Read mitten in der Entladung darf den Ruhewert nicht kippen."""
+        inverter._minrsvpct_idle = 1500
+        inverter._active_command = {"kind": "discharge", "power_kw": 2.5, "target_soc": 20}
+        inverter._note_idle_minrsvpct(500)
+        assert inverter._minrsvpct_idle == 1500
+
+    async def test_idle_value_updated_when_not_discharging(self, inverter):
+        inverter._active_command = {"kind": "charge_limit", "power_kw": 0}
+        inverter._note_idle_minrsvpct(500)
+        assert inverter._minrsvpct_idle == 500

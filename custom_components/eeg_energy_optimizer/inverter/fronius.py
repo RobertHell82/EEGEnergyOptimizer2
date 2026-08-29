@@ -235,6 +235,10 @@ class FroniusInverter(InverterBase):
         #   {"kind": "discharge", "power_kw": float, "target_soc": float|None}
         self._active_command: dict | None = None
         self._keepalive_task: asyncio.Task | None = None
+        # Zuletzt im Ruhezustand gelesener MinRsvPct (Rohwert). Der Fahrplan
+        # braucht ihn als Untergrenze; während einer Entladung steht dort
+        # unser abgesenkter Floor, deshalb nur außerhalb aktualisieren.
+        self._minrsvpct_idle: int | None = None
         # Cached MinRsvPct value (raw register, SF -2) read before
         # async_set_discharge() overwrites it. Restored by
         # async_stop_forcible() so we do not leave the inverter with
@@ -513,15 +517,24 @@ class FroniusInverter(InverterBase):
         try:
             await self._read_scale_factors()
 
+            # Ein Block bis MinRsvPct (+5): der Mindest-Ladestand kostet
+            # keinen zweiten Roundtrip und der Fahrplan braucht ihn als
+            # Untergrenze (get_backup_reserve_soc_pct).
             result = await self._client.read_holding_registers(
-                address=self._model124_base + _OFFSET_WCHAMAX, count=1,
+                address=self._model124_base + _OFFSET_WCHAMAX,
+                count=_OFFSET_MINRSVPCT - _OFFSET_WCHAMAX + 1,
                 **_slave_kw(self._client, self._slave_id),
             )
             if result.isError():
                 _LOGGER.error("Fronius: failed to read WChaMax")
                 return None
 
-            raw = int(round(result.registers[0] * (10 ** self._sf_wchamax)))
+            regs = result.registers
+            # Kurze Antwort (Gerät liefert weniger als angefragt): WChaMax
+            # steht immer an Position 0, der Rest ist Beifang.
+            if len(regs) > _OFFSET_MINRSVPCT:
+                self._note_idle_minrsvpct(regs[_OFFSET_MINRSVPCT])
+            raw = int(round(regs[0] * (10 ** self._sf_wchamax)))
             if raw == 0 or raw > _WCHAMAX_SANITY_LIMIT:
                 # Implausible value — likely a corrupted Modbus response or
                 # wrong SunSpec model layout. Don't cache, force a re-read on
@@ -939,6 +952,39 @@ class FroniusInverter(InverterBase):
             self._close_client()
             return False
 
+    def _note_idle_minrsvpct(self, raw: int) -> None:
+        """Gelesenen MinRsvPct als Ruhewert merken — nur ohne Entladung.
+
+        Während einer erzwungenen Entladung steht im Register unser eigener,
+        abgesenkter Floor (Ziel-SOC − Sicherheitsabstand). Den als
+        Geräte-Reserve zu melden würde dem Fahrplan eine Untergrenze
+        vorgaukeln, die es ohne unseren Eingriff gar nicht gibt.
+        """
+        command = self._active_command
+        if command is not None and command.get("kind") == "discharge":
+            return
+        self._minrsvpct_idle = int(raw)
+
+    def get_backup_reserve_soc_pct(self) -> float | None:
+        """Vom Gerät zurückgehaltener Mindest-Ladestand (MinRsvPct) in %.
+
+        Quelle ist der Ruhewert: läuft gerade eine Entladung, ist das der
+        beim Start gesicherte Vorwert, sonst der zuletzt gelesene. Synchron,
+        also nur aus dem Cache — vor dem ersten Modbus-Zugriff None, der
+        Fahrplan nimmt dann allein die konfigurierte Blackout-Reserve.
+
+        Der Wert wird beim täglichen WChaMax-Block und bei jedem Blick in
+        die Transparenz-Ansicht aufgefrischt. Ändert jemand die Reserve im
+        Fronius-Webinterface, greift das also erst am nächsten Tag oder nach
+        einem Neustart — er ändert sich praktisch nie im Betrieb.
+        """
+        raw = self._minrsvpct_pre_discharge
+        if raw is None:
+            raw = self._minrsvpct_idle
+        if raw is None:
+            return None
+        return raw * (10 ** self._sf_minrsvpct)
+
     # ------------------------------------------------------------------
     # Fahrplan-Steuerschnittstelle (Schedule-Executor)
     # ------------------------------------------------------------------
@@ -1071,6 +1117,7 @@ class FroniusInverter(InverterBase):
                 "value": round(out_pct, 1), "unit": "%", "role": "discharge_limit",
             })
 
+        self._note_idle_minrsvpct(_at(_OFFSET_MINRSVPCT))
         rows.append({
             "label": "Mindest-Ladestand (MinRsvPct)",
             "value": round(

@@ -16,6 +16,7 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 
 - **Fronius: Sicherheitsnetz gegen eingefrorene Batterie.** Ladesperre und Entladung werden jetzt mit der Fronius-Rückfallzeit (`InOutWRte_RvrtTms`, 5 Minuten) scharfgeschaltet und im Minutentakt aufgefrischt. Fällt Home Assistant mitten in einem Fahrplan-Slot aus, beendet der Wechselrichter den erzwungenen Betrieb selbst und kehrt zu seiner eigenen Batteriesteuerung zurück — bisher blieb die Batterie blockiert, bis jemand eingriff. Damit haben Fronius, Kostal und SMA dasselbe Failsafe-Verhalten. Hinweis: Ein zweites Programm, das denselben Wechselrichter über Modbus abfragt, hält die Rückfallzeit mit am Leben.
 
+- **Fronius: Mindest-Ladestand des Geräts fließt in den Fahrplan ein.** `MinRsvPct` wird jetzt als Untergrenze zurückgemeldet (wie der Notstrom-Ladestand bei Huawei) — sonst plant der Fahrplan Entladungen, die der Wechselrichter verweigert, und Plan und Ist laufen dauerhaft auseinander.
 - **Fronius Gen24 wird jetzt gesteuert, nicht nur angezeigt.** Der Treiber bietet die vollständige Fahrplan-Steuerschnittstelle an (Ladelimit lesen für Guard 1, Hardware-Obergrenzen für beide Guards, Stellgrößen für die Transparenz-Ansicht) und ist im Einrichtungsassistenten wieder auswählbar — gemeinsam mit Huawei. Die übrigen Wechselrichter bleiben ausgeblendet.
 
 ### Geändert
