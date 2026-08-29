@@ -6467,9 +6467,13 @@ class EegOptimizerPanel extends HTMLElement {
       const raw = parseFloat(r.value);
       const isW = (r.unit || "").toUpperCase() === "W";
       const istKw = isNaN(raw) ? null : (isW ? raw / 1000 : raw);
+      // kW auf zwei Stellen wie die Soll-Spalte — sonst steht "1,5 kW"
+      // neben "1,50 kW" und liest sich wie eine Abweichung.
+      const einheit = isW ? "kW" : (r.unit || "");
+      const nachkomma = (isW || einheit.toLowerCase() === "kw") ? 2 : 1;
       const istText = isNaN(raw)
         ? this._escapeHtml(String(r.value ?? "?"))
-        : `${fmtDe(isW ? istKw : raw, isW ? 2 : 1)} ${isW ? "kW" : (r.unit || "")}`;
+        : `${fmtDe(isW ? istKw : raw, nachkomma)} ${einheit}`;
       let soll = "—";
       let abweichung = false;
       if (r.written != null) {
@@ -6484,7 +6488,7 @@ class EegOptimizerPanel extends HTMLElement {
       const colour = abweichung ? "var(--warning-color,#ff9800)" : "inherit";
       return `<tr>
         <td style="padding:4px 10px 4px 0">${this._escapeHtml(r.label || "")}
-          <div style="font-size:11px;color:var(--secondary-text-color);font-family:monospace;word-break:break-all">${this._escapeHtml(r.entity_id)}</div>
+          ${r.entity_id ? `<div style="font-size:11px;color:var(--secondary-text-color);font-family:monospace;word-break:break-all">${this._escapeHtml(r.entity_id)}</div>` : ""}
         </td>
         <td style="padding:4px 10px 4px 0;font-variant-numeric:tabular-nums;color:${colour}">${istText}</td>
         <td style="padding:4px 0;font-variant-numeric:tabular-nums;color:var(--secondary-text-color)">${soll}</td>
