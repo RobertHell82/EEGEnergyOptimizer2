@@ -5885,7 +5885,7 @@ class EegOptimizerPanel extends HTMLElement {
       <div class="summary-section">
         <h3>Wechselrichter</h3>
         ${row("Typ", INVERTER_LABELS[d.inverter_type] || d.inverter_type)}
-        ${row("Steuerung", gesteuert ? "Aktiv (Ladelimit + Entladung)" : "Nur Anzeige — Steuerung derzeit nur Huawei")}
+        ${row("Steuerung", gesteuert ? "Aktiv (Ladelimit + Entladung)" : "Nur Anzeige — Steuerung derzeit nur Fronius, Huawei und SolaX")}
       </div>
 
       <div class="summary-section">
@@ -6400,7 +6400,7 @@ class EegOptimizerPanel extends HTMLElement {
     }
     if (!gesteuert) {
       warnings += warnRow("mdi:information-outline", "var(--info-color, #2196f3)",
-        "Dieser Wechselrichter wird nicht gesteuert \u2014 der Optimierungsplan ist nur Anzeige (Steuerung derzeit nur Huawei).");
+        "Dieser Wechselrichter wird nicht gesteuert \u2014 der Optimierungsplan ist nur Anzeige (Steuerung derzeit nur Fronius, Huawei und SolaX).");
     }
 
     const trenner = " " + String.fromCharCode(0x00B7) + " ";
