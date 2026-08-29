@@ -1,14 +1,19 @@
 pause:
   name: Pause
   description: >-
-    Steuerung für eine begrenzte Zeit aussetzen. Der Wechselrichter läuft in
-    seiner eigenen Eigenverbrauchs-Automatik; danach übernimmt der Fahrplan
-    wieder von selbst. Überlebt einen Neustart von Home Assistant.
+    Steuerung aussetzen. Der Wechselrichter läuft in seiner eigenen
+    Eigenverbrauchs-Automatik — die Batterie lädt wie gewohnt aus dem
+    PV-Überschuss; danach übernimmt der Fahrplan wieder von selbst. Endet nach
+    der angegebenen Dauer oder sobald die Batterie den angegebenen Ladestand
+    erreicht hat (mindestens eines von beiden angeben; beides zusammen =
+    was zuerst eintritt). Überlebt einen Neustart von Home Assistant.
   fields:
     stunden:
       name: Dauer
-      description: Dauer der Pause in Stunden (0,25 bis 48).
-      required: true
+      description: >-
+        Dauer der Pause in Stunden (0,25 bis 48). Ohne Angabe gilt bei einer
+        Pause bis Ladestand die Obergrenze von 48 h als Sicherheitsnetz.
+      required: false
       example: 4
       selector:
         number:
@@ -16,43 +21,20 @@ pause:
           max: 48
           step: 0.25
           unit_of_measurement: h
-    entry_id:
-      name: Konfigurationseintrag
-      description: Nur nötig, wenn mehrere EEG Energy Optimizer eingerichtet sind.
+    bis_soc_pct:
+      name: Bis Ladestand
+      description: >-
+        Die Pause endet, sobald die Batterie diesen Ladestand erreicht hat
+        (50 bis 100 %). Typischer Fall: „Auto lädt nachher — Batterie soll bis
+        dahin voll werden statt in die Gemeinschaft zu entladen."
       required: false
-      selector:
-        text:
-
-reserve:
-  name: Reserve
-  description: >-
-    Für eine begrenzte Zeit mehr Energie in der Batterie halten. Der Fahrplan
-    optimiert weiter, entlädt aber nicht unter den angegebenen Ladestand —
-    die bessere Wahl gegenüber einer Pause, wenn nur ein Puffer gebraucht wird
-    (z. B. Elektroauto laden, Gäste).
-  fields:
-    min_soc_pct:
-      name: Mindest-Ladestand
-      description: Ladestand in Prozent, unter den nicht entladen wird (5 bis 90).
-      required: true
-      example: 60
+      example: 80
       selector:
         number:
-          min: 5
-          max: 90
+          min: 50
+          max: 100
           step: 5
           unit_of_measurement: "%"
-    stunden:
-      name: Dauer
-      description: Dauer der Reserve in Stunden (0,25 bis 48).
-      required: true
-      example: 6
-      selector:
-        number:
-          min: 0.25
-          max: 48
-          step: 0.25
-          unit_of_measurement: h
     entry_id:
       name: Konfigurationseintrag
       description: Nur nötig, wenn mehrere EEG Energy Optimizer eingerichtet sind.
@@ -61,8 +43,8 @@ reserve:
         text:
 
 aufheben:
-  name: Pause/Reserve aufheben
-  description: Eine laufende Pause oder Reserve sofort beenden.
+  name: Pause aufheben
+  description: Eine laufende Pause sofort beenden.
   fields:
     entry_id:
       name: Konfigurationseintrag

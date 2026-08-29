@@ -416,12 +416,13 @@ class EegOptimizerPanel extends HTMLElement {
     this._bilanzBusy = false;
     this._bilanzGeholt = 0;
     this._bilanzDetailsOpen = false;
-    // Befristete Eingriffe (Pause / Reserve) — Zustand vom Backend, Dialog
-    // und Eingabewerte lokal. Ohne Pause/Reserve: null.
+    // Befristeter Eingriff (Pause) — Zustand vom Backend, Dialog und
+    // Eingabewerte lokal. Ohne Pause: null.
     this._override = null;
-    this._overrideDialog = null;      // "pause" | "reserve" | null
+    this._overrideDialog = null;      // "pause" | null
+    this._overrideModus = "dauer";    // Endbedingung: "dauer" | "soc"
     this._overrideStunden = 4;
-    this._overridePct = 60;
+    this._overridePct = 80;
     this._overrideBusy = false;
 
     this._settingsData = {};
@@ -616,7 +617,7 @@ class EegOptimizerPanel extends HTMLElement {
           return;
         }
         if (field === "override_pct") {
-          this._overridePct = parseFloat(target.value) || 60;
+          this._overridePct = parseFloat(target.value) || 80;
           return;
         }
         if (field.startsWith("settings_")) {
@@ -1369,7 +1370,11 @@ class EegOptimizerPanel extends HTMLElement {
         break;
       }
       case "override-open":
-        this._overrideDialog = dataset?.art === "reserve" ? "reserve" : "pause";
+        this._overrideDialog = "pause";
+        this._render();
+        break;
+      case "override-modus":
+        this._overrideModus = dataset?.modus === "soc" ? "soc" : "dauer";
         this._render();
         break;
       case "override-close":
@@ -1385,8 +1390,9 @@ class EegOptimizerPanel extends HTMLElement {
         if (!art || this._overrideBusy) break;
         this._overrideBusy = true;
         this._render();
-        const msg = { type: "eeg_optimizer/set_override", art, stunden: this._overrideStunden };
-        if (art === "reserve") msg.min_soc_pct = this._overridePct;
+        const msg = { type: "eeg_optimizer/set_override" };
+        if (this._overrideModus === "soc") msg.bis_soc_pct = this._overridePct;
+        else msg.stunden = this._overrideStunden;
         this._hass.callWS(msg).then(res => {
           this._override = res && res.aktiv ? res : null;
           this._overrideDialog = null;
@@ -6362,7 +6368,7 @@ class EegOptimizerPanel extends HTMLElement {
       });
   }
 
-  /* ── Befristete Eingriffe: Pause / Reserve ─────────────────────── */
+  /* ── Befristeter Eingriff: Pause ────────────────────────────────── */
 
   // Ablaufzeit lesbar machen — aus "bis" gerechnet, nicht aus dem
   // Backend-Wert, damit der Banner zwischen zwei Abfragen nicht steht.
@@ -6377,18 +6383,21 @@ class EegOptimizerPanel extends HTMLElement {
     return `bis ${heute ? "" : bis.toLocaleDateString("de-DE", { weekday: "short" }) + " "}${uhr} Uhr (noch ${rest})`;
   }
 
+  // Kapazität für die kWh-Angabe neben Prozentwerten — aus dem Sensor,
+  // sonst aus der Konfiguration; ohne beides null.
+  _batterieKapKwh() {
+    return this._readFloat(this._config?.battery_capacity_sensor)
+      ?? (parseFloat(this._config?.battery_capacity_kwh) || null);
+  }
+
   _renderOverrideButtons() {
     if (!this._config?.setup_complete) return "";
     const aktiv = !!this._override;
     return `
       <div class="override-btns">
-        <button class="override-btn${aktiv && this._override.art === "pause" ? " active" : ""}"
-                data-action="override-open" data-art="pause" title="Steuerung für einige Stunden aussetzen">
+        <button class="override-btn${aktiv ? " active" : ""}"
+                data-action="override-open" title="Steuerung aussetzen — für eine Dauer oder bis die Batterie einen Ladestand erreicht hat">
           <ha-icon icon="mdi:pause-circle-outline" style="--mdc-icon-size:16px"></ha-icon><span>Pause</span>
-        </button>
-        <button class="override-btn${aktiv && this._override.art === "reserve" ? " active" : ""}"
-                data-action="override-open" data-art="reserve" title="Für einige Stunden mehr Energie in der Batterie halten">
-          <ha-icon icon="mdi:battery-lock" style="--mdc-icon-size:16px"></ha-icon><span>Reserve</span>
         </button>
       </div>`;
   }
@@ -6396,68 +6405,80 @@ class EegOptimizerPanel extends HTMLElement {
   _renderOverrideBanner() {
     const ovr = this._override;
     if (!ovr) return "";
-    const pause = ovr.art === "pause";
-    const farbe = pause ? "#ff9800" : "var(--info-color,#2196f3)";
-    const icon = pause ? "mdi:pause-circle" : "mdi:battery-lock";
-    const text = pause
-      ? `Pause ${this._overrideRestText(ovr)} — der Wechselrichter läuft in seiner Automatik, danach übernimmt der Fahrplan wieder.`
-      : `Reserve ${Math.round(ovr.min_soc_pct)} %${(() => { const k = this._readFloat(this._config?.battery_capacity_sensor) ?? (parseFloat(this._config?.battery_capacity_kwh) || null); return k ? ` (≈ ${fmtDe(k * ovr.min_soc_pct / 100, 1)} kWh)` : ""; })()} ${this._overrideRestText(ovr)} — der Fahrplan entlädt nicht darunter.`;
+    const farbe = "#ff9800";
+    let text;
+    if (ovr.bis_soc_pct != null) {
+      const socNow = this._readFloat(this._config?.battery_soc_sensor);
+      const kap = this._batterieKapKwh();
+      const ziel = Math.round(ovr.bis_soc_pct);
+      const kwh = kap ? ` (≈ ${fmtDe(kap * ziel / 100, 1)} kWh)` : "";
+      const jetzt = socNow != null ? `, aktuell ${Math.round(socNow)} %` : "";
+      text = `Pause bis Ladestand ${ziel} %${kwh}${jetzt} — der Wechselrichter läuft in seiner Automatik, danach übernimmt der Fahrplan wieder.`;
+    } else {
+      text = `Pause ${this._overrideRestText(ovr)} — der Wechselrichter läuft in seiner Automatik, danach übernimmt der Fahrplan wieder.`;
+    }
     return `
       <div style="display:flex;align-items:center;gap:8px;background:color-mix(in srgb, ${farbe} 12%, transparent);border-left:3px solid ${farbe};border-radius:6px;padding:8px 12px;margin-bottom:12px;font-size:13px;color:var(--primary-text-color)">
-        <ha-icon icon="${icon}" style="--mdc-icon-size:18px;color:${farbe};flex-shrink:0"></ha-icon>
+        <ha-icon icon="mdi:pause-circle" style="--mdc-icon-size:18px;color:${farbe};flex-shrink:0"></ha-icon>
         <span style="flex:1;min-width:0">${text}</span>
         <button class="override-btn" data-action="override-clear" ${this._overrideBusy ? "disabled" : ""} style="flex-shrink:0">aufheben</button>
       </div>`;
   }
 
   _renderOverrideDialog() {
-    const art = this._overrideDialog;
-    if (!art) return "";
-    const pause = art === "pause";
+    if (!this._overrideDialog) return "";
     const busy = this._overrideBusy;
+    const soc = this._overrideModus === "soc";
     const stunden = this._overrideStunden;
-    const preset = (h) => `<button class="override-btn${stunden === h ? " active" : ""}" data-action="override-preset" data-stunden="${h}">${h} h</button>`;
+    const pct = this._overridePct;
     const socNow = this._readFloat(this._config?.battery_soc_sensor);
-    // Prozent bleibt die Eingabe (so denkt der Fahrplan), die kWh daneben
-    // machen die Zahl greifbar — Kapazitaet aus dem Sensor, sonst aus der
-    // Konfiguration; ohne beides entfaellt die Angabe.
-    const kapKwh = this._readFloat(this._config?.battery_capacity_sensor)
-      ?? (parseFloat(this._config?.battery_capacity_kwh) || null);
-    const kwhText = (pct) => kapKwh ? `≈ ${fmtDe(kapKwh * pct / 100, 1)} kWh` : "";
+    const kapKwh = this._batterieKapKwh();
+    const kwhText = (p) => kapKwh ? `≈ ${fmtDe(kapKwh * p / 100, 1)} kWh` : "";
+    const preset = (h) => `<button class="override-btn${stunden === h ? " active" : ""}" data-action="override-preset" data-stunden="${h}">${h} h</button>`;
+    const modusBtn = (m, label) => `<button class="override-btn${(soc ? "soc" : "dauer") === m ? " active" : ""}" data-action="override-modus" data-modus="${m}" style="flex:1;justify-content:center;padding:9px 10px">${label}</button>`;
     const input = (field, val, min, max, step, unit) => `
       <span style="display:inline-flex;align-items:center;gap:6px">
         <input type="number" inputmode="decimal" data-field="${field}" min="${min}" max="${max}" step="${step}" value="${val}"
                style="width:90px;border-radius:8px;border:1px solid var(--divider-color);padding:9px 10px;background:var(--card-background-color);color:var(--primary-text-color);font-size:15px;text-align:right">
         <span style="color:var(--secondary-text-color)">${unit}</span>
       </span>`;
-    const erklaerung = pause
-      ? "Der Fahrplan setzt aus, der Wechselrichter läuft in seiner eigenen Eigenverbrauchs-Automatik. Nach Ablauf übernimmt der Fahrplan von selbst wieder — auch nach einem Neustart."
-      : "Der Fahrplan optimiert weiter, entlädt die Batterie aber nicht unter diesen Ladestand. Die bessere Wahl gegenüber einer Pause, wenn nur ein Puffer gebraucht wird — etwa fürs Elektroauto.";
-    return `
-      <div class="dialog-overlay">
-        <div class="dialog-card" style="max-width:440px">
-          <h3 style="margin:0 0 6px;display:flex;align-items:center;gap:8px">
-            <ha-icon icon="${pause ? "mdi:pause-circle-outline" : "mdi:battery-lock"}" style="--mdc-icon-size:22px;color:var(--primary-color,#03a9f4)"></ha-icon>
-            ${pause ? "Pause" : "Reserve"}
-          </h3>
-          <p style="color:var(--secondary-text-color);font-size:13px;margin:0 0 14px;line-height:1.5">${erklaerung}</p>
-          ${pause ? "" : `
-          <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:12px;font-size:15px">
-            <span>Mindest-Ladestand${socNow != null ? ` <small style="color:var(--secondary-text-color)">(aktuell ${Math.round(socNow)} %${kapKwh ? `, ${kwhText(socNow)}` : ""})</small>` : ""}</span>
-            <span style="display:inline-flex;flex-direction:column;align-items:flex-end;gap:2px">
-              ${input("override_pct", this._overridePct, 5, 90, 5, "%")}
-              ${kapKwh ? `<small style="color:var(--secondary-text-color)">${kwhText(this._overridePct)} von ${fmtDe(kapKwh, 1)} kWh</small>` : ""}
-            </span>
-          </div>`}
+    // Ziel schon erreicht? Dann würde die Pause im nächsten Takt sofort
+    // wieder enden — lieber gleich sagen als einen leeren Klick zulassen.
+    const zielErreicht = soc && socNow != null && socNow >= pct;
+    const dauerBlock = `
           <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;font-size:15px">
             <span>Dauer</span>
             ${input("override_stunden", stunden, 0.25, 48, 0.25, "h")}
           </div>
-          <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">${[2, 4, 8, 12, 24].map(preset).join("")}</div>
+          <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">${[2, 4, 8, 12, 24].map(preset).join("")}</div>`;
+    const socBlock = `
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;font-size:15px">
+            <span>Ladestand${socNow != null ? ` <small style="color:var(--secondary-text-color)">(aktuell ${Math.round(socNow)} %${kapKwh ? `, ${kwhText(socNow)}` : ""})</small>` : ""}</span>
+            <span style="display:inline-flex;flex-direction:column;align-items:flex-end;gap:2px">
+              ${input("override_pct", pct, 50, 100, 5, "%")}
+              ${kapKwh ? `<small style="color:var(--secondary-text-color)">${kwhText(pct)} von ${fmtDe(kapKwh, 1)} kWh</small>` : ""}
+            </span>
+          </div>
+          ${zielErreicht
+            ? `<p style="margin:10px 0 0;font-size:13px;color:var(--warning-color,#ff9800)">Die Batterie steht bereits bei ${Math.round(socNow)} % — das Ziel ist schon erreicht.</p>`
+            : `<p style="margin:10px 0 0;font-size:12px;color:var(--secondary-text-color)">Endet, sobald der Ladestand erreicht ist — spätestens nach 48 h.</p>`}`;
+    return `
+      <div class="dialog-overlay">
+        <div class="dialog-card" style="max-width:440px">
+          <h3 style="margin:0 0 6px;display:flex;align-items:center;gap:8px">
+            <ha-icon icon="mdi:pause-circle-outline" style="--mdc-icon-size:22px;color:var(--primary-color,#03a9f4)"></ha-icon>
+            Pause
+          </h3>
+          <p style="color:var(--secondary-text-color);font-size:13px;margin:0 0 14px;line-height:1.5">Der Fahrplan setzt aus, der Wechselrichter läuft in seiner eigenen Eigenverbrauchs-Automatik — die Batterie lädt also wie gewohnt aus dem PV-Überschuss. Danach übernimmt der Fahrplan von selbst wieder, auch nach einem Neustart.</p>
+          <div style="display:flex;gap:6px;margin-bottom:14px">
+            ${modusBtn("dauer", "Für eine Dauer")}
+            ${modusBtn("soc", "Bis Ladestand")}
+          </div>
+          ${soc ? socBlock : dauerBlock}
           <div style="display:flex;gap:12px;margin-top:20px">
             <button class="btn-secondary" data-action="override-close" style="flex:1;padding:12px" ${busy ? "disabled" : ""}>Abbrechen</button>
-            <button class="btn-primary" data-action="override-set" style="flex:1;padding:12px" ${busy ? "disabled" : ""}>
-              ${busy ? "Setze…" : (pause ? "Pause starten" : "Reserve setzen")}
+            <button class="btn-primary" data-action="override-set" style="flex:1;padding:12px" ${busy || zielErreicht ? "disabled" : ""}>
+              ${busy ? "Setze…" : "Pause starten"}
             </button>
           </div>
         </div>

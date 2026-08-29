@@ -1832,15 +1832,12 @@ async def ws_get_bilanz(
 
 
 # ---------------------------------------------------------------------------
-# Befristete Eingriffe: Pause / Reserve
+# Befristeter Eingriff: Pause
 # ---------------------------------------------------------------------------
 
-async def _override_sofort_wirken(data: dict, fahrplan: bool) -> None:
+async def _override_sofort_wirken(data: dict) -> None:
     """Nicht bis zum nächsten Takt warten — der Nutzer hat gerade geklickt."""
     try:
-        runner = data.get("schedule")
-        if fahrplan and runner is not None:
-            await runner.async_run()
         lauf = data.get("_run_cycle")
         if lauf is not None:
             await lauf()
@@ -1872,9 +1869,9 @@ async def ws_get_override(
 @websocket_api.websocket_command(
     {
         vol.Required("type"): "eeg_optimizer/set_override",
-        vol.Required("art"): vol.In(["pause", "reserve"]),
-        vol.Required("stunden"): vol.All(vol.Coerce(float), vol.Range(min=0.25, max=48)),
-        vol.Optional("min_soc_pct"): vol.All(vol.Coerce(float), vol.Range(min=5, max=90)),
+        # Grenzen wie in override.py (MIN/MAX_STUNDEN, MIN/MAX_PAUSE_SOC_PCT)
+        vol.Optional("stunden"): vol.All(vol.Coerce(float), vol.Range(min=0.25, max=48)),
+        vol.Optional("bis_soc_pct"): vol.All(vol.Coerce(float), vol.Range(min=50, max=100)),
     }
 )
 @websocket_api.async_response
@@ -1883,7 +1880,10 @@ async def ws_set_override(
     connection: websocket_api.ActiveConnection,
     msg: dict,
 ) -> None:
-    """Pause oder Reserve setzen — ersetzt einen laufenden Override."""
+    """Pause setzen — für eine Dauer, bis zu einem Ladestand oder beides.
+
+    Ersetzt eine laufende Pause.
+    """
     entry, data = _get_entry_data(hass, connection, msg)
     if entry is None:
         return
@@ -1891,21 +1891,21 @@ async def ws_set_override(
     if override is None:
         connection.send_error(msg["id"], "not_ready", "Override nicht initialisiert")
         return
+    if msg.get("stunden") is None and msg.get("bis_soc_pct") is None:
+        connection.send_error(
+            msg["id"], "invalid_format", "Pause braucht stunden oder bis_soc_pct"
+        )
+        return
     from homeassistant.util import dt as dt_util
 
-    jetzt = dt_util.now()
-    if msg["art"] == "pause":
-        ergebnis = await override.async_pause(msg["stunden"], jetzt)
-        await _override_sofort_wirken(data, fahrplan=False)
-    else:
-        if msg.get("min_soc_pct") is None:
-            connection.send_error(
-                msg["id"], "invalid_format", "Reserve braucht min_soc_pct"
-            )
-            return
-        ergebnis = await override.async_reserve(msg["min_soc_pct"], msg["stunden"], jetzt)
-        await _override_sofort_wirken(data, fahrplan=True)
-    connection.send_result(msg["id"], ergebnis)
+    await override.async_pause(
+        msg.get("stunden"), dt_util.now(), bis_soc_pct=msg.get("bis_soc_pct")
+    )
+    # Erst der Sofortlauf, dann die Antwort: Steht die Batterie schon über
+    # dem Ziel, hat der Guard-Lauf die Pause gerade wieder beendet — das
+    # Panel soll dann keinen Banner zeigen.
+    await _override_sofort_wirken(data)
+    connection.send_result(msg["id"], override.to_dict(dt_util.now()))
 
 
 @websocket_api.websocket_command(
@@ -1923,7 +1923,7 @@ async def ws_clear_override(
     override = data.get("override")
     if override is not None:
         await override.async_aufheben()
-        await _override_sofort_wirken(data, fahrplan=True)
+        await _override_sofort_wirken(data)
     connection.send_result(msg["id"], {"aktiv": False})
 
 

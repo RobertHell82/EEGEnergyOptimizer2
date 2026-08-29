@@ -1560,7 +1560,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         await bilanz.async_load()
         data["bilanz"] = bilanz
 
-        # Befristete Eingriffe (Pause / Reserve). Persistent, damit ein
+        # Befristeter Eingriff (Pause). Persistent, damit ein
         # Neustart mitten in der Pause die Steuerung nicht wieder anwirft.
         from .override import SteuerOverride
 
@@ -1656,12 +1656,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             # als gesteuert) und Telemetrie sehen denselben Modus.
             override = data.get("override")
             pause_bis = None
+            pause_soc_pct = None
             override_info = None
             if override is not None:
                 try:
                     jetzt = dt_util.now() if dt_util is not None else _now_utc()
-                    await override.async_tick(jetzt)
+                    # Der gemessene Ladestand entscheidet über das Ende einer
+                    # Pause „bis Ladestand" — derselbe Wert wie im Aktivitätslog.
+                    await override.async_tick(jetzt, soc_pct=_read_soc())
                     pause_bis = override.pause_bis(jetzt)
+                    pause_soc_pct = override.pause_soc_pct(jetzt)
                     override_info = override.to_dict(jetzt)
                 except Exception:  # pragma: no cover — Override darf den Takt nie kippen
                     _LOGGER.exception("Override: Auswertung fehlgeschlagen")
@@ -1669,7 +1673,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 mode = MODE_AUS
 
             await current_executor.async_guard_cycle(
-                schedule_state, mode, pause_bis=pause_bis
+                schedule_state, mode, pause_bis=pause_bis, pause_soc_pct=pause_soc_pct
             )
             status = current_executor.status()
             status["override"] = override_info
@@ -2295,11 +2299,11 @@ async def async_unload_entry(
 
 
 # ---------------------------------------------------------------------------
-# HA-Services für befristete Eingriffe (Pause / Reserve)
+# HA-Service für die Pause
 # ---------------------------------------------------------------------------
-# Als Services, nicht nur als Panel-Knöpfe: Der eigentliche Gewinn ist, dass
-# Automationen sie auslösen können — "Wallbox steckt an → Reserve 50 % für
-# 4 h" braucht dann keine Hand mehr.
+# Als Service, nicht nur als Panel-Knopf: Der eigentliche Gewinn ist, dass
+# Automationen ihn auslösen können — "Wallbox steckt an → Pause bis Ladestand
+# 80 %" braucht dann keine Hand mehr.
 
 def _override_entry_data(hass: Any, entry_id: str | None) -> dict | None:
     """Daten-Dict des adressierten (oder einzigen) Config-Entries."""
@@ -2318,19 +2322,19 @@ def _register_override_services(hass: Any) -> None:
     except ImportError:  # pragma: no cover — Testumgebung
         return
     try:
+        # Bis 2.0.3-devfronius.4 gab es einen Service „reserve"; nach einem
+        # Reload ohne Neustart hinge er sonst mit totem Handler herum.
+        if hass.services.has_service(DOMAIN, "reserve") is True:
+            hass.services.async_remove(DOMAIN, "reserve")
         if hass.services.has_service(DOMAIN, "pause") is True:
             return
     except Exception:  # pragma: no cover
         return
 
-    async def _kick(data: dict, fahrplan: bool) -> None:
-        # Sofort wirken lassen statt bis zu 60 s zu warten: Reserve braucht
-        # einen neuen Fahrplan, beides braucht einen Guard-Lauf (Freigabe
-        # bei Pause, Umsetzung bei Reserve).
+    async def _kick(data: dict) -> None:
+        # Sofort wirken lassen statt bis zu 30 s zu warten: Der Guard-Lauf
+        # gibt beim Eintritt der Pause frei bzw. übernimmt nach dem Aufheben.
         try:
-            runner = data.get("schedule")
-            if fahrplan and runner is not None:
-                await runner.async_run()
             lauf = data.get("_run_cycle")
             if lauf is not None:
                 await lauf()
@@ -2342,50 +2346,43 @@ def _register_override_services(hass: Any) -> None:
         if data is None:
             _LOGGER.warning("Service pause: kein passender EEG-Optimizer gefunden")
             return
-        jetzt = dt_util.now() if dt_util is not None else _now_utc()
-        await data["override"].async_pause(
-            float(call.data["stunden"]), jetzt, quelle="service"
-        )
-        await _kick(data, fahrplan=False)
-
-    async def _svc_reserve(call: Any) -> None:
-        data = _override_entry_data(hass, call.data.get("entry_id"))
-        if data is None:
-            _LOGGER.warning("Service reserve: kein passender EEG-Optimizer gefunden")
+        stunden = call.data.get("stunden")
+        bis_soc = call.data.get("bis_soc_pct")
+        if stunden is None and bis_soc is None:
+            _LOGGER.warning("Service pause: 'stunden' oder 'bis_soc_pct' angeben")
             return
         jetzt = dt_util.now() if dt_util is not None else _now_utc()
-        await data["override"].async_reserve(
-            float(call.data["min_soc_pct"]),
-            float(call.data["stunden"]),
+        await data["override"].async_pause(
+            None if stunden is None else float(stunden),
             jetzt,
             quelle="service",
+            bis_soc_pct=None if bis_soc is None else float(bis_soc),
         )
-        await _kick(data, fahrplan=True)
+        await _kick(data)
 
     async def _svc_aufheben(call: Any) -> None:
         data = _override_entry_data(hass, call.data.get("entry_id"))
         if data is None:
             return
         await data["override"].async_aufheben(quelle="service")
-        await _kick(data, fahrplan=True)
+        await _kick(data)
 
-    from .override import MAX_RESERVE_PCT, MAX_STUNDEN, MIN_RESERVE_PCT, MIN_STUNDEN
+    from .override import (
+        MAX_PAUSE_SOC_PCT,
+        MAX_STUNDEN,
+        MIN_PAUSE_SOC_PCT,
+        MIN_STUNDEN,
+    )
 
-    stunden = vol.All(vol.Coerce(float), vol.Range(min=MIN_STUNDEN, max=MAX_STUNDEN))
     hass.services.async_register(
         DOMAIN, "pause", _svc_pause,
         schema=vol.Schema({
-            vol.Required("stunden"): stunden,
-            vol.Optional("entry_id"): str,
-        }),
-    )
-    hass.services.async_register(
-        DOMAIN, "reserve", _svc_reserve,
-        schema=vol.Schema({
-            vol.Required("min_soc_pct"): vol.All(
-                vol.Coerce(float), vol.Range(min=MIN_RESERVE_PCT, max=MAX_RESERVE_PCT)
+            vol.Optional("stunden"): vol.All(
+                vol.Coerce(float), vol.Range(min=MIN_STUNDEN, max=MAX_STUNDEN)
             ),
-            vol.Required("stunden"): stunden,
+            vol.Optional("bis_soc_pct"): vol.All(
+                vol.Coerce(float), vol.Range(min=MIN_PAUSE_SOC_PCT, max=MAX_PAUSE_SOC_PCT)
+            ),
             vol.Optional("entry_id"): str,
         }),
     )

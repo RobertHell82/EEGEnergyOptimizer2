@@ -195,6 +195,33 @@ async def test_pause_gibt_frei_und_schreibt_nicht(mock_hass, mock_inverter):
     assert ex.status()["pause_bis"] is None
 
 
+async def test_pause_bis_ladestand_im_status(mock_hass, mock_inverter):
+    """Eine Pause „bis Ladestand" wirkt wie jede Pause (Aus mit Ablaufzeit),
+    sagt im Status aber das Ziel statt der Uhrzeit — die Ablaufzeit ist hier
+    nur das Sicherheitsnetz."""
+    ex = _make_executor(mock_hass, mock_inverter)
+    await ex.async_guard_cycle(_state(_slot(0, battery_p=-2.0)), MODE_EIN, now=NOW)
+    mock_inverter.async_stop_forcible.reset_mock()
+
+    pause_bis = NOW + timedelta(hours=48)
+    await ex.async_guard_cycle(
+        _state(_slot(0, battery_p=-2.0)), MODE_EIN,
+        now=NOW + timedelta(seconds=30), pause_bis=pause_bis, pause_soc_pct=80.0,
+    )
+    mock_inverter.async_stop_forcible.assert_called_once()
+    assert mock_inverter.async_set_charge_limit.call_count == 1
+    assert "Pause bis Ladestand 80 %" in ex.last_status
+    assert ex.status()["pause_soc_pct"] == 80.0
+    assert ex.status()["pause_bis"] == pause_bis.isoformat()
+
+    # Ohne Pause ist auch das Ziel weg
+    await ex.async_guard_cycle(
+        _state(_slot(60, battery_p=-2.0), last_run=NOW + timedelta(hours=1)), MODE_EIN,
+        now=NOW + timedelta(hours=1, seconds=30),
+    )
+    assert ex.status()["pause_soc_pct"] is None
+
+
 async def test_anzeige_modus_schreibt_nicht(mock_hass, mock_inverter):
     ex = _make_executor(mock_hass, mock_inverter)
 

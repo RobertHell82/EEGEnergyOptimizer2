@@ -777,6 +777,7 @@ class FahrplanStatusSensor(SensorEntity):
             "letzter_schreibversuch_ok": status.get("last_write_ok"),
             "letzte_aktualisierung": status.get("last_run"),
             "pause_bis": status.get("pause_bis"),
+            "pause_soc_pct": status.get("pause_soc_pct"),
             "override": status.get("override"),
         }
         self.async_write_ha_state()

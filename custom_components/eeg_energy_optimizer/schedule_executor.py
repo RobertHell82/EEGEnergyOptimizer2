@@ -216,9 +216,10 @@ class ScheduleExecutor:
         self._last_mode: str | None = None
         # Freigabe im Anzeige-Modus nachholen (Limit aus einer Vorsession).
         self._display_release_pending = False
-        # Aktive Pause (Ablaufzeit) — nur für den Statustext; die Wirkung
-        # ist dieselbe wie Modus Aus.
+        # Aktive Pause (Ablaufzeit, ggf. Ziel-Ladestand) — nur für den
+        # Statustext; die Wirkung ist dieselbe wie Modus Aus.
         self._pause_bis: datetime | None = None
+        self._pause_soc_pct: float | None = None
 
         # Status für Panel, Statussensor und Aktivitätslog.
         self.last_run_iso: str | None = None
@@ -288,6 +289,7 @@ class ScheduleExecutor:
         mode: str,
         now: datetime | None = None,
         pause_bis: datetime | None = None,
+        pause_soc_pct: float | None = None,
     ) -> None:
         """Ein Guard-Lauf: Absicht bestimmen, gegen Messwerte halten, setzen.
 
@@ -303,6 +305,7 @@ class ScheduleExecutor:
         # sagt, wann es weitergeht. Der Modus-Wechsel unten sieht deshalb
         # einfach "Aus" und macht das Richtige.
         self._pause_bis = pause_bis
+        self._pause_soc_pct = pause_soc_pct if pause_bis is not None else None
         if pause_bis is not None:
             mode = MODE_AUS
 
@@ -382,7 +385,12 @@ class ScheduleExecutor:
                         "Executor: Modus 'Aus' — Steuerwerte aus der Vorsession "
                         "auf Standard zurückgenommen"
                     )
-            if self._pause_bis is not None:
+            if self._pause_bis is not None and self._pause_soc_pct is not None:
+                self.last_status = (
+                    f"Pause bis Ladestand {self._pause_soc_pct:.0f} % — "
+                    "der Wechselrichter läuft im Automatikmodus"
+                )
+            elif self._pause_bis is not None:
                 self.last_status = (
                     f"Pause bis {self._pause_bis.strftime('%H:%M')} — "
                     "der Wechselrichter läuft im Automatikmodus"
@@ -496,6 +504,7 @@ class ScheduleExecutor:
             },
             "failsafe_released": self._failsafe_released,
             "pause_bis": None if self._pause_bis is None else self._pause_bis.isoformat(),
+            "pause_soc_pct": self._pause_soc_pct,
             "emergency_runs": self._emergency_runs,
             "emergency_blocked_slot": self._emergency_blocked_slot,
             "write_failures": self.write_failures,
