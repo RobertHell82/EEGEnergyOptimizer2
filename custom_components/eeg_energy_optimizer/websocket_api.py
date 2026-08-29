@@ -1793,12 +1793,38 @@ async def ws_get_bilanz(
             ),
         }
 
+    # Entity-IDs der Bilanz-Sensoren, damit die Karte ihre Zahlen auf den
+    # jeweiligen Verlauf verlinken kann. Über die unique_id aufgelöst statt
+    # geraten — die Entitäten können umbenannt worden sein.
+    entities: dict[str, dict[str, str]] = {}
+    try:
+        from homeassistant.helpers import entity_registry as er
+
+        registry = er.async_get(hass)
+        for feld in ("pv_ersparnis", "opt_vorteil"):
+            je_zeitraum: dict[str, str] = {}
+            for zeitraum in ("heute", "monat", "jahr"):
+                unique_id = f"{DOMAIN}_{entry.entry_id}_bilanz_{feld}_{zeitraum}"
+                entity_id = registry.async_get_entity_id("sensor", DOMAIN, unique_id)
+                if entity_id:
+                    je_zeitraum[zeitraum] = entity_id
+            if je_zeitraum:
+                entities[feld] = je_zeitraum
+    except Exception:  # noqa: BLE001 - ohne Registry eben keine Links
+        _LOGGER.debug("Bilanz: Sensor-Entities nicht auflösbar", exc_info=True)
+
     connection.send_result(msg["id"], {
         "verfuegbar": True,
         "pv_ersparnis": _zeitraum("pv_ersparnis"),
         "opt_vorteil": _zeitraum("opt_vorteil"),
         "heute": heute,
         "waehrung": getattr(hass.config, "currency", None) or "EUR",
+        "entities": entities,
+        # Ohne abgeschlossene Tage sind Monat und Jahr identisch mit heute.
+        "archiv": {
+            "monat": bilanz.hat_archiv(monat=monat_key),
+            "jahr": bilanz.hat_archiv(jahr=jahr_key),
+        },
     })
 
 

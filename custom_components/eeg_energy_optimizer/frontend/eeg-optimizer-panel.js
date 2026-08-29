@@ -3250,24 +3250,45 @@ class EegOptimizerPanel extends HTMLElement {
     const eur = (v) =>
       v == null ? "—" : `${v < 0 ? "−" : ""}${fmtDe(Math.abs(Number(v)), 2)}&nbsp;${waehrung}`;
 
-    const spalte = (titel, wert, gross) => `
-      <div style="flex:1;min-width:0;text-align:center">
+    // Jede Spalte haengt an einem eigenen Sensor — ein Klick oeffnet dessen
+    // Verlauf. Entity-IDs kommen aufgeloest aus dem Backend (die Entitaeten
+    // koennen umbenannt worden sein), verlinkt wird nur, was auch da ist.
+    const ent = b.entities || {};
+    const spalte = (titel, wert, gross, entity) => {
+      const klickbar = entity && this._readState(entity);
+      const attrs = klickbar
+        ? ` class="bilanz-zeile-klickbar" data-action="show-entity" data-entity="${entity}" title="Verlauf anzeigen"`
+        : "";
+      return `
+      <div${attrs} style="flex:1;min-width:0;text-align:center;border-radius:8px;padding:4px 2px">
         <div style="font-size:${gross ? "26px" : "17px"};font-weight:600;color:var(--success-color,#0f9d58);white-space:nowrap">${eur(wert)}</div>
         <div style="font-size:12px;color:var(--secondary-text-color);margin-top:2px">${titel}</div>
       </div>`;
+    };
 
     // Die „davon"-Zeile nur, wenn der Vorteil wirklich gerechnet werden
     // konnte — eine Null saehe aus wie ein Messergebnis.
     const vorteilHeute = opt.heute;
+    const optEntity = (ent.opt_vorteil || {}).heute;
+    // Ohne abgeschlossenen Tag sind Monat und Jahr rechnerisch dasselbe wie
+    // heute. Die drei gleichen Betraege nebeneinander lesen sich wie ein
+    // Fehler — also erst zeigen, wenn sie sich unterscheiden koennen.
+    const archivVorhanden = !!(b.archiv && (b.archiv.monat || b.archiv.jahr));
     const davon = vorteilHeute == null ? `
       <div style="font-size:12px;color:var(--secondary-text-color);text-align:center;margin-top:10px">
         Der Anteil der Optimierung lässt sich heute noch nicht beziffern — dafür fehlt der Ladestand vom Tagesbeginn.
       </div>` : `
       <div style="font-size:13px;color:var(--secondary-text-color);text-align:center;margin-top:10px">
-        davon durch die Optimierung
-        <strong style="color:${Number(vorteilHeute) >= 0 ? "var(--success-color,#0f9d58)" : "#e53935"}">${eur(vorteilHeute)}</strong>
-        <span style="white-space:nowrap">(Monat ${eur(opt.monat)}, Jahr ${eur(opt.jahr)})</span>
-      </div>`;
+        <span${optEntity ? ` class="bilanz-zeile-klickbar" data-action="show-entity" data-entity="${optEntity}" title="Verlauf anzeigen" style="border-radius:6px;padding:2px 6px"` : ""}>
+          davon durch die Optimierung
+          <strong style="color:${Number(vorteilHeute) >= 0 ? "var(--success-color,#0f9d58)" : "#e53935"}">${eur(vorteilHeute)}</strong>
+        </span>
+        ${archivVorhanden ? `<span style="white-space:nowrap">(Monat ${eur(opt.monat)}, Jahr ${eur(opt.jahr)})</span>` : ""}
+      </div>
+      ${archivVorhanden ? "" : `
+      <div style="font-size:12px;color:var(--secondary-text-color);text-align:center;margin-top:6px;line-height:1.5">
+        Monats- und Jahreswerte wachsen erst mit jedem abgeschlossenen Tag — heute ist der erste.
+      </div>`}`;
 
     let details = "";
     if (this._bilanzDetailsOpen) {
@@ -3323,9 +3344,9 @@ class EegOptimizerPanel extends HTMLElement {
           Was deine PV bringt
         </h3>
         <div style="display:flex;gap:8px;align-items:flex-end;margin-top:14px">
-          ${spalte("heute", pv.heute, true)}
-          ${spalte("diesen Monat", pv.monat, false)}
-          ${spalte("dieses Jahr", pv.jahr, false)}
+          ${spalte("heute", pv.heute, true, ent.pv_ersparnis?.heute)}
+          ${spalte("diesen Monat", pv.monat, false, ent.pv_ersparnis?.monat)}
+          ${spalte("dieses Jahr", pv.jahr, false, ent.pv_ersparnis?.jahr)}
         </div>
         ${davon}
         <div data-action="toggle-bilanz-details" style="margin-top:12px;font-size:13px;color:var(--primary-color,#03a9f4);cursor:pointer;user-select:none;text-align:center">

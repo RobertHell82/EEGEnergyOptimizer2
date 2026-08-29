@@ -699,6 +699,19 @@ class EnergieBilanz:
                     gesamt += float(eintrag.get(feld, 0.0) or 0.0)
         return round(gesamt, 4)
 
+    def hat_archiv(self, monat: str | None = None, jahr: str | None = None) -> bool:
+        """Gibt es abgeschlossene Tage in diesem Zeitraum?
+
+        Ohne Archiv sind „diesen Monat" und „dieses Jahr" zwangsläufig
+        derselbe Wert wie „heute" — die Karte soll das benennen können,
+        statt drei gleiche Zahlen zu zeigen, die wie ein Fehler aussehen.
+        """
+        if monat:
+            return monat in self._monate
+        if jahr:
+            return any(k.startswith(jahr) for k in self._monate)
+        return bool(self._monate)
+
     @property
     def datum_heute(self) -> str:
         return self._heute.get("datum") or ""
