@@ -532,7 +532,8 @@ def test_begruendung_nennt_den_groessten_posten_zuerst():
     assert saetze[0].startswith("Mehr Netzbezug")
     assert "0,30 €" in saetze[0]
     assert saetze[1].startswith("Am Tagesende weniger Energie")
-    assert saetze[2].startswith("Weniger Einspeiseerlös")
+    # hoechstens zwei Posten, dann der Schlusssatz
+    assert not any(t.startswith("Weniger Einspeiseerlös") for t in saetze)
     # generischer Schlusssatz immer dabei
     assert "ohne Vorausschau" in saetze[-1]
 

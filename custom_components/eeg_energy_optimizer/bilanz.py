@@ -778,9 +778,8 @@ def begruende_vorteil(
 
     if not abgeschlossen:
         saetze.append(
-            "Zwischenstand — der Tag läuft noch. Energie, die der Fahrplan für "
-            "den Abend zurückhält, zählt bis dahin nur zum Basistarif; ihr "
-            "Mehrwert entsteht erst beim Einspeisen."
+            "Zwischenstand — der Tag läuft noch; zurückgehaltene Energie zählt "
+            "erst beim Einspeisen."
         )
 
     posten = sorted(
@@ -789,42 +788,34 @@ def begruende_vorteil(
     )
     texte = {
         "bezug": (
-            "Mehr Netzbezug als im Standardbetrieb ({v}). Typisch, wenn "
-            "Verbrauch kam, den die Prognose nicht kannte — etwa ein "
-            "Elektroauto: Der Fahrplan hielt Energie für später zurück, der "
-            "Standardbetrieb hätte sie sofort verbraucht."
+            "Mehr Netzbezug als im Standardbetrieb ({v}) — meist ungeplanter "
+            "Verbrauch (z. B. Elektroauto), für den der Fahrplan Energie "
+            "zurückhielt."
         ),
         "erloes": (
-            "Weniger Einspeiseerlös ({v}). Der Fahrplan hat Energie in der "
-            "Batterie behalten, oder die Gemeinschaft hatte weniger Bedarf als "
-            "vorhergesagt, sodass mehr zum Basistarif wegging."
+            "Weniger Einspeiseerlös ({v}) — Energie blieb in der Batterie, "
+            "oder die Gemeinschaft brauchte weniger als vorhergesagt."
         ),
         "endbestand": (
-            "Am Tagesende weniger Energie in der Batterie ({v}). Der "
-            "Standardbetrieb lädt bis 100 %, der Fahrplan nur bis zum "
-            "eingestellten Deckel — oder er hat für die Einspeisung entladen."
+            "Am Tagesende weniger Energie in der Batterie ({v}) — der "
+            "Standardbetrieb lädt bis 100 %, der Fahrplan nur bis zum Deckel."
         ),
-        "alterung": (
-            "Mehr Batterienutzung ({v} Alterungskosten) — der Fahrplan hat "
-            "mehr umgeschichtet als der Standardbetrieb."
-        ),
+        "alterung": "Mehr Batterienutzung ({v} Alterungskosten).",
     }
-    for feld, wert in posten[:3]:
+    for feld, wert in posten[:2]:
         saetze.append(texte[feld].format(v=eur(wert)))
 
     if 0.0 < ein_anteil < 0.9:
         saetze.append(
-            f"Die Steuerung war nur {round(ein_anteil * 100)} % des Tages "
-            "aktiv; bewertet wird trotzdem der ganze Tag."
+            f"Die Steuerung war nur {round(ein_anteil * 100)} % des Tages aktiv."
         )
 
     if not posten:
         saetze.append("Die Abweichung liegt im Bereich der Messungenauigkeit.")
 
     saetze.append(
-        "Verglichen wird der echte Tag mit einem simulierten Betrieb ohne "
-        "Vorausschau über dieselben Messwerte. Die Referenz kennt den "
-        "tatsächlichen Verbrauch, der Fahrplan nur die Prognose — bei "
-        "Überraschungen gewinnt die Referenz."
+        "Vergleich mit einem simulierten Betrieb ohne Vorausschau über dieselben "
+        "Messwerte — die Referenz kennt den echten Verbrauch, der Fahrplan nur "
+        "die Prognose."
     )
     return saetze
