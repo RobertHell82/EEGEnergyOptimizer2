@@ -33,6 +33,14 @@ Slot-Liste kommt; die gemessene Reihe geht genauso hinein wie ein Plan. Das
 ist Absicht: Eine zweite Geldlogik daneben würde bei der nächsten
 Tarifänderung auseinanderlaufen.
 
+**Zur Zeitumstellung.** Der Slot-Index kommt aus der Wanduhrzeit. Im Herbst
+wird die doppelte Stunde deshalb in dieselben vier Slots addiert, im Frühjahr
+bleiben vier Slots leer. Für die Geldsummen ist das folgenlos — sie sind
+Summen, und es geht keine Kilowattstunde verloren oder kommt hinzu. Nur die
+Zuordnung einzelner Viertelstunden ist an diesen zwei Tagen im Jahr
+ungenau. Der Fahrplan darf das NICHT so machen (dort brach ``resample()`` an
+doppelten Zeitstempeln), hier ist es unkritisch.
+
 **Die Messwerte kommen aus den Sensoren der Integration**, nicht aus den
 Rohsensoren des Wechselrichters. Der Hausverbrauch-Sensor trägt bereits die
 Vorzeichen-Normalisierung, die SolarEdge-Korrektur (ac_power enthält die
@@ -72,6 +80,10 @@ TAGE_ROH = 400
 # Größer Sprung zwischen zwei Takten (Neustart, Schlaf) — dann wird nicht
 # hochgerechnet. Lieber eine Lücke als eine erfundene Kilowattstunde.
 MAX_TAKT_SEKUNDEN = 300
+
+# Felder, die sich NICHT ueber Tage aufsummieren lassen: ein_anteil ist ein
+# Anteil zwischen 0 und 1, seine Monatssumme waere 30 statt eines Anteils.
+NICHT_SUMMIERBAR = {"ein_anteil"}
 
 # Unique-ID-Endungen der Sensoren, aus denen die Bilanz liest. Sie sind
 # bereits normalisiert (Vorzeichen, Multi-Batterie, SolarEdge).
@@ -123,6 +135,11 @@ class EnergieBilanz:
         self._store: Any = Store(hass, 1, store_key) if Store is not None else None
 
         self._heute: dict[str, Any] = _leerer_tag("")
+        # Abgelaufene Tage, die noch auf ihre Bewertung warten (siehe
+        # _schliesse_offene). Sie werden mitgespeichert — sonst ginge ein
+        # wartender Tag beim naechsten Neustart verloren, und genau der
+        # Neustart ist der Grund, warum er wartet.
+        self._offen: list[dict[str, Any]] = []
         self._tage: dict[str, dict] = {}
         self._monate: dict[str, dict] = {}
         self._letzter_takt_utc: datetime | None = None
@@ -147,6 +164,7 @@ class EnergieBilanz:
             return
 
         self._heute = stored.get("heute") or _leerer_tag("")
+        self._offen = stored.get("offen") or []
         self._tage = stored.get("tage") or {}
         self._monate = stored.get("monate") or {}
         self._verdichte_alte_tage()
@@ -168,6 +186,7 @@ class EnergieBilanz:
             await self._store.async_save({
                 "version": 1,
                 "heute": self._heute,
+                "offen": self._offen,
                 "tage": self._tage,
                 "monate": self._monate,
             })
@@ -194,11 +213,21 @@ class EnergieBilanz:
         heute = now_local.strftime("%Y-%m-%d")
 
         # Tageswechsel (auch nach einem Neustart über Mitternacht hinweg).
+        # Der alte Tag wird NICHT sofort bewertet: Ohne Fahrplan-Inputs
+        # fehlen Tarife und Kapazität, und er läge dauerhaft ohne
+        # Einspeiseerlös im Archiv. Genau das passiert nach einem Neustart
+        # über Mitternacht — der erste Bilanz-Takt kommt dann vor dem ersten
+        # Fahrplan-Lauf. Er wandert deshalb in die Warteschlange und wird
+        # bewertet, sobald die Inputs da sind (in aller Regel eine Minute
+        # später).
         if self._heute.get("datum") and self._heute["datum"] != heute:
-            self._tagesabschluss(inputs)
+            self._offen.append(self._heute)
+            self._heute = _leerer_tag(heute)
+            self._dirty = True
         if self._heute.get("datum") != heute:
             self._heute = _leerer_tag(heute)
             self._dirty = True
+        self._schliesse_offene(inputs, heute)
 
         # Erster Takt nach dem Start: nur die Uhr stellen.
         if self._erster_takt:
@@ -373,16 +402,50 @@ class EnergieBilanz:
     # ------------------------------------------------------------------
     # Tagesabschluss
     # ------------------------------------------------------------------
-    def _tagesabschluss(self, inputs: Any) -> None:
-        """Den abgelaufenen Tag bewerten und ins Archiv legen."""
-        datum = self._heute.get("datum")
+    def _schliesse_offene(self, inputs: Any, heute: str) -> None:
+        """Wartende Tage bewerten, sobald Fahrplan-Inputs vorliegen.
+
+        Nicht ewig warten: Kommt zwei Tage lang kein Fahrplan zustande, wird
+        mit dem bewertet, was da ist. Ein unbewerteter Tag im Archiv ist
+        ärgerlich, eine unbegrenzt wachsende Warteschlange wäre schlimmer.
+        """
+        if not self._offen:
+            return
+        try:
+            grenze = (date.fromisoformat(heute) - timedelta(days=1)).isoformat()
+        except (ValueError, TypeError):
+            grenze = ""
+
+        rest: list[dict[str, Any]] = []
+        for tag in self._offen:
+            datum = tag.get("datum") or ""
+            if inputs is None and datum >= grenze:
+                rest.append(tag)
+                continue
+            if inputs is None:
+                _LOGGER.warning(
+                    "Bilanz: %s wird ohne Fahrplan-Daten abgeschlossen — "
+                    "ohne Tarife bleibt der Einspeiseerlös aus",
+                    datum,
+                )
+            self._archiviere(tag, inputs)
+        self._offen = rest
+        self._dirty = True
+
+    def _archiviere(self, tag: dict[str, Any], inputs: Any) -> None:
+        """Einen abgelaufenen Tag bewerten und ins Archiv legen."""
+        datum = tag.get("datum")
         if not datum:
             return
-        ergebnis = self.bewerte_tag(self._heute, inputs)
+        ergebnis = self.bewerte_tag(tag, inputs)
         self._tage[datum] = ergebnis
         monat = datum[:7]
         summe = self._monate.setdefault(monat, {})
         for feld, wert in ergebnis.items():
+            # Anteile sind keine Betraege: ein_anteil ueber 30 Tage
+            # aufzusummieren ergaebe 30 statt eines Anteils.
+            if feld in NICHT_SUMMIERBAR:
+                continue
             if isinstance(wert, (int, float)):
                 summe[feld] = round(float(summe.get(feld, 0.0)) + float(wert), 4)
         self._dirty = True
@@ -420,6 +483,7 @@ class EnergieBilanz:
         eigen_kwh = 0.0
         vermieden = 0.0
         pv_kwh = export_kwh = bezug_kwh = 0.0
+        netzgeladen_kwh = 0.0
         ein_s = gesamt_s = 0.0
         for slot in slots:
             pv_kwh += slot.get("pv", 0.0)
@@ -434,6 +498,25 @@ class EnergieBilanz:
             preis = slot.get("kwp")
             if preis is not None:
                 vermieden += eigen * float(preis)
+            # Was im selben Slot aus dem Netz kam UND in die Batterie ging,
+            # war nie PV-Strom. Es spaeter beim Entladen als Eigenverbrauch
+            # zu zaehlen waere doppelt gerechnet: einmal als Netzbezug
+            # bezahlt, einmal als Ersparnis gutgeschrieben. Der kleinere der
+            # beiden Werte ist die obere Schranke fuer den netzgeladenen
+            # Anteil. In der Praxis ist das null — bei 26 ct Bezug gegen
+            # gut 10 ct Verguetung laedt kein Fahrplan aus dem Netz.
+            netzgeladen_kwh += min(
+                slot.get("laden", 0.0), slot.get("bezug", 0.0)
+            )
+
+        # Netzgeladene Energie herausrechnen. Bewusst ohne Wirkungsgrad, also
+        # etwas zu viel abgezogen: Die ausgewiesene Ersparnis soll im Zweifel
+        # zu klein sein, nicht zu gross.
+        if netzgeladen_kwh > 0 and eigen_kwh > 0:
+            anteil = min(netzgeladen_kwh, eigen_kwh)
+            if eigen_kwh > 0:
+                vermieden *= max(0.0, (eigen_kwh - anteil)) / eigen_kwh
+            eigen_kwh -= anteil
 
         ergebnis = dict(leer)
         ergebnis.update({

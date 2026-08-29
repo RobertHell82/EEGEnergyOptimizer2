@@ -48,6 +48,14 @@ def _inputs(**ueberschreiben):
     return ScheduleInputs(**basis)
 
 
+@pytest.fixture(autouse=True)
+def _echte_zeitquelle(monkeypatch):
+    """``homeassistant.util.dt`` ist in den Tests ein MagicMock — dessen
+    ``strftime`` liefert keinen String, und der Tageswechsel liefe ins Leere.
+    Hier gilt deshalb: lokale Zeit = die uebergebene Zeit."""
+    monkeypatch.setattr(bilanz_modul, "_jetzt_lokal", lambda now_utc: now_utc)
+
+
 def _bilanz(config=None):
     """EnergieBilanz ohne Home Assistant — nur die Rechenwege werden geprüft."""
     b = EnergieBilanz.__new__(EnergieBilanz)
@@ -56,6 +64,7 @@ def _bilanz(config=None):
     b._config = config or {}
     b._store = None
     b._heute = {"datum": TAG, "slots": {}}
+    b._offen = []
     b._tage = {}
     b._monate = {}
     b._letzter_takt_utc = None
@@ -125,16 +134,92 @@ def test_netzbezug_und_entladung_landen_in_eigenen_feldern():
     assert slot["s"] == 60.0 and slot["ein_s"] == 0.0
 
 
-def test_grosse_luecke_wird_nicht_hochgerechnet():
+async def test_grosse_luecke_wird_nicht_hochgerechnet():
     """Nach einem Neustart darf kein Takt eine Stunde Energie erfinden."""
     b = _bilanz()
     b._erster_takt = False
     b._letzter_takt_utc = datetime(2026, 8, 27, 10, 0, tzinfo=timezone.utc)
-    vorher = dict(b._heute["slots"])
+    b._lies_messwerte = lambda: {
+        "pv": 5.0, "haus": 1.0, "netz": 4.0, "batterie": 0.0, "soc": 60.0
+    }
 
-    # async_update ist async; die Schranke selbst steckt in MAX_TAKT_SEKUNDEN.
-    assert bilanz_modul.MAX_TAKT_SEKUNDEN == 300
-    assert vorher == {}
+    # Eine ganze Stunde spaeter — weit ueber MAX_TAKT_SEKUNDEN.
+    await b.async_update("Ein", datetime(2026, 8, 27, 11, 0, tzinfo=timezone.utc))
+
+    assert b._heute["slots"] == {}, "Die Luecke darf keine Energie erzeugen"
+
+    # Der naechste normale Takt zaehlt dann wieder.
+    await b.async_update("Ein", datetime(2026, 8, 27, 11, 0, 30, tzinfo=timezone.utc))
+
+    assert b._heute["slots"], "Nach der Luecke muss es normal weitergehen"
+
+
+# ---------------------------------------------------------------------------
+# Tageswechsel
+# ---------------------------------------------------------------------------
+
+
+async def test_tag_wartet_auf_die_fahrplan_daten():
+    """Nach einem Neustart ueber Mitternacht fehlen die Tarife noch.
+
+    Der Vortag darf dann NICHT unbewertet ins Archiv wandern — sonst fehlt
+    ihm dauerhaft der Einspeiseerloes. Er wartet, bis die Inputs da sind.
+    """
+    b = _bilanz()
+    b._erster_takt = False
+    b._letzter_takt_utc = None
+    b._heute = _tag_mit(
+        {48: _slot(export=2.0, basis=0.10, kwp=0.26, s=900.0)}, datum="2026-08-26"
+    )
+    b._lies_messwerte = lambda: {
+        "pv": 0.0, "haus": 0.2, "netz": -0.2, "batterie": 0.0, "soc": 50.0
+    }
+
+    # Erster Takt am neuen Tag, noch ohne Fahrplan-Inputs.
+    await b.async_update("Ein", datetime(2026, 8, 27, 0, 0, 30, tzinfo=timezone.utc), None)
+
+    assert "2026-08-26" not in b._tage, "Ohne Tarife darf nichts archiviert werden"
+    assert len(b._offen) == 1, "Der Vortag muss warten"
+    assert b._heute["datum"] == "2026-08-27", "Der neue Tag laeuft trotzdem"
+
+    # Eine Minute spaeter steht der Fahrplan.
+    await b.async_update(
+        "Ein", datetime(2026, 8, 27, 0, 1, 30, tzinfo=timezone.utc), _inputs()
+    )
+
+    assert b._offen == [], "Jetzt ist der Vortag abgeschlossen"
+    assert b._tage["2026-08-26"]["erloes"] == pytest.approx(0.20, abs=1e-3), (
+        "Mit Tarifen muss der Einspeiseerloes drinstehen"
+    )
+
+
+async def test_wartender_tag_wird_nach_zwei_tagen_notgeschlossen():
+    """Kommt nie ein Fahrplan, darf die Warteschlange nicht ewig wachsen."""
+    b = _bilanz()
+    b._erster_takt = False
+    b._letzter_takt_utc = None
+    b._offen = [
+        _tag_mit({48: _slot(haus=1.0, kwp=0.26, s=900.0)}, datum="2026-08-20")
+    ]
+    b._lies_messwerte = lambda: None
+
+    await b.async_update("Ein", datetime(2026, 8, 27, 12, 0, tzinfo=timezone.utc), None)
+
+    assert b._offen == []
+    assert "2026-08-20" in b._tage
+    # Der gemessene Teil steht auch ohne Tarife.
+    assert b._tage["2026-08-20"]["vermieden"] == pytest.approx(0.26)
+
+
+def test_wartende_tage_werden_mitgespeichert():
+    """Sonst waere der wartende Tag nach dem naechsten Neustart weg —
+    und der Neustart ist gerade der Grund, warum er wartet."""
+    quelle = (
+        __import__("pathlib").Path(bilanz_modul.__file__)
+    ).read_text(encoding="utf-8")
+
+    assert '"offen": self._offen' in quelle, "offen fehlt beim Speichern"
+    assert 'stored.get("offen")' in quelle, "offen fehlt beim Laden"
 
 
 # ---------------------------------------------------------------------------
@@ -336,7 +421,7 @@ def test_tagesabschluss_schreibt_tag_und_monat_fort():
         {48: _slot(pv=2.0, haus=1.0, bezug=0.25, export=0.75, kwp=0.26, s=900.0)}
     )
 
-    b._tagesabschluss(None)
+    b._archiviere(b._heute, None)
 
     assert TAG in b._tage
     assert b._tage[TAG]["vermieden"] == pytest.approx(0.75 * 0.26)
@@ -349,7 +434,7 @@ def test_zweiter_tag_addiert_sich_im_monat():
         b._heute = _tag_mit(
             {48: _slot(haus=1.0, bezug=0.0, kwp=0.26, s=900.0)}, datum=datum
         )
-        b._tagesabschluss(None)
+        b._archiviere(b._heute, None)
 
     assert b._monate["2026-08"]["vermieden"] == pytest.approx(2 * 0.26)
     assert b.summe("vermieden", monat="2026-08") == pytest.approx(2 * 0.26)
@@ -366,3 +451,58 @@ def test_alte_tage_fallen_raus_monatssummen_bleiben():
 
     assert alt.isoformat() not in b._tage
     assert b._monate[alt.strftime("%Y-%m")]["vermieden"] == 1.0
+
+
+# ---------------------------------------------------------------------------
+# Sonderfaelle der Bewertung
+# ---------------------------------------------------------------------------
+
+
+def test_netzgeladene_energie_zaehlt_nicht_als_ersparnis():
+    """Aus dem Netz geladener Strom ist keine PV-Ersparnis.
+
+    Sonst waere er doppelt gerechnet: einmal als Netzbezug bezahlt, einmal
+    beim Entladen als vermiedener Einkauf gutgeschrieben.
+    """
+    b = _bilanz()
+    # Nachts 2 kWh aus dem Netz in die Batterie, danach 2 kWh ins Haus.
+    tag = _tag_mit({
+        8: _slot(haus=0.1, bezug=2.1, laden=2.0, kwp=0.26, s=900.0),
+        40: _slot(haus=2.0, bezug=0.0, entladen=2.0, kwp=0.26, s=900.0),
+    })
+
+    ergebnis = b.bewerte_tag(tag, None)
+
+    # Ohne Abzug staenden hier 2,0 kWh Eigenverbrauch — sie kamen aber
+    # aus dem Netz und sind laengst bezahlt.
+    assert ergebnis["eigen_kwh"] == pytest.approx(0.0, abs=0.01)
+    assert ergebnis["vermieden"] == pytest.approx(0.0, abs=0.01)
+
+
+def test_normaler_tag_bleibt_vom_netzlade_abzug_unberuehrt():
+    """Der Abzug darf nur greifen, wenn wirklich aus dem Netz geladen wurde."""
+    b = _bilanz()
+    tag = _tag_mit({
+        48: _slot(pv=3.0, haus=1.0, laden=1.5, export=0.4, kwp=0.26, s=900.0),
+    })
+
+    ergebnis = b.bewerte_tag(tag, None)
+
+    assert ergebnis["eigen_kwh"] == pytest.approx(1.0)
+    assert ergebnis["vermieden"] == pytest.approx(0.26)
+
+
+def test_modus_anteil_wird_nicht_ueber_den_monat_summiert():
+    """ein_anteil ist ein Anteil — 30 Tage lang addiert ergaebe er 30."""
+    b = _bilanz()
+    for tag_nr in (25, 26, 27):
+        b._heute = _tag_mit(
+            {48: _slot(haus=1.0, kwp=0.26, s=900.0, ein_s=900.0)},
+            datum=f"2026-08-{tag_nr}",
+        )
+        b._archiviere(b._heute, None)
+
+    assert b._tage["2026-08-27"]["ein_anteil"] == pytest.approx(1.0)
+    assert "ein_anteil" not in b._monate["2026-08"]
+    # Die Geldfelder summieren sich weiterhin.
+    assert b._monate["2026-08"]["vermieden"] == pytest.approx(3 * 0.26)

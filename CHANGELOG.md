@@ -10,7 +10,28 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
-## [Unreleased]
+## [2.1.0] - 2026-08-28
+
+### Hinzugefügt
+
+- **Sechs neue Sensoren: was die PV in Geld bringt.** *Ersparnis durch PV*
+  (vermiedener Netzbezug plus Einspeiseerlös) und *Ersparnis durch
+  Optimierung* (Vergleich mit einem simulierten Standardbetrieb), jeweils für
+  heute, diesen Monat und dieses Jahr. Dazu die Dashboard-Karte
+  **„Was deine PV bringt"**.
+  > Der Anteil der Optimierung ist in der PV-Ersparnis **enthalten** und darf
+  > nicht dazugezählt werden — die Karte weist ihn deshalb als „davon"-Zeile
+  > aus.
+
+  Grundlage ist das neue Modul `bilanz.py`: Es zeichnet 96 Viertelstunden je
+  Tag auf und friert dabei die Preise ein, die zu dieser Viertelstunde galten.
+  Bewertet wird mit derselben Funktion, die auch den Fahrplan bewertet.
+  Der Anteil, der zum Satz der Energiegemeinschaft vergütet wird, beruht auf
+  deren Bedarfsprognose — Sensor und Karte weisen das aus, endgültig steht er
+  erst mit der EEG-Abrechnung fest.
+
+  **Die Aufzeichnung beginnt bei null:** Monat und Jahr füllen sich erst mit
+  der Zeit, es gibt keine Rückrechnung aus der Datenbank.
 
 ### Behoben
 
