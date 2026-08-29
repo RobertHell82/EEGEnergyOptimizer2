@@ -85,7 +85,7 @@ schedule_executor.py: ScheduleExecutor (execution, 30 s)
 | `inverter/base.py` | Abstract inverter interface (InverterBase ABC) |
 | `inverter/huawei.py` | Huawei SUN2000 implementation via HA services — Single + Master/Slave (multi-device) |
 | `inverter/_distribution.py` | Shared proportional discharge distribution (SolarEdge + Huawei multi-battery) |
-| `inverter/fronius.py` | Fronius Gen24 implementation via direct Modbus TCP (SunSpec Model 124) |
+| `inverter/fronius.py` | Fronius Gen24 implementation via direct Modbus TCP (SunSpec Model 124, device-read scale factors, RvrtTms watchdog + keepalive task) |
 | `inverter/kostal.py` | Kostal Plenticore implementation via direct Modbus TCP (proprietary registers 1034/1038, watchdog keepalive task) |
 | `inverter/sma.py` | SMA Smart Energy / Sunny Boy Storage implementation via direct Modbus TCP (CmpBMS 6-parameter method, complete-block writes, watchdog keepalive task) |
 | `inverter/solax.py` | SolaX Gen4+ implementation via solax_modbus Mode 1 |
@@ -231,7 +231,7 @@ InverterBase (ABC)
 
 Implementations:
   ├── HuaweiInverter — via HA huawei_solar services
-  ├── FroniusInverter — via direct Modbus TCP (SunSpec Model 124, pymodbus)
+  ├── FroniusInverter — via direct Modbus TCP (SunSpec Model 124, pymodbus; scale factors read from the device; InOutWRte_RvrtTms armed at 300s as the inverter-side failsafe, fed by a 60s keepalive)
   ├── KostalInverter — via direct Modbus TCP (proprietary registers, port 1502, unit 71; cyclic keepalive feeds the inverter watchdog, timeout = failsafe fallback to internal automatic)
   ├── SMAInverter — via direct Modbus TCP (CmpBMS external battery management, port 502, unit 3; every command writes the complete 6-register block, 60s keepalive, 300s watchdog fallback; discharge = grid-exchange setpoint GridWSpt → house load auto-compensated, house-load entry guard skipped)
   ├── SolarEdgeInverter — via HA solaredge_modbus_multi StorEdge

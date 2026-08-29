@@ -10,6 +10,18 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
+## [2.0.3-dev] - 2026-08-29
+
+### Hinzugefügt
+
+- **Fronius: Sicherheitsnetz gegen eingefrorene Batterie.** Ladesperre und Entladung werden jetzt mit der Fronius-Rückfallzeit (`InOutWRte_RvrtTms`, 5 Minuten) scharfgeschaltet und im Minutentakt aufgefrischt. Fällt Home Assistant mitten in einem Fahrplan-Slot aus, beendet der Wechselrichter den erzwungenen Betrieb selbst und kehrt zu seiner eigenen Batteriesteuerung zurück — bisher blieb die Batterie blockiert, bis jemand eingriff. Damit haben Fronius, Kostal und SMA dasselbe Failsafe-Verhalten. Hinweis: Ein zweites Programm, das denselben Wechselrichter über Modbus abfragt, hält die Rückfallzeit mit am Leben.
+
+- **Fronius Gen24 wird jetzt gesteuert, nicht nur angezeigt.** Der Treiber bietet die vollständige Fahrplan-Steuerschnittstelle an (Ladelimit lesen für Guard 1, Hardware-Obergrenzen für beide Guards, Stellgrößen für die Transparenz-Ansicht) und ist im Einrichtungsassistenten wieder auswählbar — gemeinsam mit Huawei. Die übrigen Wechselrichter bleiben ausgeblendet.
+
+### Geändert
+
+- **Fronius: Skalierungsfaktoren werden vom Gerät gelesen** statt fest angenommen (`WChaMax_SF`, `MinRsvPct_SF`, `InOutWRte_SF`). Auf Geräten, die Leistungen nicht in ganzen Watt melden, waren Lade- und Entladeleistung bisher um den Faktor 10 oder 100 daneben. Unplausible oder fehlende Werte fallen auf die bisherigen SunSpec-Vorgaben zurück.
+
 ## [2.0.2] - 2026-08-28
 
 ### Hinzugefügt

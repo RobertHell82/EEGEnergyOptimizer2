@@ -101,6 +101,20 @@ class InverterBase(ABC):
         """
         return None
 
+    async def async_get_control_values(self) -> list[dict]:
+        """Stellgrößen, die NICHT an einer HA-Entität hängen.
+
+        Für Treiber, die direkt über Modbus stellen (Fronius): dort gibt es
+        keine Entität, deren Zustand das Panel anzeigen könnte, also liefert
+        der Treiber Label und Wert selbst. Jeder Eintrag:
+        ``{"label": str, "value": Any, "unit": str|None, "role": str}``.
+
+        Default leer — Treiber, die über HA-Entitäten stellen, liefern ihre
+        Zeilen stattdessen über get_control_entities(). Beide Listen werden
+        im Panel zusammen angezeigt.
+        """
+        return []
+
     def get_control_entities(self) -> list[dict]:
         """Stellgrößen dieses Treibers für die Transparenz-Ansicht im Panel.
 

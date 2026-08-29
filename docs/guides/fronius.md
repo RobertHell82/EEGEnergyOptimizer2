@@ -26,7 +26,9 @@ Der EEG Energy Optimizer steuert die Batterie über Modbus TCP (SunSpec Model 12
 > **Wichtig:** Alle Scheduled (Dis)Charging Zeitpläne im Web-Interface deaktivieren! Modbus und Web-Interface konkurrieren — der höhere Wert gewinnt.
 
 > [!NOTE]
-> **Hinweis:** Der Wechselrichter behält Modbus-Einstellungen (z.B. Lade-/Entladesperre) auch nach einem Absturz oder Neustart des Optimizers bei, bis ein neuer Schreibbefehl kommt oder der Wechselrichter selbst neu gestartet wird. Im Normalbetrieb stellt der Optimizer den Ausgangszustand automatisch wieder her.
+> **Sicherheitsnetz:** Solange eine Ladesperre oder eine Entladung aktiv ist, meldet sich der Optimizer jede Minute beim Wechselrichter. Bleiben diese Meldungen aus — etwa weil Home Assistant abgestürzt ist —, beendet der Wechselrichter den erzwungenen Betrieb nach 5 Minuten selbst und schaltet auf seine eigene Batteriesteuerung zurück. Die Batterie bleibt also nicht dauerhaft blockiert.
+>
+> Ein anderes Programm, das denselben Wechselrichter über Modbus abfragt (z. B. evcc), hält diesen Timer mit am Leben. In so einer Kombination kann das Sicherheitsnetz später oder gar nicht greifen.
 
 ## 3. Firmware
 

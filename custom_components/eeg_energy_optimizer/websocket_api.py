@@ -2483,6 +2483,28 @@ async def ws_get_control_state(
             }
         )
 
+    # Treiber ohne Steuer-Entitäten (direkter Modbus-Pfad) liefern ihre
+    # Werte selbst. Ein Fehlschlag darf die Ansicht nicht kippen — sie ist
+    # Diagnose, und ein nicht erreichbarer Wechselrichter ist genau der
+    # Fall, in dem man sie aufruft.
+    try:
+        for row in await inverter.async_get_control_values():
+            role = row.get("role")
+            rows.append(
+                {
+                    "label": row.get("label"),
+                    "entity_id": None,
+                    "role": role,
+                    "value": row.get("value"),
+                    "unit": row.get("unit"),
+                    "max": None,
+                    "written": written.get(role),
+                    "written_unit": units.get(role),
+                }
+            )
+    except Exception:
+        _LOGGER.exception("Steuerwerte des Wechselrichters nicht lesbar")
+
     connection.send_result(
         msg["id"],
         {

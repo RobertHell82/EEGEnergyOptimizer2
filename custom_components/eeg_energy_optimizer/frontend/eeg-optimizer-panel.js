@@ -88,21 +88,21 @@ const INVERTER_LABELS = {
 };
 
 // Vom Fahrplan gesteuerte Wechselrichter — alle anderen rechnen und zeigen
-// an ("nur Anzeige"), gesteuert wird derzeit nur Huawei.
-const SCHEDULE_CONTROL_INVERTERS = ["huawei_sun2000"];
+// an ("nur Anzeige").
+const SCHEDULE_CONTROL_INVERTERS = ["fronius_gen24", "huawei_sun2000"];
 
 // Kostal ist im Wizard wieder in allen Builds auswählbar (seit 1.3.13-dev).
 // Der Flag bleibt als Schalter erhalten, falls ein Treiber künftig erneut
 // vorübergehend aus Release-Builds ausgeblendet werden soll (DEV-Erkennung
 // über den Cache-Buster der Script-URL, siehe Git-Historie zu 1.3.11).
 const KOSTAL_UI_ENABLED = true;
-// Nur Huawei zur Auswahl anbieten (Entscheid 28.08.2026): gesteuert wird
-// ohnehin nur dieser Treiber (SCHEDULE_CONTROL_INVERTERS), alle anderen
-// waren reine Anzeige. Die Karten sind nur AUSGEBLENDET, der Code bleibt
-// vollstaendig — auf `false` gesetzt kommen sie unveraendert zurueck. Ein
-// bereits konfigurierter Fremdtreiber bleibt sichtbar, damit eine
-// bestehende Anlage im Wizard nicht ploetzlich ohne Auswahl dasteht.
-const NUR_HUAWEI_WAEHLBAR = true;
+// Auswaehlbar ist genau, was der Fahrplan auch steuern kann (Entscheid
+// 28.08.2026): alles andere waere reine Anzeige. Die uebrigen Karten sind
+// nur AUSGEBLENDET, ihr Code bleibt vollstaendig — ein Eintrag in
+// SCHEDULE_CONTROL_INVERTERS holt sie unveraendert zurueck. Ein bereits
+// konfigurierter Fremdtreiber bleibt sichtbar, damit eine bestehende
+// Anlage im Wizard nicht ploetzlich ohne Auswahl dasteht.
+const istWaehlbarerWr = (key) => SCHEDULE_CONTROL_INVERTERS.includes(key);
 
 
 const WIZARD_DEFAULTS = {
@@ -3891,13 +3891,15 @@ class EegOptimizerPanel extends HTMLElement {
     const p = this._prerequisites;
     if (p) {
       const detected = [
+        p.fronius && { key: "fronius_gen24", label: "Fronius" },
         p.huawei_solar && { key: "huawei_sun2000", label: "Huawei" },
-        !NUR_HUAWEI_WAEHLBAR && p.solax_modbus && { key: "solax_gen4", label: "SolaX" },
-        !NUR_HUAWEI_WAEHLBAR && p.solaredge_modbus_multi && { key: "solaredge_storedge", label: "SolarEdge" },
-        !NUR_HUAWEI_WAEHLBAR && p.fronius && { key: "fronius_gen24", label: "Fronius" },
-        !NUR_HUAWEI_WAEHLBAR && KOSTAL_UI_ENABLED && p.kostal_plenticore && { key: "kostal_plenticore", label: "Kostal" },
-        !NUR_HUAWEI_WAEHLBAR && p.sma && { key: "sma_smart_energy", label: "SMA" },
-      ].filter(Boolean).sort((a, b) => a.label.localeCompare(b.label));
+        p.kostal_plenticore && KOSTAL_UI_ENABLED && { key: "kostal_plenticore", label: "Kostal" },
+        p.sma && { key: "sma_smart_energy", label: "SMA" },
+        p.solaredge_modbus_multi && { key: "solaredge_storedge", label: "SolarEdge" },
+        p.solax_modbus && { key: "solax_gen4", label: "SolaX" },
+      ].filter(Boolean)
+        .filter((inv) => istWaehlbarerWr(inv.key))
+        .sort((a, b) => a.label.localeCompare(b.label));
       if (detected.length > 0) {
         this._wizardData.inverter_type = detected[0].key;
       }
@@ -4548,17 +4550,13 @@ class EegOptimizerPanel extends HTMLElement {
       </p>
       <h3 style="margin-bottom:8px">Was du brauchst</h3>
       <ul style="line-height:1.8;margin-bottom:20px;padding-left:20px">
-        <li>${NUR_HUAWEI_WAEHLBAR ? "Einen Huawei SUN2000 mit Batteriespeicher" : "Einen unterstützten Wechselrichter mit Batteriespeicher"}</li>
+        <li>Einen Fronius Gen24 oder Huawei SUN2000 mit Batteriespeicher</li>
         <li>Eine PV-Prognose-Integration (Solcast Solar oder Forecast.Solar)</li>
       </ul>
       <h3 style="margin-bottom:8px">Getestete Setups</h3>
       <ul style="line-height:1.8;padding-left:20px">
-        ${NUR_HUAWEI_WAEHLBAR ? "" : "<li>Fronius Gen24 mit BYD Batteriespeicher</li>"}
+        <li>Fronius Gen24 mit BYD Batteriespeicher</li>
         <li>Huawei SUN2000 mit LUNA2000 Batteriespeicher</li>
-        ${NUR_HUAWEI_WAEHLBAR || !KOSTAL_UI_ENABLED ? "" : "<li>Kostal Plenticore (plus/G2/G3) mit BYD Batteriespeicher</li>"}
-        ${NUR_HUAWEI_WAEHLBAR ? "" : "<li>SMA Sunny Tripower Smart Energy / Sunny Boy Storage mit BYD Batteriespeicher</li>"}
-        ${NUR_HUAWEI_WAEHLBAR ? "" : "<li>SolarEdge mit StorEdge Batteriespeicher (LG RESU, BYD, Energy Bank)</li>"}
-        ${NUR_HUAWEI_WAEHLBAR ? "" : "<li>SolaX Gen4+ mit Triple Power Batteriespeicher</li>"}
       </ul>`;
   }
 
@@ -4639,20 +4637,20 @@ class EegOptimizerPanel extends HTMLElement {
     const inverterDefs = [
       { key: "huawei_sun2000", label: "Huawei SUN2000", subtitle: "", detected: huaweiOk, badge: huaweiBadge, dialog: "huawei",
         logo: `<img src="https://brands.home-assistant.io/huawei_solar/logo.png" alt="Huawei" style="max-width:120px;max-height:60px;height:auto" onerror="this.style.display='none'">` },
-      { key: "solax_gen4", label: "SolaX Gen4+", subtitle: "Gen4, Gen5, Gen6 · nur Anzeige — Steuerung derzeit nur Huawei", detected: solaxOk, badge: solaxBadge, dialog: "solax",
+      { key: "solax_gen4", label: "SolaX Gen4+", subtitle: "Gen4, Gen5, Gen6 · nur Anzeige — Steuerung derzeit nur Fronius und Huawei", detected: solaxOk, badge: solaxBadge, dialog: "solax",
         logo: `<span style="font-size:32px">SolaX</span>` },
-      { key: "solaredge_storedge", label: "SolarEdge", subtitle: "StorEdge Batteriespeicher · nur Anzeige — Steuerung derzeit nur Huawei", detected: solaredgeOk, badge: solaredgeBadge, dialog: "solaredge",
+      { key: "solaredge_storedge", label: "SolarEdge", subtitle: "StorEdge Batteriespeicher · nur Anzeige — Steuerung derzeit nur Fronius und Huawei", detected: solaredgeOk, badge: solaredgeBadge, dialog: "solaredge",
         logo: `<img src="https://brands.home-assistant.io/_/solaredge/logo.png" alt="SolarEdge" style="max-width:120px;max-height:60px;height:auto" onerror="this.outerHTML='<span style=font-size:32px>SolarEdge</span>'">` },
-      { key: "fronius_gen24", label: "Fronius Gen24", subtitle: "mit BYD Batteriespeicher · nur Anzeige — Steuerung derzeit nur Huawei", detected: froniusOk, badge: froniusBadge, dialog: "fronius",
+      { key: "fronius_gen24", label: "Fronius Gen24", subtitle: "mit BYD Batteriespeicher", detected: froniusOk, badge: froniusBadge, dialog: "fronius",
         logo: `<img src="https://brands.home-assistant.io/fronius/logo.png" alt="Fronius" style="max-width:120px;max-height:60px;height:auto" onerror="this.outerHTML='<span style=font-size:32px>Fronius</span>'">` },
-      { key: "kostal_plenticore", label: "Kostal Plenticore", subtitle: "mit BYD Batteriespeicher · nur Anzeige — Steuerung derzeit nur Huawei", detected: kostalOk, badge: kostalBadge, dialog: "kostal",
+      { key: "kostal_plenticore", label: "Kostal Plenticore", subtitle: "mit BYD Batteriespeicher · nur Anzeige — Steuerung derzeit nur Fronius und Huawei", detected: kostalOk, badge: kostalBadge, dialog: "kostal",
         logo: `<img src="https://brands.home-assistant.io/kostal_plenticore/logo.png" alt="Kostal" style="max-width:120px;max-height:60px;height:auto" onerror="this.outerHTML='<span style=font-size:32px>Kostal</span>'">` },
-      { key: "sma_smart_energy", label: "SMA Smart Energy", subtitle: "Tripower/Sunny Boy mit Batteriespeicher · nur Anzeige — Steuerung derzeit nur Huawei", detected: smaOk, badge: smaBadge, dialog: "sma",
+      { key: "sma_smart_energy", label: "SMA Smart Energy", subtitle: "Tripower/Sunny Boy mit Batteriespeicher · nur Anzeige — Steuerung derzeit nur Fronius und Huawei", detected: smaOk, badge: smaBadge, dialog: "sma",
         logo: `<img src="https://brands.home-assistant.io/sma/logo.png" alt="SMA" style="max-width:120px;max-height:60px;height:auto" onerror="this.outerHTML='<span style=font-size:32px>SMA</span>'">` },
     ].filter(inv =>
       inv.key !== "kostal_plenticore" || KOSTAL_UI_ENABLED || kostalSelected
     ).filter(inv =>
-      !NUR_HUAWEI_WAEHLBAR || inv.key === "huawei_sun2000" || inv.key === selected
+      istWaehlbarerWr(inv.key) || inv.key === selected
     );
     inverterDefs.sort((a, b) => {
       if (a.detected !== b.detected) return a.detected ? -1 : 1;
@@ -5270,7 +5268,7 @@ class EegOptimizerPanel extends HTMLElement {
     if (SCHEDULE_CONTROL_INVERTERS.includes(inverterType)) return "";
     return `<div class="help-text" style="margin-bottom:16px;padding:10px 12px;background:var(--info-color,#2196f3)18;border-left:3px solid var(--info-color,#2196f3);border-radius:4px">
            <ha-icon icon="mdi:information-outline" style="--mdc-icon-size:16px;vertical-align:middle"></ha-icon>
-           Für diesen Wechselrichter wird der Optimierungsplan nur berechnet und angezeigt — die Steuerung ist derzeit nur für Huawei verfügbar.
+           Für diesen Wechselrichter wird der Optimierungsplan nur berechnet und angezeigt — die Steuerung ist derzeit nur für Fronius und Huawei verfügbar.
          </div>`;
   }
 
