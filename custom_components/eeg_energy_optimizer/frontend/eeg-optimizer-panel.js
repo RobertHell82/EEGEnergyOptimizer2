@@ -3271,11 +3271,27 @@ class EegOptimizerPanel extends HTMLElement {
 
     let details = "";
     if (this._bilanzDetailsOpen) {
-      const zeile = (name, wert, einheit) => `
-        <tr>
-          <td style="padding:3px 0;color:var(--secondary-text-color)">${name}</td>
+      // Die kWh-Zeilen stammen aus je einem unserer Sensoren — ein Klick
+      // oeffnet dessen Verlauf. Nur verlinken, wenn die Entitaet auch da
+      // ist: ein Klick ins Leere waere schlimmer als kein Klick. Die
+      // Geldzeilen bleiben stumm, hinter ihnen steht kein Sensor.
+      const zeile = (name, wert, einheit, entity) => {
+        const klickbar = entity && this._readState(entity);
+        const attrs = klickbar
+          ? ` class="bilanz-zeile-klickbar" data-action="show-entity" data-entity="${entity}" title="Verlauf anzeigen"`
+          : "";
+        const icon = klickbar
+          ? ` <ha-icon icon="mdi:chart-line" style="--mdc-icon-size:14px;vertical-align:-2px;opacity:.5"></ha-icon>`
+          : "";
+        return `
+        <tr${attrs}>
+          <td style="padding:3px 0;color:var(--secondary-text-color)">${name}${icon}</td>
           <td style="padding:3px 0;text-align:right;white-space:nowrap">${wert == null ? "—" : fmtDe(Number(wert), einheit === "kWh" ? 1 : 2)}&nbsp;${einheit === "kWh" ? "kWh" : waehrung}</td>
         </tr>`;
+      };
+      const sPv = "sensor.eeg_energy_optimizer_pv_leistung";
+      const sNetz = "sensor.eeg_energy_optimizer_netzleistung";
+      const sHaus = "sensor.eeg_energy_optimizer_hausverbrauch";
       const eegKwh = Number(heute.eeg_kwh || 0);
       const exportKwh = Number(heute.export_kwh || 0);
       const eegZeile = exportKwh > 0 ? `
@@ -3288,10 +3304,10 @@ class EegOptimizerPanel extends HTMLElement {
         <table style="width:100%;border-collapse:collapse;font-size:13px;margin-top:12px">
           ${zeile("Nicht gekaufter Strom", heute.vermieden, "eur")}
           ${zeile("Einspeiseerlös", heute.erloes, "eur")}
-          ${zeile("Selbst verbraucht", heute.eigen_kwh, "kWh")}
-          ${zeile("Eingespeist", heute.export_kwh, "kWh")}
-          ${zeile("Aus dem Netz bezogen", heute.bezug_kwh, "kWh")}
-          ${zeile("Erzeugt", heute.pv_kwh, "kWh")}
+          ${zeile("Selbst verbraucht", heute.eigen_kwh, "kWh", sHaus)}
+          ${zeile("Eingespeist", heute.export_kwh, "kWh", sNetz)}
+          ${zeile("Aus dem Netz bezogen", heute.bezug_kwh, "kWh", sNetz)}
+          ${zeile("Erzeugt", heute.pv_kwh, "kWh", sPv)}
         </table>
         ${eegZeile}
         <div style="font-size:12px;color:var(--secondary-text-color);margin-top:8px;line-height:1.5">
@@ -8007,6 +8023,9 @@ class EegOptimizerPanel extends HTMLElement {
         .header-card { padding: 16px; }
         .header-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
         .hlv { display: flex; flex-direction: column; gap: 2px; }
+        .bilanz-zeile-klickbar { cursor: pointer; transition: background 0.15s; }
+        .bilanz-zeile-klickbar:hover { background: var(--secondary-background-color, rgba(0,0,0,0.05)); }
+        .bilanz-zeile-klickbar:active { background: var(--secondary-background-color, rgba(0,0,0,0.08)); }
         .hlv-clickable { cursor: pointer; border-radius: 8px; padding: 4px 6px; margin: -4px -6px; transition: background 0.15s; }
         .hlv-clickable:hover { background: var(--secondary-background-color, rgba(0,0,0,0.05)); }
         .hlv-label { font-size: 11px; color: var(--secondary-text-color, #999); text-transform: uppercase; letter-spacing: 0.5px; }
