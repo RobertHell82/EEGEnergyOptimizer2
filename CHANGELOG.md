@@ -10,6 +10,12 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
+## [2.0.3-devfronius.2] - 2026-08-29
+
+### Hinzugefügt
+
+- **Aufschlüsselung unter „Was deine PV bringt" führt zum Sensorverlauf.** Die kWh-Zeilen (Erzeugt, Eingespeist, Netzbezug, Selbst verbraucht) öffnen per Klick den jeweiligen Sensor mit seinem Verlauf — bisher standen dort Zahlen ohne Weg dahin. Die beiden Geldzeilen bleiben bewusst stumm: hinter ihnen steht kein Sensor, sondern eine Rechnung.
+
 ## [2.0.3-devfronius.1] - 2026-08-29
 
 ### Hinzugefügt
