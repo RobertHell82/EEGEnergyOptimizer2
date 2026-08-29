@@ -10,6 +10,18 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
+## [2.0.3-devfronius.3] - 2026-08-29
+
+### Behoben
+
+- **Ladelimit kam viel zu langsam auf den Fahrplanwert zurück.** Hatte die Einspeisegrenzen-Regelung das Ladelimit hochgezogen (an der Testanlage bis 14,86 kW bei einem Planwert von 1,49 kW), baute sie den Abstand in festen 0,5-kW-Schritten je 30 Sekunden ab — über 13 Minuten, während ein Fahrplan-Slot nur 15 dauert. Der Planwert wurde so kaum je wirksam. Die Rücknahme halbiert jetzt den Abstand je Lauf (rund 7 Läufe statt 27); das Anheben tastet sich weiter vorsichtig heran, weil dort die richtige Höhe unbekannt ist.
+- **„null" in der Transparenz-Ansicht.** Unter jedem Label stand „null", wenn der Wechselrichter direkt über Modbus gestellt wird (Fronius) — dort gibt es keine Entität, deren ID die Zeile anzeigen könnte. Außerdem werden kW-Werte in beiden Spalten mit zwei Nachkommastellen dargestellt.
+- **Anteil einer abgewählten Gemeinschaft wurde mitgezählt.** Wer als zweite Gemeinschaft „keine" wählte, bekam beim Speichern trotzdem „Anteile zusammen über 100 %" — der Prozentsatz der zweiten Gemeinschaft blieb im Formular stehen und wurde mitgerechnet, obwohl er ohne Gemeinschaft nirgends wirkt.
+
+### Hinzugefügt
+
+- **Beträge in „Was deine PV bringt" führen zum Sensorverlauf.** Die drei Zeitraum-Beträge, die „davon durch die Optimierung"-Zeile und die kWh-Zeilen der Aufschlüsselung öffnen per Klick den jeweiligen Sensor. Monats- und Jahreswert erscheinen erst, sobald ein Tag abgeschlossen ist — vorher sind sie zwangsläufig identisch mit „heute" und sahen wie ein Fehler aus.
+
 ## [2.0.3-devfronius.2] - 2026-08-29
 
 ### Hinzugefügt

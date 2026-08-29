@@ -306,6 +306,53 @@ async def test_guard1_ruecknahme_richtung_fahrplan_nie_darunter(mock_hass, mock_
     mock_inverter.async_set_charge_limit.assert_called_once_with(2.0)
 
 
+async def test_guard1_ruecknahme_halbiert_grossen_abstand(mock_hass, mock_inverter):
+    """Weit oben stehendes Limit kommt schnell zurueck, nicht in 0,5er-Schritten.
+
+    Der reale Fall von der Testanlage: Guard 1 hatte sich auf 14,86 kW
+    hochgearbeitet, der Fahrplan wollte 1,49 kW. Mit festen Schritten haette
+    das 27 Laeufe gedauert — 13,5 Minuten bei einem Slot von 15.
+    """
+    mock_inverter.async_get_charge_limit_kw.return_value = 14.86
+    ex = _make_executor(mock_hass, mock_inverter, dict(CFG_LIMIT))
+
+    with _messwerte(export=3.5):   # unter 4,0 - 0,3
+        await ex.async_guard_cycle(_state(_slot(0, battery_p=-1.493)), MODE_EIN, now=NOW)
+
+    # Halber Abstand: 14,86 - (14,86 - 1,493)/2 = 8,1765
+    gesetzt = mock_inverter.async_set_charge_limit.call_args[0][0]
+    assert round(gesetzt, 3) == 8.177
+
+
+async def test_guard1_ruecknahme_naehert_sich_an_statt_zu_springen(
+    mock_hass, mock_inverter
+):
+    """Jeder Schritt ist kleiner als der vorige — kein Ueberschwinger unter
+    den Planwert, und das Ladelimit bleibt als Bremse wirksam."""
+    ex = _make_executor(mock_hass, mock_inverter, dict(CFG_LIMIT))
+    stand = 14.86
+    verlauf = []
+    for i in range(8):
+        mock_inverter.async_get_charge_limit_kw.return_value = stand
+        mock_inverter.async_set_charge_limit.reset_mock()
+        with _messwerte(export=3.5):
+            await ex.async_guard_cycle(
+                _state(_slot(0, battery_p=-1.493)),
+                MODE_EIN,
+                now=NOW + timedelta(seconds=30 * i),
+            )
+        if not mock_inverter.async_set_charge_limit.called:
+            break
+        stand = mock_inverter.async_set_charge_limit.call_args[0][0]
+        verlauf.append(stand)
+
+    assert verlauf, "es wurde nie geschrieben"
+    assert all(a >= b for a, b in zip(verlauf, verlauf[1:])), verlauf
+    assert min(verlauf) >= 1.493 - 1e-9, verlauf     # nie unter den Planwert
+    assert verlauf[-1] == 1.493, verlauf             # kommt an
+    assert len(verlauf) <= 8, verlauf                # und zwar zuegig
+
+
 async def test_guard1_totes_band_aendert_nichts(mock_hass, mock_inverter):
     """Zwischen Grenze − 0,3 und Grenze − 0,1 wird weder angehoben noch
     zurückgenommen — das asymmetrische tote Band verhindert Pendeln."""

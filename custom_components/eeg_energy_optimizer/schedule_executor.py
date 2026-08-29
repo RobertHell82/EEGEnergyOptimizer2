@@ -34,6 +34,7 @@ from .const import (
     EXECUTOR_CHARGE_DEADBAND_KW,
     EXECUTOR_DISCHARGE_DEADBAND_KW,
     EXECUTOR_TARGET_SOC_DEADBAND_PCT,
+    GUARD_CHARGE_RELEASE_FACTOR,
     GUARD_CHARGE_STEP_KW,
     GUARD_DISCHARGE_EFFICIENCY,
     GUARD_EMERGENCY_BLOCK_MINUTES,
@@ -594,9 +595,14 @@ class ScheduleExecutor:
                 neu = min(neu, max_kw)
             return neu, "Guard 1: Einspeisung am Limit — Ladelimit angehoben"
         if export < limit_kw - GUARD_EXPORT_RELEASE_KW:
-            # Deutlich unter der Grenze → pro Lauf ein Schritt Richtung
-            # Fahrplanwert zurück, nie darunter.
-            neu = max(plan_kw, basis - GUARD_CHARGE_STEP_KW)
+            # Deutlich unter der Grenze → zurück Richtung Fahrplanwert, nie
+            # darunter. Je Lauf wird der halbe Abstand abgebaut, mindestens
+            # aber ein voller Schritt: das Ziel ist bekannt (siehe
+            # GUARD_CHARGE_RELEASE_FACTOR), und mit festen Schritten wäre ein
+            # Slot vorbei, bevor sein Planwert wirkt.
+            abstand = basis - plan_kw
+            schritt = max(abstand * GUARD_CHARGE_RELEASE_FACTOR, GUARD_CHARGE_STEP_KW)
+            neu = max(plan_kw, basis - schritt)
             if neu < basis:
                 return neu, "Guard 1: Rücknahme Richtung Planwert"
             return neu, "Planwert"

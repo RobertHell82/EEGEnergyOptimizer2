@@ -168,6 +168,15 @@ GUARD_EXPORT_STICKY_BAND_KW = 0.1   # „klebt am Limit“-Band (±100 W)
 # Überschwinger im nächsten Takt korrigierbar bleibt.
 GUARD_CHARGE_STEP_KW = 0.5
 GUARD_EXPORT_RELEASE_KW = 0.3       # Rücknahme erst unter Grenze − 0,3 kW
+# Rücknahme: Anteil des Abstands zum Fahrplanwert, der je Lauf abgebaut wird.
+# Anders als beim Anheben ist das Ziel hier bekannt — es gibt nichts zu
+# ertasten. Mit festen 0,5-kW-Schritten brauchte ein Limit, das sich bis ans
+# Hardware-Maximum hochgearbeitet hat, über 13 Minuten zurück; ein Slot dauert
+# 15. Halbierend sind es rund 7 Läufe (3,5 min), und weil jeder Schritt
+# kleiner wird als der vorige, nähert sich das Limit an, statt zu überschwingen
+# — ein Sprung direkt auf den Planwert würde den ganzen Überschuss auf einmal
+# ins Netz schicken und eine Abregelung auslösen.
+GUARD_CHARGE_RELEASE_FACTOR = 0.5
 
 # Guard 2 — Wirkungsgradkorrektur. Sollwert = benötigte Leistung / Wert.
 #
