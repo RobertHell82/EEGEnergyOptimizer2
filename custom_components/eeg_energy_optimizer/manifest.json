@@ -1,7 +1,7 @@
 {
   "domain": "eeg_energy_optimizer",
   "name": "EEG Energy Optimizer",
-  "version": "2.0.2",
+  "version": "2.0.3-devfronius.1",
   "documentation": "https://github.com/RobertHell82/EEGEnergyOptimizer2",
   "issue_tracker": "https://github.com/RobertHell82/EEGEnergyOptimizer2/issues",
   "dependencies": [
