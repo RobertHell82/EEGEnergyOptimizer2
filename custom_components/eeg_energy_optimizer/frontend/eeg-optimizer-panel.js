@@ -6432,7 +6432,7 @@ class EegOptimizerPanel extends HTMLElement {
       </span>`;
     const erklaerung = pause
       ? "Der Fahrplan setzt aus, der Wechselrichter läuft in seiner eigenen Eigenverbrauchs-Automatik. Nach Ablauf übernimmt der Fahrplan von selbst wieder — auch nach einem Neustart."
-      : "Der Fahrplan optimiert weiter, entlädt die Batterie aber nicht unter diesen Ladestand. Die bessere Wahl gegenüber einer Pause, wenn nur ein Puffer gebraucht wird — etwa fürs Elektroauto oder bei Gewitterwarnung.";
+      : "Der Fahrplan optimiert weiter, entlädt die Batterie aber nicht unter diesen Ladestand. Die bessere Wahl gegenüber einer Pause, wenn nur ein Puffer gebraucht wird — etwa fürs Elektroauto.";
     return `
       <div class="dialog-overlay">
         <div class="dialog-card" style="max-width:440px">

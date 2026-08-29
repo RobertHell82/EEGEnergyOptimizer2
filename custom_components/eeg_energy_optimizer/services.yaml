@@ -29,7 +29,7 @@ reserve:
     Für eine begrenzte Zeit mehr Energie in der Batterie halten. Der Fahrplan
     optimiert weiter, entlädt aber nicht unter den angegebenen Ladestand —
     die bessere Wahl gegenüber einer Pause, wenn nur ein Puffer gebraucht wird
-    (z. B. Elektroauto laden, Gäste, Gewitterwarnung).
+    (z. B. Elektroauto laden, Gäste).
   fields:
     min_soc_pct:
       name: Mindest-Ladestand
