@@ -6401,7 +6401,7 @@ class EegOptimizerPanel extends HTMLElement {
     const icon = pause ? "mdi:pause-circle" : "mdi:battery-lock";
     const text = pause
       ? `Pause ${this._overrideRestText(ovr)} — der Wechselrichter läuft in seiner Automatik, danach übernimmt der Fahrplan wieder.`
-      : `Reserve ${Math.round(ovr.min_soc_pct)} % ${this._overrideRestText(ovr)} — der Fahrplan entlädt nicht darunter.`;
+      : `Reserve ${Math.round(ovr.min_soc_pct)} %${(() => { const k = this._readFloat(this._config?.battery_capacity_sensor) ?? (parseFloat(this._config?.battery_capacity_kwh) || null); return k ? ` (≈ ${fmtDe(k * ovr.min_soc_pct / 100, 1)} kWh)` : ""; })()} ${this._overrideRestText(ovr)} — der Fahrplan entlädt nicht darunter.`;
     return `
       <div style="display:flex;align-items:center;gap:8px;background:color-mix(in srgb, ${farbe} 12%, transparent);border-left:3px solid ${farbe};border-radius:6px;padding:8px 12px;margin-bottom:12px;font-size:13px;color:var(--primary-text-color)">
         <ha-icon icon="${icon}" style="--mdc-icon-size:18px;color:${farbe};flex-shrink:0"></ha-icon>
@@ -6418,6 +6418,12 @@ class EegOptimizerPanel extends HTMLElement {
     const stunden = this._overrideStunden;
     const preset = (h) => `<button class="override-btn${stunden === h ? " active" : ""}" data-action="override-preset" data-stunden="${h}">${h} h</button>`;
     const socNow = this._readFloat(this._config?.battery_soc_sensor);
+    // Prozent bleibt die Eingabe (so denkt der Fahrplan), die kWh daneben
+    // machen die Zahl greifbar — Kapazitaet aus dem Sensor, sonst aus der
+    // Konfiguration; ohne beides entfaellt die Angabe.
+    const kapKwh = this._readFloat(this._config?.battery_capacity_sensor)
+      ?? (parseFloat(this._config?.battery_capacity_kwh) || null);
+    const kwhText = (pct) => kapKwh ? `≈ ${fmtDe(kapKwh * pct / 100, 1)} kWh` : "";
     const input = (field, val, min, max, step, unit) => `
       <span style="display:inline-flex;align-items:center;gap:6px">
         <input type="number" inputmode="decimal" data-field="${field}" min="${min}" max="${max}" step="${step}" value="${val}"
@@ -6437,8 +6443,11 @@ class EegOptimizerPanel extends HTMLElement {
           <p style="color:var(--secondary-text-color);font-size:13px;margin:0 0 14px;line-height:1.5">${erklaerung}</p>
           ${pause ? "" : `
           <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:12px;font-size:15px">
-            <span>Mindest-Ladestand${socNow != null ? ` <small style="color:var(--secondary-text-color)">(aktuell ${Math.round(socNow)} %)</small>` : ""}</span>
-            ${input("override_pct", this._overridePct, 5, 90, 5, "%")}
+            <span>Mindest-Ladestand${socNow != null ? ` <small style="color:var(--secondary-text-color)">(aktuell ${Math.round(socNow)} %${kapKwh ? `, ${kwhText(socNow)}` : ""})</small>` : ""}</span>
+            <span style="display:inline-flex;flex-direction:column;align-items:flex-end;gap:2px">
+              ${input("override_pct", this._overridePct, 5, 90, 5, "%")}
+              ${kapKwh ? `<small style="color:var(--secondary-text-color)">${kwhText(this._overridePct)} von ${fmtDe(kapKwh, 1)} kWh</small>` : ""}
+            </span>
           </div>`}
           <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;font-size:15px">
             <span>Dauer</span>
