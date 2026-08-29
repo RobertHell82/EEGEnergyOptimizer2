@@ -26,7 +26,7 @@ Unterstützt wird derzeit ausschließlich **Huawei SUN2000**:
 | **Huawei SUN2000** | [Huawei Solar Integration einrichten](guides/huawei.md) |
 | | [Huawei Akkukapazität-Sensor aktivieren](guides/capacity_sensor.md) |
 
-> Fronius, Kostal, SMA, SolarEdge und SolaX werden **derzeit nicht** unterstützt — ihre Treiber sind enthalten, aber stillgelegt. Welcher Wechselrichter wann dazukommt und was dafür noch fehlt: **[Stand der Unterstützung](wechselrichter-status.md)**.
+> Kostal, SMA, SolarEdge und SolaX werden **derzeit nicht** unterstützt — ihre Treiber sind enthalten, aber stillgelegt. Welcher Wechselrichter wann dazukommt und was dafür noch fehlt: **[Stand der Unterstützung](wechselrichter-status.md)**.
 
 ## ☀️ PV-Prognose einrichten
 

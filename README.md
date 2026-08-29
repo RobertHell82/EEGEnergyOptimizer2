@@ -1,6 +1,6 @@
 # EEG Energy Optimizer
 
-> **Prototyp-Zweig.** Dieses Repo enthält den LP-Fahrplan-Optimierer aus [EngagePV/chamo](https://gitlab.com/EngagePV/chamo) — er ist hier der **einzige Aktor**: Er rechnet jede Minute und steuert die Anlage (derzeit nur Huawei SUN2000). Die Zustands-Heuristik der produktiven Integration ist entfernt. Details und Installation: [CHAMO.md](CHAMO.md).
+> **Prototyp-Zweig.** Dieses Repo enthält den LP-Fahrplan-Optimierer aus [EngagePV/chamo](https://gitlab.com/EngagePV/chamo) — er ist hier der **einzige Aktor**: Er rechnet jede Minute und steuert die Anlage (derzeit Fronius Gen24 und Huawei SUN2000). Die Zustands-Heuristik der produktiven Integration ist entfernt. Details und Installation: [CHAMO.md](CHAMO.md).
 
 HACS-kompatible Home Assistant Integration für vorausschauendes Batteriemanagement, optimiert für Energiegemeinschaften (EEG) im DACH-Raum.
 
@@ -46,7 +46,7 @@ Pro Anlage wird einmalig eine zufällige **UUIDv4** + ein **API-Key** erzeugt un
 
 **Huawei SUN2000** (via [Huawei Solar](https://github.com/wlcrs/huawei_solar) Integration) — Single oder Master/Slave (mehrere Wechselrichter + Batterien). Direkte Anbindung an den Wechselrichter/Dongle oder über das EMMA-Energiemanagement (`sensor.emma_*`-Sensoren, Netz-Vorzeichen wird automatisch korrigiert — siehe [Huawei-Guide](docs/guides/huawei.md)).
 
-> **Andere Wechselrichter werden derzeit nicht unterstützt.** Die Treiber für Fronius, Kostal, SMA, SolarEdge und SolaX sind vollständig enthalten, aber stillgelegt: Sie stehen nicht zur Auswahl und werden nicht gesteuert. Sie werden Schritt für Schritt wieder freigeschaltet, sobald die Fahrplan-Steuerung an einer echten Anlage des jeweiligen Typs nachgewiesen ist — Stand, offene Punkte und Freischaltweg: **[docs/wechselrichter-status.md](docs/wechselrichter-status.md)**.
+> **Andere Wechselrichter werden derzeit nicht unterstützt.** Die Treiber für Kostal, SMA, SolarEdge und SolaX sind vollständig enthalten, aber stillgelegt: Sie stehen nicht zur Auswahl und werden nicht gesteuert. Sie werden Schritt für Schritt wieder freigeschaltet, sobald die Fahrplan-Steuerung an einer echten Anlage des jeweiligen Typs nachgewiesen ist — Stand, offene Punkte und Freischaltweg: **[docs/wechselrichter-status.md](docs/wechselrichter-status.md)**.
 
 ## Installation
 

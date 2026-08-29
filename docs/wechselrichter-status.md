@@ -5,15 +5,16 @@ unterstützt wird. README und Doku verweisen hierher, statt eigene Listen zu
 führen.
 
 > [!IMPORTANT]
-> **Derzeit wird ausschließlich Huawei SUN2000 unterstützt.**
-> Der Fahrplan steuert nur diesen Wechselrichter, und nur er steht im
-> Einrichtungsassistenten zur Auswahl.
+> **Unterstützt werden derzeit Fronius Gen24 und Huawei SUN2000.**
+> Nur diese beiden steuert der Fahrplan, und nur sie stehen im
+> Einrichtungsassistenten zur Auswahl. Fronius ist neu dazugekommen und
+> im Feldtest — siehe unten.
 
 ## Übersicht
 
 | Wechselrichter | Treiber im Code | Fahrplan-Steuerung | Im Assistenten wählbar |
 |---|---|---|---|
-| Fronius Gen24 | vorhanden | nein | nein |
+| **Fronius Gen24** | vorhanden | **ja** (Feldtest) | **ja** |
 | **Huawei SUN2000** | vorhanden | **ja** | **ja** |
 | Kostal Plenticore | vorhanden | nein | nein |
 | SMA Smart Energy | vorhanden | nein | nein |
@@ -45,11 +46,11 @@ Drei Stellen, in dieser Reihenfolge:
    Property `supports_schedule_control` auf `True` setzen (Default in
    `inverter/base.py` ist `False`). Das ist der einzige Schalter, den der
    `ScheduleExecutor` abfragt.
-2. **Einrichtungsassistent** — `frontend/eeg-optimizer-panel.js`: Der Schalter
-   `NUR_HUAWEI_WAEHLBAR` blendet die Auswahlkarten aus. Auf `false` gesetzt
-   kommen **alle** unverändert zurück; für eine schrittweise Freigabe die
-   Filterzeile auf die freigegebenen Schlüssel erweitern statt den Schalter
-   ganz umzulegen.
+2. **Einrichtungsassistent** — `frontend/eeg-optimizer-panel.js`: Die Liste
+   `SCHEDULE_CONTROL_INVERTERS` steuert beides — welche Karte im Assistenten
+   erscheint und ob der Hinweis „nur Anzeige" gezeigt wird. Den Schlüssel des
+   Treibers dort eintragen; ein bereits konfigurierter Fremdtreiber bleibt
+   unabhängig davon sichtbar.
 3. **Doku** — die Zeile in der Tabelle oben umstellen, den Guide in
    `docs/README.md` wieder verlinken und `python scripts/build_guides.py`
    laufen lassen.
@@ -73,11 +74,21 @@ unverändert weiter und bleiben erhalten.
 
 ### Fronius Gen24
 
-Steuerung über direktes Modbus TCP (SunSpec Model 124), Sensordaten über die
-native [Fronius](https://www.home-assistant.io/integrations/fronius/)
-Integration (Solar API). Keine zusätzliche HACS-Integration nötig — nur die
-Fronius Core Integration und eine Netzwerkverbindung zum Wechselrichter
-(Standard-Port 502). Offen: Feldtest der Fahrplan-Nachführung.
+**Freigegeben, im Feldtest.** Steuerung über direktes Modbus TCP (SunSpec
+Model 124), Sensordaten über die native
+[Fronius](https://www.home-assistant.io/integrations/fronius/) Integration
+(Solar API). Keine zusätzliche HACS-Integration nötig — nur die Fronius Core
+Integration und eine Netzwerkverbindung zum Wechselrichter (Standard-Port 502).
+
+Der Wechselrichter beendet einen erzwungenen Betrieb nach 5 Minuten ohne
+Modbus-Nachricht selbst (Rückfallzeit `InOutWRte_RvrtTms`), der Treiber hält
+sie mit einem Keepalive am Leben. **Achtung:** Jede Modbus-Nachricht startet
+diesen Timer neu, auch die eines anderen Programms — läuft daneben eine
+zweite Steuerung (z. B. evcc) auf demselben Gerät, greift das Sicherheitsnetz
+später oder gar nicht.
+
+Offen: Nachweis der Rückfallzeit am Gerät (Ladesperre setzen, Home Assistant
+hart stoppen, nach 5 Minuten prüfen, ob die Batterie wieder lädt).
 Guide: [fronius.md](guides/fronius.md)
 
 ### Huawei SUN2000
