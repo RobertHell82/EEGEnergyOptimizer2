@@ -1107,6 +1107,20 @@ async def async_collect_inputs(
         except Exception:
             _LOGGER.debug("Backup-Ladestand des Geräts nicht lesbar", exc_info=True)
 
+    # Befristete Reserve des Nutzers ("heute mehr vorhalten"): hebt den Boden
+    # an, solange sie läuft — der Fahrplan optimiert weiter, nur nicht
+    # darunter. Sie gilt für den ganzen Horizont, nicht je Slot: der Plan
+    # wird jede Minute neu gerechnet, nach Ablauf ist sie im nächsten Lauf
+    # einfach weg. Darf höher liegen als der dauerhafte Deckel von 30 %.
+    override = data.get("override")
+    if override is not None:
+        try:
+            reserve = override.reserve_pct(_now_local())
+            if reserve is not None and reserve > min_soc:
+                min_soc = reserve
+        except Exception:
+            _LOGGER.debug("Reserve-Override nicht lesbar", exc_info=True)
+
     # Preise. Der Bezugspreis lässt sich direkt setzen; ohne Angabe wird er
     # wie bei Harald aus Einspeisepreis plus grid_fee gebildet. Ein leeres
     # Panel-Zahlenfeld kommt als 0 an — beim Tagestarif fällt das auf den

@@ -416,6 +416,13 @@ class EegOptimizerPanel extends HTMLElement {
     this._bilanzBusy = false;
     this._bilanzGeholt = 0;
     this._bilanzDetailsOpen = false;
+    // Befristete Eingriffe (Pause / Reserve) — Zustand vom Backend, Dialog
+    // und Eingabewerte lokal. Ohne Pause/Reserve: null.
+    this._override = null;
+    this._overrideDialog = null;      // "pause" | "reserve" | null
+    this._overrideStunden = 4;
+    this._overridePct = 60;
+    this._overrideBusy = false;
 
     this._settingsData = {};
     this._settingsFehler = null;
@@ -559,6 +566,7 @@ class EegOptimizerPanel extends HTMLElement {
       // Close dialog/info-modal when clicking overlay background (not the card itself)
       if (e.target.classList.contains("dialog-overlay")) {
         this._showDialog = null;
+        this._overrideDialog = null;
         this._render();
         return;
       }
@@ -603,6 +611,14 @@ class EegOptimizerPanel extends HTMLElement {
       const target = e.target.closest("[data-field]");
       if (target) {
         const field = target.dataset.field;
+        if (field === "override_stunden") {
+          this._overrideStunden = parseFloat(target.value) || 4;
+          return;
+        }
+        if (field === "override_pct") {
+          this._overridePct = parseFloat(target.value) || 60;
+          return;
+        }
         if (field.startsWith("settings_")) {
           const realField = field.replace("settings_", "");
           const type = target.type;
@@ -780,6 +796,17 @@ class EegOptimizerPanel extends HTMLElement {
     const alter = Date.now() - this._bilanzGeholt;
     if (this._bilanz !== null && alter < 60000) return;
     this._loadBilanz();
+    this._loadOverride();
+  }
+
+  async _loadOverride() {
+    if (!this._hass) return;
+    try {
+      const r = await this._hass.callWS({ type: "eeg_optimizer/get_override" });
+      this._override = r && r.aktiv ? r : null;
+    } catch (e) {
+      // nicht kritisch — der Banner fehlt dann eben bis zum naechsten Takt
+    }
   }
 
   async _loadBilanz() {
@@ -1341,6 +1368,43 @@ class EegOptimizerPanel extends HTMLElement {
         }
         break;
       }
+      case "override-open":
+        this._overrideDialog = dataset?.art === "reserve" ? "reserve" : "pause";
+        this._render();
+        break;
+      case "override-close":
+        this._overrideDialog = null;
+        this._render();
+        break;
+      case "override-preset":
+        this._overrideStunden = parseFloat(dataset?.stunden) || this._overrideStunden;
+        this._render();
+        break;
+      case "override-set": {
+        const art = this._overrideDialog;
+        if (!art || this._overrideBusy) break;
+        this._overrideBusy = true;
+        this._render();
+        const msg = { type: "eeg_optimizer/set_override", art, stunden: this._overrideStunden };
+        if (art === "reserve") msg.min_soc_pct = this._overridePct;
+        this._hass.callWS(msg).then(res => {
+          this._override = res && res.aktiv ? res : null;
+          this._overrideDialog = null;
+        }).catch(err => {
+          console.error("set_override fehlgeschlagen:", err);
+          alert("Konnte nicht gesetzt werden: " + (err?.message || err));
+        }).finally(() => { this._overrideBusy = false; this._render(); });
+        break;
+      }
+      case "override-clear":
+        if (this._overrideBusy) break;
+        this._overrideBusy = true;
+        this._render();
+        this._hass.callWS({ type: "eeg_optimizer/clear_override" }).then(() => {
+          this._override = null;
+        }).catch(err => console.error("clear_override fehlgeschlagen:", err))
+        .finally(() => { this._overrideBusy = false; this._render(); });
+        break;
       case "toggle-mode": {
         const modeState = this._readState(this._entityIds?.select || "select.eeg_energy_optimizer_optimizer");
         const currentMode = modeState ? modeState.state : "Aus";
@@ -3280,6 +3344,10 @@ class EegOptimizerPanel extends HTMLElement {
     // konnte — eine Null saehe aus wie ein Messergebnis.
     const vorteilHeute = opt.heute;
     const optEntity = (ent.opt_vorteil || {}).heute;
+    // Eine rote Zahl ohne Erklaerung ist schlimmer als keine Zahl — die
+    // Begruendung kommt aus den Bestandteilen der Differenz (Backend).
+    const begruendung = Number(vorteilHeute) < 0 && Array.isArray(heute.vorteil_begruendung)
+      ? heute.vorteil_begruendung : null;
     // Ohne abgeschlossenen Tag sind Monat und Jahr rechnerisch dasselbe wie
     // heute. Die drei gleichen Betraege nebeneinander lesen sich wie ein
     // Fehler — also erst zeigen, wenn sie sich unterscheiden koennen.
@@ -3295,6 +3363,11 @@ class EegOptimizerPanel extends HTMLElement {
         </span>
         ${archivVorhanden ? `<span style="white-space:nowrap">(Monat ${eur(opt.monat)}, Jahr ${eur(opt.jahr)})</span>` : ""}
       </div>
+      ${begruendung ? `
+      <div style="margin:10px auto 0;max-width:560px;font-size:12px;color:var(--secondary-text-color);line-height:1.55;border-left:3px solid #e53935;padding:6px 10px;background:rgba(229,57,53,0.06);border-radius:4px;text-align:left">
+        <div style="font-weight:600;color:var(--primary-text-color);margin-bottom:4px">Warum heute negativ?</div>
+        ${begruendung.map(t => `<div style="margin:3px 0">${this._escapeHtml(t)}</div>`).join("")}
+      </div>` : ""}
       ${archivVorhanden ? "" : `
       <div style="font-size:12px;color:var(--secondary-text-color);text-align:center;margin-top:6px;line-height:1.5">
         Monats- und Jahreswerte wachsen erst mit jedem abgeschlossenen Tag — heute ist der erste.
@@ -6289,6 +6362,99 @@ class EegOptimizerPanel extends HTMLElement {
       });
   }
 
+  /* ── Befristete Eingriffe: Pause / Reserve ─────────────────────── */
+
+  // Ablaufzeit lesbar machen — aus "bis" gerechnet, nicht aus dem
+  // Backend-Wert, damit der Banner zwischen zwei Abfragen nicht steht.
+  _overrideRestText(ovr) {
+    if (!ovr || !ovr.bis) return "";
+    const bis = new Date(ovr.bis);
+    const restMin = Math.max(0, Math.round((bis - Date.now()) / 60000));
+    const uhr = bis.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" });
+    const h = Math.floor(restMin / 60), m = restMin % 60;
+    const rest = h > 0 ? `${h} h ${m} min` : `${m} min`;
+    const heute = new Date().toDateString() === bis.toDateString();
+    return `bis ${heute ? "" : bis.toLocaleDateString("de-DE", { weekday: "short" }) + " "}${uhr} Uhr (noch ${rest})`;
+  }
+
+  _renderOverrideButtons() {
+    if (!this._config?.setup_complete) return "";
+    const aktiv = !!this._override;
+    return `
+      <div class="override-btns">
+        <button class="override-btn${aktiv && this._override.art === "pause" ? " active" : ""}"
+                data-action="override-open" data-art="pause" title="Steuerung für einige Stunden aussetzen">
+          <ha-icon icon="mdi:pause-circle-outline" style="--mdc-icon-size:16px"></ha-icon><span>Pause</span>
+        </button>
+        <button class="override-btn${aktiv && this._override.art === "reserve" ? " active" : ""}"
+                data-action="override-open" data-art="reserve" title="Für einige Stunden mehr Energie in der Batterie halten">
+          <ha-icon icon="mdi:battery-lock" style="--mdc-icon-size:16px"></ha-icon><span>Reserve</span>
+        </button>
+      </div>`;
+  }
+
+  _renderOverrideBanner() {
+    const ovr = this._override;
+    if (!ovr) return "";
+    const pause = ovr.art === "pause";
+    const farbe = pause ? "#ff9800" : "var(--info-color,#2196f3)";
+    const icon = pause ? "mdi:pause-circle" : "mdi:battery-lock";
+    const text = pause
+      ? `Pause ${this._overrideRestText(ovr)} — der Wechselrichter läuft in seiner Automatik, danach übernimmt der Fahrplan wieder.`
+      : `Reserve ${Math.round(ovr.min_soc_pct)} % ${this._overrideRestText(ovr)} — der Fahrplan entlädt nicht darunter.`;
+    return `
+      <div style="display:flex;align-items:center;gap:8px;background:color-mix(in srgb, ${farbe} 12%, transparent);border-left:3px solid ${farbe};border-radius:6px;padding:8px 12px;margin-bottom:12px;font-size:13px;color:var(--primary-text-color)">
+        <ha-icon icon="${icon}" style="--mdc-icon-size:18px;color:${farbe};flex-shrink:0"></ha-icon>
+        <span style="flex:1;min-width:0">${text}</span>
+        <button class="override-btn" data-action="override-clear" ${this._overrideBusy ? "disabled" : ""} style="flex-shrink:0">aufheben</button>
+      </div>`;
+  }
+
+  _renderOverrideDialog() {
+    const art = this._overrideDialog;
+    if (!art) return "";
+    const pause = art === "pause";
+    const busy = this._overrideBusy;
+    const stunden = this._overrideStunden;
+    const preset = (h) => `<button class="override-btn${stunden === h ? " active" : ""}" data-action="override-preset" data-stunden="${h}">${h} h</button>`;
+    const socNow = this._readFloat(this._config?.battery_soc_sensor);
+    const input = (field, val, min, max, step, unit) => `
+      <span style="display:inline-flex;align-items:center;gap:6px">
+        <input type="number" inputmode="decimal" data-field="${field}" min="${min}" max="${max}" step="${step}" value="${val}"
+               style="width:90px;border-radius:8px;border:1px solid var(--divider-color);padding:9px 10px;background:var(--card-background-color);color:var(--primary-text-color);font-size:15px;text-align:right">
+        <span style="color:var(--secondary-text-color)">${unit}</span>
+      </span>`;
+    const erklaerung = pause
+      ? "Der Fahrplan setzt aus, der Wechselrichter läuft in seiner eigenen Eigenverbrauchs-Automatik. Nach Ablauf übernimmt der Fahrplan von selbst wieder — auch nach einem Neustart."
+      : "Der Fahrplan optimiert weiter, entlädt die Batterie aber nicht unter diesen Ladestand. Die bessere Wahl gegenüber einer Pause, wenn nur ein Puffer gebraucht wird — etwa fürs Elektroauto oder bei Gewitterwarnung.";
+    return `
+      <div class="dialog-overlay">
+        <div class="dialog-card" style="max-width:440px">
+          <h3 style="margin:0 0 6px;display:flex;align-items:center;gap:8px">
+            <ha-icon icon="${pause ? "mdi:pause-circle-outline" : "mdi:battery-lock"}" style="--mdc-icon-size:22px;color:var(--primary-color,#03a9f4)"></ha-icon>
+            ${pause ? "Pause" : "Reserve"}
+          </h3>
+          <p style="color:var(--secondary-text-color);font-size:13px;margin:0 0 14px;line-height:1.5">${erklaerung}</p>
+          ${pause ? "" : `
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:12px;font-size:15px">
+            <span>Mindest-Ladestand${socNow != null ? ` <small style="color:var(--secondary-text-color)">(aktuell ${Math.round(socNow)} %)</small>` : ""}</span>
+            ${input("override_pct", this._overridePct, 5, 90, 5, "%")}
+          </div>`}
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;font-size:15px">
+            <span>Dauer</span>
+            ${input("override_stunden", stunden, 0.25, 48, 0.25, "h")}
+          </div>
+          <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">${[2, 4, 8, 12, 24].map(preset).join("")}</div>
+          <div style="display:flex;gap:12px;margin-top:20px">
+            <button class="btn-secondary" data-action="override-close" style="flex:1;padding:12px" ${busy ? "disabled" : ""}>Abbrechen</button>
+            <button class="btn-primary" data-action="override-set" style="flex:1;padding:12px" ${busy ? "disabled" : ""}>
+              ${busy ? "Setze…" : (pause ? "Pause starten" : "Reserve setzen")}
+            </button>
+          </div>
+        </div>
+      </div>`;
+  }
+
   _renderDialog() {
     if (!this._showDialog) return "";
     const html = this._guideCache[this._showDialog.key];
@@ -7454,7 +7620,9 @@ class EegOptimizerPanel extends HTMLElement {
               </div>
               <span class="mode-toggle-label">${modeValue === "Ein" ? "Ein" : "Aus"}</span>
             </div>
+            ${this._renderOverrideButtons()}
           </div>
+          ${this._renderOverrideBanner()}
           ${this._statusViewVariant === "flow"
             ? this._renderEnergyFlow(pvKw, batKw, gridKw, hausKw, socVal, {pvEntity, batEntity, gridEntity, hausEntity, socEntity})
             : `<div class="header-grid">
@@ -7821,6 +7989,7 @@ class EegOptimizerPanel extends HTMLElement {
     // Der Guide-Dialog gehoert in jede Ansicht: er haengt nur an _showDialog,
     // und ein „Anleitung"-Knopf kann ueberall stehen.
     content += this._renderDialog();
+    content += this._renderOverrideDialog();
 
     this._shadow.innerHTML = `
       <style>
@@ -8073,6 +8242,13 @@ class EegOptimizerPanel extends HTMLElement {
         .val-blue { color: #2196f3; }
         .header-card-top { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; flex-wrap: wrap; }
         .header-mode-toggle { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+        .override-btns { display: inline-flex; gap: 6px; flex-shrink: 0; }
+        .override-btn { display: inline-flex; align-items: center; gap: 5px; cursor: pointer;
+          background: transparent; border: 1px solid var(--divider-color); color: var(--secondary-text-color);
+          border-radius: 999px; padding: 5px 11px; font-size: 13px; font-weight: 500; transition: background 0.15s, color 0.15s, border-color 0.15s; }
+        .override-btn:hover { background: var(--secondary-background-color, rgba(0,0,0,0.05)); color: var(--primary-text-color); }
+        .override-btn.active { background: var(--primary-color, #03a9f4); border-color: var(--primary-color, #03a9f4); color: #fff; }
+        .override-btn:disabled { opacity: .5; cursor: default; }
         .status-view-pills { display: inline-flex; background: var(--secondary-background-color, rgba(0,0,0,0.05)); border-radius: 999px; padding: 3px; gap: 0; flex-shrink: 0; }
         .view-pill { background: transparent; border: none; cursor: pointer; padding: 6px 12px; border-radius: 999px; color: var(--secondary-text-color, #666); display: inline-flex; align-items: center; justify-content: center; transition: background 0.15s, color 0.15s; }
         .view-pill:hover { color: var(--primary-text-color); }

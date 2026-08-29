@@ -14,6 +14,8 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 
 ### Hinzugefügt
 
+- **Pause und Reserve — befristete Eingriffe neben dem Ein/Aus-Schalter.** *Pause* setzt die Steuerung für eine wählbare Zeit aus (der Wechselrichter läuft in seiner eigenen Automatik); *Reserve* hält für eine wählbare Zeit einen höheren Mindest-Ladestand — der Fahrplan optimiert weiter, entlädt aber nicht darunter. Beides läuft von selbst ab und überlebt einen Neustart. Auch als Services `eeg_energy_optimizer.pause`, `.reserve` und `.aufheben`, damit Automationen sie auslösen können („Wallbox steckt an → Reserve 50 % für 4 h").
+- **Negativer Optimierungs-Vorteil wird begründet.** Unter „davon durch die Optimierung" steht bei einem Minus, woher es kommt — abgeleitet aus den Bestandteilen der Differenz (mehr Netzbezug, weniger Einspeiseerlös, weniger Restenergie, mehr Batterienutzung), mit der typischen Ursache je Posten und dem Hinweis, dass ein laufender Tag nur ein Zwischenstand ist.
 - **SolaX Gen4+ wird wieder gesteuert.** Der Treiber bietet die vollständige Fahrplan-Steuerschnittstelle an und ist im Einrichtungsassistenten wieder auswählbar.
 
 ### Behoben

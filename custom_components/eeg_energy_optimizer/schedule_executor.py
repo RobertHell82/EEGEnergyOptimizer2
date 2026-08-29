@@ -42,6 +42,7 @@ from .const import (
     GUARD_EMERGENCY_IMPORT_RUNS,
     GUARD_EXPORT_RELEASE_KW,
     GUARD_EXPORT_STICKY_BAND_KW,
+    MODE_AUS,
     MODE_EIN,
     SCHEDULE_BATTERY_FULL_SOC_PCT,
     SCHEDULE_FAILSAFE_MINUTES,
@@ -215,6 +216,9 @@ class ScheduleExecutor:
         self._last_mode: str | None = None
         # Freigabe im Anzeige-Modus nachholen (Limit aus einer Vorsession).
         self._display_release_pending = False
+        # Aktive Pause (Ablaufzeit) — nur für den Statustext; die Wirkung
+        # ist dieselbe wie Modus Aus.
+        self._pause_bis: datetime | None = None
 
         # Status für Panel, Statussensor und Aktivitätslog.
         self.last_run_iso: str | None = None
@@ -279,7 +283,11 @@ class ScheduleExecutor:
         return ok
 
     async def async_guard_cycle(
-        self, schedule_state: dict | None, mode: str, now: datetime | None = None
+        self,
+        schedule_state: dict | None,
+        mode: str,
+        now: datetime | None = None,
+        pause_bis: datetime | None = None,
     ) -> None:
         """Ein Guard-Lauf: Absicht bestimmen, gegen Messwerte halten, setzen.
 
@@ -289,6 +297,14 @@ class ScheduleExecutor:
         """
         now = now or _now_local()
         self.last_run_iso = now.isoformat()
+
+        # Eine Pause ist ein Aus mit Ablaufzeit: dieselbe Freigabe beim
+        # Eintritt, derselbe Verzicht auf Schreibbefehle — nur der Status
+        # sagt, wann es weitergeht. Der Modus-Wechsel unten sieht deshalb
+        # einfach "Aus" und macht das Richtige.
+        self._pause_bis = pause_bis
+        if pause_bis is not None:
+            mode = MODE_AUS
 
         if not self._supported:
             self.last_status = "Treiber wird nicht gesteuert — Plan nur Anzeige"
@@ -366,7 +382,13 @@ class ScheduleExecutor:
                         "Executor: Modus 'Aus' — Steuerwerte aus der Vorsession "
                         "auf Standard zurückgenommen"
                     )
-            self.last_status = "Aus — es wird nicht gesteuert"
+            if self._pause_bis is not None:
+                self.last_status = (
+                    f"Pause bis {self._pause_bis.strftime('%H:%M')} — "
+                    "der Wechselrichter läuft im Automatikmodus"
+                )
+            else:
+                self.last_status = "Aus — es wird nicht gesteuert"
             return
 
         if (now - self._created_at).total_seconds() < STARTUP_GRACE_SECONDS:
@@ -473,6 +495,7 @@ class ScheduleExecutor:
                 "reason": action.reason,
             },
             "failsafe_released": self._failsafe_released,
+            "pause_bis": None if self._pause_bis is None else self._pause_bis.isoformat(),
             "emergency_runs": self._emergency_runs,
             "emergency_blocked_slot": self._emergency_blocked_slot,
             "write_failures": self.write_failures,

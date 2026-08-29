@@ -1,0 +1,72 @@
+pause:
+  name: Pause
+  description: >-
+    Steuerung für eine begrenzte Zeit aussetzen. Der Wechselrichter läuft in
+    seiner eigenen Eigenverbrauchs-Automatik; danach übernimmt der Fahrplan
+    wieder von selbst. Überlebt einen Neustart von Home Assistant.
+  fields:
+    stunden:
+      name: Dauer
+      description: Dauer der Pause in Stunden (0,25 bis 48).
+      required: true
+      example: 4
+      selector:
+        number:
+          min: 0.25
+          max: 48
+          step: 0.25
+          unit_of_measurement: h
+    entry_id:
+      name: Konfigurationseintrag
+      description: Nur nötig, wenn mehrere EEG Energy Optimizer eingerichtet sind.
+      required: false
+      selector:
+        text:
+
+reserve:
+  name: Reserve
+  description: >-
+    Für eine begrenzte Zeit mehr Energie in der Batterie halten. Der Fahrplan
+    optimiert weiter, entlädt aber nicht unter den angegebenen Ladestand —
+    die bessere Wahl gegenüber einer Pause, wenn nur ein Puffer gebraucht wird
+    (z. B. Elektroauto laden, Gäste, Gewitterwarnung).
+  fields:
+    min_soc_pct:
+      name: Mindest-Ladestand
+      description: Ladestand in Prozent, unter den nicht entladen wird (5 bis 90).
+      required: true
+      example: 60
+      selector:
+        number:
+          min: 5
+          max: 90
+          step: 5
+          unit_of_measurement: "%"
+    stunden:
+      name: Dauer
+      description: Dauer der Reserve in Stunden (0,25 bis 48).
+      required: true
+      example: 6
+      selector:
+        number:
+          min: 0.25
+          max: 48
+          step: 0.25
+          unit_of_measurement: h
+    entry_id:
+      name: Konfigurationseintrag
+      description: Nur nötig, wenn mehrere EEG Energy Optimizer eingerichtet sind.
+      required: false
+      selector:
+        text:
+
+aufheben:
+  name: Pause/Reserve aufheben
+  description: Eine laufende Pause oder Reserve sofort beenden.
+  fields:
+    entry_id:
+      name: Konfigurationseintrag
+      description: Nur nötig, wenn mehrere EEG Energy Optimizer eingerichtet sind.
+      required: false
+      selector:
+        text:

@@ -76,6 +76,7 @@ schedule_executor.py: ScheduleExecutor (execution, 30 s)
 | `chamo/` | **Upstream, unmodified** — Harald Geyer's LP optimizer (`opt_highs.py`, `timetableopt`) plus a HiGHS adapter |
 | `sensor.py` | 25 sensors (+4 conditional): consumption profile, forecasts, power flows, plan values, grid discharge energy, register writes, Fahrplan-Status, money balance |
 | `bilanz.py` | Energy balance in money — records 96 quarter-hours per day (energy, SOC, **frozen** prices and community balances), evaluates them with `bewerte_geldfluesse`, and derives the optimiser advantage against a simulated standard operation over the measured series |
+| `override.py` | Time-boxed user overrides — **Pause** (behave like mode Aus until expiry) and **Reserve** (raise the schedule's min-SOC floor until expiry). Persisted via `Store` so a restart mid-pause does not resume control. Evaluated in `async_collect_inputs` (reserve) and the guard cycle in `__init__.py` (pause); exposed as HA services `pause` / `reserve` / `aufheben` (`services.yaml`) |
 | `coordinator.py` | Loads hourly consumption averages from recorder (rolling, weekday split) |
 | `forecast_provider.py` | Abstract PV forecast provider — Solcast and Forecast.Solar implementations |
 | `config_flow.py` | Single-click config flow (full setup happens in panel) |
@@ -169,7 +170,7 @@ three intents. `Fahrplan-Status` shows what actually happened:
 - **API**: Paginated WebSocket endpoint (`get_activity_log` with `offset`/`limit`)
 - **Frontend**: Loads 100 entries initially, "Mehr laden" fetches 100 more per click, live events via subscription
 
-### WebSocket API (25 commands)
+### WebSocket API (28 commands)
 
 | Command | Description |
 |---------|-------------|
@@ -189,7 +190,10 @@ three intents. `Fahrplan-Status` shows what actually happened:
 | `eeg_optimizer/get_peakshare_communities` | List of PeakShare community names for dropdown |
 | `eeg_optimizer/get_peakshare_data` | PeakShare community demand forecast |
 | `eeg_optimizer/get_oemag_tarif` | Current OeMAG market price (base tariff option) |
-| `eeg_optimizer/get_bilanz` | Money balance for the "Was deine PV bringt" card — PV saving and optimiser share for today / month / year plus the day's breakdown |
+| `eeg_optimizer/get_bilanz` | Money balance for the "Was deine PV bringt" card — PV saving and optimiser share for today / month / year plus the day's breakdown (incl. `vorteil_begruendung` when the share is negative) |
+| `eeg_optimizer/get_override` | Active time-boxed override (pause / reserve) or `{aktiv: false}` |
+| `eeg_optimizer/set_override` | Start a pause (`stunden`) or reserve (`min_soc_pct`, `stunden`); replaces a running one, takes effect immediately |
+| `eeg_optimizer/clear_override` | End the running override |
 | `eeg_optimizer/get_spot_preis` | Current exchange spot price, data range, age (base tariff option; `refresh` forces a fetch) |
 | `eeg_optimizer/get_feedin_statistics` | Feed-in statistics for the panel card (daily + period summaries) |
 | `eeg_optimizer/tagesbilanz_jetzt` | Build yesterday's daily balance now instead of waiting for 00:15 |

@@ -454,8 +454,13 @@ class EnergieBilanz:
     # ------------------------------------------------------------------
     # Bewertung
     # ------------------------------------------------------------------
-    def bewerte_tag(self, tag: dict[str, Any], inputs: Any) -> dict[str, Any]:
+    def bewerte_tag(
+        self, tag: dict[str, Any], inputs: Any, abgeschlossen: bool = True
+    ) -> dict[str, Any]:
         """Geldwerte eines Tages aus seiner aufgezeichneten Reihe.
+
+        ``abgeschlossen`` False = der laufende Tag: die Begründung eines
+        negativen Vorteils nennt dann zuerst, dass es ein Zwischenstand ist.
 
         Liefert beide Größen samt Zwischenwerten. ``pv_ersparnis`` enthält den
         Optimierungs-Vorteil bereits — er ist kein zusätzlicher Betrag,
@@ -476,6 +481,8 @@ class EnergieBilanz:
             "ein_anteil": 0.0,
             "ist_summe": None,
             "ref_summe": None,
+            "vorteil_begruendung": None,
+            "vorteil_details": None,
         }
         if not slots:
             return leer
@@ -554,7 +561,17 @@ class EnergieBilanz:
         # Beide Seiten der Differenz mit ausweisen — sonst steht im Panel eine
         # Zahl, die niemand nachrechnen kann.
         ergebnis["ist_summe"] = round(float(bewertung.get("summe", 0.0)), 4)
-        ergebnis["ref_summe"] = referenz
+        ergebnis["ref_summe"] = (
+            None if referenz is None else round(float(referenz.get("summe", 0.0)), 4)
+        )
+        if vorteil is not None and referenz is not None:
+            ergebnis["vorteil_details"] = vorteil_details(bewertung, referenz)
+            if vorteil < 0:
+                ergebnis["vorteil_begruendung"] = begruende_vorteil(
+                    ergebnis["vorteil_details"],
+                    ein_anteil=float(ergebnis.get("ein_anteil") or 0.0),
+                    abgeschlossen=abgeschlossen,
+                )
         return ergebnis
 
     def _sortierte_slots(self, tag: dict[str, Any]) -> list[dict[str, Any]]:
@@ -640,7 +657,7 @@ class EnergieBilanz:
         slots: list[dict[str, Any]],
         inputs: Any,
         ist_bewertung: dict[str, float],
-    ) -> tuple[float | None, float | None]:
+    ) -> tuple[float | None, dict[str, float] | None]:
         """Ist gegen simulierten Standardbetrieb — beide am selben Tag gemessen.
 
         Der Referenzlauf bekommt die GEMESSENEN PV- und Verbrauchsreihen, nicht
@@ -674,14 +691,14 @@ class EnergieBilanz:
 
         ref_summe = round(float(referenz.get("summe", 0.0)), 4)
         vorteil = round(float(ist_bewertung.get("summe", 0.0)) - ref_summe, 4)
-        return vorteil, ref_summe
+        return vorteil, dict(referenz)
 
     # ------------------------------------------------------------------
     # Abfrage (fuer die Sensoren)
     # ------------------------------------------------------------------
     def heute(self, inputs: Any = None) -> dict[str, Any]:
         """Bewertung des laufenden Tages."""
-        return self.bewerte_tag(self._heute, inputs)
+        return self.bewerte_tag(self._heute, inputs, abgeschlossen=False)
 
     def summe(self, feld: str, monat: str | None = None, jahr: str | None = None) -> float:
         """Summe eines Feldes ueber Monat (``YYYY-MM``) oder Jahr (``YYYY``).
@@ -715,3 +732,99 @@ class EnergieBilanz:
     @property
     def datum_heute(self) -> str:
         return self._heute.get("datum") or ""
+
+
+# ---------------------------------------------------------------------------
+# Begründung eines negativen Optimierungs-Vorteils
+# ---------------------------------------------------------------------------
+# Eine rote Zahl ohne Erklärung ist schlimmer als keine Zahl: Der Nutzer
+# weiß nicht, ob die Optimierung versagt hat oder nur der Tag ungewöhnlich
+# war. Die Begründung wird aus den Bestandteilen der Differenz abgeleitet —
+# was hat mehr gekostet, was weniger gebracht — und für jeden Bestandteil
+# steht, wodurch das typischerweise passiert. Unter 2 Cent zählt ein Posten
+# nicht: das ist Rauschen zwischen Messwert und Simulation.
+
+_BEGRUENDUNG_SCHWELLE_EUR = 0.02
+
+
+def vorteil_details(ist: dict[str, float], ref: dict[str, float]) -> dict[str, float]:
+    """Differenz Ist − Referenz je Bestandteil (positiv = Ist besser).
+
+    Die Summe ist erloes − bezug − alterung + endbestand; damit jeder Posten
+    dasselbe Vorzeichen hat wie sein Beitrag zum Vorteil, werden Kosten
+    negiert: ``bezug`` hier = ref.bezug − ist.bezug.
+    """
+    def _d(feld: str, kosten: bool = False) -> float:
+        a = float(ist.get(feld, 0.0) or 0.0)
+        b = float(ref.get(feld, 0.0) or 0.0)
+        return round((b - a) if kosten else (a - b), 4)
+
+    return {
+        "erloes": _d("erloes"),
+        "bezug": _d("bezug", kosten=True),
+        "alterung": _d("alterung", kosten=True),
+        "endbestand": _d("endbestand"),
+    }
+
+
+def begruende_vorteil(
+    details: dict[str, float], ein_anteil: float, abgeschlossen: bool
+) -> list[str]:
+    """Sätze, die einen negativen Vorteil erklären — der größte Posten zuerst."""
+    def eur(v: float) -> str:
+        return f"{abs(v):.2f}".replace(".", ",") + " €"
+
+    saetze: list[str] = []
+
+    if not abgeschlossen:
+        saetze.append(
+            "Zwischenstand — der Tag läuft noch. Energie, die der Fahrplan für "
+            "den Abend zurückhält, zählt bis dahin nur zum Basistarif; ihr "
+            "Mehrwert entsteht erst beim Einspeisen."
+        )
+
+    posten = sorted(
+        ((k, v) for k, v in details.items() if v < -_BEGRUENDUNG_SCHWELLE_EUR),
+        key=lambda kv: kv[1],
+    )
+    texte = {
+        "bezug": (
+            "Mehr Netzbezug als im Standardbetrieb ({v}). Typisch, wenn "
+            "Verbrauch kam, den die Prognose nicht kannte — etwa ein "
+            "Elektroauto: Der Fahrplan hielt Energie für später zurück, der "
+            "Standardbetrieb hätte sie sofort verbraucht."
+        ),
+        "erloes": (
+            "Weniger Einspeiseerlös ({v}). Der Fahrplan hat Energie in der "
+            "Batterie behalten, oder die Gemeinschaft hatte weniger Bedarf als "
+            "vorhergesagt, sodass mehr zum Basistarif wegging."
+        ),
+        "endbestand": (
+            "Am Tagesende weniger Energie in der Batterie ({v}). Der "
+            "Standardbetrieb lädt bis 100 %, der Fahrplan nur bis zum "
+            "eingestellten Deckel — oder er hat für die Einspeisung entladen."
+        ),
+        "alterung": (
+            "Mehr Batterienutzung ({v} Alterungskosten) — der Fahrplan hat "
+            "mehr umgeschichtet als der Standardbetrieb."
+        ),
+    }
+    for feld, wert in posten[:3]:
+        saetze.append(texte[feld].format(v=eur(wert)))
+
+    if 0.0 < ein_anteil < 0.9:
+        saetze.append(
+            f"Die Steuerung war nur {round(ein_anteil * 100)} % des Tages "
+            "aktiv; bewertet wird trotzdem der ganze Tag."
+        )
+
+    if not posten:
+        saetze.append("Die Abweichung liegt im Bereich der Messungenauigkeit.")
+
+    saetze.append(
+        "Verglichen wird der echte Tag mit einem simulierten Betrieb ohne "
+        "Vorausschau über dieselben Messwerte. Die Referenz kennt den "
+        "tatsächlichen Verbrauch, der Fahrplan nur die Prognose — bei "
+        "Überraschungen gewinnt die Referenz."
+    )
+    return saetze

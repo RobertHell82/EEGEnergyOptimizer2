@@ -163,6 +163,38 @@ async def test_grace_period_schreibt_nicht(mock_hass, mock_inverter):
     assert "Startphase" in ex.last_status
 
 
+async def test_pause_gibt_frei_und_schreibt_nicht(mock_hass, mock_inverter):
+    """Pause = Aus mit Ablaufzeit: beim Eintritt einmal freigeben, dann
+    keine Schreibbefehle mehr, und der Status sagt, wann es weitergeht."""
+    ex = _make_executor(mock_hass, mock_inverter)
+
+    # Lauf 1: Ein, Laden geplant → Ladelimit geschrieben
+    await ex.async_guard_cycle(_state(_slot(0, battery_p=-2.0)), MODE_EIN, now=NOW)
+    assert mock_inverter.async_set_charge_limit.call_count == 1
+    mock_inverter.async_stop_forcible.reset_mock()
+
+    # Lauf 2: Pause bis in einer Stunde → Freigabe, kein weiteres Schreiben
+    pause_bis = NOW + timedelta(hours=1)
+    await ex.async_guard_cycle(
+        _state(_slot(0, battery_p=-2.0)), MODE_EIN,
+        now=NOW + timedelta(seconds=30), pause_bis=pause_bis,
+    )
+    mock_inverter.async_stop_forcible.assert_called_once()
+    assert mock_inverter.async_set_charge_limit.call_count == 1
+    assert "Pause bis" in ex.last_status
+    assert pause_bis.strftime("%H:%M") in ex.last_status
+    assert ex.status()["pause_bis"] == pause_bis.isoformat()
+
+    # Lauf 3: Pause vorbei → steuert wieder (frischer Plan mit passendem Slot,
+    # sonst greift der Failsafe wegen Plan-Alter)
+    spaeter = NOW + timedelta(hours=1, seconds=30)
+    await ex.async_guard_cycle(
+        _state(_slot(60, battery_p=-2.0), last_run=spaeter), MODE_EIN, now=spaeter
+    )
+    assert mock_inverter.async_set_charge_limit.call_count == 2
+    assert ex.status()["pause_bis"] is None
+
+
 async def test_anzeige_modus_schreibt_nicht(mock_hass, mock_inverter):
     ex = _make_executor(mock_hass, mock_inverter)
 

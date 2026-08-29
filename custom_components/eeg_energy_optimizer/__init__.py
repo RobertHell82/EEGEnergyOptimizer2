@@ -1560,6 +1560,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         await bilanz.async_load()
         data["bilanz"] = bilanz
 
+        # Befristete Eingriffe (Pause / Reserve). Persistent, damit ein
+        # Neustart mitten in der Pause die Steuerung nicht wieder anwirft.
+        from .override import SteuerOverride
+
+        override = SteuerOverride(hass, entry.entry_id)
+        await override.async_load()
+        data["override"] = override
+
         # Telemetrie-Hooks im Closure-Scope für späteren Zugriff (Tests)
         data["_check_sensor_unavailability"] = _check_sensor_unavailability
         data["_check_forecast_streak"] = _check_forecast_streak
@@ -1643,8 +1651,28 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             runner = data.get("schedule")
             schedule_state = runner.to_dict() if runner is not None else None
 
-            await current_executor.async_guard_cycle(schedule_state, mode)
+            # Befristete Eingriffe: eine aktive Pause wirkt für alles
+            # Folgende wie Modus Aus — Executor, Bilanz (zählt die Zeit nicht
+            # als gesteuert) und Telemetrie sehen denselben Modus.
+            override = data.get("override")
+            pause_bis = None
+            override_info = None
+            if override is not None:
+                try:
+                    jetzt = dt_util.now() if dt_util is not None else _now_utc()
+                    await override.async_tick(jetzt)
+                    pause_bis = override.pause_bis(jetzt)
+                    override_info = override.to_dict(jetzt)
+                except Exception:  # pragma: no cover — Override darf den Takt nie kippen
+                    _LOGGER.exception("Override: Auswertung fehlgeschlagen")
+            if pause_bis is not None:
+                mode = MODE_AUS
+
+            await current_executor.async_guard_cycle(
+                schedule_state, mode, pause_bis=pause_bis
+            )
             status = current_executor.status()
+            status["override"] = override_info
 
             status_sensor = data.get("decision_sensor")
             if status_sensor is not None:
@@ -1773,6 +1801,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     pass
 
         data["_run_cycle"] = _guard_cycle
+
+        _register_override_services(hass)
 
         if async_track_time_interval is not None:
             unsub = async_track_time_interval(
@@ -2262,3 +2292,104 @@ async def async_unload_entry(
                 )
         hass.data[DOMAIN].pop(entry.entry_id, None)
     return unload_ok
+
+
+# ---------------------------------------------------------------------------
+# HA-Services für befristete Eingriffe (Pause / Reserve)
+# ---------------------------------------------------------------------------
+# Als Services, nicht nur als Panel-Knöpfe: Der eigentliche Gewinn ist, dass
+# Automationen sie auslösen können — "Wallbox steckt an → Reserve 50 % für
+# 4 h" braucht dann keine Hand mehr.
+
+def _override_entry_data(hass: Any, entry_id: str | None) -> dict | None:
+    """Daten-Dict des adressierten (oder einzigen) Config-Entries."""
+    alle = hass.data.get(DOMAIN, {})
+    if entry_id:
+        d = alle.get(entry_id)
+        return d if isinstance(d, dict) and "override" in d else None
+    kandidaten = [d for d in alle.values() if isinstance(d, dict) and "override" in d]
+    return kandidaten[0] if len(kandidaten) >= 1 else None
+
+
+def _register_override_services(hass: Any) -> None:
+    """Einmal je HA-Instanz registrieren — mehrere Entries teilen die Services."""
+    try:
+        import voluptuous as vol
+    except ImportError:  # pragma: no cover — Testumgebung
+        return
+    try:
+        if hass.services.has_service(DOMAIN, "pause") is True:
+            return
+    except Exception:  # pragma: no cover
+        return
+
+    async def _kick(data: dict, fahrplan: bool) -> None:
+        # Sofort wirken lassen statt bis zu 60 s zu warten: Reserve braucht
+        # einen neuen Fahrplan, beides braucht einen Guard-Lauf (Freigabe
+        # bei Pause, Umsetzung bei Reserve).
+        try:
+            runner = data.get("schedule")
+            if fahrplan and runner is not None:
+                await runner.async_run()
+            lauf = data.get("_run_cycle")
+            if lauf is not None:
+                await lauf()
+        except Exception:  # pragma: no cover
+            _LOGGER.exception("Override: Sofortlauf fehlgeschlagen")
+
+    async def _svc_pause(call: Any) -> None:
+        data = _override_entry_data(hass, call.data.get("entry_id"))
+        if data is None:
+            _LOGGER.warning("Service pause: kein passender EEG-Optimizer gefunden")
+            return
+        jetzt = dt_util.now() if dt_util is not None else _now_utc()
+        await data["override"].async_pause(
+            float(call.data["stunden"]), jetzt, quelle="service"
+        )
+        await _kick(data, fahrplan=False)
+
+    async def _svc_reserve(call: Any) -> None:
+        data = _override_entry_data(hass, call.data.get("entry_id"))
+        if data is None:
+            _LOGGER.warning("Service reserve: kein passender EEG-Optimizer gefunden")
+            return
+        jetzt = dt_util.now() if dt_util is not None else _now_utc()
+        await data["override"].async_reserve(
+            float(call.data["min_soc_pct"]),
+            float(call.data["stunden"]),
+            jetzt,
+            quelle="service",
+        )
+        await _kick(data, fahrplan=True)
+
+    async def _svc_aufheben(call: Any) -> None:
+        data = _override_entry_data(hass, call.data.get("entry_id"))
+        if data is None:
+            return
+        await data["override"].async_aufheben(quelle="service")
+        await _kick(data, fahrplan=True)
+
+    from .override import MAX_RESERVE_PCT, MAX_STUNDEN, MIN_RESERVE_PCT, MIN_STUNDEN
+
+    stunden = vol.All(vol.Coerce(float), vol.Range(min=MIN_STUNDEN, max=MAX_STUNDEN))
+    hass.services.async_register(
+        DOMAIN, "pause", _svc_pause,
+        schema=vol.Schema({
+            vol.Required("stunden"): stunden,
+            vol.Optional("entry_id"): str,
+        }),
+    )
+    hass.services.async_register(
+        DOMAIN, "reserve", _svc_reserve,
+        schema=vol.Schema({
+            vol.Required("min_soc_pct"): vol.All(
+                vol.Coerce(float), vol.Range(min=MIN_RESERVE_PCT, max=MAX_RESERVE_PCT)
+            ),
+            vol.Required("stunden"): stunden,
+            vol.Optional("entry_id"): str,
+        }),
+    )
+    hass.services.async_register(
+        DOMAIN, "aufheben", _svc_aufheben,
+        schema=vol.Schema({vol.Optional("entry_id"): str}),
+    )

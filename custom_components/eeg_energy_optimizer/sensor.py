@@ -776,6 +776,8 @@ class FahrplanStatusSensor(SensorEntity):
             "schreibfehler": status.get("write_failures"),
             "letzter_schreibversuch_ok": status.get("last_write_ok"),
             "letzte_aktualisierung": status.get("last_run"),
+            "pause_bis": status.get("pause_bis"),
+            "override": status.get("override"),
         }
         self.async_write_ha_state()
         return kurz
@@ -1184,6 +1186,8 @@ class OptimierungsVorteilSensor(_BilanzSensor):
             "mit_optimierung": heute.get("ist_summe"),
             "ohne_optimierung": heute.get("ref_summe"),
             "modus_ein_anteil": heute.get("ein_anteil"),
+            "begruendung": heute.get("vorteil_begruendung"),
+            "details": heute.get("vorteil_details"),
             "hinweis": (
                 "Modellrechnung: Vergleich mit einem simulierten "
                 "Standardbetrieb ueber die gemessenen PV- und "

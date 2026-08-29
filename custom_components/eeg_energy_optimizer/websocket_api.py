@@ -486,6 +486,9 @@ def async_register_websocket_commands(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_get_peakshare_data)
     websocket_api.async_register_command(hass, ws_get_oemag_tarif)
     websocket_api.async_register_command(hass, ws_get_bilanz)
+    websocket_api.async_register_command(hass, ws_get_override)
+    websocket_api.async_register_command(hass, ws_set_override)
+    websocket_api.async_register_command(hass, ws_clear_override)
     websocket_api.async_register_command(hass, ws_get_spot_preis)
     websocket_api.async_register_command(hass, ws_refresh_consumption_profile)
     # Phase 8 — Telemetry-Steuerung (D-32 / D-33)
@@ -1826,6 +1829,102 @@ async def ws_get_bilanz(
             "jahr": bilanz.hat_archiv(jahr=jahr_key),
         },
     })
+
+
+# ---------------------------------------------------------------------------
+# Befristete Eingriffe: Pause / Reserve
+# ---------------------------------------------------------------------------
+
+async def _override_sofort_wirken(data: dict, fahrplan: bool) -> None:
+    """Nicht bis zum nächsten Takt warten — der Nutzer hat gerade geklickt."""
+    try:
+        runner = data.get("schedule")
+        if fahrplan and runner is not None:
+            await runner.async_run()
+        lauf = data.get("_run_cycle")
+        if lauf is not None:
+            await lauf()
+    except Exception:  # noqa: BLE001
+        _LOGGER.exception("Override: Sofortlauf fehlgeschlagen")
+
+
+@websocket_api.websocket_command(
+    {vol.Required("type"): "eeg_optimizer/get_override"}
+)
+@websocket_api.async_response
+async def ws_get_override(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict,
+) -> None:
+    entry, data = _get_entry_data(hass, connection, msg)
+    if entry is None:
+        return
+    override = data.get("override")
+    if override is None:
+        connection.send_result(msg["id"], {"aktiv": False})
+        return
+    from homeassistant.util import dt as dt_util
+
+    connection.send_result(msg["id"], override.to_dict(dt_util.now()))
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "eeg_optimizer/set_override",
+        vol.Required("art"): vol.In(["pause", "reserve"]),
+        vol.Required("stunden"): vol.All(vol.Coerce(float), vol.Range(min=0.25, max=48)),
+        vol.Optional("min_soc_pct"): vol.All(vol.Coerce(float), vol.Range(min=5, max=90)),
+    }
+)
+@websocket_api.async_response
+async def ws_set_override(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict,
+) -> None:
+    """Pause oder Reserve setzen — ersetzt einen laufenden Override."""
+    entry, data = _get_entry_data(hass, connection, msg)
+    if entry is None:
+        return
+    override = data.get("override")
+    if override is None:
+        connection.send_error(msg["id"], "not_ready", "Override nicht initialisiert")
+        return
+    from homeassistant.util import dt as dt_util
+
+    jetzt = dt_util.now()
+    if msg["art"] == "pause":
+        ergebnis = await override.async_pause(msg["stunden"], jetzt)
+        await _override_sofort_wirken(data, fahrplan=False)
+    else:
+        if msg.get("min_soc_pct") is None:
+            connection.send_error(
+                msg["id"], "invalid_format", "Reserve braucht min_soc_pct"
+            )
+            return
+        ergebnis = await override.async_reserve(msg["min_soc_pct"], msg["stunden"], jetzt)
+        await _override_sofort_wirken(data, fahrplan=True)
+    connection.send_result(msg["id"], ergebnis)
+
+
+@websocket_api.websocket_command(
+    {vol.Required("type"): "eeg_optimizer/clear_override"}
+)
+@websocket_api.async_response
+async def ws_clear_override(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict,
+) -> None:
+    entry, data = _get_entry_data(hass, connection, msg)
+    if entry is None:
+        return
+    override = data.get("override")
+    if override is not None:
+        await override.async_aufheben()
+        await _override_sofort_wirken(data, fahrplan=True)
+    connection.send_result(msg["id"], {"aktiv": False})
 
 
 @websocket_api.websocket_command(

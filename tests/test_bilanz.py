@@ -506,3 +506,86 @@ def test_modus_anteil_wird_nicht_ueber_den_monat_summiert():
     assert "ein_anteil" not in b._monate["2026-08"]
     # Die Geldfelder summieren sich weiterhin.
     assert b._monate["2026-08"]["vermieden"] == pytest.approx(3 * 0.26)
+
+
+# ---------------------------------------------------------------------------
+# Begruendung eines negativen Optimierungs-Vorteils
+# ---------------------------------------------------------------------------
+
+from custom_components.eeg_energy_optimizer.bilanz import (  # noqa: E402
+    begruende_vorteil,
+    vorteil_details,
+)
+
+
+def test_vorteil_details_haben_das_vorzeichen_des_beitrags():
+    """Kosten werden negiert: mehr Bezug im Ist = negativer Beitrag."""
+    ist = {"erloes": 1.0, "bezug": 0.8, "alterung": 0.1, "endbestand": 0.5}
+    ref = {"erloes": 1.2, "bezug": 0.3, "alterung": 0.05, "endbestand": 0.9}
+    d = vorteil_details(ist, ref)
+    assert d == {"erloes": -0.2, "bezug": -0.5, "alterung": -0.05, "endbestand": -0.4}
+
+
+def test_begruendung_nennt_den_groessten_posten_zuerst():
+    d = {"erloes": -0.05, "bezug": -0.30, "alterung": 0.0, "endbestand": -0.10}
+    saetze = begruende_vorteil(d, ein_anteil=1.0, abgeschlossen=True)
+    assert saetze[0].startswith("Mehr Netzbezug")
+    assert "0,30 €" in saetze[0]
+    assert saetze[1].startswith("Am Tagesende weniger Energie")
+    assert saetze[2].startswith("Weniger Einspeiseerlös")
+    # generischer Schlusssatz immer dabei
+    assert "ohne Vorausschau" in saetze[-1]
+
+
+def test_laufender_tag_beginnt_mit_zwischenstand():
+    d = {"erloes": 0.0, "bezug": -0.2, "alterung": 0.0, "endbestand": 0.0}
+    saetze = begruende_vorteil(d, ein_anteil=1.0, abgeschlossen=False)
+    assert saetze[0].startswith("Zwischenstand")
+
+
+def test_rauschen_wird_als_solches_benannt():
+    """Unter 2 Cent je Posten gibt es keinen Schuldigen — dann steht das da."""
+    d = {"erloes": -0.01, "bezug": -0.01, "alterung": 0.0, "endbestand": 0.0}
+    saetze = begruende_vorteil(d, ein_anteil=1.0, abgeschlossen=True)
+    assert any("Messungenauigkeit" in t for t in saetze)
+    assert not any("Netzbezug" in t for t in saetze)
+
+
+def test_teilweise_gesteuerter_tag_wird_erwaehnt():
+    d = {"erloes": 0.0, "bezug": -0.2, "alterung": 0.0, "endbestand": 0.0}
+    saetze = begruende_vorteil(d, ein_anteil=0.4, abgeschlossen=True)
+    assert any("nur 40 % des Tages" in t for t in saetze)
+
+
+def test_bewerte_tag_liefert_begruendung_nur_bei_negativem_vorteil(monkeypatch):
+    """Integration: der Tageswert traegt Details immer, die Begruendung nur
+    wenn der Vorteil negativ ist."""
+    b = _bilanz()
+    tag = {
+        "datum": "2026-08-27",
+        "slots": {
+            "40": {"pv": 0.0, "export": 0.0, "bezug": 0.5, "haus": 0.5, "laden": 0.0,
+                   "entladen": 0.0, "soc_a": 50.0, "soc_e": 50.0, "s": 900, "ein_s": 900,
+                   "kwp": 0.26, "basis": 0.06},
+        },
+    }
+    # Referenz kuenstlich besser stellen, damit der Vorteil sicher negativ ist.
+    monkeypatch.setattr(
+        b, "_optimierungs_vorteil",
+        lambda *a, **k: (-0.5, {"erloes": 0.0, "bezug": 0.0, "alterung": 0.0,
+                                "endbestand": 0.5, "summe": 0.5}),
+    )
+    ergebnis = b.bewerte_tag(tag, _inputs(), abgeschlossen=False)
+    assert ergebnis["opt_vorteil"] == -0.5
+    assert ergebnis["vorteil_details"] is not None
+    assert ergebnis["vorteil_begruendung"]
+    assert ergebnis["vorteil_begruendung"][0].startswith("Zwischenstand")
+
+    monkeypatch.setattr(
+        b, "_optimierungs_vorteil",
+        lambda *a, **k: (0.3, {"erloes": 0.0, "bezug": 0.0, "alterung": 0.0,
+                               "endbestand": 0.0, "summe": 0.0}),
+    )
+    ergebnis = b.bewerte_tag(tag, _inputs())
+    assert ergebnis["vorteil_begruendung"] is None
+    assert ergebnis["vorteil_details"] is not None
