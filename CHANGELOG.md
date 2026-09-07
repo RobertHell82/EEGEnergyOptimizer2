@@ -10,6 +10,12 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
+## [2.0.3-devfronius.6] - 2026-09-07
+
+### Hinzugefügt
+
+- **OeMAG-Einspeisetarif für den laufenden Monat hochgerechnet.** Die OeMAG veröffentlicht ihren Monatstarif erst am ersten Werktag des Folgemonats — wer ihn als Standardvergütung nutzt, rechnete bisher den ganzen Monat mit dem Vormonat (im September 2026: 8,997 ct statt der absehbaren 10,515 ct). Die neue Quelle „OeMAG-Einspeisetarif (laufender Monat, hochgerechnet)" rechnet den Monat so nach, wie die OeMAG ihn am Monatsende festlegt: Day-Ahead-Stundenpreise (aWATTar), gewichtet mit der österreichischen PV-Erzeugung (Energy-Charts), begrenzt auf 60–100 % des Quartalspreises der E-Control, abzüglich Ausgleichsenergie. Im Rückblick über 20 Monate trifft das den veröffentlichten Wert im Mittel auf 0,21 ct (größte Abweichung 0,57 ct); in der ersten Monatswoche schwankt die Hochrechnung noch um bis zu 1,5 ct. Aktualisiert alle drei Stunden. Ohne Hochrechnung gilt weiter der zuletzt veröffentlichte Monat, ohne den die Handeingabe. Das Panel zeigt Monat, Datenstand, Korridor und Herkunft des Quartalspreises dazu. Die bisherige Quelle heißt jetzt „OeMAG-Einspeisetarif (zuletzt veröffentlichter Monat)" und verhält sich unverändert.
+
 ## [2.0.3-devfronius.5] - 2026-08-29
 
 ### Geändert
