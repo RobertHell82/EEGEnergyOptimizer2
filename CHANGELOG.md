@@ -10,6 +10,15 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
+## [2.0.3-devfronius.7] - 2026-09-07
+
+### Geändert
+
+- **Optimierungs-Vorteil („davon durch die Optimierung“) fairer gerechnet.** Drei Schieflagen zugunsten der Referenz sind raus:
+  - *Bilanztag 04:00 bis 04:00.* Bisher endete der Tag um Mitternacht und zerschnitt die Nacht-Entladung: zurückgehaltene Energie stand um 23:59 nur als Endbestand zum Basistarif da, der Gemeinschaftserlös fiel auf den Folgetag, wo die Referenz mit demselben Ladestand startete und ihn einfach behielt. Jetzt gehört ein Abend samt Nacht in einen Tag; „heute“ beginnt um 04:00. Vorhandene Aufzeichnungen werden beim Update umsortiert.
+  - *Tage ohne Eingriff zeigen 0,00 €.* Hat sich die Batterie wie im Standardbetrieb verhalten (kein Entladen ins Netz, kein gebremstes Laden), gibt es nichts, was der Fahrplan bewirkt hätte — die Karte sagt „kein Eingriff“ statt eines zufälligen Plus oder Minus aus Modellrauschen. Die rohe Differenz bleibt in den Attributen des Sensors sichtbar.
+  - *Endbestand mit Wirkungsgrad und Alterung bewertet.* Restenergie in der Batterie zählte zum vollen Basistarif; die Referenz lädt bis 100 % und endet meist voller — sie bekam die Differenz verlustfrei angerechnet. Jetzt gilt Basistarif × 0,95 minus Alterungskosten, in der Gewinnkarte wie in der Tagesbilanz.
+
 ## [2.0.3-devfronius.6] - 2026-09-07
 
 ### Hinzugefügt
