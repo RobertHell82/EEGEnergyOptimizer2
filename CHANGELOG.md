@@ -10,6 +10,12 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
+## [2.0.3-devfronius.9] - 2026-09-07
+
+### Behoben
+
+- **Neuauflage von .6 bis .8 unter einer Versionsnummer.** Der Release `v2.0.3-devfronius.8` war fehlerhaft veröffentlicht: das Tag entstand über die GitHub-Oberfläche und landete dadurch auf dem Standard-Branch `main` (Stand 2.0.2) statt auf dem Entwicklungsstand. HACS installierte damit die alte 2.0.2 — die zweite OeMAG-Quelle und die faire Vorteilsrechnung fehlten. Inhaltlich neu ist an dieser Version nichts, sie trägt nur den Stand aus .6 bis .8 mit einem korrekt gesetzten Tag aus.
+
 ## [2.0.3-devfronius.8] - 2026-09-07
 
 ### Geändert
