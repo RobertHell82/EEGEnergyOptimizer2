@@ -10,6 +10,12 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
+## [2.0.3-devfronius.8] - 2026-09-07
+
+### Geändert
+
+- **Referenz „Standardbetrieb“ mit derselben Physik wie der Fahrplan.** Der simulierte Betrieb ohne Vorausschau, gegen den Gewinnkarte und Tagesbilanz den Optimierungs-Vorteil messen, war in zwei Punkten bevorteilt: Er lud ohne Innenwiderstandsverluste (der Fahrplan zahlt über 0,1 C 4 %, über 0,2 C 8 % der Leistung darüber und lädt deshalb gern langsam) und ohne den eingestellten Maximum-Ladestand (der eine Vorgabe des Nutzers ist, keine Entscheidung des Fahrplans). Beides gilt jetzt auch für die Referenz. Der ausgewiesene Vorteil steigt dadurch je nach Anlage um einige Cent pro Tag — nicht, weil der Fahrplan besser wurde, sondern weil der Vergleich fair ist.
+
 ## [2.0.3-devfronius.7] - 2026-09-07
 
 ### Geändert
