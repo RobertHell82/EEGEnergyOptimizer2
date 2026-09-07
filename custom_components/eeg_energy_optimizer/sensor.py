@@ -1036,6 +1036,17 @@ class EntladungInsNetzSensor(SensorEntity):
 # ---------------------------------------------------------------------------
 
 
+def _bilanztag_start() -> Any:
+    """Beginn des laufenden Bilanztags (04:00, siehe bilanz.py) — der
+    ``last_reset`` der Tagessensoren. Um 02:00 ist das gestern 04:00."""
+    from .bilanz import BILANZTAG_START_STUNDE
+
+    jetzt = _now_local()
+    return (jetzt - timedelta(hours=BILANZTAG_START_STUNDE)).replace(
+        hour=BILANZTAG_START_STUNDE, minute=0, second=0, microsecond=0
+    )
+
+
 class _BilanzSensor(SensorEntity):
     """Gemeinsames für die sechs Geld-Sensoren.
 
@@ -1090,10 +1101,17 @@ class _BilanzSensor(SensorEntity):
             )
         else:
             jetzt = _now_local()
-            if self._zeitraum == "monat":
-                archiv = bilanz.summe(self._feld, monat=jetzt.strftime("%Y-%m"))
+            # Schluessel nach Bilanztag (04:00–04:00): um 02:00 am 1. laeuft
+            # noch der letzte Tag des Vormonats.
+            schluessel = getattr(bilanz, "zeitraum_schluessel", None)
+            if callable(schluessel):
+                monat_key, jahr_key = schluessel(jetzt)
             else:
-                archiv = bilanz.summe(self._feld, jahr=jetzt.strftime("%Y"))
+                monat_key, jahr_key = jetzt.strftime("%Y-%m"), jetzt.strftime("%Y")
+            if self._zeitraum == "monat":
+                archiv = bilanz.summe(self._feld, monat=monat_key)
+            else:
+                archiv = bilanz.summe(self._feld, jahr=jahr_key)
             self._attr_native_value = round(
                 archiv + float(heute_wert or 0.0), 2
             )
@@ -1126,9 +1144,7 @@ class PVErsparnisSensor(_BilanzSensor):
         if self._zeitraum != "heute":
             return {}
         attrs: dict[str, Any] = {
-            "last_reset": _now_local()
-            .replace(hour=0, minute=0, second=0, microsecond=0)
-            .isoformat(),
+            "last_reset": _bilanztag_start().isoformat(),
             "vermiedener_bezug": heute.get("vermieden"),
             "einspeiseerloes": heute.get("erloes"),
             "eigenverbrauch_kwh": heute.get("eigen_kwh"),
@@ -1181,19 +1197,23 @@ class OptimierungsVorteilSensor(_BilanzSensor):
         if self._zeitraum != "heute":
             return {}
         return {
-            "last_reset": _now_local()
-            .replace(hour=0, minute=0, second=0, microsecond=0)
-            .isoformat(),
+            "last_reset": _bilanztag_start().isoformat(),
             "mit_optimierung": heute.get("ist_summe"),
             "ohne_optimierung": heute.get("ref_summe"),
             "modus_ein_anteil": heute.get("ein_anteil"),
             "begruendung": heute.get("vorteil_begruendung"),
             "details": heute.get("vorteil_details"),
+            # Tage, an denen die Batterie wie die Referenz lief, zeigen 0;
+            # die rohe Differenz und das Mass dafuer bleiben nachlesbar.
+            "kein_eingriff": heute.get("kein_eingriff"),
+            "vorteil_roh": heute.get("vorteil_roh"),
+            "batterie_abweichung_kwh": heute.get("batterie_abweichung_kwh"),
             "hinweis": (
                 "Modellrechnung: Vergleich mit einem simulierten "
                 "Standardbetrieb ueber die gemessenen PV- und "
-                "Verbrauchswerte des Tages. Im Modus Aus muss der Wert nahe "
-                "null liegen."
+                "Verbrauchswerte des Bilanztags (04:00 bis 04:00). Lief die "
+                "Batterie wie im Standardbetrieb, steht hier 0 und "
+                "kein_eingriff ist wahr."
             ),
         }
 

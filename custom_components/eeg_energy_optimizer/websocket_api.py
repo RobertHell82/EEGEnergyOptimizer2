@@ -1781,8 +1781,9 @@ async def ws_get_bilanz(
     from homeassistant.util import dt as dt_util
 
     jetzt = dt_util.now()
-    monat_key = jetzt.strftime("%Y-%m")
-    jahr_key = jetzt.strftime("%Y")
+    # Schluessel nach Bilanztag (04:00–04:00), nicht nach Kalender: um 02:00
+    # am 1. laeuft noch der letzte Tag des Vormonats.
+    monat_key, jahr_key = bilanz.zeitraum_schluessel(jetzt)
 
     def _zeitraum(feld: str) -> dict:
         heute_wert = heute.get(feld)
@@ -1821,6 +1822,7 @@ async def ws_get_bilanz(
         "pv_ersparnis": _zeitraum("pv_ersparnis"),
         "opt_vorteil": _zeitraum("opt_vorteil"),
         "heute": heute,
+        "bilanztag": bilanz.datum_heute or None,
         "waehrung": getattr(hass.config, "currency", None) or "EUR",
         "entities": entities,
         # Ohne abgeschlossene Tage sind Monat und Jahr identisch mit heute.

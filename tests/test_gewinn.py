@@ -262,19 +262,24 @@ def test_bewertung_netzbezug_und_alterung():
 
 
 def test_endbestands_gutschrift_bewertet_die_restenergie():
-    """Restenergie über dem Mindest-Ladestand × Basistarif, als eigene Zeile.
+    """Restenergie über dem Mindest-Ladestand × Basistarif abzüglich
+    Wandlungsverlust und Alterung, als eigene Zeile.
 
     Ohne sie verglichen wir ungleiche Endzustände — die bekannte Falle aus
-    Horizont- und Deckel-Messung.
+    Horizont- und Deckel-Messung. Zum VOLLEN Basistarif war die Referenz
+    bevorteilt: sie endet meist voller und bekam die Differenz verlustfrei.
     """
     inputs = _inputs(feedin_price=0.06, min_soc_pct=10.0, battery_capacity_kwh=10.0)
     slots = [_slot(MITTAG, 0, grid_p=0.0, battery_p=0.0, soc=60.0)]
 
     ergebnis = sched.bewerte_geldfluesse(slots, inputs)
 
+    satz = 0.06 * EFF - 0.01                                   # battery_cost 0,01
     assert ergebnis["rest_kwh"] == pytest.approx(5.0)           # (60−10) % von 10 kWh
-    assert ergebnis["endbestand"] == pytest.approx(5.0 * 0.06)
+    assert ergebnis["endbestand_satz"] == pytest.approx(satz, abs=1e-5)
+    assert ergebnis["endbestand"] == pytest.approx(5.0 * satz, abs=1e-4)
     assert ergebnis["summe"] == pytest.approx(ergebnis["endbestand"])
+    assert sched.endbestand_satz(inputs) == pytest.approx(satz)
 
 
 def test_echte_tarife_lassen_die_gewichtung_weg():

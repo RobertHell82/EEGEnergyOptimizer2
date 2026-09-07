@@ -1379,7 +1379,7 @@ def solve(inputs: ScheduleInputs) -> dict[str, Any]:
             "vorteil": round(mit["summe"] - ohne["summe"], 4),
             "horizont_h": round(len(slots) * inputs.time_res_s / 3600.0, 1),
             # Womit der Endbestand bewertet wird — fürs ehrliche Beschriften.
-            "endbestand_tarif": round(inputs.feedin_price, 5),
+            "endbestand_tarif": round(endbestand_satz(inputs), 5),
         }
     except Exception:  # noqa: BLE001 - Vergleich ist Anzeige, kein Aktor
         _LOGGER.exception("Gewinnberechnung fehlgeschlagen — der Fahrplan bleibt gültig")
@@ -1504,6 +1504,25 @@ def _basistarif_je_slot(
     return ergebnis
 
 
+def endbestand_satz(inputs: ScheduleInputs) -> float:
+    """Was eine am Ende gespeicherte Kilowattstunde wert ist, in €/kWh.
+
+    Die Restenergie liegt noch DC in der Batterie. Bis sie Geld wird, geht
+    der Wandlungsverlust ab (``ac_efficiency``), und ihre Entladung kostet
+    dieselbe Alterung wie jede andere — genau so bewertet der Rest der
+    Funktion jede gelieferte Kilowattstunde. Zum vollen Basistarif
+    gutgeschrieben war die Referenz systematisch bevorteilt: sie lädt bis
+    voll, endet meist voller als der Fahrplan, und die Differenz bekam sie
+    verlustfrei angerechnet. An der Anlage Traun waren das um die 5 kWh
+    Unterschied, also rund 7 Cent je Tag zu Lasten der Optimierung.
+
+    Bewusst der Basistarif und nicht der Bezugspreis: ob die Energie später
+    Bezug vermeidet oder eingespeist wird, weiß keiner — der kleinere Wert
+    ist die ehrliche Untergrenze für beide Seiten gleichermaßen.
+    """
+    return inputs.feedin_price * HAConfig.ac_efficiency - inputs.battery_cost
+
+
 def bewerte_geldfluesse(
     slots: list[dict[str, Any]], inputs: ScheduleInputs
 ) -> dict[str, float]:
@@ -1526,10 +1545,11 @@ def bewerte_geldfluesse(
     Dazu: Bezug = Netzbezug × Bezugspreis; Alterung = entladene Energie ×
     Alterungskosten (wie in Haralds Zielfunktion zählt die Entladung — so
     kostet jeder Zyklus einmal, nicht doppelt); Endbestands-Gutschrift =
-    Restenergie über dem Mindest-Ladestand × Basistarif (konservativ).
-    Ohne sie verglichen wir ungleiche Endzustände: die Pläne enden mit
-    verschiedenem Ladestand, und Haralds Modell nagelt den letzten Slot
-    ohnehin auf halbe Kapazität.
+    Restenergie über dem Mindest-Ladestand × ``endbestand_satz``: Basistarif
+    abzüglich Wandlungsverlust und Alterung, siehe dort. Ohne die Gutschrift
+    verglichen wir ungleiche Endzustände: die Pläne enden mit verschiedenem
+    Ladestand, und Haralds Modell nagelt den letzten Slot ohnehin auf halbe
+    Kapazität.
 
     Vorzeichen wie im Fahrplan: ``grid_p`` positiv = Einspeisung,
     ``battery_p`` positiv = Entladen.
@@ -1592,13 +1612,15 @@ def bewerte_geldfluesse(
             0.0,
             (soc_ende - inputs.min_soc_pct) / 100.0 * inputs.battery_capacity_kwh,
         )
-    endbestand = rest_kwh * inputs.feedin_price
+    satz = endbestand_satz(inputs)
+    endbestand = rest_kwh * satz
 
     return {
         "erloes": round(erloes, 4),
         "bezug": round(bezug, 4),
         "alterung": round(alterung, 4),
         "endbestand": round(endbestand, 4),
+        "endbestand_satz": round(satz, 5),
         "rest_kwh": round(rest_kwh, 2),
         # Wie viel der Einspeisung wirklich zum Gemeinschaftssatz vergütet
         # wurde — macht im Panel sichtbar, wo der Zeitvorteil herkommt.

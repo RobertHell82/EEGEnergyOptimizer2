@@ -33,6 +33,27 @@ Slot-Liste kommt; die gemessene Reihe geht genauso hinein wie ein Plan. Das
 ist Absicht: Eine zweite Geldlogik daneben würde bei der nächsten
 Tarifänderung auseinanderlaufen.
 
+**Der Bilanztag läuft von 04:00 bis 04:00**, nicht von Mitternacht bis
+Mitternacht. Um 04:00 endet die Nacht-Entladung (harte Abschaltung des
+Fahrplans) — ein Abend samt seiner Nacht gehört damit in EINEN Tag. Mit der
+Mitternachtsgrenze war der Zyklus zerschnitten: Energie, die der Fahrplan um
+23:59 für die Gemeinschaft zurückhielt, stand nur als Endbestand zum
+Basistarif da; der Gemeinschaftserlös fiel auf den nächsten Tag, wo die
+Referenz mit demselben hohen Ladestand startete und ihn einfach behielt. Tag
+eins zeigte die Kosten, Tag zwei kaum den Gewinn. Der Slot-Index zählt
+deshalb Viertelstunden seit 04:00, das Datum eines Tages ist das seines
+Beginns. Aufzeichnungen aus der Zeit vor dieser Grenze werden beim Laden
+umsortiert (``_migriere_auf_bilanztag``).
+
+**Tage ohne Eingriff zeigen null.** Der Optimierungs-Vorteil ist der Wert
+dessen, was die Batterie ANDERS gemacht hat als ein Standardgerät. Hat sie
+sich wie die Referenz verhalten — kein Entladen ins Netz, kein gebremstes
+Laden — dann ist dieser Wert null, und was die Geldrechnung trotzdem an
+Differenz zeigt, ist Modellrauschen zwischen Messung und Simulation
+(Wirkungsgrad, Standby, Sensorrundung). Gemessen wird das an der Abweichung
+der Batterieleistung je Viertelstunde; die rohe Differenz bleibt als
+``vorteil_roh`` sichtbar.
+
 **Zur Zeitumstellung.** Der Slot-Index kommt aus der Wanduhrzeit. Im Herbst
 wird die doppelte Stunde deshalb in dieselben vier Slots addiert, im Frühjahr
 bleiben vier Slots leer. Für die Geldsummen ist das folgenlos — sie sind
@@ -82,8 +103,19 @@ TAGE_ROH = 400
 MAX_TAKT_SEKUNDEN = 300
 
 # Felder, die sich NICHT ueber Tage aufsummieren lassen: ein_anteil ist ein
-# Anteil zwischen 0 und 1, seine Monatssumme waere 30 statt eines Anteils.
-NICHT_SUMMIERBAR = {"ein_anteil"}
+# Anteil zwischen 0 und 1, seine Monatssumme waere 30 statt eines Anteils;
+# kein_eingriff ist ein Ja/Nein je Tag (bool zaehlt sonst als int mit).
+NICHT_SUMMIERBAR = {"ein_anteil", "kein_eingriff", "batterie_abweichung_kwh"}
+
+# Beginn des Bilanztags (Stunde, Ortszeit) — siehe Modul-Docstring.
+BILANZTAG_START_STUNDE = 4
+
+# Unterhalb dieser Abweichung der Batterieleistung zwischen Messung und
+# Referenz gilt ein Tag als „kein Eingriff": das Groessere aus einem festen
+# Sockel (Standby, Sensorrundung, Wirkungsgradmodell summieren sich ueber
+# 96 Viertelstunden auf einige Zehntel kWh) und einem Anteil am Durchsatz.
+KEIN_EINGRIFF_MIN_KWH = 1.0
+KEIN_EINGRIFF_ANTEIL = 0.10
 
 # Unique-ID-Endungen der Sensoren, aus denen die Bilanz liest. Sie sind
 # bereits normalisiert (Vorzeichen, Multi-Batterie, SolarEdge).
@@ -99,6 +131,22 @@ def _jetzt_lokal(now_utc: datetime) -> datetime:
     if dt_util is not None:
         return dt_util.as_local(now_utc)
     return now_utc.astimezone()
+
+
+def bilanz_datum(now_local: datetime) -> str:
+    """Datum des Bilanztags, zu dem dieser Zeitpunkt gehoert (Tag des Beginns)."""
+    return (now_local - timedelta(hours=BILANZTAG_START_STUNDE)).strftime("%Y-%m-%d")
+
+
+def slot_index(now_local: datetime) -> int:
+    """Viertelstunde seit Beginn des Bilanztags, 0..95."""
+    verschoben = now_local - timedelta(hours=BILANZTAG_START_STUNDE)
+    return (verschoben.hour * 3600 + verschoben.minute * 60) // SLOT_SEKUNDEN
+
+
+def bilanztag_start(datum: str) -> datetime:
+    """Erster Zeitpunkt eines Bilanztags als naive Ortszeit."""
+    return datetime.fromisoformat(datum) + timedelta(hours=BILANZTAG_START_STUNDE)
 
 
 def _leerer_slot() -> dict[str, Any]:
@@ -120,7 +168,9 @@ def _leerer_slot() -> dict[str, Any]:
 
 
 def _leerer_tag(datum: str) -> dict[str, Any]:
-    return {"datum": datum, "slots": {}}
+    # ``start`` kennzeichnet das Schema: Tage ohne den Schluessel stammen aus
+    # der Zeit vor dem 04:00-Bilanztag und werden beim Laden umsortiert.
+    return {"datum": datum, "slots": {}, "start": BILANZTAG_START_STUNDE}
 
 
 class EnergieBilanz:
@@ -167,7 +217,63 @@ class EnergieBilanz:
         self._offen = stored.get("offen") or []
         self._tage = stored.get("tage") or {}
         self._monate = stored.get("monate") or {}
+        self._migriere_auf_bilanztag()
         self._verdichte_alte_tage()
+
+    def _migriere_auf_bilanztag(self) -> None:
+        """Aufzeichnungen aus der Zeit vor dem 04:00-Bilanztag umsortieren.
+
+        Alte Tage begannen um Mitternacht. Ihre Slots 0–15 (00:00–04:00)
+        gehoeren im neuen Schema zum Vortag und ruecken dort ans Ende
+        (80–95); der Rest rueckt um 16 Slots nach vorn. Was zu einem Tag
+        gehoert, der bereits als Kalendertag bewertet im Archiv liegt, wird
+        verworfen — es steckt dort schon im Geld, ein zweites Mal zaehlen
+        waere doppelt. Der juengste umsortierte Tag wird der laufende, alle
+        anderen warten auf ihre Bewertung wie ein normaler Tageswechsel.
+        """
+        alte = [
+            tag
+            for tag in [*self._offen, self._heute]
+            if tag.get("datum") and tag.get("start") != BILANZTAG_START_STUNDE
+        ]
+        if not alte:
+            return
+
+        grenze = BILANZTAG_START_STUNDE * 4
+        neu: dict[str, dict[str, Any]] = {}
+        for tag in alte:
+            datum = str(tag["datum"])
+            try:
+                vortag = (date.fromisoformat(datum) - timedelta(days=1)).isoformat()
+            except ValueError:
+                continue
+            for schluessel, slot in (tag.get("slots") or {}).items():
+                try:
+                    i = int(schluessel)
+                except (TypeError, ValueError):
+                    continue
+                if i < grenze:
+                    ziel, neu_i = vortag, i + SLOTS_PRO_TAG - grenze
+                else:
+                    ziel, neu_i = datum, i - grenze
+                if ziel in self._tage:
+                    continue
+                neu.setdefault(ziel, _leerer_tag(ziel))["slots"][str(neu_i)] = slot
+
+        self._offen = [
+            tag for tag in self._offen if tag.get("start") == BILANZTAG_START_STUNDE
+        ]
+        if neu:
+            juengster = max(neu)
+            self._heute = neu.pop(juengster)
+            self._offen.extend(neu[k] for k in sorted(neu))
+        else:
+            self._heute = _leerer_tag("")
+        self._dirty = True
+        _LOGGER.info(
+            "Bilanz auf den 04:00-Bilanztag umgestellt: %d Tag(e) umsortiert",
+            len(alte),
+        )
 
     def _verdichte_alte_tage(self) -> None:
         """Tage über der Aufbewahrungsfrist verwerfen — Monate bleiben."""
@@ -210,9 +316,9 @@ class EnergieBilanz:
         Optimierungs-Vorteil gegen null gehen.
         """
         now_local = _jetzt_lokal(now_utc)
-        heute = now_local.strftime("%Y-%m-%d")
+        heute = bilanz_datum(now_local)
 
-        # Tageswechsel (auch nach einem Neustart über Mitternacht hinweg).
+        # Tageswechsel um 04:00 (auch nach einem Neustart darüber hinweg).
         # Der alte Tag wird NICHT sofort bewertet: Ohne Fahrplan-Inputs
         # fehlen Tarife und Kapazität, und er läge dauerhaft ohne
         # Einspeiseerlös im Archiv. Genau das passiert nach einem Neustart
@@ -246,7 +352,7 @@ class EnergieBilanz:
         if messwerte is None:
             return
 
-        index = (now_local.hour * 3600 + now_local.minute * 60) // SLOT_SEKUNDEN
+        index = slot_index(now_local)
         self._summiere(str(index), messwerte, sekunden, mode, inputs, now_local)
         self._dirty = True
 
@@ -467,7 +573,8 @@ class EnergieBilanz:
         sondern der Anteil daran, der auf die Steuerung zurückgeht. Wer beides
         addiert, zählt doppelt.
         """
-        slots = self._sortierte_slots(tag)
+        paare = self._sortierte_paare(tag)
+        slots = [slot for _, slot in paare]
         leer = {
             "pv_ersparnis": 0.0,
             "opt_vorteil": None,
@@ -483,6 +590,10 @@ class EnergieBilanz:
             "ref_summe": None,
             "vorteil_begruendung": None,
             "vorteil_details": None,
+            # Rohe Differenz Ist − Referenz, auch wenn oben null steht.
+            "vorteil_roh": None,
+            "kein_eingriff": False,
+            "batterie_abweichung_kwh": None,
         }
         if not slots:
             return leer
@@ -541,8 +652,8 @@ class EnergieBilanz:
             ergebnis["pv_ersparnis"] = ergebnis["vermieden"]
             return ergebnis
 
-        datum = tag.get("datum") or date.today().isoformat()
-        ist_slots = self._als_slots(slots, datum)
+        datum = tag.get("datum") or bilanz_datum(datetime.now())
+        ist_slots = self._als_slots(paare, datum)
         bewertung = self._bewerte(ist_slots, slots, inputs)
         if bewertung is None:
             ergebnis["pv_ersparnis"] = ergebnis["vermieden"]
@@ -565,8 +676,23 @@ class EnergieBilanz:
             None if referenz is None else round(float(referenz.get("summe", 0.0)), 4)
         )
         if vorteil is not None and referenz is not None:
+            ergebnis["vorteil_roh"] = vorteil
             ergebnis["vorteil_details"] = vorteil_details(bewertung, referenz)
-            if vorteil < 0:
+            abweichung = referenz.get("batterie_abweichung_kwh")
+            durchsatz = float(referenz.get("batterie_durchsatz_kwh") or 0.0)
+            if abweichung is not None:
+                ergebnis["batterie_abweichung_kwh"] = round(float(abweichung), 2)
+            if abweichung is not None and float(abweichung) <= max(
+                KEIN_EINGRIFF_MIN_KWH, KEIN_EINGRIFF_ANTEIL * durchsatz
+            ):
+                # Die Batterie lief wie im Standardbetrieb — es gibt nichts,
+                # was der Fahrplan bewirkt haette. Siehe Modul-Docstring.
+                ergebnis["opt_vorteil"] = 0.0
+                ergebnis["kein_eingriff"] = True
+                ergebnis["vorteil_begruendung"] = begruende_kein_eingriff(
+                    float(abweichung), durchsatz, vorteil, abgeschlossen
+                )
+            elif vorteil < 0:
                 ergebnis["vorteil_begruendung"] = begruende_vorteil(
                     ergebnis["vorteil_details"],
                     ein_anteil=float(ergebnis.get("ein_anteil") or 0.0),
@@ -574,16 +700,23 @@ class EnergieBilanz:
                 )
         return ergebnis
 
-    def _sortierte_slots(self, tag: dict[str, Any]) -> list[dict[str, Any]]:
+    def _sortierte_paare(self, tag: dict[str, Any]) -> list[tuple[int, dict[str, Any]]]:
+        """(Index, Slot) in Zeitreihenfolge. Unlesbare Schluessel fallen weg."""
         roh = tag.get("slots") or {}
-        try:
-            schluessel = sorted(roh, key=int)
-        except (TypeError, ValueError):
-            schluessel = sorted(roh)
-        return [roh[k] for k in schluessel]
+        paare: list[tuple[int, dict[str, Any]]] = []
+        for schluessel, slot in roh.items():
+            try:
+                paare.append((int(schluessel), slot))
+            except (TypeError, ValueError):
+                continue
+        paare.sort(key=lambda p: p[0])
+        return paare
+
+    def _sortierte_slots(self, tag: dict[str, Any]) -> list[dict[str, Any]]:
+        return [slot for _, slot in self._sortierte_paare(tag)]
 
     def _als_slots(
-        self, slots: list[dict[str, Any]], datum: str
+        self, paare: list[tuple[int, dict[str, Any]]], datum: str
     ) -> list[dict[str, Any]]:
         """Die gemessene Reihe in der Form, die ``bewerte_geldfluesse`` erwartet.
 
@@ -591,13 +724,18 @@ class EnergieBilanz:
         ``battery_p`` positiv = Entladen. Leistung ist Energie je Slot geteilt
         durch die Slotdauer — die Bewertung multipliziert sie wieder mit
         derselben Dauer, der Umweg hebt sich exakt auf und hält die Funktion
-        unveraendert nutzbar.
+        unveraendert nutzbar. Der Zeitstempel kommt aus dem Slot-INDEX (nicht
+        aus der Position in der Liste): Viertelstunden seit Beginn des
+        Bilanztags — so stimmen Nachtfenster und Gemeinschaftssalden auch
+        bei einem Tag mit Luecken.
         """
         stunden = SLOT_SEKUNDEN / 3600.0
+        start = bilanztag_start(datum)
         gebaut: list[dict[str, Any]] = []
-        for i, slot in enumerate(slots):
-            minute = (i * SLOT_SEKUNDEN) // 60
-            stempel = f"{datum}T{minute // 60:02d}:{minute % 60:02d}:00"
+        for i, slot in paare:
+            stempel = (start + timedelta(seconds=i * SLOT_SEKUNDEN)).isoformat(
+                timespec="seconds"
+            )
             netz = (slot.get("export", 0.0) - slot.get("bezug", 0.0)) / stunden
             batterie = (slot.get("entladen", 0.0) - slot.get("laden", 0.0)) / stunden
             gebaut.append({
@@ -691,7 +829,21 @@ class EnergieBilanz:
 
         ref_summe = round(float(referenz.get("summe", 0.0)), 4)
         vorteil = round(float(ist_bewertung.get("summe", 0.0)) - ref_summe, 4)
-        return vorteil, dict(referenz)
+
+        # Hat die Batterie etwas ANDERES getan als die Referenz? Summe der
+        # Leistungsabweichung je Viertelstunde in kWh, dazu der Durchsatz
+        # als Massstab — die Entscheidung faellt in bewerte_tag.
+        dt_h = SLOT_SEKUNDEN / 3600.0
+        abweichung = durchsatz = 0.0
+        for ist, ref in zip(ist_slots, referenz_slots):
+            bat_ist = float(ist.get("battery_p") or 0.0)
+            bat_ref = float(ref.get("battery_p") or 0.0)
+            abweichung += abs(bat_ist - bat_ref) * dt_h
+            durchsatz += abs(bat_ist) * dt_h
+        ergebnis = dict(referenz)
+        ergebnis["batterie_abweichung_kwh"] = round(abweichung, 3)
+        ergebnis["batterie_durchsatz_kwh"] = round(durchsatz, 3)
+        return vorteil, ergebnis
 
     # ------------------------------------------------------------------
     # Abfrage (fuer die Sensoren)
@@ -733,6 +885,15 @@ class EnergieBilanz:
     def datum_heute(self) -> str:
         return self._heute.get("datum") or ""
 
+    def zeitraum_schluessel(self, now_local: datetime) -> tuple[str, str]:
+        """(``YYYY-MM``, ``YYYY``) des laufenden Bilanztags.
+
+        Um 02:00 am 1. Oktober laeuft noch der Bilanztag vom 30. September —
+        „diesen Monat" ist dann der September, nicht der Oktober.
+        """
+        datum = self.datum_heute or bilanz_datum(now_local)
+        return datum[:7], datum[:4]
+
 
 # ---------------------------------------------------------------------------
 # Begründung eines negativen Optimierungs-Vorteils
@@ -765,6 +926,28 @@ def vorteil_details(ist: dict[str, float], ref: dict[str, float]) -> dict[str, f
         "alterung": _d("alterung", kosten=True),
         "endbestand": _d("endbestand"),
     }
+
+
+def begruende_kein_eingriff(
+    abweichung_kwh: float, durchsatz_kwh: float, vorteil_roh: float, abgeschlossen: bool
+) -> list[str]:
+    """Saetze fuer einen Tag, an dem die Batterie wie im Standardbetrieb lief."""
+    def kwh(v: float) -> str:
+        return f"{v:.1f}".replace(".", ",") + " kWh"
+
+    def eur(v: float) -> str:
+        return ("−" if v < 0 else "+") + f"{abs(v):.2f}".replace(".", ",") + " €"
+
+    saetze = [
+        "Kein Eingriff: Die Batterie lief wie im Standardbetrieb — kein Entladen "
+        "ins Netz, kein gebremstes Laden. Es gibt daher weder Vorteil noch "
+        "Nachteil."
+        + (" Der Tag läuft noch." if not abgeschlossen else ""),
+        f"Abweichung der Batterieleistung zur Referenz: {kwh(abweichung_kwh)} bei "
+        f"{kwh(durchsatz_kwh)} Durchsatz. Die rechnerische Differenz von "
+        f"{eur(vorteil_roh)} ist Modellrauschen zwischen Messung und Simulation.",
+    ]
+    return saetze
 
 
 def begruende_vorteil(

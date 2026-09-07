@@ -160,7 +160,7 @@ async def test_grosse_luecke_wird_nicht_hochgerechnet():
 
 
 async def test_tag_wartet_auf_die_fahrplan_daten():
-    """Nach einem Neustart ueber Mitternacht fehlen die Tarife noch.
+    """Nach einem Neustart ueber die 04:00-Grenze fehlen die Tarife noch.
 
     Der Vortag darf dann NICHT unbewertet ins Archiv wandern — sonst fehlt
     ihm dauerhaft der Einspeiseerloes. Er wartet, bis die Inputs da sind.
@@ -175,8 +175,8 @@ async def test_tag_wartet_auf_die_fahrplan_daten():
         "pv": 0.0, "haus": 0.2, "netz": -0.2, "batterie": 0.0, "soc": 50.0
     }
 
-    # Erster Takt am neuen Tag, noch ohne Fahrplan-Inputs.
-    await b.async_update("Ein", datetime(2026, 8, 27, 0, 0, 30, tzinfo=timezone.utc), None)
+    # Erster Takt am neuen Bilanztag (04:00), noch ohne Fahrplan-Inputs.
+    await b.async_update("Ein", datetime(2026, 8, 27, 4, 0, 30, tzinfo=timezone.utc), None)
 
     assert "2026-08-26" not in b._tage, "Ohne Tarife darf nichts archiviert werden"
     assert len(b._offen) == 1, "Der Vortag muss warten"
@@ -184,7 +184,7 @@ async def test_tag_wartet_auf_die_fahrplan_daten():
 
     # Eine Minute spaeter steht der Fahrplan.
     await b.async_update(
-        "Ein", datetime(2026, 8, 27, 0, 1, 30, tzinfo=timezone.utc), _inputs()
+        "Ein", datetime(2026, 8, 27, 4, 1, 30, tzinfo=timezone.utc), _inputs()
     )
 
     assert b._offen == [], "Jetzt ist der Vortag abgeschlossen"
@@ -220,6 +220,94 @@ def test_wartende_tage_werden_mitgespeichert():
 
     assert '"offen": self._offen' in quelle, "offen fehlt beim Speichern"
     assert 'stored.get("offen")' in quelle, "offen fehlt beim Laden"
+
+
+# ---------------------------------------------------------------------------
+# Bilanztag 04:00–04:00
+# ---------------------------------------------------------------------------
+
+
+def test_bilanztag_beginnt_um_vier():
+    """03:59 gehoert noch zum Vortag, 04:00 beginnt der neue Tag."""
+    assert bilanz_modul.bilanz_datum(datetime(2026, 8, 27, 3, 59)) == "2026-08-26"
+    assert bilanz_modul.bilanz_datum(datetime(2026, 8, 27, 4, 0)) == "2026-08-27"
+    assert bilanz_modul.slot_index(datetime(2026, 8, 27, 4, 0)) == 0
+    assert bilanz_modul.slot_index(datetime(2026, 8, 27, 12, 0)) == 32
+    assert bilanz_modul.slot_index(datetime(2026, 8, 28, 3, 45)) == 95
+
+
+async def test_nacht_entladung_bleibt_im_selben_bilanztag():
+    """Ein Takt um 02:00 bucht in den Tag, der am Vortag um 04:00 begann —
+    Abend und Nacht-Entladung gehoeren zusammen, nicht in zwei Tage."""
+    b = _bilanz()
+    b._erster_takt = False
+    b._letzter_takt_utc = datetime(2026, 8, 28, 1, 59, 30, tzinfo=timezone.utc)
+    b._lies_messwerte = lambda: {
+        "pv": 0.0, "haus": 0.3, "netz": 2.0, "batterie": -2.3, "soc": 40.0
+    }
+
+    await b.async_update("Ein", datetime(2026, 8, 28, 2, 0, 0, tzinfo=timezone.utc))
+
+    assert b._heute["datum"] == TAG, "Kalender sagt 28.08., der Bilanztag ist der 27."
+    assert "88" in b._heute["slots"], "02:00 ist die 88. Viertelstunde seit 04:00"
+    assert b._offen == []
+
+
+def test_als_slots_traegt_die_uhrzeit_ab_vier_und_nach_index():
+    b = _bilanz()
+    paare = [(0, _slot(s=900.0)), (88, _slot(s=900.0))]
+
+    ist = b._als_slots(paare, TAG)
+
+    assert ist[0]["t"] == "2026-08-27T04:00:00"
+    # Index, nicht Position: ein Tag mit Luecken bleibt auf der Uhr.
+    assert ist[1]["t"] == "2026-08-28T02:00:00"
+
+
+def test_alte_aufzeichnung_wird_auf_den_bilanztag_umsortiert():
+    """Vor der Umstellung begann der Tag um Mitternacht: Slots 0–15 gehoeren
+    zum Vortag (dort ans Ende), der Rest rueckt um 16 nach vorn. Was schon
+    als Kalendertag bewertet im Archiv liegt, wird nicht noch einmal gezaehlt."""
+    b = _bilanz()
+    b._tage = {"2026-08-25": {"pv_ersparnis": 1.0}}
+    b._offen = [{"datum": "2026-08-26",
+                 "slots": {"4": _slot(haus=0.1), "20": _slot(haus=0.2)}}]
+    b._heute = {"datum": "2026-08-27",
+                "slots": {"8": _slot(haus=0.3), "48": _slot(haus=0.4)}}
+
+    b._migriere_auf_bilanztag()
+
+    # Slot 4 vom 26. (01:00) gehoerte zum 25. — der ist archiviert: verworfen.
+    # Slot 20 vom 26. (05:00) → 26., Index 4. Slot 8 vom 27. (02:00) → 26., Index 88.
+    assert len(b._offen) == 1 and b._offen[0]["datum"] == "2026-08-26"
+    assert set(b._offen[0]["slots"]) == {"4", "88"}
+    assert b._offen[0]["slots"]["88"]["haus"] == 0.3
+    assert b._offen[0]["start"] == bilanz_modul.BILANZTAG_START_STUNDE
+    # Slot 48 vom 27. (12:00) → 27., Index 32; der 27. ist der laufende Tag.
+    assert b._heute["datum"] == "2026-08-27"
+    assert set(b._heute["slots"]) == {"32"}
+    assert b._dirty is True
+
+
+def test_neue_aufzeichnung_bleibt_bei_der_migration_unberuehrt():
+    b = _bilanz()
+    b._heute = bilanz_modul._leerer_tag("2026-08-27")
+    b._heute["slots"]["5"] = _slot(haus=0.1)
+
+    b._migriere_auf_bilanztag()
+
+    assert set(b._heute["slots"]) == {"5"}
+    assert b._offen == []
+
+
+def test_zeitraum_schluessel_folgt_dem_bilanztag():
+    """Um 02:00 am 1. Oktober laeuft noch der September-Tag."""
+    b = _bilanz()
+    b._heute = bilanz_modul._leerer_tag("2026-09-30")
+    assert b.zeitraum_schluessel(datetime(2026, 10, 1, 2, 0)) == ("2026-09", "2026")
+    b._heute = bilanz_modul._leerer_tag("")
+    assert b.zeitraum_schluessel(datetime(2026, 10, 1, 2, 0)) == ("2026-09", "2026")
+    assert b.zeitraum_schluessel(datetime(2026, 10, 1, 5, 0)) == ("2026-10", "2026")
 
 
 # ---------------------------------------------------------------------------
@@ -359,6 +447,31 @@ def test_standardbetrieb_ergibt_praktisch_keinen_vorteil():
     )
 
 
+def test_standardbetrieb_zeigt_kein_eingriff():
+    """Lief die Batterie wie die Referenz, ist der Vorteil per Definition null
+    — und die Karte sagt „kein Eingriff" statt ein Rauschen zu zeigen. Die
+    rohe Differenz bleibt sichtbar."""
+    b = _bilanz()
+    inputs = _inputs()
+    tag = _tagesreihe_standardbetrieb(inputs)
+
+    ergebnis = b.bewerte_tag(tag, inputs)
+
+    assert ergebnis["kein_eingriff"] is True
+    assert ergebnis["opt_vorteil"] == 0.0
+    assert ergebnis["vorteil_roh"] is not None
+    assert abs(ergebnis["vorteil_roh"]) < 0.02
+    assert ergebnis["batterie_abweichung_kwh"] == pytest.approx(0.0, abs=0.05)
+    assert ergebnis["vorteil_begruendung"][0].startswith("Kein Eingriff")
+    assert "Modellrauschen" in ergebnis["vorteil_begruendung"][1]
+
+
+def test_kein_eingriff_wird_nicht_ueber_den_monat_summiert():
+    """Ein Ja/Nein je Tag ist keine Summe — als bool zaehlte es sonst als 1."""
+    assert "kein_eingriff" in bilanz_modul.NICHT_SUMMIERBAR
+    assert "batterie_abweichung_kwh" in bilanz_modul.NICHT_SUMMIERBAR
+
+
 def test_abendeinspeisung_zum_hoeheren_satz_bringt_vorteil():
     """Wer einspeist, wenn es mehr wert ist, muss besser dastehen.
 
@@ -392,6 +505,10 @@ def test_abendeinspeisung_zum_hoeheren_satz_bringt_vorteil():
     assert ergebnis["opt_vorteil"] > 0, (
         "Abendeinspeisung zum höheren Satz muss einen Vorteil ergeben"
     )
+    # Die Batterie hat etwas anderes getan als die Referenz — ein Eingriff.
+    assert ergebnis["kein_eingriff"] is False
+    assert ergebnis["batterie_abweichung_kwh"] > bilanz_modul.KEIN_EINGRIFF_MIN_KWH
+    assert ergebnis["vorteil_roh"] == ergebnis["opt_vorteil"]
 
 
 def test_ohne_ladestand_kein_vorteil_sondern_none():
@@ -556,6 +673,14 @@ def test_teilweise_gesteuerter_tag_wird_erwaehnt():
     d = {"erloes": 0.0, "bezug": -0.2, "alterung": 0.0, "endbestand": 0.0}
     saetze = begruende_vorteil(d, ein_anteil=0.4, abgeschlossen=True)
     assert any("nur 40 % des Tages" in t for t in saetze)
+
+
+def test_begruendung_kein_eingriff_nennt_abweichung_und_rauschen():
+    saetze = bilanz_modul.begruende_kein_eingriff(0.42, 17.3, -0.07, abgeschlossen=False)
+    assert saetze[0].startswith("Kein Eingriff")
+    assert "Der Tag läuft noch." in saetze[0]
+    assert "0,4 kWh" in saetze[1] and "17,3 kWh" in saetze[1]
+    assert "−0,07 €" in saetze[1] and "Modellrauschen" in saetze[1]
 
 
 def test_bewerte_tag_liefert_begruendung_nur_bei_negativem_vorteil(monkeypatch):

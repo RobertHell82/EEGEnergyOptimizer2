@@ -3369,8 +3369,14 @@ class EegOptimizerPanel extends HTMLElement {
     const optEntity = (ent.opt_vorteil || {}).heute;
     // Eine rote Zahl ohne Erklaerung ist schlimmer als keine Zahl — die
     // Begruendung kommt aus den Bestandteilen der Differenz (Backend).
-    const begruendung = Number(vorteilHeute) < 0 && Array.isArray(heute.vorteil_begruendung)
+    // „Kein Eingriff": die Batterie lief wie im Standardbetrieb, der Wert ist
+    // per Definition null — die Erklaerung dazu ist neutral, nicht rot.
+    const keinEingriff = !!heute.kein_eingriff;
+    const begruendung = (keinEingriff || Number(vorteilHeute) < 0) && Array.isArray(heute.vorteil_begruendung)
       ? heute.vorteil_begruendung : null;
+    const hinweisFarbe = keinEingriff ? "var(--secondary-text-color)" : "#e53935";
+    const hinweisHintergrund = keinEingriff ? "rgba(128,128,128,0.08)" : "rgba(229,57,53,0.06)";
+    const hinweisTitel = keinEingriff ? "Heute kein Eingriff" : "Warum heute negativ?";
     // Ohne abgeschlossenen Tag sind Monat und Jahr rechnerisch dasselbe wie
     // heute. Die drei gleichen Betraege nebeneinander lesen sich wie ein
     // Fehler — also erst zeigen, wenn sie sich unterscheiden koennen.
@@ -3382,13 +3388,13 @@ class EegOptimizerPanel extends HTMLElement {
       <div style="font-size:13px;color:var(--secondary-text-color);text-align:center;margin-top:10px">
         <span${optEntity ? ` class="bilanz-zeile-klickbar" data-action="show-entity" data-entity="${optEntity}" title="Verlauf anzeigen" style="border-radius:6px;padding:2px 6px"` : ""}>
           davon durch die Optimierung
-          <strong style="color:${Number(vorteilHeute) >= 0 ? "var(--success-color,#0f9d58)" : "#e53935"}">${eur(vorteilHeute)}</strong>
+          <strong style="color:${keinEingriff ? "var(--secondary-text-color)" : Number(vorteilHeute) >= 0 ? "var(--success-color,#0f9d58)" : "#e53935"}">${eur(vorteilHeute)}</strong>${keinEingriff ? " (kein Eingriff)" : ""}
         </span>
         ${archivVorhanden ? `<span style="white-space:nowrap">(Monat ${eur(opt.monat)}, Jahr ${eur(opt.jahr)})</span>` : ""}
       </div>
       ${begruendung ? `
-      <div style="margin:10px auto 0;max-width:560px;font-size:12px;color:var(--secondary-text-color);line-height:1.55;border-left:3px solid #e53935;padding:6px 10px;background:rgba(229,57,53,0.06);border-radius:4px;text-align:left">
-        <div style="font-weight:600;color:var(--primary-text-color);margin-bottom:4px">Warum heute negativ?</div>
+      <div style="margin:10px auto 0;max-width:560px;font-size:12px;color:var(--secondary-text-color);line-height:1.55;border-left:3px solid ${hinweisFarbe};padding:6px 10px;background:${hinweisHintergrund};border-radius:4px;text-align:left">
+        <div style="font-weight:600;color:var(--primary-text-color);margin-bottom:4px">${hinweisTitel}</div>
         ${begruendung.map(t => `<div style="margin:3px 0">${this._escapeHtml(t)}</div>`).join("")}
       </div>` : ""}
       ${archivVorhanden ? "" : `
@@ -3440,6 +3446,9 @@ class EegOptimizerPanel extends HTMLElement {
         <div style="font-size:12px;color:var(--secondary-text-color);margin-top:8px;line-height:1.5">
           Der Anteil der Optimierung ist ein Vergleich mit einem simulierten Betrieb ohne Vorausschau,
           gerechnet über die gemessenen Werte des Tages — keine Messung, sondern eine Rechnung.
+          Ein Bilanztag läuft von 04:00 bis 04:00, damit ein Abend samt Nacht-Entladung in einem Tag
+          bleibt; „heute" beginnt deshalb um 04:00. Hat die Batterie sich wie ein Standardgerät
+          verhalten, steht hier „kein Eingriff" und 0,00&nbsp;€ — die Rechnung kennt dann nur Rauschen.
         </div>`;
     }
 
@@ -3536,9 +3545,9 @@ class EegOptimizerPanel extends HTMLElement {
           bzw. Börsenpreis an den Restabnehmer.${eegZuteilung}
           Endbestand: Restenergie über dem Mindest-Ladestand am
           Horizontende (mit Optimierung ${fmtDe(m.rest_kwh ?? 0, 1)}&nbsp;kWh,
-          ohne ${fmtDe(o.rest_kwh ?? 0, 1)}&nbsp;kWh), konservativ mit dem
-          Basistarif gutgeschrieben — sonst verglichen die Pläne ungleiche
-          Endzustände.
+          ohne ${fmtDe(o.rest_kwh ?? 0, 1)}&nbsp;kWh), gutgeschrieben mit dem
+          Basistarif abzüglich Wandlungsverlust und Alterung${gewinn.endbestand_tarif != null ? ` (${fmtDe(Number(gewinn.endbestand_tarif) * 100, 2)}&nbsp;ct/kWh)` : ""}
+          — sonst verglichen die Pläne ungleiche Endzustände.
         </p>`;
     }
     const kennzahl = `
