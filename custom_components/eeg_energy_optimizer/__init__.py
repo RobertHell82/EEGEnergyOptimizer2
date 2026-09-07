@@ -1273,6 +1273,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Integrationsaufbaus verzögern. Der erste Lauf kommt als Task.
     hass.async_create_task(oemag_provider.async_fetch())
 
+    # Hochrechnung des laufenden Monats (oemag_schaetzung.py). Wie beim
+    # Spotpreis immer angelegt (fürs Panel), aber nur dann von selbst geholt,
+    # wenn sie der gewählte Basistarif ist — drei fremde Abrufe alle drei
+    # Stunden sollen nur die zahlen, die sie nutzen.
+    from .oemag_schaetzung import OemagSchaetzer
+    oemag_schaetzer = OemagSchaetzer(hass, entry.entry_id, oemag_provider)
+    await oemag_schaetzer.async_load()
+    hass.data[DOMAIN][entry.entry_id]["oemag_schaetzung"] = oemag_schaetzer
+    if str(config.get("schedule_feedin_source") or "manual").lower() == "oemag_estimate":
+        hass.async_create_task(oemag_schaetzer.async_fetch())
+
     # Spotpreis (EPEX Day-Ahead über aWATTar), falls als Basistarif gewählt.
     # Immer geladen (fürs Panel), aber nur automatisch abgerufen, wenn die
     # Quelle wirklich „spot" ist — kein Dauerverkehr für Nutzer, die die
@@ -1871,12 +1882,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             # ----------------------------------------------------------
             async def _fremddaten_cycle(_now=None):
                 namen = ["peakshare", "oemag"]
-                # Die Börse nur abfragen, wenn sie der gewählte Basistarif ist.
+                # Börse und OeMAG-Hochrechnung nur abfragen, wenn sie der
+                # gewählte Basistarif sind.
                 cfg = data.get("config") or {}
-                if str(
+                quelle_basis = str(
                     cfg.get("schedule_feedin_source") or "manual"
-                ).lower() == "spot":
+                ).lower()
+                if quelle_basis == "spot":
                     namen.append("spot")
+                if quelle_basis == "oemag_estimate":
+                    namen.append("oemag_schaetzung")
                 for name in namen:
                     quelle = data.get(name)
                     if quelle is None:

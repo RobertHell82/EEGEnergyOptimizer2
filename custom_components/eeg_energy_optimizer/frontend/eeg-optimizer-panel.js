@@ -702,7 +702,7 @@ class EegOptimizerPanel extends HTMLElement {
             // Nachtsatz). Das war der Grund, warum das Umschalten auf OeMAG
             // sichtbar nichts tat.
             if (realField === "schedule_feedin_source") {
-              if (target.value === "oemag") this._ensureOemagTarif();
+              if (target.value === "oemag" || target.value === "oemag_estimate") this._ensureOemagTarif();
               if (target.value === "spot") this._ensureSpotStatus();
               this._render();
             }
@@ -734,7 +734,7 @@ class EegOptimizerPanel extends HTMLElement {
             this._applyForecastDefaults(target.value);
             this._render();
           } else if (field === "schedule_feedin_source") {
-            if (target.value === "oemag") this._ensureOemagTarif();
+            if (target.value === "oemag" || target.value === "oemag_estimate") this._ensureOemagTarif();
             if (target.value === "spot") this._ensureSpotStatus();
             this._saveWizardProgress();
             this._render();
@@ -784,9 +784,21 @@ class EegOptimizerPanel extends HTMLElement {
   // Ein fehlgeschlagener Abruf wird nicht wiederholt (sonst Retry-Sturm bei
   // jedem Render) — dafür gibt es „Jetzt holen".
   _ensureOemagTarif() {
-    if (this._oemagStatus !== null || this._oemagBusy || this._oemagRequested) return;
+    // Bei Quelle „hochgerechnet" muss der Status auch die Hochrechnung
+    // tragen — ein früherer Abruf ohne sie zählt dann nicht als geladen.
+    const fehlt = this._oemagStatus === null
+      || (this._oemagSchaetzungGewuenscht() && this._oemagStatus.schaetzung === undefined);
+    if (!fehlt || this._oemagBusy || this._oemagRequested) return;
     this._oemagRequested = true;
     this._loadOemagTarif();
+  }
+
+  // Ist irgendwo (Einstellungen, Assistent, gespeicherte Konfiguration) die
+  // Hochrechnung als Quelle gewählt? Dann fragt das Panel sie beim
+  // OeMAG-Status mit an — ohne diese Wahl kostet sie niemanden einen Abruf.
+  _oemagSchaetzungGewuenscht() {
+    return [this._settingsData, this._wizardData, this._config]
+      .some((d) => d && d.schedule_feedin_source === "oemag_estimate");
   }
 
   // Geldwerte der Energiebilanz. Kein eigener Timer: Ein Render stößt das
@@ -1234,12 +1246,17 @@ class EegOptimizerPanel extends HTMLElement {
       this._oemagStatus = await this._hass.callWS({
         type: "eeg_optimizer/get_oemag_tarif",
         ...(refresh ? { refresh: true } : {}),
+        ...(this._oemagSchaetzungGewuenscht() ? { schaetzung: true } : {}),
       });
     } catch (e) {
       console.warn("OeMAG-Tarif nicht abrufbar:", e);
-      this._oemagStatus = { preis: null, fehler: e?.message || String(e) };
+      // schaetzung: null, nicht undefined — sonst hielte _ensureOemagTarif den
+      // Status für unvollständig und fragte bei jedem Render erneut an.
+      this._oemagStatus = { preis: null, fehler: e?.message || String(e), schaetzung: null };
     } finally {
       this._oemagBusy = false;
+      // Ein weiterer Abruf darf folgen, wenn die Quelle später wechselt.
+      this._oemagRequested = false;
       this._render();
     }
   }
@@ -5408,7 +5425,8 @@ class EegOptimizerPanel extends HTMLElement {
     // keinen Nachtsatz, dort entfällt das Feld (das Backend ignoriert einen
     // gespeicherten Wert bei Quelle OeMAG ohnehin).
     const quelle = d.schedule_feedin_source || "manual";
-    const quelleOemag = quelle === "oemag";
+    const quelleOemagSchaetzung = quelle === "oemag_estimate";
+    const quelleOemag = quelle === "oemag" || quelleOemagSchaetzung;
     const quelleSpot = quelle === "spot";
 
     // Ansicht mit OeMAG-/Spot-Wert geöffnet (Wizard-Rücksprung, gespeicherte
@@ -5439,11 +5457,40 @@ class EegOptimizerPanel extends HTMLElement {
     } else {
       oemagZeile = "Noch kein Tarif geholt.";
     }
+    // Hochrechnung des laufenden Monats (oemag_schaetzung.py): Wert, Monat,
+    // Datenstand und Korridor — die Herleitung steht dabei, weil der Wert
+    // eine Schätzung ist und man sehen soll, worauf sie fußt.
+    let schaetzZeile = "";
+    if (quelleOemagSchaetzung) {
+      const sch = o?.schaetzung;
+      if (this._oemagBusy) {
+        schaetzZeile = "Hochrechnung läuft…";
+      } else if (sch && sch.preis) {
+        const stand = sch.solar_bis
+          ? `, Daten bis ${new Date(sch.solar_bis).toLocaleString("de-AT", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}`
+          : "";
+        const korridor = sch.korridor_von != null
+          ? `, Korridor ${fmtDe(sch.korridor_von * 100, 3)}–${fmtDe(sch.korridor_bis * 100, 3)} ct (${sch.anker_quelle})`
+          : ", ohne Korridor — Quartalspreis der E-Control nicht lesbar";
+        schaetzZeile = `<strong>${fmtDe(sch.preis * 100, 3)} ct/kWh</strong> für ${monate[sch.monat] || "den laufenden Monat"}`
+          + ` — aus ${sch.slots} Viertelstunden${stand}${korridor}`
+          + (sch.fehler ? ` — letzter Abruf fehlgeschlagen: ${this._escapeHtml(sch.fehler)}` : "");
+      } else if (sch && sch.fehler) {
+        schaetzZeile = `Hochrechnung nicht möglich (${this._escapeHtml(sch.fehler)}) — es gilt der zuletzt veröffentlichte Monat.`;
+      } else {
+        schaetzZeile = "Noch nicht hochgerechnet — bis dahin gilt der zuletzt veröffentlichte Monat.";
+      }
+    }
+    const schaetzBlock = quelleOemagSchaetzung ? `
+        <label>OeMAG-Einspeisetarif, laufender Monat hochgerechnet</label>
+        <div class="help-text" style="font-size:13px;color:var(--primary-text-color)">${schaetzZeile}</div>
+        <div class="help-text">Rechnet den laufenden Monat so, wie die OeMAG ihn am Monatsende festlegt: Day-Ahead-Stundenpreise (aWATTar), gewichtet mit der österreichischen PV-Erzeugung (Energy-Charts), begrenzt auf 60–100 % des Quartalspreises der E-Control, abzüglich Ausgleichsenergie. Im Rückblick trifft das den veröffentlichten Wert auf rund 0,2 ct; in der ersten Monatswoche schwankt die Hochrechnung noch um bis zu 1,5 ct. Aktualisiert alle drei Stunden.</div>
+        <label style="margin-top:8px">Zuletzt veröffentlicht</label>` : `
+        <label>OeMAG-Einspeisetarif</label>`;
     const oemagBlock = `
-      <div class="field-group">
-        <label>OeMAG-Einspeisetarif</label>
+      <div class="field-group">${schaetzBlock}
         <div class="help-text" style="font-size:13px;color:var(--primary-text-color)">${oemagZeile}</div>
-        <div class="help-text">Wird zweimal täglich von oem-ag.at gelesen und wechselt monatlich; der laufende Monat erscheint dort erst im Laufe des Monats, bis dahin gilt der letzte veröffentlichte. Antwortet die Seite nicht, bleibt der zuletzt gelesene Wert stehen — und wenn es nie einen gab, der fest eingetragene.</div>
+        <div class="help-text">Wird zweimal täglich von oem-ag.at gelesen und wechselt monatlich; der laufende Monat erscheint dort erst zu Beginn des Folgemonats, bis dahin gilt ${quelleOemagSchaetzung ? "die Hochrechnung, ohne sie" : ""} der letzte veröffentlichte. Antwortet die Seite nicht, bleibt der zuletzt gelesene Wert stehen — und wenn es nie einen gab, der fest eingetragene.</div>
         <button class="btn-link" data-action="refresh-oemag" style="font-size:12px;padding:0" ${this._oemagBusy ? "disabled" : ""}>Jetzt holen</button>
       </div>`;
     // Spot-Status (aWATTar): aktueller Börsenpreis, Datenreichweite, Alter.
@@ -5493,7 +5540,8 @@ class EegOptimizerPanel extends HTMLElement {
         <label>Standardvergütung — Quelle *</label>
         <select data-field="${prefix}schedule_feedin_source">
           <option value="manual" ${quelle === "manual" ? "selected" : ""}>Fester Wert</option>
-          <option value="oemag" ${quelleOemag ? "selected" : ""}>OeMAG-Einspeisetarif (monatlich)</option>
+          <option value="oemag" ${quelle === "oemag" ? "selected" : ""}>OeMAG-Einspeisetarif (zuletzt veröffentlichter Monat)</option>
+          <option value="oemag_estimate" ${quelleOemagSchaetzung ? "selected" : ""}>OeMAG-Einspeisetarif (laufender Monat, hochgerechnet)</option>
           <option value="spot" ${quelleSpot ? "selected" : ""}>Spotpreis der Strombörse (stündlich)</option>
         </select>
         <div class="help-text">Was du bekommst, wenn die Energie nicht in einer Gemeinschaft landet. Der Fahrplan hält diesen Wert gegen den Bezugspreis und gegen die Vergütung der Gemeinschaften.</div>
@@ -5666,13 +5714,16 @@ class EegOptimizerPanel extends HTMLElement {
     // Vorschau einen Aufschlag, den der Fahrplan so nie rechnet. Ohne
     // geholten Wert gilt auch dort die Handeingabe.
     const gemQuelle = d.schedule_feedin_source || "manual";
-    if (gemQuelle === "oemag") this._ensureOemagTarif();
+    const gemOemag = gemQuelle === "oemag" || gemQuelle === "oemag_estimate";
+    if (gemOemag) this._ensureOemagTarif();
     if (gemQuelle === "spot") this._ensureSpotStatus();
     // Basistarif für die Vorschau wie im Backend: OeMAG-Wert, bei Spot der
     // aktuelle Börsenpreis abzüglich Vermarkter-Abschlag (zeitvariabel — die
     // Vorschau nimmt den Augenblickswert als Näherung), sonst Handeingabe.
     let basis = Number(d.schedule_feedin_price ?? 0.082);
-    if (gemQuelle === "oemag" && Number(this._oemagStatus?.preis ?? 0) > 0) {
+    if (gemQuelle === "oemag_estimate" && Number(this._oemagStatus?.schaetzung?.preis ?? 0) > 0) {
+      basis = Number(this._oemagStatus.schaetzung.preis);
+    } else if (gemOemag && Number(this._oemagStatus?.preis ?? 0) > 0) {
       basis = Number(this._oemagStatus.preis);
     } else if (gemQuelle === "spot" && this._spotStatus?.preis != null) {
       basis = Number(this._spotStatus.preis) - Number(d.spot_feedin_fee ?? 0);
@@ -6015,6 +6066,12 @@ class EegOptimizerPanel extends HTMLElement {
           ? (this._oemagStatus?.preis
             ? `OeMAG — ${fmtDe(this._oemagStatus.preis * 100, 3)} ct/kWh`
             : "OeMAG (noch nicht geholt)")
+          : (d.schedule_feedin_source || "manual") === "oemag_estimate"
+          ? (this._oemagStatus?.schaetzung?.preis
+            ? `OeMAG hochgerechnet — ${fmtDe(this._oemagStatus.schaetzung.preis * 100, 3)} ct/kWh`
+            : this._oemagStatus?.preis
+              ? `OeMAG hochgerechnet (noch nicht berechnet, vorerst ${fmtDe(this._oemagStatus.preis * 100, 3)} ct/kWh)`
+              : "OeMAG hochgerechnet (noch nicht berechnet)")
           : (d.schedule_feedin_source || "manual") === "spot"
           ? `Spotpreis ${(d.spot_market_area || "at") === "de" ? "EPEX DE" : "EPEX AT"}`
             + (Number(d.spot_feedin_fee ?? 0) !== 0 ? ` − ${fmtDe(ctAus(d.spot_feedin_fee), 2)} ct Abschlag` : "")

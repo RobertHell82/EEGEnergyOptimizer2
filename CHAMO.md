@@ -195,7 +195,7 @@ alle Werte sind additiv, die Config-Entry-Version bleibt unberührt.
 | `schedule_horizon_hours` | 36 | Vorausschau in Stunden |
 | `schedule_worst_case_factor` | 0.6 | Worst-Case-PV als Anteil des Erwartungswerts — greift nur ohne Solcast-p10 |
 | `inverter_ac_limit_kw` | *(pv_peak_kwp)* | **AC-Grenzleistung des Wechselrichters** — im Panel unter den Anlagendaten einstellbar. Ohne Angabe wird die PV-Spitzenleistung genommen, sonst 10 kW. |
-| `schedule_feedin_source` | `manual` | Woher die Standardvergütung kommt: `manual` oder `oemag` (monatlicher Einspeisetarif, aus der HTML-Tabelle von oem-ag.at gelesen, siehe `oemag.py`) |
+| `schedule_feedin_source` | `manual` | Woher die Standardvergütung kommt: `manual`, `oemag` (zuletzt veröffentlichter Monatstarif, aus der HTML-Tabelle von oem-ag.at gelesen, siehe `oemag.py`), `oemag_estimate` (Hochrechnung des laufenden Monats nach der OeMAG-Rechenvorschrift: PV-gewichtetes Day-Ahead-Mittel im 60–100-%-Korridor des E-Control-Quartalspreises minus Ausgleichsenergie, siehe `oemag_schaetzung.py`; ohne Hochrechnung gilt der veröffentlichte Monat) oder `spot` (Börsenpreis) |
 | `schedule_feedin_price` | 0.082 | Standardvergütung je kWh — gilt bei `manual` und als Rückfall, wenn der OeMAG-Wert fehlt |
 | `schedule_feedin_price_night` | 0.102 | Zweiter Einspeisetarif für das Nachtfenster. 0 = nur ein Tarif. |
 | `schedule_night_start` / `_end` | 22:00 / 06:00 | Nachtfenster, darf über Mitternacht gehen |

@@ -74,10 +74,12 @@ CONF_SCHEDULE_FEEDIN_PRICE = "schedule_feedin_price"
 # Nachtsatz der Standardvergütung — nur bei Quelle „manual" (die OeMAG kennt
 # keinen Nachtsatz), 0 oder leer heißt: kein Nachttarif.
 CONF_SCHEDULE_FEEDIN_PRICE_NIGHT = "schedule_feedin_price_night"
-# Woher der Basistarif kommt: Handeingabe, OeMAG (oemag.py) oder die
-# Strombörse (spot.py, aWATTar-API).
+# Woher der Basistarif kommt: Handeingabe, OeMAG (oemag.py — der zuletzt
+# veröffentlichte Monat oder die Hochrechnung des laufenden Monats aus
+# oemag_schaetzung.py) oder die Strombörse (spot.py, aWATTar-API).
 CONF_SCHEDULE_FEEDIN_SOURCE = "schedule_feedin_source"
 FEEDIN_SOURCE_OEMAG = "oemag"
+FEEDIN_SOURCE_OEMAG_ESTIMATE = "oemag_estimate"
 FEEDIN_SOURCE_SPOT = "spot"
 DEFAULT_SCHEDULE_FEEDIN_SOURCE = "manual"
 # Abschlag des Vermarkters auf den Börsenpreis (€/kWh, im Panel in Cent).
@@ -1133,15 +1135,29 @@ async def async_collect_inputs(
     # Basistarif aus der OeMAG statt aus der Handeingabe. Der Wert wechselt
     # monatlich; ihn hier zu ziehen (statt im Executor) hält die Rechnung frei
     # von Netzzugriffen — geholt wird er im Hintergrund, siehe oemag.py.
-    if str(
+    # Zwei Spielarten: der zuletzt VERÖFFENTLICHTE Monat (läuft dem laufenden
+    # immer einen Monat hinterher) oder die HOCHRECHNUNG des laufenden Monats
+    # (oemag_schaetzung.py). Ohne Hochrechnung gilt auch dort der
+    # veröffentlichte Wert, ohne den die Handeingabe.
+    quelle_basis = str(
         config.get(CONF_SCHEDULE_FEEDIN_SOURCE, DEFAULT_SCHEDULE_FEEDIN_SOURCE)
         or DEFAULT_SCHEDULE_FEEDIN_SOURCE
-    ).lower() == FEEDIN_SOURCE_OEMAG:
+    ).lower()
+    if quelle_basis in (FEEDIN_SOURCE_OEMAG, FEEDIN_SOURCE_OEMAG_ESTIMATE):
         # Die OeMAG kennt keinen Nachtsatz — ein gespeicherter Wert aus der
         # Handeingabe würde Tag und Nacht aus verschiedenen Quellen mischen.
         feedin_nacht = None
-        oemag = data.get("oemag")
-        oemag_preis = oemag.preis if oemag is not None else None
+        oemag_preis = None
+        if quelle_basis == FEEDIN_SOURCE_OEMAG_ESTIMATE:
+            schaetzer = data.get("oemag_schaetzung")
+            oemag_preis = schaetzer.preis if schaetzer is not None else None
+            if not oemag_preis:
+                _LOGGER.debug(
+                    "OeMAG-Hochrechnung nicht verfügbar, es gilt der veröffentlichte Monat"
+                )
+        if not oemag_preis:
+            oemag = data.get("oemag")
+            oemag_preis = oemag.preis if oemag is not None else None
         if oemag_preis:
             feedin_tag = float(oemag_preis)
         else:

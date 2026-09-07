@@ -87,7 +87,7 @@ class _Oemag:
         self.preis = preis
 
 
-def _hass(config, peakshare=None, oemag=None):
+def _hass(config, peakshare=None, oemag=None, oemag_schaetzung=None):
     hass = MagicMock()
     hass.data = {
         sched.DOMAIN: {
@@ -97,6 +97,7 @@ def _hass(config, peakshare=None, oemag=None):
                 "inverter": None,
                 "peakshare": peakshare,
                 "oemag": oemag,
+                "oemag_schaetzung": oemag_schaetzung,
             }
         }
     }
@@ -113,8 +114,8 @@ def _hass(config, peakshare=None, oemag=None):
     return hass
 
 
-async def _collect(config, peakshare=None, oemag=None):
-    hass = _hass(config, peakshare, oemag)
+async def _collect(config, peakshare=None, oemag=None, oemag_schaetzung=None):
+    hass = _hass(config, peakshare, oemag, oemag_schaetzung)
     with (
         patch.object(sched, "_now_local", return_value=NOW),
         patch.object(
@@ -122,6 +123,59 @@ async def _collect(config, peakshare=None, oemag=None):
         ),
     ):
         return await sched.async_collect_inputs(hass, "entry1")
+
+
+# ---------------------------------------------------------------------------
+# Basistarif aus der OeMAG: veröffentlichter Monat oder Hochrechnung
+# ---------------------------------------------------------------------------
+
+
+async def test_oemag_hochrechnung_ist_der_basistarif():
+    """Quelle „oemag_estimate": der hochgerechnete laufende Monat zählt, nicht
+    der veröffentlichte Vormonat — September 2026: 10,515 statt 8,997 ct."""
+    inputs, problem = await _collect(
+        {**BASE_CONFIG, "schedule_feedin_source": "oemag_estimate",
+         "schedule_feedin_price_night": 0.12},
+        oemag=_Oemag(0.08997), oemag_schaetzung=_Oemag(0.10515),
+    )
+    assert problem is None
+    assert inputs.feedin_price == pytest.approx(0.10515)
+    # Die OeMAG kennt keinen Nachtsatz — auch nicht hochgerechnet.
+    assert inputs.feedin_price_night is None
+
+
+async def test_oemag_hochrechnung_faellt_auf_den_veroeffentlichten_monat_zurueck():
+    """Ohne Hochrechnung (noch nicht gerechnet, API ausgefallen, Monatswechsel)
+    gilt der veröffentlichte Vormonat — genau wie bei Quelle „oemag"."""
+    inputs, _ = await _collect(
+        {**BASE_CONFIG, "schedule_feedin_source": "oemag_estimate"},
+        oemag=_Oemag(0.08997), oemag_schaetzung=_Oemag(None),
+    )
+    assert inputs.feedin_price == pytest.approx(0.08997)
+
+    inputs, _ = await _collect(
+        {**BASE_CONFIG, "schedule_feedin_source": "oemag_estimate"},
+        oemag=_Oemag(0.08997), oemag_schaetzung=None,
+    )
+    assert inputs.feedin_price == pytest.approx(0.08997)
+
+
+async def test_oemag_ohne_jeden_wert_gilt_die_handeingabe():
+    inputs, _ = await _collect(
+        {**BASE_CONFIG, "schedule_feedin_source": "oemag_estimate"},
+        oemag=_Oemag(None), oemag_schaetzung=_Oemag(None),
+    )
+    assert inputs.feedin_price == pytest.approx(0.082)
+
+
+async def test_quelle_oemag_ignoriert_die_hochrechnung():
+    """Wer den veröffentlichten Monat wählt, bekommt ihn — die Hochrechnung
+    liegt zwar vor, zählt hier aber nicht."""
+    inputs, _ = await _collect(
+        {**BASE_CONFIG, "schedule_feedin_source": "oemag"},
+        oemag=_Oemag(0.08997), oemag_schaetzung=_Oemag(0.10515),
+    )
+    assert inputs.feedin_price == pytest.approx(0.08997)
 
 
 # ---------------------------------------------------------------------------

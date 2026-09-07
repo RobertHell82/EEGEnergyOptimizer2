@@ -1931,6 +1931,7 @@ async def ws_clear_override(
     {
         vol.Required("type"): "eeg_optimizer/get_oemag_tarif",
         vol.Optional("refresh"): bool,
+        vol.Optional("schaetzung"): bool,
     }
 )
 @websocket_api.async_response
@@ -1945,6 +1946,12 @@ async def ws_get_oemag_tarif(
     die Seite umgebaut wird, bleibt der letzte gelesene Wert stehen. Ohne Alter
     wäre das nicht zu erkennen. ``refresh`` erzwingt einen Abruf — für den
     Knopf „Jetzt holen" in den Einstellungen.
+
+    ``schaetzung`` rechnet zusätzlich den laufenden Monat hoch
+    (oemag_schaetzung.py) — nur auf Wunsch des Panels, weil das drei fremde
+    Abrufe kostet; ohne ``refresh`` gilt dabei die Drei-Stunden-Frist. Der
+    Stand der Hochrechnung steht immer unter ``schaetzung`` in der Antwort,
+    auch ohne neuen Abruf.
     """
     entry, data = _get_entry_data(hass, connection, msg)
     if entry is None:
@@ -1960,7 +1967,14 @@ async def ws_get_oemag_tarif(
     if msg.get("refresh"):
         await provider.async_fetch(force=True)
 
-    connection.send_result(msg["id"], provider.status())
+    ergebnis = provider.status()
+    schaetzer = data.get("oemag_schaetzung")
+    ergebnis["schaetzung"] = None
+    if schaetzer is not None:
+        if msg.get("schaetzung"):
+            await schaetzer.async_fetch(force=bool(msg.get("refresh")))
+        ergebnis["schaetzung"] = schaetzer.status()
+    connection.send_result(msg["id"], ergebnis)
 
 
 @websocket_api.websocket_command(

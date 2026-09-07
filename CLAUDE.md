@@ -69,7 +69,8 @@ schedule_executor.py: ScheduleExecutor (execution, 30 s)
 | `schedule.py` | Planning — `ScheduleInputs`, `HAConfig` (the bridge to `opt()`), `ScheduleRunner` (collect in loop, solve in worker thread); profit comparison (`simuliere_standardbetrieb` greedy self-consumption reference + `bewerte_geldfluesse` with real tariffs — community rates only for energy the community's quarter-hour saldo actually absorbs, rest at base tariff/spot series; incl. end-of-horizon battery credit) |
 | `schedule_executor.py` | Execution — `plan_action()` + `ScheduleExecutor.async_guard_cycle()`; the **only** place that writes inverter commands |
 | `eeg_price.py` | Synthetic feed-in tariff from community demand — turns PeakShare demand into a price surcharge |
-| `oemag.py` | Optional base tariff: OeMAG monthly market price, scraped from the HTML table (no API), cached across restarts |
+| `oemag.py` | Optional base tariff: OeMAG monthly market price, scraped from the HTML table (no API), cached across restarts; also reads the per-month calculation basis + balancing-energy cost for the estimator |
+| `oemag_schaetzung.py` | Estimate of the OeMAG tariff for the *current* month (source `oemag_estimate`): aWATTar day-ahead prices weighted by Austrian solar generation (Energy-Charts), clamped to 60–100 % of the E-Control quarterly price (scraped; fallback derived from clamped months of the OeMAG table), minus balancing cost. Validated 2025-01…2026-08: MAE 0.21 ct |
 | `power_readings.py` | Shared sensor reads — house load, PV now, grid export, battery capacity resolution |
 | `schedule_archive.py` | Rolling archive of computed plans (7 days, gzip, ~8 KB each) for after-the-fact debugging |
 | `schedule_archive_view.py` | HTTP view that packs archive + settings + measured history into a downloadable ZIP |
@@ -189,7 +190,7 @@ three intents. `Fahrplan-Status` shows what actually happened:
 | `eeg_optimizer/get_activity_log` | Paginated activity log (offset, limit) |
 | `eeg_optimizer/get_peakshare_communities` | List of PeakShare community names for dropdown |
 | `eeg_optimizer/get_peakshare_data` | PeakShare community demand forecast |
-| `eeg_optimizer/get_oemag_tarif` | Current OeMAG market price (base tariff option) |
+| `eeg_optimizer/get_oemag_tarif` | Current OeMAG market price (base tariff option); with `schaetzung: true` also computes/returns the current-month estimate under `schaetzung` |
 | `eeg_optimizer/get_bilanz` | Money balance for the "Was deine PV bringt" card — PV saving and optimiser share for today / month / year plus the day's breakdown (incl. `vorteil_begruendung` when the share is negative) |
 | `eeg_optimizer/get_override` | Active pause or `{aktiv: false}` |
 | `eeg_optimizer/set_override` | Start a pause — `stunden` and/or `bis_soc_pct` (at least one); replaces a running one, takes effect immediately, answers with the state *after* the immediate guard run |
@@ -353,7 +354,7 @@ sensors (assigned once), steps 4–5 are the parameters:
    in the wizard *and* on save), export limit, battery power limit, minimum
    state of charge, maximum state of charge (always visible, no toggle —
    100 = charge to full, the value alone carries the state since v27)
-6. Tarife & Gemeinschaft — base tariff (manual or OeMAG; manual also takes a
+6. Tarife & Gemeinschaft — base tariff (manual, OeMAG published month, OeMAG current-month estimate, or spot; manual also takes a
    night rate `schedule_feedin_price_night`), consumption price, community
    shares/prices/weights. The night window lives in the Vergütung section
    (rendered once via `_nachtfensterFelder`) and appears when ANY night rate

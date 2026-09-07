@@ -84,7 +84,7 @@ Jede Minute rechnet die Integration einen **linearen Optimierungs-Fahrplan** üb
 
 Der Fahrplan kennt keine Zeitfenster und keine Zustände — er kennt nur einen **Preis je Viertelstunde**. Die Einspeisevergütung ist eine Zeitreihe aus zwei Teilen:
 
-1. **Basistarif** — ein fester Wert, der OeMAG-Monatstarif oder der Börsen-Spotpreis.
+1. **Basistarif** — ein fester Wert, der OeMAG-Monatstarif (zuletzt veröffentlicht oder für den laufenden Monat hochgerechnet) oder der Börsen-Spotpreis.
 2. **Auf- und Abschlag der Energiegemeinschaften** — hat eine Gemeinschaft in einer Viertelstunde Bedarf, steigt der Preis; hat sie Überschuss, sinkt er.
 
 Der Optimierer maximiert daraus den Erlös über 48 Stunden: Wo eine Kilowattstunde mehr wert ist, wird eingespeist; wo sie weniger wert ist, wird geladen oder gehalten.

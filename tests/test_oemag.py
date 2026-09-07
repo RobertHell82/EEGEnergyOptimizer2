@@ -17,15 +17,22 @@ ECHTES_HTML = """
 <tr><th>Monat</th><th>Marktpreis Photovoltaik<br>und andere Energieträger<br>(außer Windkraft)</th>
     <th>Marktpreis Windkraft</th><th>Rechtliche Grundlage</th><th>Kommentar</th></tr>
 <tr><td>Jänner</td><td>8,842 ct/kWh</td><td>8,796 ct/kWh</td>
-    <td>Preis gem. &sect; 13 Abs. 3 iVm &sect; 41 &Ouml;SG</td><td>Marktpreis abz&uuml;gl. Aufwand</td></tr>
-<tr><td>Februar</td><td>8,457 ct/kWh</td><td>8,411 ct/kWh</td><td>...</td><td>...</td></tr>
+    <td>Preis gem. &sect; 13 Abs. 3 iVm &sect; 41 &Ouml;SG</td>
+    <td>Marktpreis gem. &sect; 41 Abs. 1 &Ouml;SG abz&uuml;gl. Aufwand Ausgleichsenergie</td></tr>
+<tr><td>Februar</td><td>8,457 ct/kWh</td><td>8,411 ct/kWh</td><td>...</td>
+    <td>durchschnittlich mengengewichteter Day-Ahead-Stundenpreis abz&uuml;gl. Aufwand Ausgleichsenergie</td></tr>
 <tr><td>M&auml;rz</td><td>5,720 ct/kWh</td><td>5,674 ct/kWh</td><td>...</td><td>...</td></tr>
-<tr><td>April</td><td>6,772 ct/kWh</td><td>6,726 ct/kWh</td><td>...</td><td>...</td></tr>
+<tr><td>April</td><td>6,772 ct/kWh</td><td>6,726 ct/kWh</td><td>...</td>
+    <td>60% des Marktpreises gem&auml;&szlig; &sect; 41 Abs. 1 &Ouml;SG abz&uuml;gl. Aufwand Ausgleichsenergie</td></tr>
 <tr><td>Mai</td><td>6,772 ct/kWh</td><td>6,726 ct/kWh</td><td>...</td><td>...</td></tr>
 <tr><td>Juni</td><td>6,772 ct/kWh</td><td>6,726 ct/kWh</td><td>...</td><td>...</td></tr>
-<tr><td>Juli</td><td>6,146 ct/kWh</td><td>6,100 ct/kWh</td><td>...</td><td>...</td></tr>
+<tr><td>Juli</td><td>6,146 ct/kWh</td><td>6,100 ct/kWh</td><td>...</td>
+    <td>60% des Marktpreises gem&auml;&szlig; &sect; 41 Abs. 1 &Ouml;SG abz&uuml;gl. Aufwand Ausgleichsenergie</td></tr>
 </tbody>
 </table>
+<p>Die Aufwendungen f&uuml;r Ausgleichsenergie betragen f&uuml;r Windkraft 0,454 ct/kWh und
+f&uuml;r Photovoltaik und andere Energietr&auml;ger 0,408 ct/kWh. Dementsprechend werden im
+Jahr 2026 zwei unterschiedliche Marktpreise hier ver&ouml;ffentlicht.</p>
 <table><tr><td>Fall 1</td><td>Fall 2</td></tr>
 <tr><td>Schritt 1 -&gt; Ticketausgabe</td><td>99,999 ct/kWh</td></tr></table>
 """
@@ -40,6 +47,46 @@ def test_echte_seite_wird_zerlegt():
     assert tarife[7] == pytest.approx(0.06146)
     # Die zweite Tabelle (Ablaufbeschreibung) darf nicht mitgelesen werden.
     assert 8 not in tarife and 12 not in tarife
+
+
+def test_seite_liefert_berechnungsbasis_und_ausgleichsenergie():
+    """Die Kommentarspalte sagt, ob ein Monat auf dem Korridor lag — das
+    braucht die Hochrechnung, um den Quartalsanker zurückzurechnen."""
+    seite = oemag.parse_seite(ECHTES_HTML)
+
+    assert seite["tarife"] == oemag.parse_tarife(ECHTES_HTML)
+    assert seite["basis"][1] == oemag.BASIS_DECKEL        # „Marktpreis gem. § 41 Abs. 1"
+    assert seite["basis"][2] == oemag.BASIS_DAY_AHEAD     # „mengengewichteter Day-Ahead"
+    assert seite["basis"][4] == oemag.BASIS_BODEN         # „60% des Marktpreises"
+    assert seite["basis"][3] is None                      # „..." sagt nichts
+    assert seite["ausgleichsenergie"] == pytest.approx(0.00408)
+
+
+def test_seite_ohne_ausgleichsenergie_text():
+    seite = oemag.parse_seite("<table><tr><td>Juli</td><td>6,146 ct/kWh</td></tr></table>")
+    assert seite["tarife"] == {7: pytest.approx(0.06146)}
+    assert seite["basis"] == {7: None}
+    assert seite["ausgleichsenergie"] is None
+
+
+def test_provider_rechnet_den_quartalsanker_zurueck():
+    """Juli lag auf der Untergrenze: (6,146 + 0,408) / 0,6 = 10,923 ct — der
+    E-Control-Quartalspreis Q3 2026. Jänner lag auf der Obergrenze: 9,250."""
+    provider = oemag.OemagProvider(hass=None, entry_id="e1")
+    seite = oemag.parse_seite(ECHTES_HTML)
+    provider._tarife, provider._basis = seite["tarife"], seite["basis"]
+    provider._ausgleichsenergie = seite["ausgleichsenergie"]
+
+    assert provider.ausgleichsenergie == pytest.approx(0.00408)
+    assert provider.anker_fuer_quartal(3) == pytest.approx(0.10923, abs=1e-5)
+    assert provider.anker_fuer_quartal(2) == pytest.approx(0.11967, abs=5e-5)  # April: 60 %
+    assert provider.anker_fuer_quartal(1) == pytest.approx(0.0925, abs=1e-5)  # Jänner: Deckel
+    assert provider.anker_fuer_quartal(4) is None
+
+
+def test_ausgleichsenergie_faellt_auf_die_vorgabe_zurueck():
+    provider = oemag.OemagProvider(hass=None, entry_id="e1")
+    assert provider.ausgleichsenergie == oemag.AUSGLEICHSENERGIE_PV_DEFAULT
 
 
 def test_windkraftspalte_wird_nicht_verwechselt():
@@ -120,6 +167,7 @@ def test_preisanbieter_werden_vor_dem_wizard_abbruch_geladen():
     abbruch = quelle.index("if not setup_complete:")
     for marker, name in (
         ('["oemag"] = oemag_provider', "OeMAG"),
+        ('["oemag_schaetzung"] = oemag_schaetzer', "OeMAG-Hochrechnung"),
         ('["spot"] = spot_provider', "Spot"),
     ):
         stelle = quelle.index(marker)

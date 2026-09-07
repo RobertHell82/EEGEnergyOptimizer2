@@ -16,6 +16,14 @@ hier gelesen, und bewusst schmal:
 Weil das HTML-Lesen bricht, sobald die Seite umgebaut wird, ist der Wert immer
 mit Herkunft und Alter versehen: das Panel zeigt beides, damit ein stehender
 Tarif auffällt.
+
+Zusätzlich liest ``parse_seite`` aus derselben Tabelle die Berechnungsbasis je
+Monat (Kommentarspalte: Obergrenze, Untergrenze oder echter Day-Ahead-Wert)
+und aus dem Seitentext den Aufwand für Ausgleichsenergie. Beides braucht die
+Hochrechnung des laufenden Monats (``oemag_schaetzung.py``): ein Monat, der auf
+Ober- oder Untergrenze lag, verrät den Quartalsmarktpreis der E-Control —
+``anker_aus_tabelle`` rechnet ihn zurück, falls die E-Control-Seite selbst
+nicht lesbar ist.
 """
 
 from __future__ import annotations
@@ -53,6 +61,17 @@ CACHE_FRESH_SECONDS = 12 * 3600
 # alter echter Tarif als ein Rückfall auf die Handeingabe.
 CACHE_MAX_SECONDS = 40 * 24 * 3600
 
+# Aufwand Ausgleichsenergie Photovoltaik 2026 in €/kWh — Rückfall, wenn der
+# Seitentext den Wert nicht preisgibt. Die OeMAG legt ihn jährlich neu fest.
+AUSGLEICHSENERGIE_PV_DEFAULT = 0.00408
+# Untergrenze des Korridors nach § 41 Abs. 2a ÖSG: 60 % des Quartalspreises.
+KORRIDOR_UNTEN = 0.6
+
+# Berechnungsbasis eines Monats, aus der Kommentarspalte der Tabelle.
+BASIS_DECKEL = "deckel"        # „Marktpreis gem. § 41 Abs. 1 ÖSG abzügl. …"
+BASIS_BODEN = "boden"          # „60% des Marktpreises gemäß § 41 Abs. 1 ÖSG …"
+BASIS_DAY_AHEAD = "day_ahead"  # „durchschnittlich mengengewichteter Day-Ahead-…"
+
 # Österreichische und deutsche Schreibweise, beide kommen vor.
 MONATE = {
     "jänner": 1, "januar": 1, "februar": 2, "märz": 3, "maerz": 3, "april": 4,
@@ -61,23 +80,28 @@ MONATE = {
 }
 
 
-def parse_tarife(html: str) -> dict[int, float]:
-    """Monat → Einspeisetarif in €/kWh aus dem HTML der OeMAG-Seite.
+def parse_seite(html: str) -> dict[str, Any]:
+    """Alles, was die OeMAG-Seite hergibt: Tarife, Berechnungsbasis, Ausgleichsenergie.
+
+    Rückgabe ``{"tarife": {Monat: €/kWh}, "basis": {Monat: BASIS_*|None},
+    "ausgleichsenergie": €/kWh|None}``.
 
     Gelesen wird die erste Tabelle: Spalte 1 der Monatsname, Spalte 2 der Satz
-    für Photovoltaik (``6,146 ct/kWh``). Zeilen ohne beides fallen heraus, die
-    Kopfzeile also von selbst.
+    für Photovoltaik (``6,146 ct/kWh``), die letzte Spalte der Kommentar, der
+    sagt, ob der Monat auf der Ober- oder Untergrenze des Korridors lag.
+    Zeilen ohne Monat und Preis fallen heraus, die Kopfzeile also von selbst.
+    Die Ausgleichsenergie steht im Fließtext („… für Photovoltaik und andere
+    Energieträger 0,408 ct/kWh").
     """
     tabellen = re.findall(r"<table.*?</table>", html or "", re.S | re.I)
-    if not tabellen:
-        return {}
-
     tarife: dict[int, float] = {}
-    for zeile in re.findall(r"<tr.*?</tr>", tabellen[0], re.S | re.I):
+    basis: dict[int, str | None] = {}
+    zeilen = re.findall(r"<tr.*?</tr>", tabellen[0], re.S | re.I) if tabellen else []
+    for zeile in zeilen:
         # Entities dekodieren, nicht nur &nbsp; ersetzen: die Seite schreibt
         # Umlaute teils als M&auml;rz, teils direkt in UTF-8.
         zellen = [
-            html_entities.unescape(re.sub(r"<[^>]+>", " ", z)).replace(" ", " ").strip()
+            html_entities.unescape(re.sub(r"<[^>]+>", " ", z)).replace("\xa0", " ").strip()
             for z in re.findall(r"<t[dh].*?</t[dh]>", zeile, re.S | re.I)
         ]
         if len(zellen) < 2:
@@ -88,7 +112,59 @@ def parse_tarife(html: str) -> dict[int, float]:
         preis = _ct_pro_kwh(zellen[1])
         if preis is not None:
             tarife[monat] = preis
-    return tarife
+            basis[monat] = _basis_aus_kommentar(zellen[-1]) if len(zellen) > 2 else None
+
+    ausgleichsenergie = None
+    text = re.sub(r"\s+", " ", html_entities.unescape(re.sub(r"<[^>]+>", " ", html or "")))
+    treffer = re.search(
+        r"Photovoltaik und andere Energietr\S+ (\d+[.,]\d+) ct/kWh", text, re.I
+    )
+    if treffer:
+        ausgleichsenergie = _ct_pro_kwh(treffer.group(1) + " ct/kWh")
+    return {"tarife": tarife, "basis": basis, "ausgleichsenergie": ausgleichsenergie}
+
+
+def parse_tarife(html: str) -> dict[int, float]:
+    """Monat → Einspeisetarif in €/kWh aus dem HTML der OeMAG-Seite."""
+    return parse_seite(html)["tarife"]
+
+
+def _basis_aus_kommentar(text: str) -> str | None:
+    """Kommentarspalte → BASIS_*: „60%" ist der Boden, „Day-Ahead" der echte
+    Monatswert, „§ 41 Abs. 1" ohne Prozentangabe der Deckel."""
+    t = (text or "").lower()
+    if "60" in t and "%" in t:
+        return BASIS_BODEN
+    if "day-ahead" in t or "mengengewicht" in t:
+        return BASIS_DAY_AHEAD
+    if "41" in t and "abs. 1" in t:
+        return BASIS_DECKEL
+    return None
+
+
+def anker_aus_tabelle(
+    tarife: dict[int, float],
+    basis: dict[int, str | None],
+    ausgleichsenergie: float,
+    quartal: int,
+) -> float | None:
+    """Quartalsmarktpreis Q (€/kWh) aus einem Monat des Quartals zurückrechnen.
+
+    Ein Monat auf der Untergrenze zeigt ``0,6·Q − AE``, einer auf der
+    Obergrenze ``Q − AE``. Ein Day-Ahead-Monat sagt über Q nichts. Genommen
+    wird der späteste Monat des Quartals, der etwas verrät — im Zweifel
+    stimmen alle überein, es ist dieselbe Zahl.
+    """
+    for monat in range(quartal * 3, quartal * 3 - 3, -1):
+        art = basis.get(monat)
+        preis = tarife.get(monat)
+        if preis is None or art is None:
+            continue
+        if art == BASIS_BODEN:
+            return round((preis + ausgleichsenergie) / KORRIDOR_UNTEN, 6)
+        if art == BASIS_DECKEL:
+            return round(preis + ausgleichsenergie, 6)
+    return None
 
 
 def tarif_fuer(tarife: dict[int, float], monat: int) -> tuple[float, int] | None:
@@ -124,8 +200,24 @@ class OemagProvider:
         self._monat: int | None = None
         self._geholt: datetime | None = None
         self._fehler: str | None = None
+        # Für die Hochrechnung (oemag_schaetzung.py): alle Tarife des Jahres
+        # mit Berechnungsbasis und der Aufwand Ausgleichsenergie.
+        self._tarife: dict[int, float] = {}
+        self._basis: dict[int, str | None] = {}
+        self._ausgleichsenergie: float | None = None
 
     # -- Zustand -------------------------------------------------------
+
+    @property
+    def ausgleichsenergie(self) -> float:
+        """Aufwand Ausgleichsenergie PV in €/kWh — gelesen oder der Vorgabewert."""
+        return self._ausgleichsenergie or AUSGLEICHSENERGIE_PV_DEFAULT
+
+    def anker_fuer_quartal(self, quartal: int) -> float | None:
+        """Quartalsmarktpreis Q (€/kWh), zurückgerechnet aus der Tabelle, sonst None."""
+        return anker_aus_tabelle(
+            self._tarife, self._basis, self.ausgleichsenergie, quartal
+        )
 
     @property
     def preis(self) -> float | None:
@@ -162,6 +254,13 @@ class OemagProvider:
                 geholt = stored.get("geholt")
                 if geholt:
                     self._geholt = datetime.fromisoformat(geholt)
+                self._tarife = {
+                    int(k): float(v) for k, v in (stored.get("tarife") or {}).items()
+                }
+                self._basis = {
+                    int(k): v for k, v in (stored.get("basis") or {}).items()
+                }
+                self._ausgleichsenergie = stored.get("ausgleichsenergie")
         except Exception:
             _LOGGER.debug("OeMAG: kein gespeicherter Tarif vorhanden")
 
@@ -199,7 +298,8 @@ class OemagProvider:
             )
             return self.preis
 
-        tarife = parse_tarife(html)
+        seite = parse_seite(html)
+        tarife = seite["tarife"]
         treffer = tarif_fuer(tarife, dt_now_monat())
         if treffer is None:
             self._fehler = "Tabelle nicht lesbar"
@@ -212,12 +312,22 @@ class OemagProvider:
 
         preis, monat = treffer
         self._preis, self._monat, self._geholt, self._fehler = preis, monat, jetzt, None
+        self._tarife, self._basis = tarife, seite["basis"]
+        if seite["ausgleichsenergie"]:
+            self._ausgleichsenergie = seite["ausgleichsenergie"]
         _LOGGER.debug("OeMAG-Tarif: %.5f €/kWh (Monat %d)", preis, monat)
 
         if self._store is not None:
             try:
                 await self._store.async_save(
-                    {"preis": preis, "monat": monat, "geholt": jetzt.isoformat()}
+                    {
+                        "preis": preis,
+                        "monat": monat,
+                        "geholt": jetzt.isoformat(),
+                        "tarife": {str(k): v for k, v in tarife.items()},
+                        "basis": {str(k): v for k, v in seite["basis"].items()},
+                        "ausgleichsenergie": self._ausgleichsenergie,
+                    }
                 )
             except Exception:
                 _LOGGER.debug("OeMAG-Tarif konnte nicht gespeichert werden")
