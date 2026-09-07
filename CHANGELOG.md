@@ -10,6 +10,28 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
+## [2.0.3] - 2026-09-07
+
+> Fasst die Entwicklungsstände `2.0.3-devfronius.1` bis `.9` zusammen (Einzelheiten in den Abschnitten darunter). An dieser Version ist gegenüber `.9` inhaltlich nichts neu.
+
+### Hinzugefügt
+
+- **Fronius Gen24 wird gesteuert, nicht nur angezeigt.** Der Treiber bietet die vollständige Fahrplan-Steuerschnittstelle und ist im Einrichtungsassistenten auswählbar. Mit Sicherheitsnetz: Ladesperre und Entladung laufen mit der Fronius-Rückfallzeit (`InOutWRte_RvrtTms`, 5 Minuten) und werden im Minutentakt aufgefrischt — fällt Home Assistant mitten in einem Slot aus, kehrt der Wechselrichter selbst zu seiner Batteriesteuerung zurück. Skalierungsfaktoren werden vom Gerät gelesen statt angenommen, und der geräteeigene Mindest-Ladestand (`MinRsvPct`) fließt als Untergrenze in die Planung ein.
+- **SolaX Gen4+ wird gesteuert.** Vollständige Steuerschnittstelle, im Assistenten auswählbar.
+- **Pause als befristeter Eingriff neben dem Ein/Aus-Schalter.** Setzt die Steuerung für eine wählbare Dauer aus oder „bis Ladestand xx %" — der Fall „Auto kommt um 14 Uhr, Batterie soll bis dahin voll sein". Läuft von selbst ab, überlebt einen Neustart, auch als Services `eeg_energy_optimizer.pause` und `.aufheben` für Automationen.
+- **OeMAG-Einspeisetarif für den laufenden Monat hochgerechnet.** Neue Quelle der Standardvergütung neben dem zuletzt veröffentlichten Monat. Rechnet den Monat so nach, wie die OeMAG ihn am Monatsende festlegt: Day-Ahead-Stundenpreise, gewichtet mit der österreichischen PV-Erzeugung, begrenzt auf 60–100 % des Quartalspreises der E-Control, abzüglich Ausgleichsenergie. Trifft den veröffentlichten Wert im Rückblick über 20 Monate im Mittel auf 0,21 ct.
+- **„Was deine PV bringt" führt zum Sensorverlauf.** Beträge und kWh-Zeilen öffnen per Klick den jeweiligen Sensor. Ein negativer Optimierungs-Vorteil wird begründet, aufgeschlüsselt nach Netzbezug, Einspeiseerlös, Restenergie und Batterienutzung.
+
+### Geändert
+
+- **Optimierungs-Vorteil fairer gerechnet.** Fünf Schieflagen zugunsten der Vergleichsrechnung sind raus: der Bilanztag läuft von 04:00 bis 04:00, damit ein Abend samt Nacht-Entladung in einem Tag bleibt; Tage ohne Eingriff zeigen 0,00 € statt Modellrauschen; die Restenergie in der Batterie wird mit Wandlungsverlust und Alterung bewertet statt zum vollen Basistarif; und der simulierte Standardbetrieb zahlt jetzt dieselben Innenwiderstandsverluste und hält denselben Maximum-Ladestand ein wie der Fahrplan.
+
+### Behoben
+
+- **Ladelimit kam nach der Einspeisegrenzen-Regelung viel zu langsam auf den Fahrplanwert zurück** (rund 7 statt 27 Läufe).
+- **SolaX: Entladung blieb am geräteeigenen Entladeboden stehen**, ohne das zu melden. Der Treiber senkt den Wert für die Dauer der Entladung ab und schreibt ihn danach zurück.
+- **Panel:** kein „null" mehr in der Transparenz-Ansicht bei Modbus-Treibern; der Anteil einer abgewählten zweiten Gemeinschaft wird nicht mehr mitgezählt.
+
 ## [2.0.3-devfronius.9] - 2026-09-07
 
 ### Behoben
