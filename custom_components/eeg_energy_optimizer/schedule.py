@@ -1392,34 +1392,87 @@ def solve(inputs: ScheduleInputs) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
+def _batterie_verluste_kw(p_kw: float, kapazitaet_kwh: float) -> float:
+    """Innenwiderstandsverluste in kW zu einer Batterieleistung — Haralds Modell.
+
+    ``opt_highs.py`` kann keinen echten Innenwiderstand (quadratisch) linear
+    abbilden und nimmt zwei Stufen: bis 0,1 C ist (Ent-)Laden verlustfrei,
+    zwischen 0,1 C und 0,2 C gehen ``battery_resistance`` (4 %) der Leistung
+    darüber verloren, oberhalb von 0,2 C das Doppelte. „C" ist die Kapazität
+    in kWh als Leistung in kW gelesen. Die Verluste gehen vom DC-Bus ab, die
+    Batterie selbst sieht die volle Leistung — beim Laden kommt also weniger
+    von der PV an, beim Entladen weniger beim Haus. Richtung ist egal.
+    """
+    r = HAConfig.battery_resistance
+    stufe = kapazitaet_kwh / 10.0
+    p = abs(p_kw)
+    hoch1 = min(max(p - stufe, 0.0), stufe)
+    hoch2 = max(p - 2.0 * stufe, 0.0)
+    return r * hoch1 + 2.0 * r * hoch2
+
+
+def _ladeleistung_aus_dc(angebot_kw: float, kapazitaet_kwh: float) -> float:
+    """Umkehrung von ``_batterie_verluste_kw`` fürs Laden: die Batterieleistung
+    p, für die ``p + Verluste(p)`` genau das DC-Angebot ausschöpft."""
+    r = HAConfig.battery_resistance
+    stufe = kapazitaet_kwh / 10.0
+    if angebot_kw <= stufe:
+        return max(angebot_kw, 0.0)
+    if angebot_kw <= stufe * (2.0 + r):          # bis p = 0,2 C
+        return (angebot_kw + r * stufe) / (1.0 + r)
+    return (angebot_kw + 3.0 * r * stufe) / (1.0 + 2.0 * r)
+
+
+def _entladeleistung_fuer_dc(bedarf_kw: float, kapazitaet_kwh: float) -> float:
+    """Umkehrung fürs Entladen: die Batterieleistung p, für die
+    ``p − Verluste(p)`` genau den DC-Bedarf deckt."""
+    r = HAConfig.battery_resistance
+    stufe = kapazitaet_kwh / 10.0
+    if bedarf_kw <= stufe:
+        return max(bedarf_kw, 0.0)
+    if bedarf_kw <= stufe * (2.0 - r):           # bis p = 0,2 C
+        return (bedarf_kw - r * stufe) / (1.0 - r)
+    return (bedarf_kw - 3.0 * r * stufe) / (1.0 - 2.0 * r)
+
+
 def simuliere_standardbetrieb(
     slots: list[dict[str, Any]], inputs: ScheduleInputs
 ) -> list[dict[str, Any]]:
     """Was ein Standard-Wechselrichter aus denselben Prognosen machen würde.
 
     Eigenverbrauchs-Logik, wie sie jedes Gerät ab Werk fährt: PV-Überschuss
-    lädt zuerst die Batterie bis voll, erst der Rest wird eingespeist; ein
-    Defizit entlädt die Batterie bis zum Mindest-Ladestand, erst der Rest
-    kommt aus dem Netz. Eine einfache Slot-Schleife über die Spalten des
-    gerechneten Fahrplans (PV, consumption) — bewusst KEIN zweiter LP-Lauf:
-    das Standardgerät schaut nicht voraus, genau das ist der Unterschied.
+    lädt zuerst die Batterie, erst der Rest wird eingespeist; ein Defizit
+    entlädt die Batterie bis zum Mindest-Ladestand, erst der Rest kommt aus
+    dem Netz. Eine einfache Slot-Schleife über die Spalten des gerechneten
+    Fahrplans (PV, consumption) — bewusst KEIN zweiter LP-Lauf: das
+    Standardgerät schaut nicht voraus, genau das ist der Unterschied.
 
-    Dieselbe Physik wie im Modell: PV und Batterie sind DC, Hauslast und Netz
-    AC, dazwischen liegt ``ac_efficiency``. Ohne den Wirkungsgrad bekäme die
-    Referenz 5 % mehr Energie, als das Modell je liefern kann, und der
-    Vergleich wäre systematisch schief. Weggelassen ist der Innenwiderstand
-    (Zusatzverluste über 0,1C) — das begünstigt die Referenz, der
-    ausgewiesene Vorteil ist also eher zu klein als zu groß.
+    Dieselbe Physik wie im Modell, in allen drei Punkten:
+
+    * PV und Batterie sind DC, Hauslast und Netz AC, dazwischen liegt
+      ``ac_efficiency``. Ohne den Wirkungsgrad bekäme die Referenz 5 % mehr
+      Energie, als das Modell je liefern kann.
+    * Innenwiderstand nach Haralds Stufenmodell (``_batterie_verluste_kw``):
+      über 0,1 C kostet (Ent-)Laden Verluste. Der Fahrplan lädt deshalb
+      gern langsam; die Referenz lädt mit dem vollen Überschuss und zahlt
+      dafür — ohne diese Verluste bekam sie bis zu 8 % geschenkt, und der
+      ausgewiesene Vorteil war um genau das zu klein.
+    * Der Ladedeckel ``max_soc_pct`` gilt auch hier. Er ist eine Vorgabe des
+      Nutzers zum Schutz der Batterie, keine Entscheidung des Fahrplans —
+      hielte nur der Fahrplan ihn ein, würde ihm angelastet, was der Nutzer
+      gewollt hat. Steht die Batterie schon darüber, lädt sie nicht weiter
+      (und wird nicht entladen, wie im Modell). Mit 100 % ist es „bis voll".
 
     Vorzeichen wie im Fahrplan (Haralds Konvention): ``grid_p`` positiv =
-    Einspeisung, ``battery_p`` positiv = Entladen. Der Ladedeckel
-    (``max_soc_pct``) gilt hier NICHT — ein Standardgerät lädt bis voll.
+    Einspeisung, ``battery_p`` positiv = Entladen; ``battery_p`` ist die
+    Leistung an der Batterie, die Verluste liegen davor auf dem DC-Bus.
     """
     dt_h = inputs.time_res_s / 3600.0
     eff = HAConfig.ac_efficiency
     kapazitaet = inputs.battery_capacity_kwh
     inhalt = kapazitaet * max(0.0, min(100.0, inputs.soc_pct or 0.0)) / 100.0
     boden = kapazitaet * max(0.0, min(100.0, inputs.min_soc_pct)) / 100.0
+    deckel = kapazitaet * max(0.0, min(100.0, inputs.max_soc_pct)) / 100.0
 
     referenz: list[dict[str, Any]] = []
     for slot in slots:
@@ -1429,31 +1482,35 @@ def simuliere_standardbetrieb(
         bedarf_dc = verbrauch / eff
         if pv >= bedarf_dc:
             ueberschuss = pv - bedarf_dc
+            # Der Überschuss muss Ladeleistung UND Verluste tragen.
             laden = min(
-                ueberschuss,
+                _ladeleistung_aus_dc(ueberschuss, kapazitaet),
                 inputs.battery_power_limit_kw,
-                max(0.0, kapazitaet - inhalt) / dt_h,
+                max(0.0, deckel - inhalt) / dt_h,
             )
+            verlust = _batterie_verluste_kw(laden, kapazitaet)
             # Was über die Einspeisegrenze hinausgeht, regelt das Gerät ab —
             # dieselbe Schranke wie im LP (feedin_limit, AC-Grenze abzüglich
             # Hauslast).
             grenze = max(
                 0.0, min(inputs.feedin_limit_kw, inputs.ac_limit_kw - verbrauch)
             )
-            export = min((ueberschuss - laden) * eff, grenze)
+            export = min(max(0.0, ueberschuss - laden - verlust) * eff, grenze)
             inhalt += laden * dt_h
             batterie_p = -laden
             netz_p = export
         else:
             defizit = bedarf_dc - pv
+            # Die Batterie muss mehr liefern, als beim Haus ankommt.
             entladen = min(
-                defizit,
+                _entladeleistung_fuer_dc(defizit, kapazitaet),
                 inputs.battery_power_limit_kw,
                 max(0.0, inhalt - boden) / dt_h,
             )
+            geliefert = entladen - _batterie_verluste_kw(entladen, kapazitaet)
             inhalt -= entladen * dt_h
             batterie_p = entladen
-            netz_p = -(defizit - entladen) * eff
+            netz_p = -max(0.0, defizit - geliefert) * eff
         referenz.append(
             {
                 "t": slot["t"],

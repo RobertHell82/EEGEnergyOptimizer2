@@ -981,7 +981,8 @@ def begruende_vorteil(
         ),
         "endbestand": (
             "Am Tagesende weniger Energie in der Batterie ({v}) — der "
-            "Standardbetrieb lädt bis 100 %, der Fahrplan nur bis zum Deckel."
+            "Fahrplan hat Energie eingespeist oder für den Abend "
+            "zurückgehalten, die der Standardbetrieb gespeichert hätte."
         ),
         "alterung": "Mehr Batterienutzung ({v} Alterungskosten).",
     }

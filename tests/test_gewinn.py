@@ -73,7 +73,11 @@ def test_standardbetrieb_laedt_zuerst_und_speist_den_rest_ein():
     ref = sched.simuliere_standardbetrieb(slots, inputs)
 
     assert ref[0]["battery_p"] == pytest.approx(-3.0)          # lädt am Limit
-    assert ref[0]["grid_p"] == pytest.approx((5.0 - 3.0) * EFF)
+    # 3 kW an 10 kWh liegen über 0,2 C: 0,04·1 + 0,08·1 = 0,12 kW Verluste
+    # gehen vom Überschuss ab, bevor der Rest ins Netz kann.
+    verlust = sched._batterie_verluste_kw(3.0, 10.0)
+    assert verlust == pytest.approx(0.12)
+    assert ref[0]["grid_p"] == pytest.approx((5.0 - 3.0 - verlust) * EFF)
     # 3 kW über eine Viertelstunde = 0,75 kWh auf 10 kWh → +7,5 Punkte
     assert ref[0]["soc"] == pytest.approx(47.5)
 
@@ -119,6 +123,81 @@ def test_standardbetrieb_respektiert_die_einspeisegrenze():
     ref = sched.simuliere_standardbetrieb(slots, inputs)
 
     assert ref[0]["grid_p"] == pytest.approx(4.0)
+
+
+def test_verluste_folgen_haralds_stufenmodell():
+    """Bis 0,1 C verlustfrei, bis 0,2 C 4 % der Leistung darüber, oberhalb
+    8 % — genau ``battery_high1_p``/``battery_high2_p`` in opt_highs.py."""
+    assert sched._batterie_verluste_kw(0.8, 10.0) == 0.0
+    assert sched._batterie_verluste_kw(1.5, 10.0) == pytest.approx(0.02)
+    assert sched._batterie_verluste_kw(2.0, 10.0) == pytest.approx(0.04)
+    assert sched._batterie_verluste_kw(3.0, 10.0) == pytest.approx(0.12)
+    assert sched._batterie_verluste_kw(-3.0, 10.0) == pytest.approx(0.12)  # Richtung egal
+
+
+@pytest.mark.parametrize("angebot", [0.5, 1.0, 1.5, 2.04, 2.5, 5.0, 9.0])
+def test_ladeleistung_aus_dc_angebot_ist_die_umkehrung(angebot):
+    p = sched._ladeleistung_aus_dc(angebot, 10.0)
+    assert p + sched._batterie_verluste_kw(p, 10.0) == pytest.approx(angebot)
+    assert 0.0 <= p <= angebot
+
+
+@pytest.mark.parametrize("bedarf", [0.5, 1.0, 1.5, 1.96, 2.5, 4.0])
+def test_entladeleistung_fuer_dc_bedarf_ist_die_umkehrung(bedarf):
+    p = sched._entladeleistung_fuer_dc(bedarf, 10.0)
+    assert p - sched._batterie_verluste_kw(p, 10.0) == pytest.approx(bedarf)
+    assert p >= bedarf
+
+
+def test_standardbetrieb_laedt_unter_0_1c_verlustfrei():
+    """1 kW Überschuss an 10 kWh ist genau 0,1 C — alles landet in der Batterie."""
+    inputs = _inputs(soc_pct=40.0)
+    slots = [_slot(MITTAG, 0, PV=2.0, consumption=0.95)]     # 1 kW DC Überschuss
+
+    ref = sched.simuliere_standardbetrieb(slots, inputs)
+
+    assert ref[0]["battery_p"] == pytest.approx(-1.0)
+    assert ref[0]["grid_p"] == pytest.approx(0.0)
+
+
+def test_standardbetrieb_entlaedt_ueber_0_2c_mit_verlusten():
+    """4 kW DC Bedarf aus der Batterie: sie muss mehr liefern, als ankommt."""
+    inputs = _inputs(soc_pct=80.0)
+    slots = [_slot(MITTAG, 0, PV=0.0, consumption=4.0 * EFF)]  # 4 kW DC-Bedarf
+
+    ref = sched.simuliere_standardbetrieb(slots, inputs)
+
+    p = ref[0]["battery_p"]
+    assert p > 4.0
+    assert p - sched._batterie_verluste_kw(p, 10.0) == pytest.approx(4.0, abs=1e-3)
+    assert ref[0]["grid_p"] == pytest.approx(0.0, abs=1e-3)
+
+
+def test_standardbetrieb_haelt_den_ladedeckel_ein():
+    """Der Maximum-Ladestand ist eine Vorgabe des Nutzers, keine Entscheidung
+    des Fahrplans — die Referenz muss ihn ebenso einhalten. Sonst würde dem
+    Fahrplan angelastet, was der Nutzer gewollt hat."""
+    # 85 → 90 % an 10 kWh: 0,5 kWh frei = 2 kW über eine Viertelstunde
+    inputs = _inputs(soc_pct=85.0, max_soc_pct=90.0)
+    slots = [_slot(MITTAG, 0, PV=6.0, consumption=0.95)]
+
+    ref = sched.simuliere_standardbetrieb(slots, inputs)
+
+    assert ref[0]["battery_p"] == pytest.approx(-2.0)
+    assert ref[0]["soc"] == pytest.approx(90.0)
+    verlust = sched._batterie_verluste_kw(2.0, 10.0)           # 0,04 kW
+    assert ref[0]["grid_p"] == pytest.approx((5.0 - 2.0 - verlust) * EFF)
+
+
+def test_standardbetrieb_ueber_dem_deckel_laedt_nicht_weiter():
+    inputs = _inputs(soc_pct=95.0, max_soc_pct=90.0)
+    slots = [_slot(MITTAG, 0, PV=6.0, consumption=0.95)]
+
+    ref = sched.simuliere_standardbetrieb(slots, inputs)
+
+    assert ref[0]["battery_p"] == pytest.approx(0.0)
+    assert ref[0]["soc"] == pytest.approx(95.0)
+    assert ref[0]["grid_p"] == pytest.approx(5.0 * EFF)
 
 
 def test_standardbetrieb_hat_die_slotstruktur_des_fahrplans():

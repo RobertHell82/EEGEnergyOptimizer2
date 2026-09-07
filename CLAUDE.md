@@ -66,7 +66,7 @@ schedule_executor.py: ScheduleExecutor (execution, 30 s)
 | File | Role |
 |------|------|
 | `__init__.py` | Entry setup, 30s guard timer + 1min schedule timer, activity log, panel registration, telemetry watchdogs, config migration |
-| `schedule.py` | Planning — `ScheduleInputs`, `HAConfig` (the bridge to `opt()`), `ScheduleRunner` (collect in loop, solve in worker thread); profit comparison (`simuliere_standardbetrieb` greedy self-consumption reference + `bewerte_geldfluesse` with real tariffs — community rates only for energy the community's quarter-hour saldo actually absorbs, rest at base tariff/spot series; incl. end-of-horizon battery credit) |
+| `schedule.py` | Planning — `ScheduleInputs`, `HAConfig` (the bridge to `opt()`), `ScheduleRunner` (collect in loop, solve in worker thread); profit comparison (`simuliere_standardbetrieb` greedy self-consumption reference with the same physics as the LP: AC efficiency, Harald's two-step internal-resistance losses above 0.1 C / 0.2 C, and the configured max-SOC cap; `bewerte_geldfluesse` with real tariffs — community rates only for energy the community's quarter-hour saldo actually absorbs, rest at base tariff/spot series; end-of-horizon battery credit at `endbestand_satz` = base tariff × efficiency − aging) |
 | `schedule_executor.py` | Execution — `plan_action()` + `ScheduleExecutor.async_guard_cycle()`; the **only** place that writes inverter commands |
 | `eeg_price.py` | Synthetic feed-in tariff from community demand — turns PeakShare demand into a price surcharge |
 | `oemag.py` | Optional base tariff: OeMAG monthly market price, scraped from the HTML table (no API), cached across restarts; also reads the per-month calculation basis + balancing-energy cost for the estimator |
