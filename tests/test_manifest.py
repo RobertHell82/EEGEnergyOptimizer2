@@ -34,6 +34,7 @@ class TestManifest:
             "solax_modbus",
             "solaredge_modbus_multi",
             "fronius",
+            "sigen",
         ):
             assert dep in after, f"{dep} missing from after_dependencies"
 

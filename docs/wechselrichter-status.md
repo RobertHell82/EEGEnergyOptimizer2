@@ -5,10 +5,10 @@ unterstützt wird. README und Doku verweisen hierher, statt eigene Listen zu
 führen.
 
 > [!IMPORTANT]
-> **Unterstützt werden derzeit Fronius Gen24, Huawei SUN2000 und SolaX Gen4+.**
-> Nur diese drei steuert der Fahrplan, und nur sie stehen im
-> Einrichtungsassistenten zur Auswahl. Fronius und SolaX sind neu
-> dazugekommen und im Feldtest — siehe unten.
+> **Unterstützt werden derzeit Fronius Gen24, Huawei SUN2000, Sigenergy
+> SigenStor und SolaX Gen4+.** Nur diese vier steuert der Fahrplan, und nur
+> sie stehen im Einrichtungsassistenten zur Auswahl. Fronius, Sigenergy und
+> SolaX sind neu dazugekommen und im Feldtest — siehe unten.
 
 ## Übersicht
 
@@ -17,6 +17,7 @@ führen.
 | **Fronius Gen24** | vorhanden | **ja** (Feldtest) | **ja** |
 | **Huawei SUN2000** | vorhanden | **ja** | **ja** |
 | Kostal Plenticore | vorhanden | nein | nein |
+| **Sigenergy SigenStor** | vorhanden | **ja** (Feldtest) | **ja** |
 | SMA Smart Energy | vorhanden | nein | nein |
 | SolarEdge StorEdge | vorhanden | nein | nein |
 | **SolaX Gen4+** | vorhanden | **ja** (Feldtest) | **ja** |
@@ -113,6 +114,39 @@ zurück. Die Steuerregister sind flüchtig (RAM) — kein NVRAM-Verschleiß.
 Offen: Feldtest der Fahrplan-Nachführung; das Encoding der Einspeisebegrenzung
 war zuletzt noch ungeklärt.
 Guide: [kostal.md](guides/kostal.md)
+
+### Sigenergy SigenStor
+
+**Freigegeben, im Feldtest.** SigenStor-Anlagen (EC-/CMU-Serie) ab Firmware
+SPC109, Steuerung über die HACS-Integration
+[Sigenergy Local Modbus](https://github.com/TypQxQ/Sigenergy-Local-Modbus)
+(Domain `sigen`) — Remote EMS per Schalter, Auswahl und Zahlen-Entitäten,
+kein eigenes Modbus. Eine Verbindung steuert die ganze Anlage, auch mit
+mehreren Wechselrichtern; alle Sensoren kommen in kW vom Gerät „Sigen Plant",
+die Kapazität als Sensor.
+
+**Steuerentitäten ab Werk deaktiviert:** Die Integration legt alle
+Schreib-Entitäten deaktiviert an. Der Einrichtungsassistent liest ihren
+Zustand aus der Entity-Registry und lässt erst weiter, wenn die vier
+Pflicht-Entitäten aktiv sind. Die Modus-Auswahl ist zudem nur verfügbar,
+solange der Schalter „Remote EMS" an ist — der Treiber schaltet ein, wartet
+auf die Auswahl und setzt dann den Modus (Home Assistant überspringt
+Service-Aufrufe an nicht verfügbare Entitäten stillschweigend).
+
+> [!WARNING]
+> **Kein geräteseitiges Failsafe.** Die Sigenergy-Modbus-Spezifikation kennt
+> weder Watchdog noch Rückfallzeit. Ein Befehl läuft am Gerät weiter, bis er
+> zurückgenommen wird — deshalb ist die Freigabe hier das Ausschalten des
+> Remote EMS, und die Integration gibt bei „Aus", fehlendem Plan und Unload
+> immer aktiv frei. Nach einem harten Absturz von Home Assistant bleibt der
+> letzte Befehl stehen.
+
+Offen (Feldtest): ob „Command Charging (PV First)" mit Limit 0 nur das Laden
+sperrt oder auch die Hausentladung; ob „Command Discharging (ESS First)" ins
+Netz liefert; ob der Entlade-Cut-Off (40048) eine befohlene Entladung stoppt
+(dann wie bei SolaX für die Dauer absenken). Netz-Vorzeichen bei Einspeisung
+gegenprüfen.
+Guide: [sigenergy.md](guides/sigenergy.md)
 
 ### SMA Smart Energy
 

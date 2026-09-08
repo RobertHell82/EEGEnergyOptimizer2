@@ -47,10 +47,17 @@ from .const import (
     DOMAIN,
     INVERTER_TYPE_HUAWEI,
     INVERTER_TYPE_SOLAX,
+    INVERTER_TYPE_SIGENERGY,
     INVERTER_TYPE_SOLAREDGE,
     INVERTER_TYPE_FRONIUS,
     INVERTER_TYPE_KOSTAL,
     INVERTER_TYPE_SMA,
+)
+from .inverter.sigenergy import (
+    SIGEN_CONTROL_ENTITY_PATTERNS,
+    SIGEN_REQUIRED_CONTROLS,
+    find_sigen_control_entity,
+    sigen_control_entity_status,
 )
 from .inverter.solax import (
     SOLAX_CONTROL_ENTITY_PATTERNS,
@@ -131,6 +138,26 @@ SOLAX_DEFAULTS: dict[str, list[str]] = {
     CONF_PV_POWER_SENSOR_2: [
         "sensor.solax_inverter_meter_2_measured_power",
     ],
+}
+
+# Sigenergy (HACS-Integration „sigen"): Anlagen-Sensoren („Sigen Plant"),
+# alle in kW. Die IDs entstehen aus Gerätename + Entitätsname — bei
+# umbenanntem Gerät greift der Suffix-Scan über SIGENERGY_SENSOR_PATTERNS.
+SIGENERGY_DEFAULTS: dict[str, list[str]] = {
+    CONF_BATTERY_SOC_SENSOR: ["sensor.sigen_plant_battery_state_of_charge"],
+    CONF_BATTERY_CAPACITY_SENSOR: ["sensor.sigen_plant_rated_energy_capacity"],
+    CONF_PV_POWER_SENSOR: ["sensor.sigen_plant_pv_power"],
+    CONF_GRID_POWER_SENSOR: ["sensor.sigen_plant_grid_active_power"],
+    CONF_BATTERY_POWER_SENSOR: ["sensor.sigen_plant_battery_power"],
+}
+# Suffix je Sensor; bei mehreren Treffern (Anlage UND Wechselrichter führen
+# z. B. „battery_power") gewinnt der kürzeste Name — die Anlagen-Entität.
+SIGENERGY_SENSOR_PATTERNS: dict[str, re.Pattern] = {
+    CONF_BATTERY_SOC_SENSOR: re.compile(r"battery_state_of_charge$"),
+    CONF_BATTERY_CAPACITY_SENSOR: re.compile(r"rated_energy_capacity$"),
+    CONF_PV_POWER_SENSOR: re.compile(r"(?<!third_party_)pv_power$"),
+    CONF_GRID_POWER_SENSOR: re.compile(r"grid_active_power$"),
+    CONF_BATTERY_POWER_SENSOR: re.compile(r"battery_power$"),
 }
 
 # SolarEdge sensor suffixes — used with detected prefix to build entity IDs.
@@ -694,7 +721,7 @@ async def ws_check_prerequisites(
     msg: dict,
 ) -> None:
     """Check which prerequisite integrations are installed and loaded."""
-    check_domains = ["huawei_solar", "solax_modbus", "solaredge_modbus_multi", "fronius", "kostal_plenticore", "sma", "solcast_solar", "forecast_solar"]
+    check_domains = ["huawei_solar", "solax_modbus", "solaredge_modbus_multi", "fronius", "kostal_plenticore", "sma", "sigen", "solcast_solar", "forecast_solar"]
     result = {}
 
     for domain in check_domains:
@@ -855,6 +882,55 @@ async def ws_detect_sensors(
         if prefix:
             result["solax_prefix"] = prefix
 
+        connection.send_result(msg["id"], result)
+        return
+
+    # Sigenergy (HACS-Integration „sigen"). Die Steuerentitäten kommen aus
+    # der Entity-Registry, weil sie ab Werk DEAKTIVIERT sind und in der
+    # State-Machine gar nicht auftauchen — das Panel zeigt dem Nutzer, was
+    # er noch einschalten muss, statt später an einem stummen Service-Call
+    # zu scheitern.
+    sigen_entries = hass.config_entries.async_entries("sigen")
+    sigen_loaded = any(e.state.value == "loaded" for e in sigen_entries)
+
+    if sigen_loaded:
+        sensors = {}
+        for conf_key, candidates in SIGENERGY_DEFAULTS.items():
+            for entity_id in candidates:
+                if hass.states.get(entity_id) is not None:
+                    sensors[conf_key] = entity_id
+                    break
+        for conf_key, pattern in SIGENERGY_SENSOR_PATTERNS.items():
+            if conf_key in sensors:
+                continue
+            treffer = [
+                st.entity_id
+                for st in hass.states.async_all("sensor")
+                if pattern.search(st.entity_id.split(".", 1)[1])
+            ]
+            if treffer:
+                sensors[conf_key] = min(treffer, key=len)
+
+        result = {
+            CONF_INVERTER_TYPE: INVERTER_TYPE_SIGENERGY,
+            "detected": True,
+            "sensors": sensors,
+        }
+        status = sigen_control_entity_status(hass)
+        for control_key in SIGEN_CONTROL_ENTITY_PATTERNS:
+            entity_id = (status.get(control_key) or {}).get("entity_id") or find_sigen_control_entity(
+                hass, control_key
+            )
+            if entity_id:
+                result[f"sigen_{control_key}"] = entity_id
+        result["sigen_control_status"] = status
+        # Was den Treiber am Stellen hindert: Pflicht-Entitäten, die fehlen
+        # oder deaktiviert sind. Ohne Registry (leerer Status) keine Aussage.
+        result["sigen_controls_missing"] = [
+            status[k]["name"]
+            for k in SIGEN_REQUIRED_CONTROLS
+            if k in status and status[k].get("enabled") is not True
+        ]
         connection.send_result(msg["id"], result)
         return
 
@@ -1183,7 +1259,7 @@ async def ws_detect_sensors(
         connection.send_result(msg["id"], result)
         return
 
-    # Neither Huawei, SolaX, SolarEdge, Fronius, Kostal, nor SMA detected
+    # Neither Huawei, SolaX, Sigenergy, SolarEdge, Fronius, Kostal, nor SMA detected
     connection.send_result(msg["id"], {"detected": False, "sensors": {}})
 
 

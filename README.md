@@ -1,6 +1,6 @@
 # EEG Energy Optimizer
 
-> **Prototyp-Zweig.** Dieses Repo enthält den LP-Fahrplan-Optimierer aus [EngagePV/chamo](https://gitlab.com/EngagePV/chamo) — er ist hier der **einzige Aktor**: Er rechnet jede Minute und steuert die Anlage (derzeit Fronius Gen24, Huawei SUN2000 und SolaX Gen4+). Die Zustands-Heuristik der produktiven Integration ist entfernt. Details und Installation: [CHAMO.md](CHAMO.md).
+> **Prototyp-Zweig.** Dieses Repo enthält den LP-Fahrplan-Optimierer aus [EngagePV/chamo](https://gitlab.com/EngagePV/chamo) — er ist hier der **einzige Aktor**: Er rechnet jede Minute und steuert die Anlage (derzeit Fronius Gen24, Huawei SUN2000, Sigenergy SigenStor und SolaX Gen4+). Die Zustands-Heuristik der produktiven Integration ist entfernt. Details und Installation: [CHAMO.md](CHAMO.md).
 
 HACS-kompatible Home Assistant Integration für vorausschauendes Batteriemanagement, optimiert für Energiegemeinschaften (EEG) im DACH-Raum.
 

@@ -10,6 +10,7 @@ from custom_components.eeg_energy_optimizer.inverter.base import InverterBase
 from custom_components.eeg_energy_optimizer.inverter.fronius import FroniusInverter
 from custom_components.eeg_energy_optimizer.inverter.huawei import HuaweiInverter
 from custom_components.eeg_energy_optimizer.inverter.kostal import KostalInverter
+from custom_components.eeg_energy_optimizer.inverter.sigenergy import SigenergyInverter
 from custom_components.eeg_energy_optimizer.inverter.sma import SMAInverter
 from custom_components.eeg_energy_optimizer.inverter.solaredge import SolarEdgeInverter
 from custom_components.eeg_energy_optimizer.inverter.solax import SolaXInverter
@@ -55,7 +56,7 @@ class TestInverterFactory:
 
 
 class TestRegisteredInverterTypes:
-    """All six production inverter drivers are registered with the factory."""
+    """All seven production inverter drivers are registered with the factory."""
 
     def test_huawei_registered(self):
         assert INVERTER_TYPES.get("huawei_sun2000") is HuaweiInverter
@@ -74,6 +75,16 @@ class TestRegisteredInverterTypes:
 
     def test_sma_registered(self):
         assert INVERTER_TYPES.get("sma_smart_energy") is SMAInverter
+
+    def test_sigenergy_registered(self):
+        assert INVERTER_TYPES.get("sigenergy_sigenstor") is SigenergyInverter
+
+    def test_create_sigenergy_returns_instance(self, mock_hass):
+        """Factory builds a SigenergyInverter from the canonical type id."""
+        inv = create_inverter("sigenergy_sigenstor", mock_hass, {})
+        assert isinstance(inv, SigenergyInverter)
+        assert isinstance(inv, InverterBase)
+        assert inv.supports_schedule_control is True
 
     def test_create_sma_returns_instance(self, mock_hass):
         """Factory builds an SMAInverter from the canonical type id."""

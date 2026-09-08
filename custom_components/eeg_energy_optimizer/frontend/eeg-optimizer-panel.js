@@ -80,6 +80,7 @@ const WIZARD_STEPS = [
 // Anzeigenamen der Wechselrichter-Typen (Zusammenfassung, Sensor-Übersicht).
 const INVERTER_LABELS = {
   huawei_sun2000: "Huawei SUN2000",
+  sigenergy_sigenstor: "Sigenergy SigenStor",
   solax_gen4: "SolaX Gen4+",
   solaredge_storedge: "SolarEdge StorEdge",
   fronius_gen24: "Fronius Gen24",
@@ -89,7 +90,7 @@ const INVERTER_LABELS = {
 
 // Vom Fahrplan gesteuerte Wechselrichter — alle anderen rechnen und zeigen
 // an ("nur Anzeige").
-const SCHEDULE_CONTROL_INVERTERS = ["fronius_gen24", "huawei_sun2000", "solax_gen4"];
+const SCHEDULE_CONTROL_INVERTERS = ["fronius_gen24", "huawei_sun2000", "sigenergy_sigenstor", "solax_gen4"];
 
 // Summe der Aufteilungsschluessel — es zaehlt nur, was auch eine gewaehlte
 // Gemeinschaft hat. Der Prozentsatz bleibt im Formular stehen, wenn der
@@ -148,6 +149,13 @@ const WIZARD_DEFAULTS = {
   solax_remotecontrol_duration: "",
   solax_remotecontrol_trigger: "",
   solax_selfuse_discharge_min_soc: "",
+  // Sigenergy (HACS „sigen"): Steuerentitäten der Anlage, per Registry erkannt.
+  sigen_remote_ems_switch: "",
+  sigen_remote_ems_mode: "",
+  sigen_ess_max_charging_limit: "",
+  sigen_ess_max_discharging_limit: "",
+  sigen_ess_discharge_cut_off_soc: "",
+  sigen_ess_backup_soc: "",
   solaredge_storage_control_mode: "",
   solaredge_storage_command_mode: "",
   solaredge_storage_charge_limit: "",
@@ -242,6 +250,7 @@ const DIALOG_CONTENT = {
   solcast: { file: "solcast.html" },
   forecast_solar: { file: "forecast_solar.html" },
   capacity_sensor: { file: "capacity_sensor.html" },
+  sigenergy: { file: "sigenergy.html" },
   solax: { file: "solax.html" },
   solaredge: { file: "solaredge.html" },
   fronius: { file: "fronius.html" },
@@ -1461,6 +1470,8 @@ class EegOptimizerPanel extends HTMLElement {
             "solax_remotecontrol_power_control", "solax_remotecontrol_active_power",
             "solax_remotecontrol_autorepeat_duration", "solax_remotecontrol_duration",
             "solax_remotecontrol_trigger", "solax_selfuse_discharge_min_soc",
+            "sigen_remote_ems_switch", "sigen_remote_ems_mode", "sigen_ess_max_charging_limit",
+            "sigen_ess_max_discharging_limit", "sigen_ess_discharge_cut_off_soc", "sigen_ess_backup_soc",
           ];
           for (const k of sensorKeys) this._wizardData[k] = "";
           this._wizardData.huawei_device_ids = [];
@@ -1916,6 +1927,19 @@ class EegOptimizerPanel extends HTMLElement {
         if (invType === "solax_gen4" && invP && !invP.solax_modbus) {
           this._showValidationError("SolaX Modbus Integration muss zuerst installiert werden.");
           return false;
+        }
+        if (invType === "sigenergy_sigenstor" && invP && !invP.sigen) {
+          this._showValidationError("Sigenergy-Integration (sigen) nicht gefunden. Diese wird für Sensoren und Steuerung benötigt. Klicke auf 'Anleitung' für Hilfe.");
+          return false;
+        }
+        if (invType === "sigenergy_sigenstor") {
+          // Die Integration legt ihre Steuerentitäten deaktiviert an — ohne
+          // die vier Pflicht-Entitäten kann der Treiber nichts stellen.
+          const fehlend = (this._detectedSensors && this._detectedSensors.sigen_controls_missing) || [];
+          if (fehlend.length) {
+            this._showValidationError("Sigenergy: Diese Steuerentitäten sind noch deaktiviert oder fehlen: " + fehlend.join(", ") + ". Bitte in Home Assistant aktivieren (siehe Anleitung), dann den Wechselrichter hier erneut anklicken.");
+            return false;
+          }
         }
         if (invType === "solaredge_storedge" && invP && !invP.solaredge_modbus_multi) {
           this._showValidationError("SolarEdge Modbus Multi Integration muss zuerst installiert werden.");
@@ -4051,6 +4075,7 @@ class EegOptimizerPanel extends HTMLElement {
         p.kostal_plenticore && KOSTAL_UI_ENABLED && { key: "kostal_plenticore", label: "Kostal" },
         p.sma && { key: "sma_smart_energy", label: "SMA" },
         p.solaredge_modbus_multi && { key: "solaredge_storedge", label: "SolarEdge" },
+        p.sigen && { key: "sigenergy_sigenstor", label: "Sigenergy" },
         p.solax_modbus && { key: "solax_gen4", label: "SolaX" },
       ].filter(Boolean)
         .filter((inv) => istWaehlbarerWr(inv.key))
@@ -4141,6 +4166,15 @@ class EegOptimizerPanel extends HTMLElement {
           "solax_selfuse_discharge_min_soc",
         ];
         for (const key of solaxKeys) {
+          if (this._detectedSensors[key] && !this._wizardData[key]) {
+            this._wizardData[key] = this._detectedSensors[key];
+          }
+        }
+        // Sigenergy-Steuer-Entities: Server löst sie über die Entity-Registry
+        // auf (auch deaktivierte) — direkt übernehmen.
+        for (const key of ["sigen_remote_ems_switch", "sigen_remote_ems_mode",
+          "sigen_ess_max_charging_limit", "sigen_ess_max_discharging_limit",
+          "sigen_ess_discharge_cut_off_soc", "sigen_ess_backup_soc"]) {
           if (this._detectedSensors[key] && !this._wizardData[key]) {
             this._wizardData[key] = this._detectedSensors[key];
           }
@@ -4643,7 +4677,7 @@ class EegOptimizerPanel extends HTMLElement {
     // installiert ist oder Hausverbrauch-Sensoren fehlen.
     if (name === "Wechselrichter") {
       const p = this._prerequisites;
-      if (p && !p.huawei_solar && !p.solax_modbus && !p.solaredge_modbus_multi && !p.fronius && !p.kostal_plenticore && !p.sma) return true;
+      if (p && !p.huawei_solar && !p.solax_modbus && !p.solaredge_modbus_multi && !p.fronius && !p.kostal_plenticore && !p.sma && !p.sigen) return true;
       const d = this._wizardData;
       if (!d.inverter_type) return true;
       if (!d.pv_power_sensor) return true;
@@ -4705,7 +4739,7 @@ class EegOptimizerPanel extends HTMLElement {
       </p>
       <h3 style="margin-bottom:8px">Was du brauchst</h3>
       <ul style="line-height:1.8;margin-bottom:20px;padding-left:20px">
-        <li>Einen Fronius Gen24, Huawei SUN2000 oder SolaX Gen4+ mit Batteriespeicher</li>
+        <li>Einen Fronius Gen24, Huawei SUN2000, Sigenergy SigenStor oder SolaX Gen4+ mit Batteriespeicher</li>
         <li>Eine PV-Prognose-Integration (Solcast Solar oder Forecast.Solar)</li>
       </ul>
       <h3 style="margin-bottom:8px">Getestete Setups</h3>
@@ -4726,6 +4760,7 @@ class EegOptimizerPanel extends HTMLElement {
     const froniusOk = p && p.fronius;
     const kostalOk = p && p.kostal_plenticore;
     const smaOk = p && p.sma;
+    const sigenOk = p && p.sigen;
     const selected = this._wizardData.inverter_type || "";
     const huaweiSelected = selected === "huawei_sun2000";
     const solaxSelected = selected === "solax_gen4";
@@ -4733,6 +4768,7 @@ class EegOptimizerPanel extends HTMLElement {
     const froniusSelected = selected === "fronius_gen24";
     const kostalSelected = selected === "kostal_plenticore";
     const smaSelected = selected === "sma_smart_energy";
+    const sigenSelected = selected === "sigenergy_sigenstor";
 
     const huaweiBadge = huaweiOk
       ? '<span class="status-badge installed">Installiert</span>'
@@ -4758,6 +4794,10 @@ class EegOptimizerPanel extends HTMLElement {
       ? '<span class="status-badge installed">Installiert</span>'
       : '<span class="status-badge missing">Nicht installiert</span>';
 
+    const sigenBadge = sigenOk
+      ? '<span class="status-badge installed">Installiert</span>'
+      : '<span class="status-badge missing">Nicht installiert</span>';
+
 
     const pvHelp = huaweiSelected
       ? "Aktuelle PV-Produktion in W oder kW (Huawei: sensor.inverter_eingangsleistung)."
@@ -4769,6 +4809,8 @@ class EegOptimizerPanel extends HTMLElement {
       ? "Aktuelle PV-Produktion in W (Kostal: sensor.*_sum_power_of_all_pv_dc_inputs — Summe aller PV-Eingänge. Achtung: *_solar_power enthält auch die Batterieentladung und ist ungeeignet)."
       : smaSelected
       ? "Aktuelle PV-Produktion in W (SMA: sensor.*_pv_power)."
+      : sigenSelected
+      ? "Aktuelle PV-Produktion in kW (Sigenergy: sensor.sigen_plant_pv_power — Anlagenwert, nicht der einzelne Wechselrichter)."
       : "Aktuelle PV-Produktion in W (SolaX: sensor.solax_energy_dashboard_solax_solar_power).";
     const batteryHelp = huaweiSelected
       ? "Lade- und Entladeleistung der Batterie in W oder kW (Huawei: sensor.batteries_lade_entladeleistung)."
@@ -4778,6 +4820,8 @@ class EegOptimizerPanel extends HTMLElement {
       ? "Lade- und Entladeleistung der Batterie in W (Fronius: sensor.*_power_battery oder *_leistung_batterie). Bei Fronius-Installationen mit getrennten Lade-/Entladesensoren bitte den signed Sensor wählen."
       : kostalSelected
       ? "Lade- und Entladeleistung der Batterie in W (Kostal: sensor.*_battery_power — positiv = Entladen, wird automatisch umgerechnet)."
+      : sigenSelected
+      ? "Lade- und Entladeleistung der Batterie in kW (Sigenergy: sensor.sigen_plant_battery_power — positiv = Laden)."
       : "Lade- und Entladeleistung der Batterie in W (SolaX: sensor.solax_energy_dashboard_solax_battery_power).";
     const gridHelp = huaweiSelected
       ? "Wirkleistung am Netzanschluss in W oder kW (Huawei: sensor.power_meter_wirkleistung)."
@@ -4787,6 +4831,8 @@ class EegOptimizerPanel extends HTMLElement {
       ? "Wirkleistung am Netzanschluss in W (Fronius: sensor.*_power_grid oder *_leistung_netz). Bei Fronius-Installationen mit getrennten Bezugs-/Einspeisesensoren bitte den signed Sensor wählen."
       : kostalSelected
       ? "Wirkleistung am Netzanschluss in W (Kostal: sensor.*_grid_power — positiv = Bezug, wird automatisch umgerechnet)."
+      : sigenSelected
+      ? "Wirkleistung am Netzanschluss in kW (Sigenergy: sensor.sigen_plant_grid_active_power — positiv = Bezug, wird automatisch umgerechnet)."
       : "Wirkleistung am Netzanschluss in W (SolaX: sensor.solax_energy_dashboard_solax_grid_power).";
 
     // Build inverter cards, sort: detected first (alphabetically), then undetected (alphabetically)
@@ -4795,13 +4841,15 @@ class EegOptimizerPanel extends HTMLElement {
         logo: `<img src="https://brands.home-assistant.io/huawei_solar/logo.png" alt="Huawei" style="max-width:120px;max-height:60px;height:auto" onerror="this.style.display='none'">` },
       { key: "solax_gen4", label: "SolaX Gen4+", subtitle: "Gen4, Gen5, Gen6", detected: solaxOk, badge: solaxBadge, dialog: "solax",
         logo: `<span style="font-size:32px">SolaX</span>` },
-      { key: "solaredge_storedge", label: "SolarEdge", subtitle: "StorEdge Batteriespeicher · nur Anzeige — Steuerung derzeit nur Fronius, Huawei und SolaX", detected: solaredgeOk, badge: solaredgeBadge, dialog: "solaredge",
+      { key: "sigenergy_sigenstor", label: "Sigenergy SigenStor", subtitle: "SigenStor mit Batteriespeicher · Feldtest", detected: sigenOk, badge: sigenBadge, dialog: "sigenergy",
+        logo: `<img src="https://brands.home-assistant.io/_/sigen/logo.png" alt="Sigenergy" style="max-width:120px;max-height:60px;height:auto" onerror="this.outerHTML='<span style=font-size:26px>Sigenergy</span>'">` },
+      { key: "solaredge_storedge", label: "SolarEdge", subtitle: "StorEdge Batteriespeicher · nur Anzeige — Steuerung derzeit nur Fronius, Huawei, Sigenergy und SolaX", detected: solaredgeOk, badge: solaredgeBadge, dialog: "solaredge",
         logo: `<img src="https://brands.home-assistant.io/_/solaredge/logo.png" alt="SolarEdge" style="max-width:120px;max-height:60px;height:auto" onerror="this.outerHTML='<span style=font-size:32px>SolarEdge</span>'">` },
       { key: "fronius_gen24", label: "Fronius Gen24", subtitle: "mit BYD Batteriespeicher", detected: froniusOk, badge: froniusBadge, dialog: "fronius",
         logo: `<img src="https://brands.home-assistant.io/fronius/logo.png" alt="Fronius" style="max-width:120px;max-height:60px;height:auto" onerror="this.outerHTML='<span style=font-size:32px>Fronius</span>'">` },
-      { key: "kostal_plenticore", label: "Kostal Plenticore", subtitle: "mit BYD Batteriespeicher · nur Anzeige — Steuerung derzeit nur Fronius, Huawei und SolaX", detected: kostalOk, badge: kostalBadge, dialog: "kostal",
+      { key: "kostal_plenticore", label: "Kostal Plenticore", subtitle: "mit BYD Batteriespeicher · nur Anzeige — Steuerung derzeit nur Fronius, Huawei, Sigenergy und SolaX", detected: kostalOk, badge: kostalBadge, dialog: "kostal",
         logo: `<img src="https://brands.home-assistant.io/kostal_plenticore/logo.png" alt="Kostal" style="max-width:120px;max-height:60px;height:auto" onerror="this.outerHTML='<span style=font-size:32px>Kostal</span>'">` },
-      { key: "sma_smart_energy", label: "SMA Smart Energy", subtitle: "Tripower/Sunny Boy mit Batteriespeicher · nur Anzeige — Steuerung derzeit nur Fronius, Huawei und SolaX", detected: smaOk, badge: smaBadge, dialog: "sma",
+      { key: "sma_smart_energy", label: "SMA Smart Energy", subtitle: "Tripower/Sunny Boy mit Batteriespeicher · nur Anzeige — Steuerung derzeit nur Fronius, Huawei, Sigenergy und SolaX", detected: smaOk, badge: smaBadge, dialog: "sma",
         logo: `<img src="https://brands.home-assistant.io/sma/logo.png" alt="SMA" style="max-width:120px;max-height:60px;height:auto" onerror="this.outerHTML='<span style=font-size:32px>SMA</span>'">` },
     ].filter(inv =>
       inv.key !== "kostal_plenticore" || KOSTAL_UI_ENABLED || kostalSelected
@@ -4829,13 +4877,14 @@ class EegOptimizerPanel extends HTMLElement {
       <div class="prereq-cards" style="display:grid;grid-template-columns:repeat(auto-fit, minmax(150px, 1fr));gap:16px;margin-bottom:16px">
         ${inverterCards}
       </div>
-      ${huaweiSelected || solaxSelected || solaredgeSelected || froniusSelected || kostalSelected || smaSelected ? `
+      ${huaweiSelected || solaxSelected || solaredgeSelected || froniusSelected || kostalSelected || smaSelected || sigenSelected ? `
       <div class="card" style="padding:16px;margin-bottom:16px">
         <h3 style="margin:0 0 4px">Hausverbrauch-Sensoren</h3>
         <p style="font-size:13px;color:var(--secondary-text-color);margin:0 0 12px">
           Diese Sensoren werden f&uuml;r die Berechnung des Hausverbrauchs verwendet (PV &minus; Batterie &minus; Netz).
         </p>
         ${this._renderHuaweiMultiInfo()}
+        ${sigenSelected ? this._renderSigenControlInfo() : ""}
         ${this._entityPickerHtml(
           "pv_power_sensor",
           this._wizardData.pv_power_sensor,
@@ -5186,6 +5235,32 @@ class EegOptimizerPanel extends HTMLElement {
   // Huawei Master/Slave: zeigt direkt bei der Sensor-Auswahl, welche Sensoren
   // je Wechselrichter erkannt wurden — damit der User sieht "der hat beide
   // gecheckt" (oder eben nicht). Leerer String bei Single-Inverter.
+  _renderSigenControlInfo() {
+    // Die Sigenergy-Integration legt alle Steuerentitäten deaktiviert an.
+    // Die Erkennung liefert ihren Registry-Zustand — hier sieht der Nutzer
+    // sofort, was er noch einschalten muss, statt später an einem stummen
+    // Service-Call zu scheitern.
+    const st = (this._detectedSensors && this._detectedSensors.sigen_control_status) || null;
+    if (!st || !Object.keys(st).length) return "";
+    const fehlend = (this._detectedSensors.sigen_controls_missing || []).length;
+    const zeilen = Object.values(st).map((e) => {
+      const ok = e.enabled === true;
+      const text = e.enabled === null || e.enabled === undefined ? "nicht vorhanden" : ok ? "aktiv" : "deaktiviert";
+      const farbe = ok ? "var(--success-color, #4caf50)" : "var(--warning-color, #ffa600)";
+      const id = e.entity_id ? ` <code style="font-size:11px;opacity:.8">${e.entity_id}</code>` : "";
+      return `<li><span style="color:${farbe};font-weight:500">${text}</span> — ${e.name}${id}</li>`;
+    }).join("");
+    const rand = fehlend ? "var(--warning-color, #ffa600)" : "var(--success-color, #4caf50)";
+    const hinweis = fehlend
+      ? "Die Integration legt ihre Steuerentitäten <strong>deaktiviert</strong> an. Der Optimizer braucht die ersten vier &mdash; die Anleitung zeigt, wie sie aktiviert werden. Danach den Wechselrichter hier erneut anklicken, die Erkennung läuft dann noch einmal."
+      : "Alle Pflicht-Entitäten sind aktiv &mdash; der Optimizer kann steuern.";
+    return `<div class="card" style="padding:12px;margin:0 0 12px;border-left:3px solid ${rand}">
+      <strong>Sigenergy-Steuerentitäten</strong>
+      <p style="font-size:12px;color:var(--secondary-text-color);margin:4px 0 8px;line-height:1.5">${hinweis}</p>
+      <ul style="font-size:12px;margin:0;padding-left:18px;line-height:1.7">${zeilen}</ul>
+    </div>`;
+  }
+
   _renderHuaweiMultiInfo() {
     if (this._wizardData.inverter_type !== "huawei_sun2000") return "";
     const ids = this._wizardData.huawei_device_ids || [];
@@ -5350,6 +5425,8 @@ class EegOptimizerPanel extends HTMLElement {
           ? "z.B. 9.8 für LG RESU10H, 4.8 für BYD LVS 4.0"
           : this._wizardData.inverter_type === "sma_smart_energy"
           ? "z.B. 10.2 für BYD Battery-Box Premium HVS 10.2 (SMA liefert keinen Kapazitätssensor)"
+          : this._wizardData.inverter_type === "sigenergy_sigenstor"
+          ? "Sigenergy liefert die Kapazität normalerweise als Sensor (Rated Energy Capacity) — manuell nur, wenn er fehlt"
           : "Nutzbare Gesamtkapazität deines Batteriespeichers in kWh"}</div>
       </div>` : "";
 
@@ -5424,7 +5501,7 @@ class EegOptimizerPanel extends HTMLElement {
     if (SCHEDULE_CONTROL_INVERTERS.includes(inverterType)) return "";
     return `<div class="help-text" style="margin-bottom:16px;padding:10px 12px;background:var(--info-color,#2196f3)18;border-left:3px solid var(--info-color,#2196f3);border-radius:4px">
            <ha-icon icon="mdi:information-outline" style="--mdc-icon-size:16px;vertical-align:middle"></ha-icon>
-           Für diesen Wechselrichter wird der Optimierungsplan nur berechnet und angezeigt — die Steuerung ist derzeit nur für Fronius, Huawei und SolaX verfügbar.
+           Für diesen Wechselrichter wird der Optimierungsplan nur berechnet und angezeigt — die Steuerung ist derzeit nur für Fronius, Huawei, Sigenergy und SolaX verfügbar.
          </div>`;
   }
 
@@ -6027,7 +6104,7 @@ class EegOptimizerPanel extends HTMLElement {
       <div class="summary-section">
         <h3>Wechselrichter</h3>
         ${row("Typ", INVERTER_LABELS[d.inverter_type] || d.inverter_type)}
-        ${row("Steuerung", gesteuert ? "Aktiv (Ladelimit + Entladung)" : "Nur Anzeige — Steuerung derzeit nur Fronius, Huawei und SolaX")}
+        ${row("Steuerung", gesteuert ? "Aktiv (Ladelimit + Entladung)" : "Nur Anzeige — Steuerung derzeit nur Fronius, Huawei, Sigenergy und SolaX")}
       </div>
 
       <div class="summary-section">
@@ -6665,7 +6742,7 @@ class EegOptimizerPanel extends HTMLElement {
     }
     if (!gesteuert) {
       warnings += warnRow("mdi:information-outline", "var(--info-color, #2196f3)",
-        "Dieser Wechselrichter wird nicht gesteuert \u2014 der Optimierungsplan ist nur Anzeige (Steuerung derzeit nur Fronius, Huawei und SolaX).");
+        "Dieser Wechselrichter wird nicht gesteuert \u2014 der Optimierungsplan ist nur Anzeige (Steuerung derzeit nur Fronius, Huawei, Sigenergy und SolaX).");
     }
 
     const trenner = " " + String.fromCharCode(0x00B7) + " ";

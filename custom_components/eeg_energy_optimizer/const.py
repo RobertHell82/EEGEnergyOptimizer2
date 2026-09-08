@@ -43,6 +43,7 @@ INVERTER_TYPE_SOLAREDGE = "solaredge_storedge"
 INVERTER_TYPE_FRONIUS = "fronius_gen24"
 INVERTER_TYPE_KOSTAL = "kostal_plenticore"
 INVERTER_TYPE_SMA = "sma_smart_energy"
+INVERTER_TYPE_SIGENERGY = "sigenergy_sigenstor"
 
 # Sign conventions per inverter type for battery and grid power sensors.
 # battery_sign: +1 = positive means charging (Huawei), -1 = positive means discharging (SolaX)
@@ -68,6 +69,12 @@ INVERTER_SIGN_CONVENTIONS = {
     # …_absorbed) — same situation as Fronius: the setup creates synthetic
     # combined sensors that are already canonical. Sign convention = identity.
     "sma_smart_energy": {"battery_sign": 1, "grid_sign": 1},
+    # Sigenergy (HACS-Integration `sigen`, TypQxQ): Anlagen-Sensoren in kW,
+    # roh aus den Registern. 30037 ESS-Leistung positiv = laden (wie bei uns,
+    # an der Testanlage bestätigt), 30005 Netzleistung positiv = BEZUG →
+    # Netz-Vorzeichen gedreht. Am Gerät bei Einspeisung gegenprüfen
+    # (binary_sensor …exporting_to_grid muss dann „on" sein).
+    "sigenergy_sigenstor": {"battery_sign": 1, "grid_sign": -1},
 }
 
 # Huawei EMMA-Energiemanagement: Die Einspeiseleistung des EMMA-Geräts

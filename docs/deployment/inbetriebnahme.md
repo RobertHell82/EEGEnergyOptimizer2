@@ -61,14 +61,17 @@ Der Optimizer braucht eine PV-Prognose für deine Anlage. Empfohlen ist **Solcas
 ## Schritt 5: Wechselrichter anbinden
 
 Damit der Optimizer deinen Speicher steuern kann, wird er mit deinem
-Wechselrichter verbunden. Unterstützt wird derzeit ausschließlich
-**Huawei SUN2000**:
+Wechselrichter verbunden. Unterstützt werden derzeit **Fronius Gen24, Huawei
+SUN2000, Sigenergy SigenStor und SolaX Gen4+**:
 
 | Wechselrichter | Anleitung |
 |---|---|
+| **Fronius Gen24** | [Fronius einrichten](../guides/fronius.md) |
 | **Huawei SUN2000** | [Huawei Solar einrichten](../guides/huawei.md) + [Akkukapazität-Sensor](../guides/capacity_sensor.md) |
+| **Sigenergy SigenStor** | [Sigenergy einrichten](../guides/sigenergy.md) |
+| **SolaX Gen4+** | [SolaX Modbus einrichten](../guides/solax.md) |
 
-> Andere Wechselrichter (Fronius, Kostal, SMA, SolarEdge, SolaX) werden derzeit
+> Andere Wechselrichter (Kostal, SMA, SolarEdge) werden derzeit
 > nicht unterstützt — siehe [Stand der Unterstützung](../wechselrichter-status.md).
 
 ---

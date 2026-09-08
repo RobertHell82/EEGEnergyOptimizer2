@@ -19,12 +19,15 @@ Am besten in dieser Reihenfolge:
 
 ## 🔌 Wechselrichter anbinden
 
-Unterstützt wird derzeit ausschließlich **Huawei SUN2000**:
+Unterstützt werden derzeit **Fronius Gen24, Huawei SUN2000, Sigenergy SigenStor und SolaX Gen4+**:
 
 | Wechselrichter | Anleitung |
 |---|---|
+| **Fronius Gen24** | [Fronius einrichten](guides/fronius.md) |
 | **Huawei SUN2000** | [Huawei Solar Integration einrichten](guides/huawei.md) |
 | | [Huawei Akkukapazität-Sensor aktivieren](guides/capacity_sensor.md) |
+| **Sigenergy SigenStor** | [Sigenergy einrichten](guides/sigenergy.md) |
+| **SolaX Gen4+** | [SolaX Modbus einrichten](guides/solax.md) |
 
 > Kostal, SMA und SolarEdge werden **derzeit nicht** unterstützt — ihre Treiber sind enthalten, aber stillgelegt. Welcher Wechselrichter wann dazukommt und was dafür noch fehlt: **[Stand der Unterstützung](wechselrichter-status.md)**.
 
