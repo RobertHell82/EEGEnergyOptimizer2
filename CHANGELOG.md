@@ -10,6 +10,16 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
+## [2.1.0-dev1] - 2026-09-08
+
+### Hinzugefügt
+
+- **Sigenergy SigenStor wird gesteuert (Feldtest).** Neuer Wechselrichtertyp im Einrichtungsassistenten, Steuerung über die HACS-Integration [Sigenergy Local Modbus](https://github.com/TypQxQ/Sigenergy-Local-Modbus) (`sigen`) — Remote EMS per Schalter, Modus-Auswahl und Leistungslimits, ohne eigenes Modbus. Eine Verbindung steuert die ganze Anlage, auch mit mehreren Wechselrichtern; alle Sensoren kommen in kW vom Gerät „Sigen Plant", die Speicherkapazität als Sensor (keine manuelle Eingabe nötig). Ladelimit → „Command Charging (PV First)", Entladung → „Command Discharging (ESS First)", Freigabe → „Maximum Self Consumption" und Remote EMS aus.
+- **Der Assistent zeigt, welche Sigenergy-Steuerentitäten noch zu aktivieren sind.** Die Integration legt alle Schreib-Entitäten deaktiviert an; der Optimizer liest ihren Zustand aus der Entity-Registry, listet die vier Pflicht-Entitäten mit Status auf und lässt erst weiter, wenn sie aktiv sind. Die Modus-Auswahl ist erst mit eingeschaltetem Remote EMS verfügbar — der Treiber schaltet ein, wartet darauf und setzt dann den Modus, weil Home Assistant Service-Aufrufe an nicht verfügbare Entitäten sonst stillschweigend überspringt.
+- **Anleitung „Sigenergy einrichten"** im Panel und in `docs/guides/`: Modbus am Gerät freischalten, Integration installieren, Steuerentitäten aktivieren, was der Optimizer am Gerät tut, offene Punkte des Feldtests.
+
+> Sigenergy kennt kein geräteseitiges Sicherheitsnetz (weder Watchdog noch Rückfallzeit). Der Optimizer gibt bei „Aus", fehlendem Plan und Neustart aktiv frei; nach einem harten Absturz von Home Assistant bleibt der letzte Befehl am Gerät stehen — dann den Schalter „Remote EMS" manuell ausschalten. Am Gerät noch zu bestätigen: ob die Ladesperre die Hausentladung mit einschränkt, ob die Entladung ins Netz liefert und ob der Entlade-Cut-Off eine befohlene Entladung stoppt.
+
 ## [2.0.4-dev2] - 2026-09-08
 
 ### Behoben
