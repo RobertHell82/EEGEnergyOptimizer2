@@ -1369,7 +1369,9 @@ def solve(inputs: ScheduleInputs) -> dict[str, Any]:
     # Standardbetrieb desselben Geräts? Ein Fehler hier darf den Fahrplan
     # nicht kosten — er ist die Steuerung, der Vergleich nur Anzeige.
     try:
-        referenz = simuliere_standardbetrieb(slots, inputs)
+        referenz = simuliere_standardbetrieb(
+            slots, inputs, ziel_soc_pct=slots[-1]["soc"] if slots else None
+        )
         mit = bewerte_geldfluesse(slots, inputs)
         ohne = bewerte_geldfluesse(referenz, inputs)
         result["referenz_slots"] = referenz
@@ -1435,8 +1437,54 @@ def _entladeleistung_fuer_dc(bedarf_kw: float, kapazitaet_kwh: float) -> float:
     return (bedarf_kw - 3.0 * r * stufe) / (1.0 - 2.0 * r)
 
 
+def _reservekurve(
+    slots: list[dict[str, Any]],
+    inputs: ScheduleInputs,
+    ziel_inhalt: float,
+    boden: float,
+    deckel: float,
+    dt_h: float,
+) -> list[float]:
+    """Mindest-Ladestand je Slot, damit am Ende ``ziel_inhalt`` im Speicher steht.
+
+    Rückwärts gerechnet: im letzten Slot gilt das Ziel, in jedem Slot davor
+    abzüglich dessen, was dieser Slot selbst noch aus PV-Überschuss nachladen
+    könnte. Solange die Sonne den Endstand liefern kann, bleibt die Kurve
+    deshalb auf dem Boden — die Referenz entlädt dann so frei wie bisher, und
+    die Auflage greift erst dort, wo auch das LP einfriert: in der letzten
+    Nacht vor dem Horizontende.
+
+    Die Vorausschau macht die Referenz NICHT klüger: sie darf damit nur die
+    Auflage erfüllen, nicht besser wirtschaften. Entladen wird weiterhin
+    stumpf gegen die Hauslast, nie gegen einen Preis.
+    """
+    eff = HAConfig.ac_efficiency
+    kapazitaet = inputs.battery_capacity_kwh
+    reserve = [boden] * len(slots)
+    bedarf = min(ziel_inhalt, deckel)
+    for index in range(len(slots) - 1, -1, -1):
+        reserve[index] = max(boden, bedarf)
+        pv = slots[index].get("PV") or 0.0
+        verbrauch = slots[index].get("consumption") or 0.0
+        ueberschuss = max(0.0, pv - verbrauch / eff)
+        bedarf -= (
+            min(
+                _ladeleistung_aus_dc(ueberschuss, kapazitaet),
+                inputs.battery_power_limit_kw,
+            )
+            * dt_h
+        )
+        if bedarf <= boden:
+            # Weiter vorne bindet die Auflage nicht mehr — der Rest der Kurve
+            # steht schon auf dem Boden.
+            break
+    return reserve
+
+
 def simuliere_standardbetrieb(
-    slots: list[dict[str, Any]], inputs: ScheduleInputs
+    slots: list[dict[str, Any]],
+    inputs: ScheduleInputs,
+    ziel_soc_pct: float | None = None,
 ) -> list[dict[str, Any]]:
     """Was ein Standard-Wechselrichter aus denselben Prognosen machen würde.
 
@@ -1466,6 +1514,18 @@ def simuliere_standardbetrieb(
     Vorzeichen wie im Fahrplan (Haralds Konvention): ``grid_p`` positiv =
     Einspeisung, ``battery_p`` positiv = Entladen; ``battery_p`` ist die
     Leistung an der Batterie, die Verluste liegen davor auf dem DC-Bus.
+
+    ``ziel_soc_pct`` ist die vierte gemeinsame Grenze: der Ladestand, den der
+    Fahrplan am Horizontende erreicht. Das LP hat dort keine Wahl
+    (``battery_free[-1]`` ist in ``opt_highs.py`` eine Konstante, keine
+    Variable), die Referenz ohne diese Auflage endet leer. Verglichen würden
+    dann ungleiche Vermögensstände: der Fahrplan deckt die letzte Nacht aus
+    dem Netz, weil er die Reserve halten MUSS, und bekommt sie nur zum
+    Basistarif gutgeschrieben — an der SolaX-Testanlage 1,33 von 1,73 Euro
+    ausgewiesenem „Verlust". Mit der Auflage tragen beide Seiten denselben
+    Randeffekt, und er kürzt sich aus dem Vorteil heraus. Ohne Angabe bleibt
+    es beim bisherigen Verhalten (Tagesbilanz: dort ist der Endstand gemessen
+    und nicht erzwungen).
     """
     dt_h = inputs.time_res_s / 3600.0
     eff = HAConfig.ac_efficiency
@@ -1474,8 +1534,14 @@ def simuliere_standardbetrieb(
     boden = kapazitaet * max(0.0, min(100.0, inputs.min_soc_pct)) / 100.0
     deckel = kapazitaet * max(0.0, min(100.0, inputs.max_soc_pct)) / 100.0
 
+    reserve = [boden] * len(slots)
+    if ziel_soc_pct is not None:
+        ziel_inhalt = kapazitaet * max(0.0, min(100.0, ziel_soc_pct)) / 100.0
+        if ziel_inhalt > boden:
+            reserve = _reservekurve(slots, inputs, ziel_inhalt, boden, deckel, dt_h)
+
     referenz: list[dict[str, Any]] = []
-    for slot in slots:
+    for index, slot in enumerate(slots):
         pv = slot.get("PV") or 0.0
         verbrauch = slot.get("consumption") or 0.0
         # DC-Leistung, die die Hauslast hinter dem Wirkungsgrad deckt.
@@ -1505,7 +1571,7 @@ def simuliere_standardbetrieb(
             entladen = min(
                 _entladeleistung_fuer_dc(defizit, kapazitaet),
                 inputs.battery_power_limit_kw,
-                max(0.0, inhalt - boden) / dt_h,
+                max(0.0, inhalt - reserve[index]) / dt_h,
             )
             geliefert = entladen - _batterie_verluste_kw(entladen, kapazitaet)
             inhalt -= entladen * dt_h

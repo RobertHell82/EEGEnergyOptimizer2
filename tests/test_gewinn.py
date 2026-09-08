@@ -211,6 +211,68 @@ def test_standardbetrieb_hat_die_slotstruktur_des_fahrplans():
         assert set(slot) == {"t", "grid_p", "battery_p", "soc"}
 
 
+def test_standardbetrieb_haelt_die_endauflage_des_fahrplans():
+    """Dieselbe Endauflage für beide Seiten der Gewinnkarte.
+
+    Das LP muss am Horizontende einen festen Ladestand vorweisen und deckt
+    die letzte Nacht deshalb aus dem Netz. Ohne dieselbe Auflage endet die
+    Referenz leer, und der Vergleich stellt ungleiche Vermögensstände
+    gegenüber — an der SolaX-Testanlage 1,33 von 1,73 Euro ausgewiesenem
+    "Verlust", der keiner war.
+    """
+    # 10 kWh, Boden 10 %, Start 60 % → 5 kWh über dem Boden, Hauslast 1 kW DC
+    inputs = _inputs(soc_pct=60.0, battery_capacity_kwh=10.0, min_soc_pct=10.0)
+    slots = [_slot(MITTAG, i * 15, PV=0.0, consumption=0.95) for i in range(4)]
+
+    frei = sched.simuliere_standardbetrieb(slots, inputs)
+    gebunden = sched.simuliere_standardbetrieb(slots, inputs, ziel_soc_pct=55.0)
+
+    assert frei[-1]["soc"] == pytest.approx(50.0)       # 4 × 0,25 kWh entladen
+    assert gebunden[-1]["soc"] == pytest.approx(55.0)   # Auflage genau erfüllt
+    # Was die Batterie nicht mehr liefern darf, kommt aus dem Netz — genau
+    # das tut der Fahrplan in seinen eingefrorenen Slots auch.
+    assert gebunden[-1]["battery_p"] == pytest.approx(0.0)
+    assert gebunden[-1]["grid_p"] == pytest.approx(-0.95)
+
+
+def test_endauflage_greift_erst_wenn_die_sonne_sie_nicht_mehr_liefert():
+    """Die Auflage bindet so spät wie möglich.
+
+    Kommt vor dem Horizontende noch Überschuss, der den Endstand nachladen
+    kann, darf die Referenz vorher voll entladen — sonst würde sie über den
+    ganzen Horizont Energie horten und der ausgewiesene Vorteil kippte in die
+    andere Richtung.
+    """
+    inputs = _inputs(soc_pct=60.0, battery_capacity_kwh=10.0, min_soc_pct=10.0)
+    slots = [
+        _slot(MITTAG, 0, PV=0.0, consumption=0.95),    # Nacht
+        _slot(MITTAG, 15, PV=8.0, consumption=0.95),   # Sonne: lädt nach
+        _slot(MITTAG, 30, PV=0.0, consumption=0.95),   # Nacht
+    ]
+
+    gebunden = sched.simuliere_standardbetrieb(slots, inputs, ziel_soc_pct=55.0)
+
+    assert gebunden[0]["battery_p"] > 0.0      # erster Slot bleibt frei
+    assert gebunden[0]["grid_p"] == pytest.approx(0.0)
+    assert gebunden[-1]["soc"] >= 55.0
+
+
+def test_unerreichbare_endauflage_haelt_so_viel_wie_moeglich():
+    """Kann die Referenz den Endstand nicht erreichen, hält sie alles.
+
+    Der Rest bleibt Aufgabe der Endbestands-Gutschrift in
+    ``bewerte_geldfluesse`` — eine unerfüllbare Auflage darf die Simulation
+    nicht sprengen.
+    """
+    inputs = _inputs(soc_pct=20.0, battery_capacity_kwh=10.0, min_soc_pct=10.0)
+    slots = [_slot(MITTAG, i * 15, PV=0.0, consumption=0.95) for i in range(4)]
+
+    gebunden = sched.simuliere_standardbetrieb(slots, inputs, ziel_soc_pct=90.0)
+
+    assert all(s["battery_p"] == pytest.approx(0.0) for s in gebunden)
+    assert gebunden[-1]["soc"] == pytest.approx(20.0)
+
+
 # ---------------------------------------------------------------------------
 # Bewertung mit echten Geldflüssen
 # ---------------------------------------------------------------------------
@@ -465,6 +527,9 @@ def test_solve_liefert_referenz_und_gewinn():
     # Die Referenz hält dieselben Grenzen wie der Plan.
     assert min(s["soc"] for s in ref) >= 10.0 - 0.1
     assert max(s["soc"] for s in ref) <= 100.0
+    # ... und denselben Endstand: das LP ist am Horizontende auf einen festen
+    # Ladestand festgenagelt, die Referenz bekommt dieselbe Auflage.
+    assert ref[-1]["soc"] == pytest.approx(result["slots"][-1]["soc"], abs=0.2)
 
 
 def test_gewinn_wird_auch_bei_quelle_spot_gerechnet():

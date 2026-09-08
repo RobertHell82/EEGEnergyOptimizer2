@@ -3546,8 +3546,11 @@ class EegOptimizerPanel extends HTMLElement {
           Endbestand: Restenergie über dem Mindest-Ladestand am
           Horizontende (mit Optimierung ${fmtDe(m.rest_kwh ?? 0, 1)}&nbsp;kWh,
           ohne ${fmtDe(o.rest_kwh ?? 0, 1)}&nbsp;kWh), gutgeschrieben mit dem
-          Basistarif abzüglich Wandlungsverlust und Alterung${gewinn.endbestand_tarif != null ? ` (${fmtDe(Number(gewinn.endbestand_tarif) * 100, 2)}&nbsp;ct/kWh)` : ""}
-          — sonst verglichen die Pläne ungleiche Endzustände.
+          Basistarif abzüglich Wandlungsverlust und Alterung${gewinn.endbestand_tarif != null ? ` (${fmtDe(Number(gewinn.endbestand_tarif) * 100, 2)}&nbsp;ct/kWh)` : ""}.
+          Der Ladestand am Horizontende ist im Modell fest vorgegeben, und der
+          Standardbetrieb muss ihn genauso einhalten — sonst verglichen die
+          Pläne ungleiche Endzustände, und der Fahrplan müsste sich anrechnen
+          lassen, dass er die letzte Nacht aus dem Netz deckt.
         </p>`;
     }
     const kennzahl = `
