@@ -10,7 +10,7 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
-## [2.0.3-dev] - 2026-09-08
+## [2.0.4-dev1] - 2026-09-08
 
 ### Behoben
 
