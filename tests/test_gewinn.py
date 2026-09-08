@@ -257,6 +257,27 @@ def test_endauflage_greift_erst_wenn_die_sonne_sie_nicht_mehr_liefert():
     assert gebunden[-1]["soc"] >= 55.0
 
 
+def test_standardbetrieb_laedt_nicht_ueber_die_endauflage_hinaus():
+    """Die Auflage ist eine Gleichung, keine Untergrenze.
+
+    Endet der Horizont mittags, bindet die Untergrenze nicht — dann hortet die
+    Referenz ohne Obergrenze bis zum Ladedeckel, während der Fahrplan alles
+    über seiner Vorgabe verkaufen MUSS. Die Schieflage kippt damit nur auf die
+    andere Seite: an der Testanlage 98 % gegen 57 % Endstand und 0,72 € zu
+    Gunsten der Referenz.
+    """
+    inputs = _inputs(soc_pct=40.0, battery_capacity_kwh=10.0, min_soc_pct=10.0)
+    slots = [_slot(MITTAG, i * 15, PV=8.0, consumption=0.95) for i in range(4)]
+
+    frei = sched.simuliere_standardbetrieb(slots, inputs)
+    gebunden = sched.simuliere_standardbetrieb(slots, inputs, ziel_soc_pct=50.0)
+
+    assert frei[-1]["soc"] > 50.0                       # lädt mit voller Leistung
+    assert gebunden[-1]["soc"] == pytest.approx(50.0)   # Auflage genau erfüllt
+    # Was nicht mehr in die Batterie darf, geht ins Netz — wie beim Fahrplan.
+    assert gebunden[-1]["grid_p"] > frei[-1]["grid_p"]
+
+
 def test_unerreichbare_endauflage_haelt_so_viel_wie_moeglich():
     """Kann die Referenz den Endstand nicht erreichen, hält sie alles.
 

@@ -383,6 +383,7 @@ class HAConfig:
         self.max_blackout_reserve = 0.0
         self.blackout_time = BLACKOUT_LOOKAHEAD
 
+
         self._consumption_series = None
         self._feedin_series = None
 
@@ -1481,6 +1482,52 @@ def _reservekurve(
     return reserve
 
 
+def _deckelkurve(
+    slots: list[dict[str, Any]],
+    inputs: ScheduleInputs,
+    ziel_inhalt: float,
+    deckel: float,
+    dt_h: float,
+) -> list[float]:
+    """Höchst-Ladestand je Slot, damit am Ende nicht MEHR als ``ziel_inhalt`` steht.
+
+    Das Gegenstück zu ``_reservekurve`` und aus demselben Grund nötig: die
+    Endauflage des LP ist eine Gleichung, keine Untergrenze. Der Fahrplan darf
+    am Horizontende nicht voller sein als vorgegeben und verkauft alles
+    darüber; die Referenz ohne diese Grenze lädt mit voller Leistung weiter
+    und endet — gemessen an der Testanlage am 08.09. mittags — bei 98 %
+    gegen 57 %. Dann kippt die Schieflage nur auf die andere Seite: die
+    Referenz bekommt 9,56 kWh gutgeschrieben, die der Fahrplan zum
+    Einspeisetarif abgegeben hat.
+
+    Rückwärts wie die Reservekurve, nur mit umgekehrtem Vorzeichen: was ein
+    Slot noch gegen die Hauslast entladen kann, durfte davor mehr im Speicher
+    liegen. Reicht die Hauslast bis zum Ende, um vom Ladedeckel auf das Ziel
+    zu kommen, bindet die Grenze gar nicht.
+    """
+    eff = HAConfig.ac_efficiency
+    kapazitaet = inputs.battery_capacity_kwh
+    grenze = [deckel] * len(slots)
+    erlaubt = ziel_inhalt
+    for index in range(len(slots) - 1, -1, -1):
+        grenze[index] = min(deckel, erlaubt)
+        pv = slots[index].get("PV") or 0.0
+        verbrauch = slots[index].get("consumption") or 0.0
+        defizit = max(0.0, verbrauch / eff - pv)
+        erlaubt += (
+            min(
+                _entladeleistung_fuer_dc(defizit, kapazitaet),
+                inputs.battery_power_limit_kw,
+            )
+            * dt_h
+        )
+        if erlaubt >= deckel:
+            # Weiter vorne bindet die Grenze nicht mehr — der Rest der Kurve
+            # steht schon auf dem Ladedeckel.
+            break
+    return grenze
+
+
 def simuliere_standardbetrieb(
     slots: list[dict[str, Any]],
     inputs: ScheduleInputs,
@@ -1518,14 +1565,21 @@ def simuliere_standardbetrieb(
     ``ziel_soc_pct`` ist die vierte gemeinsame Grenze: der Ladestand, den der
     Fahrplan am Horizontende erreicht. Das LP hat dort keine Wahl
     (``battery_free[-1]`` ist in ``opt_highs.py`` eine Konstante, keine
-    Variable), die Referenz ohne diese Auflage endet leer. Verglichen würden
-    dann ungleiche Vermögensstände: der Fahrplan deckt die letzte Nacht aus
-    dem Netz, weil er die Reserve halten MUSS, und bekommt sie nur zum
-    Basistarif gutgeschrieben — an der SolaX-Testanlage 1,33 von 1,73 Euro
-    ausgewiesenem „Verlust". Mit der Auflage tragen beide Seiten denselben
-    Randeffekt, und er kürzt sich aus dem Vorteil heraus. Ohne Angabe bleibt
-    es beim bisherigen Verhalten (Tagesbilanz: dort ist der Endstand gemessen
-    und nicht erzwungen).
+    Variable) — und zwar eine GLEICHUNG, weshalb die Auflage in beide
+    Richtungen gilt: ``_reservekurve`` verhindert, dass die Referenz darunter
+    endet, ``_deckelkurve``, dass sie darüber endet. Ohne die Untergrenze
+    fährt sie die Batterie leer, während der Fahrplan die letzte Nacht aus dem
+    Netz deckt, weil er die Reserve halten muss (1,33 von 1,73 Euro
+    ausgewiesenem „Verlust" an der Testanlage); ohne die Obergrenze hortet sie
+    bis 98 %, während der Fahrplan alles über seiner Vorgabe verkauft
+    (0,72 Euro in die andere Richtung). Beides ist derselbe Randeffekt, und
+    nur mit gleichem Endstand kürzt er sich vollständig heraus — dann ist die
+    Endbestands-Gutschrift auf beiden Seiten gleich groß, unabhängig davon,
+    mit welchem Satz sie bewertet wird.
+
+    Beide Kurven binden so spät wie möglich, greifen also nur am Horizontrand.
+    Ohne Angabe bleibt es beim bisherigen Verhalten (Tagesbilanz: dort ist der
+    Endstand gemessen und nicht erzwungen).
     """
     dt_h = inputs.time_res_s / 3600.0
     eff = HAConfig.ac_efficiency
@@ -1535,10 +1589,13 @@ def simuliere_standardbetrieb(
     deckel = kapazitaet * max(0.0, min(100.0, inputs.max_soc_pct)) / 100.0
 
     reserve = [boden] * len(slots)
+    obergrenze = [deckel] * len(slots)
     if ziel_soc_pct is not None:
         ziel_inhalt = kapazitaet * max(0.0, min(100.0, ziel_soc_pct)) / 100.0
         if ziel_inhalt > boden:
             reserve = _reservekurve(slots, inputs, ziel_inhalt, boden, deckel, dt_h)
+        if ziel_inhalt < deckel:
+            obergrenze = _deckelkurve(slots, inputs, ziel_inhalt, deckel, dt_h)
 
     referenz: list[dict[str, Any]] = []
     for index, slot in enumerate(slots):
@@ -1552,7 +1609,7 @@ def simuliere_standardbetrieb(
             laden = min(
                 _ladeleistung_aus_dc(ueberschuss, kapazitaet),
                 inputs.battery_power_limit_kw,
-                max(0.0, deckel - inhalt) / dt_h,
+                max(0.0, obergrenze[index] - inhalt) / dt_h,
             )
             verlust = _batterie_verluste_kw(laden, kapazitaet)
             # Was über die Einspeisegrenze hinausgeht, regelt das Gerät ab —
