@@ -10,6 +10,12 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
+## [2.0.3-dev] - 2026-09-08
+
+### Behoben
+
+- **Gewinnkarte rechnete der Optimierung einen Verlust an, der keiner war.** Der Fahrplan muss am Ende seines Vorschau-Horizonts einen bestimmten Ladestand vorweisen — eine Modellvorgabe, damit er die Batterie nicht in den letzten Stunden verkauft. Fällt dieses Ende in die Nacht, deckt er den Hausverbrauch aus dem Netz, weil er die Reserve halten muss. Der simulierte Standardbetrieb kannte diese Vorgabe nicht, fuhr die Batterie leer und stand damit scheinbar besser da. Verglichen wurden ungleiche Endzustände: an einer Testanlage 1,33 von 1,73 € ausgewiesenem „Verlust". Der Standardbetrieb hält jetzt denselben Endstand wie der Fahrplan — und zwar so spät wie möglich, damit ihm die Vorgabe nicht den ganzen Horizont über Energie abzwingt, die die Sonne noch nachliefert. Der Tagesrückblick („Ersparnis durch Optimierung") ist unverändert: dort ist der Endstand gemessen, nicht vorgegeben.
+
 ## [2.0.3] - 2026-09-07
 
 > Fasst die Entwicklungsstände `2.0.3-devfronius.1` bis `.9` zusammen (Einzelheiten in den Abschnitten darunter). An dieser Version ist gegenüber `.9` inhaltlich nichts neu.
