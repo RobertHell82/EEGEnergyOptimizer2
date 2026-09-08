@@ -10,6 +10,13 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
+## [2.0.4-dev2] - 2026-09-08
+
+### Behoben
+
+- **Der Fahrplan kaufte nachts Strom, obwohl die Energie im Akku lag.** An einer Testanlage 5,08 kWh für 1,17 € in einer einzigen Nacht — der Ladestand fror bei 51,7 % ein, statt das Haus zu versorgen. Dahinter steckt die Notstrom-Reserve: sie schaut 18 Stunden voraus und schreibt einen Mindest-Ladestand fest, gerechnet mit dem Schlechtwetter-Pfad der Prognose. Solcasts p10 wird für spätere Tage aber immer pessimistischer (an der Anlage: morgen 44 %, übermorgen 28 %, dann 14 % der Erwartung) — das ist keine Wetteraussage mehr, sondern die Unsicherheit der Prognose selbst. Lag die Vorgabe über dem, was aus PV nachzuladen war, blieb nur der Netzbezug. Der Schlechtwetter-Pfad wird jetzt nach unten begrenzt: schlechtestenfalls 60 % der Erwartung, derselbe Wert, mit dem Forecast.Solar ohne p10 längst rechnet. Die Reserve selbst bleibt unverändert und schützt den Speicher weiter gegen die Einspeisung ins Netz — nur den eigenen Verbrauch kann sie nicht mehr ins Netz verlagern.
+- **Gewinnkarte: der Vergleich hielt den Endstand nur nach unten fest.** Endet der Vorschau-Horizont mittags, lud der simulierte Standardbetrieb mit voller Leistung weiter und stand am Ende bei 98 % gegen 57 % des Fahrplans — die Schieflage aus `2.0.4-dev1` kippte damit auf die andere Seite. Beide Seiten enden jetzt auf demselben Ladestand, die Endbestands-Gutschrift kürzt sich vollständig heraus.
+
 ## [2.0.4-dev1] - 2026-09-08
 
 ### Behoben
