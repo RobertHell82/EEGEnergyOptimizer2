@@ -283,9 +283,33 @@ class _Forecast:
         return self._build().loc[start_time:]
 
     def min_production(self, start_time):
-        """Worst-Case-Pfad: p10 der Prognose, sonst skalierter Erwartungswert."""
+        """Worst-Case-Pfad: p10 der Prognose, nach unten begrenzt.
+
+        Diese Reihe steuert im LP ausschließlich die Notstrom-Reserve
+        (``opt_highs.py`` bildet daraus ``residual`` und ``bor``): je tiefer
+        sie liegt, desto mehr Energie muss der Fahrplan vorhalten.
+
+        Deshalb die Untergrenze. Solcasts p10 ist ein 10-%-Quantil, dessen
+        Streuung mit dem Prognosehorizont wächst — gemessen an der
+        Testanlage am 08.09.2026: Tag 1 noch 87 % der Erwartung, Tag 2 44 %,
+        Tag 3 28 %, Tag 4 14 %. Für die späteren Tage ist das keine
+        Wetteraussage mehr, sondern die Unsicherheit der Prognose selbst. Die
+        Reserve schaut aber 18 Stunden voraus und verlangte daraus einen
+        Mindest-Ladestand, der in der Nacht davor nur mit NETZBEZUG zu halten
+        war: 5,08 kWh für 1,17 Euro gekauft, während die Energie im Akku lag.
+        Strom kaufen kann nie der Zweck einer Reserve sein — sie soll den
+        Speicher gegen den Verkauf ins Netz schützen, nicht gegen den eigenen
+        Verbrauch.
+
+        ``worst_case_factor`` ist derselbe Wert, mit dem eine Quelle ohne
+        p10-Pfad (Forecast.Solar) skaliert wird — beide Quellen rechnen damit
+        jetzt mit derselben Annahme: schlechtestenfalls 60 % der Erwartung.
+        Der Reserve-Mechanismus selbst bleibt unberührt, auch sein
+        Vorschaufenster.
+        """
+        erwartung = self.production(start_time)
         if self._inputs.min_production_kw is None:
-            return self.production(start_time) * self._inputs.worst_case_factor
+            return erwartung * self._inputs.worst_case_factor
         if self._min_series is None:
             import pandas as pd
 
@@ -293,7 +317,9 @@ class _Forecast:
                 self._inputs.min_production_kw,
                 index=pd.DatetimeIndex(self._inputs.timestamps),
             )
-        return self._min_series.loc[start_time:]
+        return self._min_series.loc[start_time:].clip(
+            lower=erwartung * self._inputs.worst_case_factor
+        )
 
 
 class HAConfig:

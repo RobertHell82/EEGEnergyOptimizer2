@@ -583,6 +583,51 @@ def test_worst_case_kommt_aus_p10_nicht_aus_faktor():
     assert p10[index_0700] == pytest.approx(0.98)
 
 
+def test_p10_wird_nach_unten_auf_den_worst_case_faktor_begrenzt():
+    """Der p10-Pfad steuert im LP allein die Notstrom-Reserve.
+
+    Ein zu tiefer Wert lässt sie einen Mindest-Ladestand verlangen, der nur
+    mit Netzbezug zu halten ist — gemessen an der Testanlage 5,08 kWh für
+    1,17 Euro gekauft, während die Energie im Akku lag. Deshalb gilt derselbe
+    Boden wie für eine Quelle ohne p10: schlechtestenfalls
+    ``worst_case_factor`` der Erwartung.
+    """
+    pytest.importorskip("pandas")
+    stamps = [NOW + timedelta(minutes=15 * i) for i in range(3)]
+    inputs = dataclasses.replace(
+        _inputs_for_solve(),
+        timestamps=stamps,
+        production_kw=[10.0, 10.0, 0.0],
+        # 10 %, 80 % und (nachts) 0 % der Erwartung
+        min_production_kw=[1.0, 8.0, 0.0],
+        consumption_kw=[0.5, 0.5, 0.5],
+        worst_case_factor=0.6,
+    )
+
+    serie = sched._Forecast(inputs).min_production(stamps[0])
+
+    # angehoben, unangetastet, und ohne Erzeugung bleibt es bei null
+    assert list(serie) == pytest.approx([6.0, 8.0, 0.0])
+
+
+def test_ohne_p10_bleibt_der_skalierte_erwartungswert():
+    """Quellen ohne p10-Pfad (Forecast.Solar) rechnen unverändert weiter."""
+    pytest.importorskip("pandas")
+    stamps = [NOW + timedelta(minutes=15 * i) for i in range(2)]
+    inputs = dataclasses.replace(
+        _inputs_for_solve(),
+        timestamps=stamps,
+        production_kw=[10.0, 4.0],
+        min_production_kw=None,
+        consumption_kw=[0.5, 0.5],
+        worst_case_factor=0.6,
+    )
+
+    serie = sched._Forecast(inputs).min_production(stamps[0])
+
+    assert list(serie) == pytest.approx([6.0, 2.4])
+
+
 async def test_solcast_hat_vorrang_vor_der_energy_plattform():
     hass = _hass_with(BASE_CONFIG)
     hass.states.async_all.return_value = [_solcast_state(NOW, SOLCAST_TAG)]
