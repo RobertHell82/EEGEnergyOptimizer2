@@ -107,6 +107,18 @@ const anteilssummePct = (d) =>
 // Der Flag bleibt als Schalter erhalten, falls ein Treiber künftig erneut
 // vorübergehend aus Release-Builds ausgeblendet werden soll (DEV-Erkennung
 // über den Cache-Buster der Script-URL, siehe Git-Historie zu 1.3.11).
+// Gemeinschaften im Quotenmodus, denen die Tages-Abnahmequote fehlt — nur
+// aktive Einträge (Name und Anteil > 0). Ohne Quote nimmt die Gemeinschaft im
+// Modell nichts auf, die Eingabe wäre wirkungslos; deshalb Pflichtfeld.
+// Rückgabe: die Namen für die Meldung.
+const quoteLuecken = (d) => {
+  if (d.enable_peakshare === false || (d.eeg_demand_source || "peakshare") !== "quote") return [];
+  return [["", d.peakshare_community], ["_2", d.peakshare_community_2]]
+    .filter(([sfx, name]) => name && Number(d[`peakshare_share_pct${sfx}`] ?? 0) > 0
+      && !(Number(d[`peakshare_quote_pct${sfx}`] ?? 0) > 0))
+    .map(([, name]) => name);
+};
+
 const KOSTAL_UI_ENABLED = true;
 // Auswaehlbar ist genau, was der Fahrplan auch steuern kann (Entscheid
 // 28.08.2026): alles andere waere reine Anzeige. Die uebrigen Karten sind
@@ -211,6 +223,10 @@ const WIZARD_DEFAULTS = {
   // aWATTar SUNNY (fester Monatstarif): welche Preisspalte gilt — Verträge
   // bis zum Stichtag 25.02.2026 („alt") oder danach („neu").
   awattar_sunny_vertrag: "neu",
+  // Woher der Fahrplan weiß, wie viel die Gemeinschaft aufnimmt: aus der
+  // PeakShare-Prognose (Vorgabe) oder aus einer festen Abnahmequote je
+  // Gemeinschaft — für Mitglieder, deren Gemeinschaft kein PeakShare hat.
+  eeg_demand_source: "peakshare",
   // Nachtsatz der Standardvergütung: 0 heißt „wie am Tag" (kein Nachttarif).
   schedule_feedin_price_night: 0,
   schedule_night_start: "20:00",
@@ -728,6 +744,9 @@ class EegOptimizerPanel extends HTMLElement {
             }
             // Die Vertragsvariante blendet den angezeigten SUNNY-Wert um.
             if (realField === "awattar_sunny_vertrag") this._render();
+            // Die Bedarfsquelle tauscht die PeakShare-Auswahl gegen Namens-
+            // und Quotenfelder.
+            if (realField === "eeg_demand_source") this._render();
           }
           return;
         }
@@ -761,7 +780,7 @@ class EegOptimizerPanel extends HTMLElement {
             if (target.value === "awattar_sunny") this._ensureSunnyStatus();
             this._saveWizardProgress();
             this._render();
-          } else if (field === "awattar_sunny_vertrag") {
+          } else if (field === "awattar_sunny_vertrag" || field === "eeg_demand_source") {
             this._saveWizardProgress();
             this._render();
           }
@@ -825,6 +844,14 @@ class EegOptimizerPanel extends HTMLElement {
   _oemagSchaetzungGewuenscht() {
     return [this._settingsData, this._wizardData, this._config]
       .some((d) => d && d.schedule_feedin_source === "oemag_estimate");
+  }
+
+  // Liefert PeakShare Daten für diese Anlage? Nur bei aktiver Gemeinschaft
+  // UND Bedarfsquelle „Prognose" — mit fester Abnahmequote gibt es weder
+  // Bedarfskurven noch einen Cache-Stand, den man anzeigen könnte.
+  _peakshareAktiv() {
+    const c = this._config || {};
+    return c.enable_peakshare !== false && (c.eeg_demand_source || "peakshare") !== "quote";
   }
 
   // Geldwerte der Energiebilanz. Kein eigener Timer: Ein Render stößt das
@@ -2126,6 +2153,13 @@ class EegOptimizerPanel extends HTMLElement {
             `Die Anteile der Gemeinschaften ergeben zusammen ${fmtDe(anteile, 0)} % — mehr als 100 % ist nicht möglich.`);
           return false;
         }
+        // Quotenmodus: ohne Tages-Abnahmequote nimmt die Gemeinschaft im
+        // Modell nichts auf — die Eingabe wäre wirkungslos.
+        const quoteFehlt = quoteLuecken(this._wizardData);
+        if (quoteFehlt.length) {
+          this._showValidationError(`Bitte die Abnahmequote eintragen: ${quoteFehlt.join(", ")}.`);
+          return false;
+        }
         return true;
       }
       default:
@@ -2249,6 +2283,7 @@ class EegOptimizerPanel extends HTMLElement {
     if (anteile > 100) {
       fehlt.push(`Anteile der Gemeinschaften (Summe ${fmtDe(anteile, 0)} % statt maximal 100 %)`);
     }
+    for (const name of quoteLuecken(d)) fehlt.push(`Abnahmequote der Gemeinschaft ${name}`);
     return fehlt;
   }
 
@@ -2292,7 +2327,7 @@ class EegOptimizerPanel extends HTMLElement {
       this._config = {...this._config, ...changed};
       // Reload PeakShare data if community or enable_peakshare changed
       if ("peakshare_community" in changed || "peakshare_community_2" in changed
-          || "enable_peakshare" in changed) {
+          || "enable_peakshare" in changed || "eeg_demand_source" in changed) {
         this._peakshareDataLoaded = false;
         this._peakshareData = null;
         if (this._peakshareDataOpen) this._loadPeakShareData();
@@ -2825,7 +2860,7 @@ class EegOptimizerPanel extends HTMLElement {
     // verdoppeln.
     const eegFarben = ["#8e24aa", "#00897b"];
     let eegSerien = [];
-    if (this._config?.enable_peakshare !== false) {
+    if (this._peakshareAktiv()) {
       eegSerien = rohSerien.map((serie, i) => {
         // Viertelstundenraster wie die API (V2): 192 Intervalle über 48 h.
         const jeViertel = new Map();
@@ -3577,8 +3612,9 @@ class EegOptimizerPanel extends HTMLElement {
       // Nur mit aktiver Gemeinschaft — bei Spot/OeMAG ohne EEG sagt sie nichts.
       const eegAktiv = this._config?.enable_peakshare !== false
         && !!this._config?.peakshare_community;
+      const quoteModus = (this._config?.eeg_demand_source || "peakshare") === "quote";
       const eegZuteilung = (eegAktiv && m.eeg_kwh != null && o.eeg_kwh != null)
-        ? ` Zur Gemeinschaft vergütet: mit Optimierung ${fmtDe(m.eeg_kwh, 1)}&nbsp;von&nbsp;${fmtDe(m.export_kwh ?? 0, 1)}&nbsp;kWh, ohne ${fmtDe(o.eeg_kwh, 1)}&nbsp;von&nbsp;${fmtDe(o.export_kwh ?? 0, 1)}&nbsp;kWh.`
+        ? ` Zur Gemeinschaft vergütet${quoteModus ? " (angenommene Abnahmequote)" : ""}: mit Optimierung ${fmtDe(m.eeg_kwh, 1)}&nbsp;von&nbsp;${fmtDe(m.export_kwh ?? 0, 1)}&nbsp;kWh, ohne ${fmtDe(o.eeg_kwh, 1)}&nbsp;von&nbsp;${fmtDe(o.export_kwh ?? 0, 1)}&nbsp;kWh.`
         : "";
       // Kosten stehen als negative Beträge in der Tabelle, damit die
       // Summenzeile schlicht die Spaltensumme ist.
@@ -4381,7 +4417,7 @@ class EegOptimizerPanel extends HTMLElement {
           if (this._scheduleOpen) this._loadScheduleHistory();
         }
         // PeakShare-Cache-Alter gelegentlich auffrischen (max. alle 5 min)
-        if (this._config?.enable_peakshare !== false &&
+        if (this._peakshareAktiv() &&
             now - this._lastPeakshareReload > 300000) {
           this._lastPeakshareReload = now;
           this._loadPeakShareData();
@@ -4478,7 +4514,7 @@ class EegOptimizerPanel extends HTMLElement {
       // Steht die Karte schon offen, den gewählten Verlauf gleich mitholen —
       // sonst stünde dort bis zum ersten Zyklus „Kein Verlauf geladen".
       if (this._scheduleOpen) this._loadScheduleHistory();
-      if (this._config?.enable_peakshare !== false) {
+      if (this._peakshareAktiv()) {
         this._loadPeakShareData();
       }
       // Re-subscribe if previous subscription was lost (e.g. after reconnect)
@@ -5903,6 +5939,9 @@ class EegOptimizerPanel extends HTMLElement {
   _gemeinschaftFields(d, prefix) {
     const on = d.enable_peakshare !== false;
     const communities = this._peakshareCommunitiesCache || [];
+    // Feste Abnahmequote statt PeakShare-Prognose: Name als Freitext, je
+    // Gemeinschaft eine Quote für Tag und Nacht, Vorschau als Mischpreis.
+    const quoten = (d.eeg_demand_source || "peakshare") === "quote";
     // Basistarif wie im Backend bestimmen (schedule.py): bei Quelle OeMAG
     // zählt der geholte Tarif, nicht die Handeingabe — sonst zeigt die
     // Vorschau einen Aufschlag, den der Fahrplan so nie rechnet. Ohne
@@ -5955,6 +5994,16 @@ class EegOptimizerPanel extends HTMLElement {
       // Leeres Nachtfeld (0) heißt: derselbe Satz wie am Tag.
       const preisNacht = Number(d[`peakshare_price_night${s}`] ?? 0) || preis;
       const gewicht = Number(d[`peakshare_weight${s}`] ?? (nr === 1 ? 0.01 : 0));
+      // Abnahmequote (Quotenmodus): leeres Nachtfeld heißt wie am Tag, über
+      // 100 % wird geklemmt — dieselben Regeln wie eeg_price._quoten.
+      const quoteTag = Math.min(100, Math.max(0, Number(d[`peakshare_quote_pct${s}`] ?? 0)));
+      const quoteNachtRoh = Number(d[`peakshare_quote_night_pct${s}`] ?? 0);
+      const quoteNacht = quoteNachtRoh > 0 ? Math.min(100, quoteNachtRoh) : quoteTag;
+      // Mischpreis mit den ECHTEN Sätzen (ohne Gewichtung), wie ihn
+      // bewerte_geldfluesse rechnet: Anteil × Quote zum Gemeinschaftssatz,
+      // der Rest zur Standardvergütung — Tag und Nacht getrennt.
+      const mischTag = basis + (pct / 100) * (quoteTag / 100) * (preis - basis);
+      const mischNacht = basisNacht + (pct / 100) * (quoteNacht / 100) * (preisNacht - basisNacht);
       // Höchster Aufschlag dieser Gemeinschaft: zur Bedarfsspitze erreicht er
       // genau ihren Anteil an der Differenz zum Basistarif. Tag und Nacht
       // getrennt, weil beide Sätze verschieden sein können.
@@ -5965,19 +6014,28 @@ class EegOptimizerPanel extends HTMLElement {
         preis,
         preisNacht,
         gewicht,
+        quoteTag,
+        quoteNacht,
+        mischTag,
+        mischNacht,
         aufTag: Math.max(0, (pct / 100) * (preis + gewicht - basis)),
         aufNacht: Math.max(0, (pct / 100) * (preisNacht + gewicht - basisNacht)),
       };
     };
 
     const block = (nr) => {
-      const { s, name, pct, preis, gewicht, aufTag, aufNacht } = tarifWerte(nr);
+      const { s, name, pct, preis, gewicht, aufTag, aufNacht,
+              quoteTag, quoteNacht, mischTag, mischNacht } = tarifWerte(nr);
       const aufschlag = Math.max(aufTag, aufNacht);
 
       // Einen konfigurierten Namen immer anbieten, auch wenn die Liste ihn
-      // (noch) nicht kennt — sonst leert das Speichern das Feld.
+      // (noch) nicht kennt — sonst leert das Speichern das Feld. Im
+      // Quotenmodus ist der Name nur ein Etikett: Freitext statt Liste.
       const namen = !name || communities.includes(name) ? communities : [name, ...communities];
-      const auswahl = communities.length === 0 && !name
+      const auswahl = quoten
+        ? `<input type="text" data-field="${prefix}peakshare_community${s}" value="${this._escapeHtml(name)}" maxlength="60"
+                  placeholder="${nr === 2 ? "Name der zweiten Gemeinschaft (optional)" : "Name der Gemeinschaft, z. B. EEG Musterdorf"}">`
+        : communities.length === 0 && !name
         ? `<div class="help-text">Gemeinschaften werden geladen…</div>`
         : `<select data-field="${prefix}peakshare_community${s}">
              <option value="" ${name ? "" : "selected"}>${nr === 2 ? "— keine —" : "— bitte wählen —"}</option>
@@ -5988,9 +6046,19 @@ class EegOptimizerPanel extends HTMLElement {
       if (!name) {
         wirkung = nr === 2
           ? "Keine zweite Gemeinschaft — der Rest des Aufteilungsschlüssels geht an den Energieversorger."
-          : "Noch keine Gemeinschaft gewählt.";
+          : (quoten ? "Noch kein Name eingetragen." : "Noch keine Gemeinschaft gewählt.");
       } else if (pct <= 0) {
         wirkung = "Anteil 0 % — diese Gemeinschaft wirkt nicht auf den Fahrplan.";
+      } else if (quoten && quoteTag <= 0 && quoteNacht <= 0) {
+        wirkung = "Abnahmequote fehlt — ohne sie nimmt die Gemeinschaft im Modell nichts auf und wirkt nicht.";
+      } else if (quoten) {
+        // Vorschau rechnet die Backend-Formel nach (bewerte_geldfluesse):
+        // was eine eingespeiste Kilowattstunde im Mittel wirklich bringt.
+        wirkung = `Mischpreis: <strong>${fmtDe(mischTag * 100, 2)} ct/kWh</strong> am Tag,`
+          + ` <strong>${fmtDe(mischNacht * 100, 2)} ct/kWh</strong> nachts`
+          + ` (${fmtDe(pct, 0)} % Anteil, Abnahmequote ${fmtDe(quoteTag, 0)} %/${fmtDe(quoteNacht, 0)} %,`
+          + ` Standardvergütung ${fmtDe(basis * 100, 2)} ct).`
+          + (gewicht > 0 ? ` Die Gewichtung von ${fmtDe(gewicht * 100, 1)} ct zählt zusätzlich im Steuersignal, nicht im Geld.` : "");
       } else if (aufschlag <= 0) {
         wirkung = "Vergütung liegt nicht über dem Basistarif — kein Anreiz, Energie hierher zu verschieben.";
       } else if (Math.abs(aufTag - aufNacht) < 1e-9) {
@@ -6032,6 +6100,22 @@ class EegOptimizerPanel extends HTMLElement {
                      value="${ctAus(gewicht)}" min="0" max="100" step="0.1">
             </div>
           </div>
+          ${quoten ? `
+          <div style="display:flex;gap:12px;flex-wrap:wrap">
+            <div class="field-group" style="flex:1;min-width:140px">
+              <label>Abnahmequote Tag (%) *</label>
+              <input type="number" data-field="${prefix}peakshare_quote_pct${s}"
+                     value="${Number(d[`peakshare_quote_pct${s}`] ?? 0) > 0 ? Number(d[`peakshare_quote_pct${s}`]) : ""}"
+                     min="0" max="100" step="1" placeholder="z. B. 40">
+            </div>
+            <div class="field-group" style="flex:1;min-width:140px">
+              <label>Abnahmequote Nacht (%)</label>
+              <input type="number" data-field="${prefix}peakshare_quote_night_pct${s}"
+                     value="${Number(d[`peakshare_quote_night_pct${s}`] ?? 0) > 0 ? Number(d[`peakshare_quote_night_pct${s}`]) : ""}"
+                     min="0" max="100" step="1" placeholder="wie am Tag">
+            </div>
+          </div>
+          <div class="help-text" style="margin-bottom:8px">Welcher Teil deiner angebotenen Einspeisung erfahrungsgemäß in der Gemeinschaft landet — steht in der EEG-Monatsabrechnung als Anteil der Einspeisung, der in der Gemeinschaft verbraucht wurde. Mittags im Sommer ist die Quote niedrig, weil alle einspeisen; nachts liegt sie nahe 100 %, solange die Gemeinschaft nachts mehr verbraucht, als eingespeist wird.</div>` : ""}
           <div class="help-text" style="margin-bottom:8px">${wirkung}</div>
         </div>`;
     };
@@ -6083,9 +6167,19 @@ class EegOptimizerPanel extends HTMLElement {
       action: prefix ? "toggle-settings-feature" : "toggle-feature",
       feature: "enable_peakshare",
       icon: "mdi:account-group-outline",
-      titel: "Gemeinschaftsdaten abrufen (PeakShare)",
-      beschreibung: "Holt die Bedarfsprognose der Gemeinschaften. Der Fahrplan rechnet daraus einen Preisaufschlag: Stunden mit hohem Bedarf werden wertvoller, dorthin verschiebt er die Einspeisung. Ohne Anteil (0 %) ist es reine Anzeige. Das funktioniert nur für Gemeinschaften, die über PeakShare der EW Ansfelden abgewickelt werden — andere Gemeinschaften liefern hier keine Daten.",
+      titel: "Energiegemeinschaft",
+      beschreibung: "Bist du Mitglied einer Energiegemeinschaft, bekommt ein Teil deiner Einspeisung deren Vergütung statt der Standardvergütung. Der Fahrplan rechnet damit — und mit dem, was die Gemeinschaft davon wirklich aufnimmt: aus der PeakShare-Bedarfsprognose oder aus einer festen Abnahmequote. Ohne Anteil (0 %) ist es reine Anzeige.",
       params: `
+        <div class="field-group">
+          <label>Bedarfsdaten der Gemeinschaft</label>
+          <select data-field="${prefix}eeg_demand_source">
+            <option value="peakshare" ${quoten ? "" : "selected"}>PeakShare-Prognose (EW Ansfelden)</option>
+            <option value="quote" ${quoten ? "selected" : ""}>Feste Abnahmequote (Gemeinschaft ohne PeakShare)</option>
+          </select>
+          <div class="help-text">${quoten
+            ? "Ohne Bedarfsprognose rechnet der Fahrplan mit einem Mischpreis: Anteil × Abnahmequote zum Gemeinschaftssatz, der Rest zur Standardvergütung — getrennt für Tag und Nacht. Das ist eine erklärte Annahme aus deiner Abrechnung, kein Steuersignal nach Stunden; auch die Gewinn- und Bilanzkarten rechnen damit."
+            : "Holt die Bedarfsprognose der Gemeinschaften. Der Fahrplan rechnet daraus einen Preisaufschlag: Stunden mit hohem Bedarf werden wertvoller, dorthin verschiebt er die Einspeisung. Das funktioniert nur für Gemeinschaften, die über PeakShare der EW Ansfelden abgewickelt werden — für alle anderen die feste Abnahmequote wählen."}</div>
+        </div>
         ${block(1)}
         ${zweiterBlock}
         <div class="help-text" style="color:${summeFarbe}">${summeText}</div>
@@ -6192,7 +6286,7 @@ class EegOptimizerPanel extends HTMLElement {
       ${this._verguetungFields(d, "")}
       <h3 style="margin:24px 0 12px;font-size:16px">Kosten</h3>
       ${this._kostenFields(d, "")}
-      <h3 style="margin:24px 0 12px;font-size:16px">Energiegemeinschaft (EW Ansfelden – PeakShare)</h3>
+      <h3 style="margin:24px 0 12px;font-size:16px">Energiegemeinschaft</h3>
       ${this._gemeinschaftFields(d, "")}`;
   }
 
@@ -6289,7 +6383,9 @@ class EegOptimizerPanel extends HTMLElement {
           ? row("Standardvergütung Nacht", `${preis(d.schedule_feedin_price_night, 0)} (${d.schedule_night_start || "20:00"}–${d.schedule_night_end || "06:00"})`)
           : ""}
         ${row("Bezugspreis", preis(d.schedule_consumption_price, 0.247))}
-        ${row("Gemeinschaftsdaten (PeakShare)", d.enable_peakshare !== false ? (d.peakshare_community || "BEG") : "Aus")}
+        ${row("Energiegemeinschaft", d.enable_peakshare !== false
+          ? `${d.peakshare_community || "BEG"} — ${(d.eeg_demand_source || "peakshare") === "quote" ? "feste Abnahmequote" : "PeakShare-Prognose"}`
+          : "Aus")}
         ${[["", d.peakshare_community], ["_2", d.peakshare_community_2]]
           .filter(([sfx, name]) => name && Number(d[`peakshare_share_pct${sfx}`] ?? 0) > 0)
           .map(([sfx, name]) => row(
@@ -6298,6 +6394,11 @@ class EegOptimizerPanel extends HTMLElement {
             + `${preis(d[`peakshare_price${sfx}`], 0.102)}`
             + (Number(d[`peakshare_weight${sfx}`] ?? 0) > 0
               ? ` + ${fmtDe(Number(d[`peakshare_weight${sfx}`]) * 100, 1)} ct Gewichtung`
+              : "")
+            + ((d.eeg_demand_source || "peakshare") === "quote"
+              ? `, Abnahmequote ${fmtDe(Number(d[`peakshare_quote_pct${sfx}`] ?? 0), 0)} %`
+                + (Number(d[`peakshare_quote_night_pct${sfx}`] ?? 0) > 0
+                  ? ` / nachts ${fmtDe(Number(d[`peakshare_quote_night_pct${sfx}`]), 0)} %` : "")
               : "")))
           .join("")}
       </div>
@@ -7663,7 +7764,7 @@ class EegOptimizerPanel extends HTMLElement {
       stale: profilAge != null && profilAge > slowTakt * 2 + 300,
     });
 
-    if (this._config?.enable_peakshare !== false) {
+    if (this._peakshareAktiv()) {
       const ageMin = this._peakshareData?.cache_age_minutes;
       jobs.push({
         label: "PeakShare",
@@ -8029,7 +8130,7 @@ class EegOptimizerPanel extends HTMLElement {
           })() : ""}
         </div>
 
-        ${this._config?.enable_peakshare !== false ? (() => {
+        ${this._peakshareAktiv() ? (() => {
           // Beide konfigurierten Gemeinschaften in der Ueberschrift, in der
           // Reihenfolge der Konfiguration. Das Praefix folgt dem Namen: eine
           // Gemeinschaft namens "BEG" bleibt BEG, jede andere ist eine EEG.

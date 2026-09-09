@@ -260,7 +260,10 @@ class ScheduleInputs:
     feedin_series_extrapolated: int = 0
     # Die ECHTEN Vergütungssätze der Gemeinschaften (ohne Gewichtung), je
     # Eintrag {"anteil", "tag", "nacht"} — nur für die Gewinnberechnung.
-    # eeg_bonus dagegen ist die Fiktion, mit der GESTEUERT wird.
+    # eeg_bonus dagegen ist die Fiktion, mit der GESTEUERT wird. Im
+    # Quotenmodus (eeg_price.DEMAND_SOURCE_QUOTE) tragen die Einträge
+    # zusätzlich "quote_tag"/"quote_nacht" (0..1): dann gilt die Quote statt
+    # des Saldos als Maß dafür, was die Gemeinschaft aufnimmt.
     eeg_tarife: list[dict] | None = None
     # Saldo-Prognose je Gemeinschaft für die Gewinnberechnung:
     # {Name: {Epochenviertelstunde: kWh}}, positiv = Bedarf (wie peakshare.py).
@@ -962,7 +965,10 @@ def _eeg_aufschlag(
     weiterhin, was zum selben Zeitpunkt gilt — nur eben je Vertrag.
     """
     gemeinschaften = eeg_price.gemeinschaften_aus_config(config)
-    if not gemeinschaften or bedarf is None:
+    # Feste Abnahmequote statt Prognose: dann braucht es keinen Saldo, der
+    # Mischpreis kommt aus der Konfiguration (eeg_price.quoten_aufschlag_reihe).
+    quotenmodus = eeg_price.bedarfsquelle(config) == eeg_price.DEMAND_SOURCE_QUOTE
+    if not gemeinschaften or (bedarf is None and not quotenmodus):
         return None, None
 
     summe = eeg_price.anteile_summe(gemeinschaften)
@@ -992,8 +998,12 @@ def _eeg_aufschlag(
         for stamp in stamps
     ]
 
+    if quotenmodus:
+        return eeg_price.quoten_aufschlag_reihe(
+            gemeinschaften, stamps, basis, ist_nacht_eeg
+        )
     return eeg_price.aufschlag_reihe(
-        gemeinschaften, bedarf, stamps, basis, ist_nacht_eeg
+        gemeinschaften, bedarf or {}, stamps, basis, ist_nacht_eeg
     )
 
 
@@ -1285,7 +1295,12 @@ async def async_collect_inputs(
         [g.name for g in eeg_price.gemeinschaften_aus_config(config)]
         + [t["name"] for t in echte_tarife]
     ))
-    eeg_bedarf = _eeg_bedarf_sammeln(data, alle_namen)
+    # Mit fester Abnahmequote gibt es keine Bedarfsprognose — PeakShare wird
+    # dann gar nicht gefragt (die Gemeinschaft ist dort ohnehin unbekannt).
+    if eeg_price.bedarfsquelle(config) == eeg_price.DEMAND_SOURCE_QUOTE:
+        eeg_bedarf = None
+    else:
+        eeg_bedarf = _eeg_bedarf_sammeln(data, alle_namen)
 
     # Nachtfenster: das der Standardvergütung und — seit es getrennt
     # einstellbar ist — das der Gemeinschaften. Ein leeres Gemeinschafts-
@@ -1783,7 +1798,11 @@ def bewerte_geldfluesse(
     Standardbetriebs trifft deren Überschuss und bekommt nur den
     Basistarif. Ohne Saldodaten für einen Slot gilt der Basistarif — eine
     fehlende Prognose darf keinen erfundenen Erlös erzeugen (dieselbe Regel
-    wie in der Preisfunktion). Bewusst NICHT die interne Preisfunktion
+    wie in der Preisfunktion). Einzige Ausnahme: die feste Abnahmequote
+    (``quote_tag``/``quote_nacht`` im Tarif — Quotenmodus für Gemeinschaften
+    ohne PeakShare, siehe eeg_price.py). Sie ist eine erklärte Annahme des
+    Nutzers aus seiner EEG-Abrechnung, keine Prognose: aufgenommen wird dann
+    Anteil × Quote der Einspeisung, Tag oder Nacht. Bewusst NICHT die interne Preisfunktion
     (``eeg_bonus`` samt Deckel, Boden und Normierung) — deren Gewichtung
     und Überschussabschlag sind Steuer-Fiktionen, hier zählt, was fließt.
 
@@ -1831,10 +1850,15 @@ def bewerte_geldfluesse(
             unzugeteilt = export_kwh
             for tarif in tarife:
                 angeboten = tarif["anteil"] * export_kwh
-                saldo = (bedarf.get(tarif["name"]) or {}).get(viertel)
-                aufgenommen = (
-                    0.0 if saldo is None else min(angeboten, max(0.0, saldo))
-                )
+                quote = tarif.get("quote_nacht" if eeg_nacht else "quote_tag")
+                if quote is not None:
+                    # Quotenmodus: die erklärte Abnahmequote statt des Saldos.
+                    aufgenommen = angeboten * min(1.0, max(0.0, float(quote)))
+                else:
+                    saldo = (bedarf.get(tarif["name"]) or {}).get(viertel)
+                    aufgenommen = (
+                        0.0 if saldo is None else min(angeboten, max(0.0, saldo))
+                    )
                 satz = tarif["nacht"] if eeg_nacht else tarif["tag"]
                 erloes += aufgenommen * satz + (angeboten - aufgenommen) * basis
                 eeg_kwh += aufgenommen

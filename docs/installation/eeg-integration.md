@@ -29,7 +29,7 @@ Der EEG Energy Optimizer wird als **benutzerdefiniertes Repository** (Custom Rep
    2. Wechselrichtertyp wählen + automatische Sensorerkennung
    3. Batterie- & PV-Sensoren zuordnen
    4. Prognosequelle wählen (Solcast / Forecast.Solar)
-   5. Fahrplan-Einstellungen (Einspeisevergütung, Bezugspreis, Mindest- und Maximum-Ladestand, Alterungskosten, Batterie-Leistungsgrenze; PeakShare-Community optional)
+   5. Fahrplan-Einstellungen (Einspeisevergütung, Bezugspreis, Mindest- und Maximum-Ladestand, Alterungskosten, Batterie-Leistungsgrenze; Energiegemeinschaft optional — mit PeakShare-Prognose oder fester Abnahmequote)
    6. Einspeisegrenze (optional)
    7. Wechselrichter-Verbindungstest
 

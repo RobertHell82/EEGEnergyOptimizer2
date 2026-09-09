@@ -681,3 +681,54 @@ def test_deckel_kappt_echte_boersenpreise_nicht():
 
     werte = [round(float(v), 4) for v in list(reihe)[:4]]
     assert werte == [0.42, 0.35, 0.25, 0.10], f"Börsenpreise gekappt: {werte}"
+
+
+def test_bewertung_mit_fester_abnahmequote():
+    """Quotenmodus: aufgenommen wird Anteil × Quote der Einspeisung — tags
+    40 %, nachts 90 % — statt des Saldos. Saldodaten braucht es keine."""
+    tag = _slot(MITTAG, 0, grid_p=4.0, battery_p=0.0, soc=10.0)
+    nacht = _slot(NOW.replace(hour=23, minute=0), 0, grid_p=4.0, battery_p=0.0, soc=10.0)
+    inputs = _inputs(
+        feedin_price=0.08989,
+        eeg_tarife=[{"name": "EEG Musterdorf", "anteil": 1.0, "tag": 0.095, "nacht": 0.095,
+                     "quote_tag": 0.4, "quote_nacht": 0.9}],
+        eeg_bedarf=None,
+        min_soc_pct=10.0,
+    )
+
+    ergebnis = sched.bewerte_geldfluesse([tag, nacht], inputs)
+
+    erwartet = (0.4 * 0.095 + 0.6 * 0.08989) + (0.9 * 0.095 + 0.1 * 0.08989)
+    assert ergebnis["erloes"] == pytest.approx(erwartet, abs=1e-4)
+    assert ergebnis["eeg_kwh"] == pytest.approx(1.3)
+    assert ergebnis["export_kwh"] == pytest.approx(2.0)
+
+
+def test_bewertung_quote_hat_vorrang_vor_saldo():
+    """Steht eine Quote im Tarif, zählt sie — auch wenn Saldodaten da sind."""
+    slot = _slot(MITTAG, 0, grid_p=4.0, battery_p=0.0, soc=10.0)
+    inputs = _inputs(
+        feedin_price=0.06,
+        eeg_tarife=[{"name": "X", "anteil": 0.5, "tag": 0.10, "nacht": 0.10,
+                     "quote_tag": 0.5, "quote_nacht": 0.5}],
+        eeg_bedarf={"X": {_viertel(MITTAG): 100.0}},
+    )
+
+    ergebnis = sched.bewerte_geldfluesse([slot], inputs)
+
+    # 1 kWh Export, 0,5 kWh angeboten, davon 50 % aufgenommen = 0,25 kWh.
+    assert ergebnis["eeg_kwh"] == pytest.approx(0.25)
+    assert ergebnis["erloes"] == pytest.approx(0.25 * 0.10 + 0.75 * 0.06)
+
+
+def test_bewertung_quote_null_faellt_zum_basistarif():
+    slot = _slot(MITTAG, 0, grid_p=4.0, battery_p=0.0, soc=10.0)
+    inputs = _inputs(
+        feedin_price=0.06,
+        eeg_tarife=[{"name": "X", "anteil": 0.5, "tag": 0.10, "nacht": 0.10,
+                     "quote_tag": 0.0, "quote_nacht": 0.0}],
+        eeg_bedarf=None,
+    )
+    ergebnis = sched.bewerte_geldfluesse([slot], inputs)
+    assert ergebnis["eeg_kwh"] == 0.0
+    assert ergebnis["erloes"] == pytest.approx(0.06)

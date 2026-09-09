@@ -68,7 +68,7 @@ schedule_executor.py: ScheduleExecutor (execution, 30 s)
 | `__init__.py` | Entry setup, 30s guard timer + 1min schedule timer, activity log, panel registration, telemetry watchdogs, config migration |
 | `schedule.py` | Planning — `ScheduleInputs`, `HAConfig` (the bridge to `opt()`), `ScheduleRunner` (collect in loop, solve in worker thread); profit comparison (`simuliere_standardbetrieb` greedy self-consumption reference with the same physics as the LP: AC efficiency, Harald's two-step internal-resistance losses above 0.1 C / 0.2 C, and the configured max-SOC cap; `bewerte_geldfluesse` with real tariffs — community rates only for energy the community's quarter-hour saldo actually absorbs, rest at base tariff/spot series; end-of-horizon battery credit at `endbestand_satz` = base tariff × efficiency − aging) |
 | `schedule_executor.py` | Execution — `plan_action()` + `ScheduleExecutor.async_guard_cycle()`; the **only** place that writes inverter commands |
-| `eeg_price.py` | Synthetic feed-in tariff from community demand — turns PeakShare demand into a price surcharge |
+| `eeg_price.py` | Synthetic feed-in tariff from community demand — turns PeakShare demand into a price surcharge. Quote mode (`eeg_demand_source = "quote"`, for communities without PeakShare): fixed day/night acceptance quota per community (`peakshare_quote_pct[_2]`, `peakshare_quote_night_pct[_2]`) → blended price `Anteil · Quote · (Wert − Basistarif)` instead of the demand-normalised signal; the same quota replaces the saldo in `bewerte_geldfluesse` (declared assumption, the one exception to "no invented revenue"); PeakShare is not fetched in quote mode |
 | `oemag.py` | Optional base tariff: OeMAG monthly market price, scraped from the HTML table (no API), cached across restarts; also reads the per-month calculation basis + balancing-energy cost for the estimator |
 | `oemag_schaetzung.py` | Estimate of the OeMAG tariff for the *current* month (source `oemag_estimate`): aWATTar day-ahead prices weighted by Austrian solar generation (Energy-Charts), clamped to 60–100 % of the E-Control quarterly price (scraped; fallback derived from clamped months of the OeMAG table), minus balancing cost. Validated 2025-01…2026-08: MAE 0.21 ct |
 | `awattar_sunny.py` | Optional base tariff: aWATTar SUNNY fixed monthly feed-in price (source `awattar_sunny`). No API — reads the yearly tab of aWATTar's published price sheet (Google Sheet, gviz CSV) and falls back to the tariff page; two contract variants (`awattar_sunny_vertrag` = `neu`/`alt`, contracts after/until 25.02.2026) because the sheet carries two SUNNY columns; cached across restarts, hourly retry while the current month is missing |
@@ -358,7 +358,9 @@ sensors (assigned once), steps 4–5 are the parameters:
    100 = charge to full, the value alone carries the state since v27)
 6. Tarife & Gemeinschaft — base tariff (manual, OeMAG published month, OeMAG current-month estimate, spot with cent and/or percent fee, or aWATTar SUNNY monthly tariff with contract variant; manual also takes a
    night rate `schedule_feedin_price_night`), consumption price, community
-   shares/prices/weights. The night window lives in the Vergütung section
+   shares/prices/weights, demand source PeakShare forecast or fixed acceptance
+   quota (`eeg_demand_source`; quotas per community, day mandatory in quote
+   mode, name becomes free text). The night window lives in the Vergütung section
    (rendered once via `_nachtfensterFelder`) and appears when ANY night rate
    is set — base tariff or community; second community collapsed behind a
    button; expert mode: battery aging cost

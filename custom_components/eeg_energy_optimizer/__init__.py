@@ -1385,8 +1385,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     from .peakshare import PeakShareProvider
     peakshare_provider = PeakShareProvider(hass, entry.entry_id)
     await peakshare_provider.async_load()
-    await peakshare_provider.async_fetch()
     data["peakshare"] = peakshare_provider
+    # Nur abrufen, wenn die Gemeinschaft aktiv ist und ihren Bedarf aus der
+    # PeakShare-Prognose bezieht. Mit fester Abnahmequote (Gemeinschaften
+    # ohne PeakShare) gibt es dort nichts zu holen — der Anbieter bleibt fürs
+    # Panel geladen, geht aber nicht ins Netz.
+    if _peakshare_gewuenscht(config):
+        await peakshare_provider.async_fetch()
 
     if coordinator and provider:
         # ----------------------------------------------------------
@@ -1892,10 +1897,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             # Grundlage der Preisfunktion wäre sie damit nach einem Tag stumm.
             # ----------------------------------------------------------
             async def _fremddaten_cycle(_now=None):
-                namen = ["peakshare", "oemag"]
+                cfg = data.get("config") or {}
+                # PeakShare nur mit aktiver Gemeinschaft UND Bedarfsprognose
+                # als Quelle; mit fester Abnahmequote entfällt der Abruf.
+                namen = ["peakshare", "oemag"] if _peakshare_gewuenscht(cfg) else ["oemag"]
                 # Börse, OeMAG-Hochrechnung und aWATTar SUNNY nur abfragen,
                 # wenn sie der gewählte Basistarif sind.
-                cfg = data.get("config") or {}
                 quelle_basis = str(
                     cfg.get("schedule_feedin_source") or "manual"
                 ).lower()
@@ -2177,6 +2184,21 @@ def _requires_full_reload(old: dict, new: dict) -> bool:
             if old.get(key) != new.get(key):
                 return True
     return False
+
+
+def _peakshare_gewuenscht(config: dict) -> bool:
+    """Braucht diese Anlage PeakShare-Daten?
+
+    Nur wenn die Gemeinschaft aktiv ist und ihren Bedarf aus der Prognose
+    bezieht. Mitglieder ohne PeakShare (feste Abnahmequote, siehe
+    eeg_price.py) bekommen dort keine Daten — der Abruf würde nur Fehler
+    protokollieren.
+    """
+    from .eeg_price import DEMAND_SOURCE_QUOTE, bedarfsquelle
+
+    if config.get("enable_peakshare") is False:
+        return False
+    return bedarfsquelle(config) != DEMAND_SOURCE_QUOTE
 
 
 async def _async_update_listener(

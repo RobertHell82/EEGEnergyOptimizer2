@@ -69,6 +69,22 @@ Die Anteile sind der Aufteilungsschlüssel: Summe höchstens 1. Was nicht auf
 eine Gemeinschaft entfällt, geht zum Basistarif an den Energieversorger — die
 Formel gibt das von selbst richtig wieder, weil jede Gemeinschaft nur ihren
 Anteil an der Differenz beiträgt.
+
+**Ohne PeakShare: feste Abnahmequote** (``eeg_demand_source = "quote"``).
+Mitglieder einer Gemeinschaft, die nicht über PeakShare abgewickelt wird,
+haben keine Bedarfsprognose. Sie tragen stattdessen je Gemeinschaft eine
+Abnahmequote ein — den Anteil der angebotenen Energie, den die Gemeinschaft
+erfahrungsgemäß aufnimmt (steht in jeder EEG-Monatsabrechnung), getrennt für
+Tag und Nacht, weil das der einzige Zeitverlauf ist, den man ohne Prognose
+ehrlich behaupten kann. Daraus wird ein Mischpreis statt eines
+bedarfsnormierten Signals:
+
+    Aufschlag_i(t) = Anteil_i · Quote_i(t) · (Wert_i(t) − Basistarif(t))
+
+Die Quote ist eine erklärte Annahme des Nutzers, keine erfundene Prognose —
+deshalb darf sie, anders als fehlende Saldodaten, auch in die Geldbewertung
+eingehen (``schedule.bewerte_geldfluesse``). Eine Differenz unter null zählt
+hier mit: der Mischpreis ist der erwartete echte Erlös, kein Steuersignal.
 """
 
 from __future__ import annotations
@@ -82,6 +98,20 @@ from typing import Any
 # hoch gesetzter Wert nicht zufällig genau auf dem Bezugspreis landet.
 DECKEL_ABSTAND = 0.001
 
+# Woher der Fahrplan weiß, wie viel die Gemeinschaft aufnimmt: aus der
+# PeakShare-Bedarfsprognose (Vorgabe) oder aus einer festen Abnahmequote je
+# Gemeinschaft — für Mitglieder, deren Gemeinschaft keine PeakShare-Daten hat.
+CONF_EEG_DEMAND_SOURCE = "eeg_demand_source"
+DEMAND_SOURCE_PEAKSHARE = "peakshare"
+DEMAND_SOURCE_QUOTE = "quote"
+
+
+def bedarfsquelle(config: dict[str, Any]) -> str:
+    """„quote" nur bei ausdrücklicher Wahl — alles andere ist PeakShare."""
+    wert = str(config.get(CONF_EEG_DEMAND_SOURCE) or "").strip().lower()
+    return DEMAND_SOURCE_QUOTE if wert == DEMAND_SOURCE_QUOTE else DEMAND_SOURCE_PEAKSHARE
+
+
 @dataclass(frozen=True)
 class Gemeinschaft:
     """Eine Energiegemeinschaft, wie die Preisfunktion sie braucht."""
@@ -90,9 +120,16 @@ class Gemeinschaft:
     anteil: float       # Aufteilungsschlüssel, 0..1
     wert_tag: float     # €/kWh: Vergütung + zusätzliche Gewichtung
     wert_nacht: float   # dasselbe für das Nachtfenster
+    # Feste Abnahmequote (0..1), nur im Quotenmodus gesetzt: welcher Teil der
+    # angebotenen Energie erfahrungsgemäß in der Gemeinschaft landet.
+    quote_tag: float | None = None
+    quote_nacht: float | None = None
 
     def wert(self, ist_nacht: bool) -> float:
         return self.wert_nacht if ist_nacht else self.wert_tag
+
+    def quote(self, ist_nacht: bool) -> float | None:
+        return self.quote_nacht if ist_nacht else self.quote_tag
 
 
 def _roh_gemeinschaften(config: dict[str, Any]) -> list[tuple]:
@@ -104,6 +141,8 @@ def _roh_gemeinschaften(config: dict[str, Any]) -> list[tuple]:
             config.get("peakshare_price"),
             config.get("peakshare_price_night"),
             config.get("peakshare_weight"),
+            config.get("peakshare_quote_pct"),
+            config.get("peakshare_quote_night_pct"),
         ),
         (
             config.get("peakshare_community_2"),
@@ -111,8 +150,22 @@ def _roh_gemeinschaften(config: dict[str, Any]) -> list[tuple]:
             config.get("peakshare_price_2"),
             config.get("peakshare_price_night_2"),
             config.get("peakshare_weight_2"),
+            config.get("peakshare_quote_pct_2"),
+            config.get("peakshare_quote_night_pct_2"),
         ),
     ]
+
+
+def _quoten(quote_pct: Any, quote_nacht_pct: Any) -> tuple[float, float]:
+    """Panel-Prozentfelder → (Tag, Nacht) als Bruch 0..1.
+
+    Ein leeres Nachtfeld heißt wie bei den Sätzen: dieselbe Quote wie am Tag.
+    Über 100 % kann nichts aufgenommen werden, unter 0 % nichts abgegeben.
+    """
+    tag = min(1.0, max(0.0, _zahl(quote_pct) / 100.0))
+    nacht_roh = _zahl(quote_nacht_pct)
+    nacht = min(1.0, max(0.0, nacht_roh / 100.0)) if nacht_roh > 0 else tag
+    return tag, nacht
 
 
 def gemeinschaften_aus_config(config: dict[str, Any]) -> list[Gemeinschaft]:
@@ -127,9 +180,10 @@ def gemeinschaften_aus_config(config: dict[str, Any]) -> list[Gemeinschaft]:
         return []
 
     roh = _roh_gemeinschaften(config)
+    quotenmodus = bedarfsquelle(config) == DEMAND_SOURCE_QUOTE
 
     ergebnis: list[Gemeinschaft] = []
-    for name, anteil_pct, preis, preis_nacht, gewichtung in roh:
+    for name, anteil_pct, preis, preis_nacht, gewichtung, q_pct, q_nacht_pct in roh:
         if not name:
             continue
         anteil = _zahl(anteil_pct) / 100.0
@@ -142,12 +196,21 @@ def gemeinschaften_aus_config(config: dict[str, Any]) -> list[Gemeinschaft]:
         # Gemeinschaft am Leben, sonst steuert der Fahrplan nachts gar nicht.
         if anteil <= 0 or max(tag + gew, nacht + gew) <= 0:
             continue
+        quote_tag = quote_nacht = None
+        if quotenmodus:
+            quote_tag, quote_nacht = _quoten(q_pct, q_nacht_pct)
+            # Ohne Quote nimmt die Gemeinschaft nichts auf — sie wirkt dann
+            # in keine Richtung, wie eine PeakShare-Gemeinschaft ohne Daten.
+            if quote_tag <= 0 and quote_nacht <= 0:
+                continue
         ergebnis.append(
             Gemeinschaft(
                 name=str(name),
                 anteil=anteil,
                 wert_tag=tag + gew,
                 wert_nacht=nacht + gew,
+                quote_tag=quote_tag,
+                quote_nacht=quote_nacht,
             )
         )
     return ergebnis
@@ -168,9 +231,10 @@ def echte_tarife_aus_config(config: dict[str, Any]) -> list[dict[str, Any]]:
     if config.get("enable_peakshare") is False:
         return []
 
+    quotenmodus = bedarfsquelle(config) == DEMAND_SOURCE_QUOTE
     ergebnis: list[dict[str, Any]] = []
-    for name, anteil_pct, preis, preis_nacht, _gewichtung in _roh_gemeinschaften(
-        config
+    for name, anteil_pct, preis, preis_nacht, _gewichtung, q_pct, q_nacht_pct in (
+        _roh_gemeinschaften(config)
     ):
         if not name:
             continue
@@ -183,9 +247,15 @@ def echte_tarife_aus_config(config: dict[str, Any]) -> list[dict[str, Any]]:
         # Geldfluss fehlte in der Gewinnberechnung vollständig.
         if anteil <= 0 or max(tag, nacht) <= 0:
             continue
-        ergebnis.append(
-            {"name": str(name), "anteil": anteil, "tag": tag, "nacht": nacht}
-        )
+        eintrag: dict[str, Any] = {
+            "name": str(name), "anteil": anteil, "tag": tag, "nacht": nacht
+        }
+        if quotenmodus:
+            # Nur im Quotenmodus dabei: die Geldbewertung nimmt dann die
+            # Quote statt des Saldos. Ohne die Schlüssel bleibt alles wie
+            # bisher (Saldo, ohne Saldo Basistarif).
+            eintrag["quote_tag"], eintrag["quote_nacht"] = _quoten(q_pct, q_nacht_pct)
+        ergebnis.append(eintrag)
     return ergebnis
 
 
@@ -297,6 +367,66 @@ def aufschlag_reihe(
         eintrag["max_abschlag_ct"] = round(tiefster * 100, 2)
         if hoechster <= 0 and tiefster >= 0:
             eintrag["hinweis"] = "kein Mehrwert gegenüber dem Basistarif"
+        diagnose.append(eintrag)
+
+    return aufschlaege, diagnose
+
+
+def quoten_aufschlag_reihe(
+    gemeinschaften: list[Gemeinschaft],
+    stamps: list[datetime],
+    basis: float | list[float],
+    ist_nacht: list[bool] | None = None,
+) -> tuple[list[float], list[dict[str, Any]]]:
+    """Preisaufschlag aus festen Abnahmequoten — der Mischpreis ohne Prognose.
+
+    Gegenstück zu ``aufschlag_reihe`` für Gemeinschaften ohne PeakShare:
+    statt des bedarfsnormierten Signals gilt je Zeitpunkt der erwartete
+    Anteil, der wirklich in der Gemeinschaft landet. Die Differenz zum
+    Basistarif zählt in beide Richtungen — der Mischpreis ist der erwartete
+    Erlös, kein Anreiz, und eine Gemeinschaft, die weniger zahlt als der
+    Basistarif, senkt ihn wirklich. Gemeinschaften ohne Quote (None) tragen
+    nichts bei. Rückgabe wie ``aufschlag_reihe``: (Aufschläge, Diagnose).
+    """
+    anzahl = len(stamps)
+    aufschlaege = [0.0] * anzahl
+    basis_reihe = (
+        list(basis) if isinstance(basis, (list, tuple)) else [float(basis)] * anzahl
+    )
+    if len(basis_reihe) < anzahl:
+        fehlt = anzahl - len(basis_reihe)
+        basis_reihe += [basis_reihe[-1] if basis_reihe else 0.0] * fehlt
+    nacht_reihe = ist_nacht if ist_nacht is not None else [False] * anzahl
+    diagnose: list[dict[str, Any]] = []
+
+    for g in gemeinschaften:
+        eintrag: dict[str, Any] = {
+            "name": g.name,
+            "anteil_pct": round(g.anteil * 100, 1),
+            "wert_tag_ct": round(g.wert_tag * 100, 2),
+            "wert_nacht_ct": round(g.wert_nacht * 100, 2),
+            "quote_tag_pct": None if g.quote_tag is None else round(g.quote_tag * 100, 1),
+            "quote_nacht_pct": None if g.quote_nacht is None else round(g.quote_nacht * 100, 1),
+            "max_aufschlag_ct": 0.0,
+            "max_abschlag_ct": 0.0,
+            "hinweis": "feste Abnahmequote",
+        }
+        if g.quote_tag is None and g.quote_nacht is None:
+            eintrag["hinweis"] = "keine Abnahmequote"
+            diagnose.append(eintrag)
+            continue
+        hoechster = tiefster = 0.0
+        for i in range(anzahl):
+            nacht = bool(nacht_reihe[i])
+            quote = g.quote(nacht)
+            if not quote:
+                continue
+            zuschlag = g.anteil * quote * (g.wert(nacht) - basis_reihe[i])
+            aufschlaege[i] += zuschlag
+            hoechster = max(hoechster, zuschlag)
+            tiefster = min(tiefster, zuschlag)
+        eintrag["max_aufschlag_ct"] = round(hoechster * 100, 2)
+        eintrag["max_abschlag_ct"] = round(tiefster * 100, 2)
         diagnose.append(eintrag)
 
     return aufschlaege, diagnose

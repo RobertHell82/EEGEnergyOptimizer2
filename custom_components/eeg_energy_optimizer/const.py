@@ -279,6 +279,9 @@ TELEMETRY_SETTINGS_KEYS = (
     "steuerung",
     "enable_peakshare",
     "peakshare_community",
+    # Prognose (PeakShare) oder feste Abnahmequote — erklaert, warum ein Plan
+    # keinen Bedarfsverlauf kennt.
+    "eeg_demand_source",
     "discharge_power_kw",
     "forecast_source",
     "schedule_min_soc_pct",

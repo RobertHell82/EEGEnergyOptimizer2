@@ -467,3 +467,76 @@ async def test_quelle_oemag_fragt_awattar_sunny_nicht():
     )
     assert inputs.feedin_price == pytest.approx(0.06146)
     assert sunny.abgefragt == []
+
+
+# ---------------------------------------------------------------------------
+# Feste Abnahmequote statt PeakShare-Prognose
+# ---------------------------------------------------------------------------
+
+QUOTE_CONFIG = {
+    **BASE_CONFIG,
+    "eeg_demand_source": "quote",
+    "peakshare_community": "EEG Musterdorf",
+    "peakshare_share_pct": 100,
+    "peakshare_price": 0.095,
+    "peakshare_weight": 0,
+    "peakshare_quote_pct": 40,
+    "peakshare_quote_night_pct": 90,
+    "schedule_feedin_price": 0.08989,
+    "schedule_night_start": "20:00",
+    "schedule_night_end": "06:00",
+}
+
+
+async def test_quotenmodus_rechnet_den_mischpreis_ohne_peakshare():
+    """Ohne Prognose wird PeakShare gar nicht gefragt; der Aufschlag ist die
+    Quote der Tarifdifferenz — tags 40 %, nachts 90 %, zu jeder Stunde."""
+    ps = _Peakshare({18: 100.0}, namen=("EEG Musterdorf",))
+    inputs, problem = await _collect(QUOTE_CONFIG, peakshare=ps)
+
+    assert problem is None
+    assert ps.abrufe == [], "mit fester Quote darf PeakShare nicht abgefragt werden"
+    assert inputs.eeg_bedarf is None
+    assert inputs.eeg_bonus is not None
+    for t, b in zip(inputs.timestamps, inputs.eeg_bonus):
+        nacht = t.hour >= 20 or t.hour < 6
+        assert b == pytest.approx((0.9 if nacht else 0.4) * (0.095 - 0.08989)), t
+    assert inputs.eeg_details[0]["hinweis"] == "feste Abnahmequote"
+    # Die echten Tarife tragen die Quote — für die Geldbewertung.
+    assert inputs.eeg_tarife[0]["quote_tag"] == pytest.approx(0.4)
+    assert inputs.eeg_tarife[0]["quote_nacht"] == pytest.approx(0.9)
+
+
+async def test_quotenmodus_ohne_quote_wirkt_nicht():
+    inputs, _ = await _collect(
+        {**QUOTE_CONFIG, "peakshare_quote_pct": 0, "peakshare_quote_night_pct": 0}
+    )
+    assert inputs.eeg_bonus is None
+    assert inputs.eeg_tarife[0]["quote_tag"] == 0.0
+
+
+async def test_quotenmodus_mit_awattar_sunny_als_basis():
+    """Der Kundenfall: SUNNY-Monatstarif als Basis, EEG mit Quote obendrauf."""
+    inputs, _ = await _collect(
+        {**QUOTE_CONFIG, "schedule_feedin_source": "awattar_sunny"},
+        awattar_sunny=_Sunny(neu=0.01223),      # Mai 2026
+    )
+    assert inputs.feedin_price == pytest.approx(0.01223)
+    tag = [b for t, b in zip(inputs.timestamps, inputs.eeg_bonus) if t.hour == 12]
+    nacht = [b for t, b in zip(inputs.timestamps, inputs.eeg_bonus) if t.hour == 23]
+    assert tag and all(b == pytest.approx(0.4 * (0.095 - 0.01223)) for b in tag)
+    assert nacht and all(b == pytest.approx(0.9 * (0.095 - 0.01223)) for b in nacht)
+
+
+async def test_peakshare_modus_bleibt_mit_quotenfeldern_unveraendert():
+    """Gespeicherte Quoten dürfen im PeakShare-Modus nichts ändern."""
+    ps = _Peakshare({18: 100.0}, namen=("EEG Musterdorf",))
+    inputs, _ = await _collect(
+        {**QUOTE_CONFIG, "eeg_demand_source": "peakshare"}, peakshare=ps
+    )
+
+    assert ps.abrufe == ["EEG Musterdorf"]
+    assert "quote_tag" not in inputs.eeg_tarife[0]
+    um18 = [b for t, b in zip(inputs.timestamps, inputs.eeg_bonus) if t.hour == 18]
+    assert um18 and all(b == pytest.approx(0.095 - 0.08989) for b in um18)
+    assert all(b == 0.0 for t, b in zip(inputs.timestamps, inputs.eeg_bonus) if t.hour == 12)

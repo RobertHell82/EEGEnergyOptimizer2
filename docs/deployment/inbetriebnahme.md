@@ -91,7 +91,7 @@ Das Panel führt dich Schritt für Schritt durch:
 2. Wechselrichtertyp wählen + automatische Sensorerkennung
 3. Prognosequelle wählen (Solcast / Forecast.Solar)
 4. Batterie- & PV-Sensoren zuordnen
-5. Fahrplan-Einstellungen (Einspeisevergütung, Bezugspreis, Mindest- und Maximum-Ladestand, Alterungskosten, Batterie-Leistungsgrenze, PeakShare-Community)
+5. Fahrplan-Einstellungen (Einspeisevergütung, Bezugspreis, Mindest- und Maximum-Ladestand, Alterungskosten, Batterie-Leistungsgrenze, Energiegemeinschaft mit PeakShare-Prognose oder fester Abnahmequote)
 6. Einspeisegrenze (optional)
 7. Wechselrichter-Verbindungstest
 

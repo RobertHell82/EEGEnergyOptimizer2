@@ -404,3 +404,128 @@ def test_boden_vertraegt_eine_leere_reihe():
     assert preise == []
     assert angehoben == 0
     assert tiefster == 0.0
+
+
+# ---------------------------------------------------------------------------
+# Feste Abnahmequote (Gemeinschaft ohne PeakShare)
+# ---------------------------------------------------------------------------
+
+QUOTE_CONFIG = {
+    "eeg_demand_source": "quote",
+    "peakshare_community": "EEG Musterdorf",
+    "peakshare_share_pct": 100, "peakshare_price": 0.095, "peakshare_weight": 0,
+    "peakshare_quote_pct": 40, "peakshare_quote_night_pct": 90,
+}
+
+
+def test_bedarfsquelle_ist_peakshare_ausser_bei_ausdruecklicher_quote():
+    assert ep.bedarfsquelle({}) == ep.DEMAND_SOURCE_PEAKSHARE
+    assert ep.bedarfsquelle({"eeg_demand_source": "peakshare"}) == ep.DEMAND_SOURCE_PEAKSHARE
+    assert ep.bedarfsquelle({"eeg_demand_source": " Quote "}) == ep.DEMAND_SOURCE_QUOTE
+    assert ep.bedarfsquelle({"eeg_demand_source": "unsinn"}) == ep.DEMAND_SOURCE_PEAKSHARE
+
+
+def test_quoten_werden_gelesen():
+    g = ep.gemeinschaften_aus_config(QUOTE_CONFIG)
+
+    assert len(g) == 1
+    assert g[0].quote_tag == pytest.approx(0.4)
+    assert g[0].quote_nacht == pytest.approx(0.9)
+    assert g[0].quote(ist_nacht=True) == pytest.approx(0.9)
+    assert g[0].quote(ist_nacht=False) == pytest.approx(0.4)
+    # Leeres Nachtfeld: wie am Tag. Über 100 % wird geklemmt.
+    g = ep.gemeinschaften_aus_config(
+        {**QUOTE_CONFIG, "peakshare_quote_night_pct": "", "peakshare_quote_pct": 130}
+    )
+    assert g[0].quote_tag == pytest.approx(1.0)
+    assert g[0].quote_nacht == pytest.approx(1.0)
+
+
+def test_ohne_quote_faellt_die_gemeinschaft_heraus():
+    """Ohne Quote nimmt sie nichts auf — wie eine PeakShare-Gemeinschaft ohne
+    Daten wirkt sie in keine Richtung."""
+    assert ep.gemeinschaften_aus_config(
+        {**QUOTE_CONFIG, "peakshare_quote_pct": 0, "peakshare_quote_night_pct": 0}
+    ) == []
+    assert ep.gemeinschaften_aus_config(
+        {**QUOTE_CONFIG, "peakshare_quote_pct": "", "peakshare_quote_night_pct": ""}
+    ) == []
+    # Nur eine Nachtquote hält sie am Leben (Tag 0 %, Nacht 90 %).
+    g = ep.gemeinschaften_aus_config({**QUOTE_CONFIG, "peakshare_quote_pct": 0})
+    assert len(g) == 1 and g[0].quote_tag == 0.0 and g[0].quote_nacht == pytest.approx(0.9)
+
+
+def test_peakshare_modus_kennt_keine_quote():
+    """Gespeicherte Quotenfelder ändern im PeakShare-Modus nichts."""
+    g = ep.gemeinschaften_aus_config({**QUOTE_CONFIG, "eeg_demand_source": "peakshare"})
+    assert g[0].quote_tag is None and g[0].quote_nacht is None
+    tarife = ep.echte_tarife_aus_config({**QUOTE_CONFIG, "eeg_demand_source": "peakshare"})
+    assert "quote_tag" not in tarife[0] and "quote_nacht" not in tarife[0]
+
+
+def test_echte_tarife_tragen_die_quote_im_quotenmodus():
+    tarife = ep.echte_tarife_aus_config(QUOTE_CONFIG)
+    assert tarife == [{
+        "name": "EEG Musterdorf", "anteil": 1.0, "tag": 0.095, "nacht": 0.095,
+        "quote_tag": pytest.approx(0.4), "quote_nacht": pytest.approx(0.9),
+    }]
+    # Ohne Quote bleibt der Eintrag (echter Satz), nimmt aber nichts auf.
+    tarife = ep.echte_tarife_aus_config(
+        {**QUOTE_CONFIG, "peakshare_quote_pct": "", "peakshare_quote_night_pct": ""}
+    )
+    assert tarife[0]["quote_tag"] == 0.0 and tarife[0]["quote_nacht"] == 0.0
+    # Nur die Nachtquote gesetzt: tags 0, nachts 90 %.
+    tarife = ep.echte_tarife_aus_config({**QUOTE_CONFIG, "peakshare_quote_pct": ""})
+    assert tarife[0]["quote_tag"] == 0.0 and tarife[0]["quote_nacht"] == pytest.approx(0.9)
+
+
+def test_quoten_aufschlag_ist_der_mischpreis_je_tageszeit():
+    """Anteil 100 %, Satz 9,5 ct, Basis 8,989 ct: tags 40 % der Differenz,
+    nachts 90 % — an jedem Zeitpunkt, ohne Bedarfsdaten."""
+    g = ep.gemeinschaften_aus_config(QUOTE_CONFIG)
+    stamps = _stamps(24, 60)
+    nacht = [s.hour >= 20 or s.hour < 6 for s in stamps]
+
+    aufschlaege, diagnose = ep.quoten_aufschlag_reihe(g, stamps, 0.08989, nacht)
+
+    for a, n in zip(aufschlaege, nacht):
+        assert a == pytest.approx((0.9 if n else 0.4) * (0.095 - 0.08989))
+    assert diagnose[0]["hinweis"] == "feste Abnahmequote"
+    assert diagnose[0]["quote_tag_pct"] == 40.0
+    assert diagnose[0]["quote_nacht_pct"] == 90.0
+    assert diagnose[0]["max_aufschlag_ct"] == pytest.approx(0.46, abs=0.005)
+    assert diagnose[0]["max_abschlag_ct"] == 0.0
+
+
+def test_quoten_aufschlag_zaehlt_negative_differenz_mit():
+    """SUNNY im Jänner (10,969 ct) über dem EEG-Satz: der Mischpreis liegt
+    wirklich darunter — er ist der erwartete Erlös, kein Anreiz."""
+    g = ep.gemeinschaften_aus_config({**QUOTE_CONFIG, "peakshare_share_pct": 50})
+    stamps = _stamps(2, 60)
+
+    aufschlaege, diagnose = ep.quoten_aufschlag_reihe(g, stamps, 0.10969, [False, False])
+
+    assert all(a == pytest.approx(0.5 * 0.4 * (0.095 - 0.10969)) for a in aufschlaege)
+    assert diagnose[0]["max_abschlag_ct"] < 0
+
+
+def test_quoten_aufschlag_mit_basisreihe_und_zwei_gemeinschaften():
+    g = ep.gemeinschaften_aus_config({
+        **QUOTE_CONFIG, "peakshare_share_pct": 60,
+        "peakshare_community_2": "BEG", "peakshare_share_pct_2": 40,
+        "peakshare_price_2": 0.12, "peakshare_quote_pct_2": 50,
+    })
+    stamps = _stamps(2, 60)
+
+    aufschlaege, diagnose = ep.quoten_aufschlag_reihe(g, stamps, [0.05, 0.10], [False, False])
+
+    assert aufschlaege[0] == pytest.approx(0.6 * 0.4 * (0.095 - 0.05) + 0.4 * 0.5 * (0.12 - 0.05))
+    assert aufschlaege[1] == pytest.approx(0.6 * 0.4 * (0.095 - 0.10) + 0.4 * 0.5 * (0.12 - 0.10))
+    assert [e["name"] for e in diagnose] == ["EEG Musterdorf", "BEG"]
+
+
+def test_quoten_aufschlag_ohne_quote_ist_null():
+    g = [ep.Gemeinschaft(name="X", anteil=1.0, wert_tag=0.1, wert_nacht=0.1)]
+    aufschlaege, diagnose = ep.quoten_aufschlag_reihe(g, _stamps(2, 60), 0.05)
+    assert aufschlaege == [0.0, 0.0]
+    assert diagnose[0]["hinweis"] == "keine Abnahmequote"
