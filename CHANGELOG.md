@@ -10,6 +10,13 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
+## [2.1.0-dev3] - 2026-09-09
+
+### Hinzugefügt
+
+- **Energiegemeinschaft ohne PeakShare: feste Abnahmequote.** Unter „Energiegemeinschaft" gibt es die Wahl der Bedarfsdaten: PeakShare-Prognose wie bisher oder eine feste Abnahmequote je Gemeinschaft (Tag und Nacht, in Prozent). Die Quote ist der Anteil der angebotenen Einspeisung, den die Gemeinschaft erfahrungsgemäß aufnimmt — er steht in jeder EEG-Monatsabrechnung. Der Fahrplan rechnet daraus einen Mischpreis: Anteil × Quote zum Gemeinschaftssatz, der Rest zur Standardvergütung. Bisher fiel eine Gemeinschaft ohne PeakShare komplett heraus, jede Kilowattstunde zählte zum Basistarif — für einen aWATTar-SUNNY-Kunden in einer EEG im Sommer also 1,2 statt rund 9 Cent. Der Name der Gemeinschaft ist im Quotenmodus ein Freitext; PeakShare wird dann nicht mehr abgefragt, die Bedarfskarte im Dashboard entfällt.
+- **Gewinn- und Bilanzkarten rechnen mit der Quote.** Die Zuteilung zur Gemeinschaft folgt im Quotenmodus der erklärten Annahme statt des Saldos und ist als solche beschriftet. Die Regel „keine Prognose, kein erfundener Erlös" bleibt für PeakShare unverändert.
+
 ## [2.1.0-dev2] - 2026-09-09
 
 ### Hinzugefügt
