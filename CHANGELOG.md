@@ -10,6 +10,12 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
+## [2.1.0-dev4] - 2026-09-09
+
+### Behoben
+
+- **Einstellungen: Überschrift „Energiegemeinschaft (EW Ansfelden – PeakShare)" hieß noch nach PeakShare.** Die Karte gilt seit 2.1.0-dev3 für jede Gemeinschaft, mit oder ohne PeakShare — sie heißt jetzt wie im Assistenten schlicht „Energiegemeinschaft".
+
 ## [2.1.0-dev3] - 2026-09-09
 
 ### Hinzugefügt
