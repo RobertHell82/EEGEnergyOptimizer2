@@ -297,6 +297,8 @@ TELEMETRY_SETTINGS_KEYS = (
     "schedule_feedin_price_night",
     "spot_market_area",
     "spot_feedin_fee",
+    "spot_feedin_fee_pct",
+    "awattar_sunny_vertrag",
     "schedule_consumption_price",
     "schedule_grid_fee",
     "schedule_battery_cost",

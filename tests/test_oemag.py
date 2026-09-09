@@ -169,6 +169,7 @@ def test_preisanbieter_werden_vor_dem_wizard_abbruch_geladen():
         ('["oemag"] = oemag_provider', "OeMAG"),
         ('["oemag_schaetzung"] = oemag_schaetzer', "OeMAG-Hochrechnung"),
         ('["spot"] = spot_provider', "Spot"),
+        ('["awattar_sunny"] = awattar_sunny_provider', "aWATTar SUNNY"),
     ):
         stelle = quelle.index(marker)
         assert stelle < abbruch, (

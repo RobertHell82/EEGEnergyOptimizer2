@@ -87,7 +87,8 @@ class _Oemag:
         self.preis = preis
 
 
-def _hass(config, peakshare=None, oemag=None, oemag_schaetzung=None):
+def _hass(config, peakshare=None, oemag=None, oemag_schaetzung=None,
+          awattar_sunny=None):
     hass = MagicMock()
     hass.data = {
         sched.DOMAIN: {
@@ -98,6 +99,7 @@ def _hass(config, peakshare=None, oemag=None, oemag_schaetzung=None):
                 "peakshare": peakshare,
                 "oemag": oemag,
                 "oemag_schaetzung": oemag_schaetzung,
+                "awattar_sunny": awattar_sunny,
             }
         }
     }
@@ -114,8 +116,9 @@ def _hass(config, peakshare=None, oemag=None, oemag_schaetzung=None):
     return hass
 
 
-async def _collect(config, peakshare=None, oemag=None, oemag_schaetzung=None):
-    hass = _hass(config, peakshare, oemag, oemag_schaetzung)
+async def _collect(config, peakshare=None, oemag=None, oemag_schaetzung=None,
+                   awattar_sunny=None):
+    hass = _hass(config, peakshare, oemag, oemag_schaetzung, awattar_sunny)
     with (
         patch.object(sched, "_now_local", return_value=NOW),
         patch.object(
@@ -383,3 +386,84 @@ async def test_leeres_gemeinschafts_nachtfenster_faellt_auf_standard():
     assert problem is None
     assert inputs.eeg_night_start_hour == 22   # wie schedule_night_start
     assert inputs.eeg_night_end_hour == 6
+
+
+# ---------------------------------------------------------------------------
+# Basistarif aWATTar SUNNY (fester Monatstarif)
+# ---------------------------------------------------------------------------
+
+
+class _Sunny:
+    """Anbieter-Attrappe: Preis je Vertragsvariante, merkt sich die Abfrage."""
+
+    def __init__(self, neu, alt=None):
+        self._preise = {"neu": neu, "alt": alt}
+        self.abgefragt = []
+
+    def preis_fuer(self, vertrag):
+        self.abgefragt.append(vertrag)
+        return self._preise.get(vertrag)
+
+
+async def test_awattar_sunny_ersetzt_den_basistarif():
+    """Quelle „awattar_sunny": der Monatstarif zählt, nicht die Handeingabe.
+    Ohne Angabe gilt der aktuelle Vertrag."""
+    sunny = _Sunny(neu=0.08989, alt=0.09340)
+    inputs, _ = await _collect(
+        {**BASE_CONFIG, "schedule_feedin_source": "awattar_sunny",
+         "schedule_feedin_price": 0.082},
+        awattar_sunny=sunny,
+    )
+    assert inputs.feedin_price == pytest.approx(0.08989)
+    assert inputs.feedin_price_series is None
+    assert sunny.abgefragt == ["neu"]
+
+
+async def test_awattar_sunny_altvertrag_nimmt_die_andere_spalte():
+    """Verträge bis 25.02.2026 haben eine eigene Preisspalte — die Einstellung
+    entscheidet, welche der Fahrplan nimmt."""
+    sunny = _Sunny(neu=0.05415, alt=0.08602)
+    inputs, _ = await _collect(
+        {**BASE_CONFIG, "schedule_feedin_source": "awattar_sunny",
+         "awattar_sunny_vertrag": "alt"},
+        awattar_sunny=sunny,
+    )
+    assert inputs.feedin_price == pytest.approx(0.08602)
+    assert sunny.abgefragt == ["alt"]
+
+
+async def test_awattar_sunny_kennt_keinen_nachtsatz():
+    """Ein gespeicherter Nachtsatz der Handeingabe darf Tag und Nacht nicht
+    aus verschiedenen Quellen mischen — wie bei der OeMAG."""
+    inputs, _ = await _collect(
+        {**BASE_CONFIG, "schedule_feedin_source": "awattar_sunny",
+         "schedule_feedin_price_night": 0.102},
+        awattar_sunny=_Sunny(neu=0.08989),
+    )
+    assert inputs.feedin_price == pytest.approx(0.08989)
+    assert inputs.feedin_price_night is None
+
+
+async def test_ohne_awattar_sunny_wert_gilt_die_handeingabe():
+    inputs, _ = await _collect(
+        {**BASE_CONFIG, "schedule_feedin_source": "awattar_sunny",
+         "schedule_feedin_price": 0.082},
+        awattar_sunny=_Sunny(neu=None),
+    )
+    assert inputs.feedin_price == pytest.approx(0.082)
+    # Anbieter gar nicht geladen: ebenso.
+    inputs, _ = await _collect(
+        {**BASE_CONFIG, "schedule_feedin_source": "awattar_sunny",
+         "schedule_feedin_price": 0.082},
+    )
+    assert inputs.feedin_price == pytest.approx(0.082)
+
+
+async def test_quelle_oemag_fragt_awattar_sunny_nicht():
+    sunny = _Sunny(neu=0.08989)
+    inputs, _ = await _collect(
+        {**BASE_CONFIG, "schedule_feedin_source": "oemag"},
+        oemag=_Oemag(0.06146), awattar_sunny=sunny,
+    )
+    assert inputs.feedin_price == pytest.approx(0.06146)
+    assert sunny.abgefragt == []

@@ -517,6 +517,7 @@ def async_register_websocket_commands(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_set_override)
     websocket_api.async_register_command(hass, ws_clear_override)
     websocket_api.async_register_command(hass, ws_get_spot_preis)
+    websocket_api.async_register_command(hass, ws_get_awattar_sunny)
     websocket_api.async_register_command(hass, ws_refresh_consumption_profile)
     # Phase 8 — Telemetry-Steuerung (D-32 / D-33)
     websocket_api.async_register_command(hass, ws_telemetry_get_status)
@@ -2088,6 +2089,44 @@ async def ws_get_spot_preis(
     elif provider.preis_jetzt() is None:
         # Erstes Öffnen im Panel: ohne Daten wäre der Status eine leere
         # Behauptung — einmal holen, die Frische-Frist drosselt Wiederholungen.
+        await provider.async_fetch()
+
+    connection.send_result(msg["id"], provider.status())
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "eeg_optimizer/get_awattar_sunny",
+        vol.Optional("refresh"): bool,
+    }
+)
+@websocket_api.async_response
+async def ws_get_awattar_sunny(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict,
+) -> None:
+    """Monatstarif aWATTar SUNNY: Wert je Vertragsvariante, Monat, Herkunft, Alter.
+
+    Beide Varianten („neu"/„alt") stehen in der Antwort, das Panel zeigt die
+    gewählte — auch eine noch nicht gespeicherte Auswahl. ``refresh`` erzwingt
+    einen Abruf (Knopf „Jetzt holen"); ohne Daten wird beim ersten Öffnen
+    einmal geholt, die Frische-Frist drosselt Wiederholungen.
+    """
+    entry, data = _get_entry_data(hass, connection, msg)
+    if entry is None:
+        return
+
+    provider = data.get("awattar_sunny")
+    if provider is None:
+        connection.send_result(
+            msg["id"], {"neu": None, "alt": None, "fehler": "Anbieter nicht geladen"}
+        )
+        return
+
+    if msg.get("refresh"):
+        await provider.async_fetch(force=True)
+    elif not provider.hat_daten():
         await provider.async_fetch()
 
     connection.send_result(msg["id"], provider.status())

@@ -76,15 +76,27 @@ CONF_SCHEDULE_FEEDIN_PRICE = "schedule_feedin_price"
 CONF_SCHEDULE_FEEDIN_PRICE_NIGHT = "schedule_feedin_price_night"
 # Woher der Basistarif kommt: Handeingabe, OeMAG (oemag.py — der zuletzt
 # veröffentlichte Monat oder die Hochrechnung des laufenden Monats aus
-# oemag_schaetzung.py) oder die Strombörse (spot.py, aWATTar-API).
+# oemag_schaetzung.py), die Strombörse (spot.py, aWATTar-API) oder der feste
+# Monatstarif aWATTar SUNNY (awattar_sunny.py).
 CONF_SCHEDULE_FEEDIN_SOURCE = "schedule_feedin_source"
 FEEDIN_SOURCE_OEMAG = "oemag"
 FEEDIN_SOURCE_OEMAG_ESTIMATE = "oemag_estimate"
 FEEDIN_SOURCE_SPOT = "spot"
+FEEDIN_SOURCE_AWATTAR_SUNNY = "awattar_sunny"
 DEFAULT_SCHEDULE_FEEDIN_SOURCE = "manual"
+# aWATTar SUNNY führt seit dem 25.02.2026 zwei Preisspalten — Verträge bis
+# zu diesem Tag („alt") und danach („neu"). Welche gilt, sagt das
+# Vertragsdatum des Nutzers; siehe awattar_sunny.py.
+CONF_AWATTAR_SUNNY_VERTRAG = "awattar_sunny_vertrag"
+DEFAULT_AWATTAR_SUNNY_VERTRAG = "neu"
 # Abschlag des Vermarkters auf den Börsenpreis (€/kWh, im Panel in Cent).
 # 0 oder leer heißt: der volle Spotpreis. Negativ wäre ein Aufschlag.
 CONF_SPOT_FEEDIN_FEE = "spot_feedin_fee"
+# Prozentualer Abschlag auf den BETRAG des Börsenpreises (0–100). aWATTar
+# SUNNY Spot 60min zieht 19 % auf |Preis| ab — ein negativer Preis wird
+# dadurch negativer, nicht kleiner. Cent- und Prozentabschlag wirken
+# zusammen; wer nur einen hat, lässt den anderen leer.
+CONF_SPOT_FEEDIN_FEE_PCT = "spot_feedin_fee_pct"
 CONF_SCHEDULE_NIGHT_START = "schedule_night_start"
 CONF_SCHEDULE_NIGHT_END = "schedule_night_end"
 # Eigenes Nachtfenster der Gemeinschaften: EEG/BEG-Verträge können ein
@@ -1195,6 +1207,26 @@ async def async_collect_inputs(
                 feedin_tag,
             )
 
+    # Fester Monatstarif aWATTar SUNNY (awattar_sunny.py): wie die OeMAG ein
+    # Skalar ohne Tagesstruktur und ohne Nachtsatz. Die Vertragsvariante
+    # kommt aus der Konfiguration und wird bei jeder Abfrage übergeben — so
+    # wirkt ein Wechsel in den Einstellungen sofort, ohne Neuaufbau des
+    # Anbieters. Ohne Wert gilt auch hier die Handeingabe.
+    if quelle_basis == FEEDIN_SOURCE_AWATTAR_SUNNY:
+        feedin_nacht = None
+        sunny = data.get("awattar_sunny")
+        vertrag = str(
+            config.get(CONF_AWATTAR_SUNNY_VERTRAG) or DEFAULT_AWATTAR_SUNNY_VERTRAG
+        ).lower()
+        sunny_preis = sunny.preis_fuer(vertrag) if sunny is not None else None
+        if sunny_preis is not None:
+            feedin_tag = float(sunny_preis)
+        else:
+            _LOGGER.debug(
+                "aWATTar-SUNNY-Tarif nicht verfügbar, es gilt die Handeingabe (%.5f €/kWh)",
+                feedin_tag,
+            )
+
     # Basistarif von der Strombörse (Day-Ahead, aWATTar-API): eine Zeitreihe
     # statt Tag/Nacht-Sätzen. Der Vermarkter-Abschlag geht je Slot ab, negative
     # Börsenpreise bleiben negativ (der Fahrplan regelt dann ab statt
@@ -1215,7 +1247,14 @@ async def async_collect_inputs(
                 fee = float(config.get(CONF_SPOT_FEEDIN_FEE) or 0)
             except (TypeError, ValueError):
                 fee = 0.0
-            feedin_reihe = [p - fee for p in roh_reihe]
+            try:
+                fee_pct = float(config.get(CONF_SPOT_FEEDIN_FEE_PCT) or 0) / 100.0
+            except (TypeError, ValueError):
+                fee_pct = 0.0
+            # Der Prozentabschlag geht vom BETRAG ab (aWATTar SUNNY Spot
+            # 60min: 19 % auf |Preis|) — bei negativem Börsenpreis wird die
+            # Einspeisung dadurch noch teurer, genau wie im Tarif.
+            feedin_reihe = [p - fee - abs(p) * fee_pct for p in roh_reihe]
             # Der Skalar bleibt als Kenngröße (Bezugspreis-Fallback, Anzeige):
             # das Mittel der Reihe ist dafür der ehrlichste Einzelwert.
             feedin_tag = sum(feedin_reihe) / len(feedin_reihe)

@@ -205,6 +205,12 @@ const WIZARD_DEFAULTS = {
   // den der Vermarkter vom Börsenpreis abzieht (0 = voller Spot).
   spot_market_area: "at",
   spot_feedin_fee: 0.02,
+  // Prozentualer Abschlag auf den Betrag des Börsenpreises (aWATTar SUNNY
+  // Spot 60min: 19). 0 heißt: kein prozentualer Abschlag.
+  spot_feedin_fee_pct: 0,
+  // aWATTar SUNNY (fester Monatstarif): welche Preisspalte gilt — Verträge
+  // bis zum Stichtag 25.02.2026 („alt") oder danach („neu").
+  awattar_sunny_vertrag: "neu",
   // Nachtsatz der Standardvergütung: 0 heißt „wie am Tag" (kein Nachttarif).
   schedule_feedin_price_night: 0,
   schedule_night_start: "20:00",
@@ -446,6 +452,10 @@ class EegOptimizerPanel extends HTMLElement {
     this._spotStatus = null;
     this._spotBusy = false;
     this._spotRequested = false;
+    // aWATTar-SUNNY-Status (fester Monatstarif), gleiche Mechanik.
+    this._sunnyStatus = null;
+    this._sunnyBusy = false;
+    this._sunnyRequested = false;
     this._peakshareCommunitiesCache = [];
     this._peakshareCommunitiesLoading = false;
     // Community-Statistik (Phase 8: Telemetrie-Opt-In)
@@ -713,8 +723,11 @@ class EegOptimizerPanel extends HTMLElement {
             if (realField === "schedule_feedin_source") {
               if (target.value === "oemag" || target.value === "oemag_estimate") this._ensureOemagTarif();
               if (target.value === "spot") this._ensureSpotStatus();
+              if (target.value === "awattar_sunny") this._ensureSunnyStatus();
               this._render();
             }
+            // Die Vertragsvariante blendet den angezeigten SUNNY-Wert um.
+            if (realField === "awattar_sunny_vertrag") this._render();
           }
           return;
         }
@@ -745,6 +758,10 @@ class EegOptimizerPanel extends HTMLElement {
           } else if (field === "schedule_feedin_source") {
             if (target.value === "oemag" || target.value === "oemag_estimate") this._ensureOemagTarif();
             if (target.value === "spot") this._ensureSpotStatus();
+            if (target.value === "awattar_sunny") this._ensureSunnyStatus();
+            this._saveWizardProgress();
+            this._render();
+          } else if (field === "awattar_sunny_vertrag") {
             this._saveWizardProgress();
             this._render();
           }
@@ -869,6 +886,36 @@ class EegOptimizerPanel extends HTMLElement {
       this._spotStatus = { preis: null, fehler: e?.message || String(e) };
     } finally {
       this._spotBusy = false;
+      this._render();
+    }
+  }
+
+  // aWATTar SUNNY (fester Monatstarif): dieselbe Mechanik wie beim Spotpreis
+  // — einmal je Sitzung holen, sobald ihn eine Ansicht zeigt; „Jetzt holen"
+  // erzwingt einen neuen Abruf.
+  _ensureSunnyStatus() {
+    if (this._sunnyStatus !== null || this._sunnyBusy || this._sunnyRequested) return;
+    this._sunnyRequested = true;
+    this._loadSunnyStatus();
+  }
+
+  async _loadSunnyStatus(refresh = false) {
+    if (this._sunnyBusy || !this._hass) {
+      if (!this._hass) this._sunnyRequested = false;
+      return;
+    }
+    this._sunnyBusy = true;
+    if (refresh) this._render();
+    try {
+      this._sunnyStatus = await this._hass.callWS({
+        type: "eeg_optimizer/get_awattar_sunny",
+        ...(refresh ? { refresh: true } : {}),
+      });
+    } catch (e) {
+      console.warn("aWATTar-SUNNY-Tarif nicht abrufbar:", e);
+      this._sunnyStatus = { neu: null, alt: null, fehler: e?.message || String(e) };
+    } finally {
+      this._sunnyBusy = false;
       this._render();
     }
   }
@@ -1628,6 +1675,9 @@ class EegOptimizerPanel extends HTMLElement {
         break;
       case "refresh-spot":
         this._loadSpotStatus(true);
+        break;
+      case "refresh-sunny":
+        this._loadSunnyStatus(true);
         break;
     }
   }
@@ -5517,11 +5567,14 @@ class EegOptimizerPanel extends HTMLElement {
     const quelleOemagSchaetzung = quelle === "oemag_estimate";
     const quelleOemag = quelle === "oemag" || quelleOemagSchaetzung;
     const quelleSpot = quelle === "spot";
+    const quelleSunny = quelle === "awattar_sunny";
 
-    // Ansicht mit OeMAG-/Spot-Wert geöffnet (Wizard-Rücksprung, gespeicherte
-    // Auswahl): den Tarif holen, statt „Noch kein Tarif geholt" zu zeigen.
+    // Ansicht mit OeMAG-/Spot-/SUNNY-Wert geöffnet (Wizard-Rücksprung,
+    // gespeicherte Auswahl): den Tarif holen, statt „Noch kein Tarif
+    // geholt" zu zeigen.
     if (quelleOemag) this._ensureOemagTarif();
     if (quelleSpot) this._ensureSpotStatus();
+    if (quelleSunny) this._ensureSunnyStatus();
 
     // Der OeMAG-Wert kommt aus einer HTML-Tabelle. Deshalb steht hier immer
     // dabei, aus welchem Monat er ist und wie alt der Abruf — bricht das
@@ -5623,6 +5676,57 @@ class EegOptimizerPanel extends HTMLElement {
                value="${Number(d.spot_feedin_fee ?? 0) !== 0 ? ctAus(d.spot_feedin_fee) : ""}"
                min="-20" max="20" step="0.01" placeholder="0 — voller Spotpreis">
         <div class="help-text">Was dein Abnahmevertrag je Kilowattstunde vom Börsenpreis abzieht (steht im Vertrag, oft 1–2 ct). Leer oder 0 heißt: du bekommst den vollen Spotpreis.</div>
+      </div>
+      <div class="field-group">
+        <label>Abschlag des Vermarkters (% vom Börsenpreis)</label>
+        <input type="number" data-field="${prefix}spot_feedin_fee_pct"
+               value="${Number(d.spot_feedin_fee_pct ?? 0) !== 0 ? Number(d.spot_feedin_fee_pct) : ""}"
+               min="0" max="100" step="0.1" placeholder="0 — kein prozentualer Abschlag">
+        <div class="help-text">Zieht dein Vertrag einen Prozentsatz vom Börsenpreis ab, trage ihn hier ein. aWATTar SUNNY Spot 60min: <strong>19</strong> — 19 % auf den Betrag des Stundenpreises; bei negativen Börsenpreisen wird die Einspeisung dadurch noch teurer, der Fahrplan regelt dann ab. Cent- und Prozent-Abschlag wirken zusammen.</div>
+      </div>`;
+    // aWATTar SUNNY (fester Monatstarif): Wert der gewählten Vertragsvariante
+    // mit Monat, Herkunft und Alter. Der Wert kommt aus einer Google-Tabelle
+    // oder von der Tarifseite — beides kann brechen, deshalb steht immer
+    // dabei, woher er ist und wie alt der Abruf. Vorschau und Fahrplan
+    // nehmen dieselbe Variante (awattar_sunny_vertrag), auch ungespeichert.
+    const sunnyVertrag = d.awattar_sunny_vertrag === "alt" ? "alt" : "neu";
+    const su = this._sunnyStatus;
+    const suWert = su ? su[sunnyVertrag] : null;
+    let sunnyZeile;
+    if (this._sunnyBusy) {
+      sunnyZeile = "Tarif wird geholt…";
+    } else if (suWert && suWert.preis != null) {
+      const alter = su.alter_minuten == null
+        ? ""
+        : su.alter_minuten < 60
+          ? `, geholt vor ${su.alter_minuten} min`
+          : `, geholt vor ${Math.round(su.alter_minuten / 60)} h`;
+      const stand = suWert.monat
+        ? ` (Stand ${monate[suWert.monat] || suWert.monat}${suWert.jahr ? " " + suWert.jahr : ""})`
+        : "";
+      const herkunft = su.quelle === "tarifseite" ? ", von der Tarifseite" : "";
+      sunnyZeile = `<strong>${fmtDe(suWert.preis * 100, 3)} ct/kWh</strong>${stand}${herkunft}${alter}`
+        + (su.fehler ? ` — letzter Abruf fehlgeschlagen: ${this._escapeHtml(su.fehler)}` : "");
+    } else if (su && su.fehler) {
+      sunnyZeile = `Kein Tarif gelesen (${this._escapeHtml(su.fehler)}) — es gilt der fest eingetragene Wert.`;
+    } else {
+      sunnyZeile = "Noch kein Tarif geholt.";
+    }
+    const altBis = su?.alt_bis || "25.02.2026";
+    const sunnyBlock = `
+      <div class="field-group">
+        <label>Vertragsabschluss</label>
+        <select data-field="${prefix}awattar_sunny_vertrag">
+          <option value="neu" ${sunnyVertrag === "neu" ? "selected" : ""}>nach dem ${altBis} (aktueller Tarif)</option>
+          <option value="alt" ${sunnyVertrag === "alt" ? "selected" : ""}>bis ${altBis} (Altvertrag)</option>
+        </select>
+        <div class="help-text">aWATTar führt seit dem ${altBis} zwei SUNNY-Preisspalten, die je Monat um mehrere Cent auseinanderliegen können. Maßgeblich ist das Datum deines Vertragsabschlusses — es steht in der Vertragsbestätigung.</div>
+      </div>
+      <div class="field-group">
+        <label>aWATTar SUNNY — Einspeisevergütung</label>
+        <div class="help-text" style="font-size:13px;color:var(--primary-text-color)">${sunnyZeile}</div>
+        <div class="help-text">Fester Netto-Preis je Monat: EEX-Monatsfuture der ersten zehn Handelstage des Vormonats, gewichtet mit dem PV-Lastprofil, abzüglich 9 % Vermarktung. aWATTar veröffentlicht ihn spätestens am 1. des Monats; gelesen wird zweimal täglich aus der Preistabelle „Berechnungsmethodik &amp; Preise" von aWATTar, zur Not von der Tarifseite. Fehlt der laufende Monat noch, gilt der jüngste veröffentlichte. Antwortet keine Quelle, bleibt der zuletzt gelesene Wert stehen — und wenn es nie einen gab, der fest eingetragene.</div>
+        <button class="btn-link" data-action="refresh-sunny" style="font-size:12px;padding:0" ${this._sunnyBusy ? "disabled" : ""}>Jetzt holen</button>
       </div>`;
     return `
       <div class="field-group">
@@ -5631,11 +5735,12 @@ class EegOptimizerPanel extends HTMLElement {
           <option value="manual" ${quelle === "manual" ? "selected" : ""}>Fester Wert</option>
           <option value="oemag" ${quelle === "oemag" ? "selected" : ""}>OeMAG-Einspeisetarif (zuletzt veröffentlichter Monat)</option>
           <option value="oemag_estimate" ${quelleOemagSchaetzung ? "selected" : ""}>OeMAG-Einspeisetarif (laufender Monat, hochgerechnet)</option>
-          <option value="spot" ${quelleSpot ? "selected" : ""}>Spotpreis der Strombörse (stündlich)</option>
+          <option value="spot" ${quelleSpot ? "selected" : ""}>Spotpreis der Strombörse (stündlich, z. B. aWATTar SUNNY Spot 60min)</option>
+          <option value="awattar_sunny" ${quelleSunny ? "selected" : ""}>aWATTar SUNNY (fester Monatstarif)</option>
         </select>
         <div class="help-text">Was du bekommst, wenn die Energie nicht in einer Gemeinschaft landet. Der Fahrplan hält diesen Wert gegen den Bezugspreis und gegen die Vergütung der Gemeinschaften.</div>
       </div>
-      ${quelleOemag ? oemagBlock : quelleSpot ? spotBlock : `
+      ${quelleOemag ? oemagBlock : quelleSpot ? spotBlock : quelleSunny ? sunnyBlock : `
       <div style="display:flex;gap:12px;flex-wrap:wrap">
         <div class="field-group" style="flex:1;min-width:140px">
           <label>Einspeisevergütung Tag (ct/kWh) *</label>
@@ -5806,6 +5911,7 @@ class EegOptimizerPanel extends HTMLElement {
     const gemOemag = gemQuelle === "oemag" || gemQuelle === "oemag_estimate";
     if (gemOemag) this._ensureOemagTarif();
     if (gemQuelle === "spot") this._ensureSpotStatus();
+    if (gemQuelle === "awattar_sunny") this._ensureSunnyStatus();
     // Basistarif für die Vorschau wie im Backend: OeMAG-Wert, bei Spot der
     // aktuelle Börsenpreis abzüglich Vermarkter-Abschlag (zeitvariabel — die
     // Vorschau nimmt den Augenblickswert als Näherung), sonst Handeingabe.
@@ -5814,8 +5920,14 @@ class EegOptimizerPanel extends HTMLElement {
       basis = Number(this._oemagStatus.schaetzung.preis);
     } else if (gemOemag && Number(this._oemagStatus?.preis ?? 0) > 0) {
       basis = Number(this._oemagStatus.preis);
+    } else if (gemQuelle === "awattar_sunny") {
+      const su = this._sunnyStatus?.[d.awattar_sunny_vertrag === "alt" ? "alt" : "neu"];
+      if (su && su.preis != null) basis = Number(su.preis);
     } else if (gemQuelle === "spot" && this._spotStatus?.preis != null) {
-      basis = Number(this._spotStatus.preis) - Number(d.spot_feedin_fee ?? 0);
+      // Cent- und Prozentabschlag wie im Backend (schedule.py): der
+      // Prozentsatz geht vom Betrag des Börsenpreises ab.
+      const p = Number(this._spotStatus.preis);
+      basis = p - Number(d.spot_feedin_fee ?? 0) - Math.abs(p) * Number(d.spot_feedin_fee_pct ?? 0) / 100;
     }
     // Nachts steht die Gemeinschaft gegen den Nachtsatz der Standardvergütung,
     // wenn einer gesetzt ist (nur bei festem Wert — OeMAG und Spot kennen
@@ -6095,6 +6207,8 @@ class EegOptimizerPanel extends HTMLElement {
     const row = (label, value) =>
       `<div class="summary-row"><span class="label">${label}</span><span class="value">${value}</span></div>`;
     const preis = (v, fallback) => `${fmtDe(ctAus(v ?? fallback), 2)} ct/kWh`;
+    // aWATTar SUNNY: der Wert der gewählten Vertragsvariante, falls geholt.
+    const sunnyWert = this._sunnyStatus?.[d.awattar_sunny_vertrag === "alt" ? "alt" : "neu"];
 
     return `
       <p style="margin-bottom:16px;color:var(--secondary-text-color)">
@@ -6164,7 +6278,12 @@ class EegOptimizerPanel extends HTMLElement {
           : (d.schedule_feedin_source || "manual") === "spot"
           ? `Spotpreis ${(d.spot_market_area || "at") === "de" ? "EPEX DE" : "EPEX AT"}`
             + (Number(d.spot_feedin_fee ?? 0) !== 0 ? ` − ${fmtDe(ctAus(d.spot_feedin_fee), 2)} ct Abschlag` : "")
+            + (Number(d.spot_feedin_fee_pct ?? 0) !== 0 ? ` − ${fmtDe(Number(d.spot_feedin_fee_pct), 1)} % vom Betrag` : "")
             + (this._spotStatus?.preis != null ? ` (jetzt ${fmtDe(this._spotStatus.preis * 100, 2)} ct/kWh)` : "")
+          : (d.schedule_feedin_source || "manual") === "awattar_sunny"
+          ? (sunnyWert && sunnyWert.preis != null
+            ? `aWATTar SUNNY — ${fmtDe(sunnyWert.preis * 100, 3)} ct/kWh${d.awattar_sunny_vertrag === "alt" ? " (Altvertrag)" : ""}`
+            : "aWATTar SUNNY (noch nicht geholt)")
           : preis(d.schedule_feedin_price, 0.082))}
         ${(d.schedule_feedin_source || "manual") === "manual" && Number(d.schedule_feedin_price_night ?? 0) > 0
           ? row("Standardvergütung Nacht", `${preis(d.schedule_feedin_price_night, 0)} (${d.schedule_night_start || "20:00"}–${d.schedule_night_end || "06:00"})`)

@@ -1345,3 +1345,55 @@ def test_solve_rechnet_ueber_die_umstellung_hinweg():
     result = sched.solve(inputs)
 
     assert result["slots"], "an der Zeitumstellung entstand kein Fahrplan"
+
+
+async def test_spotquelle_prozentabschlag_geht_vom_betrag_ab():
+    """aWATTar SUNNY Spot 60min: 19 % auf |Preis| — aus 9 ct werden 7,29 ct,
+    ein negativer Preis wird negativer (die Einspeisung kostet dann mehr)."""
+    inputs, _ = await _collect_spot(
+        {
+            **BASE_CONFIG,
+            "schedule_feedin_source": "spot",
+            "spot_feedin_fee": 0,
+            "spot_feedin_fee_pct": 19,
+        },
+        _FakeSpot(0.09),
+    )
+    assert all(p == pytest.approx(0.0729) for p in inputs.feedin_price_series)
+    assert inputs.feedin_price == pytest.approx(0.0729)
+
+    inputs, _ = await _collect_spot(
+        {
+            **BASE_CONFIG,
+            "schedule_feedin_source": "spot",
+            "spot_feedin_fee_pct": 19,
+        },
+        _FakeSpot(-0.02),
+    )
+    assert all(p == pytest.approx(-0.0238) for p in inputs.feedin_price_series)
+
+
+async def test_spotquelle_cent_und_prozentabschlag_wirken_zusammen():
+    inputs, _ = await _collect_spot(
+        {
+            **BASE_CONFIG,
+            "schedule_feedin_source": "spot",
+            "spot_feedin_fee": 0.01,
+            "spot_feedin_fee_pct": 10,
+        },
+        _FakeSpot(0.10),
+    )
+    assert all(p == pytest.approx(0.08) for p in inputs.feedin_price_series)
+
+
+async def test_spotquelle_unsinniger_prozentabschlag_zaehlt_als_null():
+    inputs, _ = await _collect_spot(
+        {
+            **BASE_CONFIG,
+            "schedule_feedin_source": "spot",
+            "spot_feedin_fee": 0,
+            "spot_feedin_fee_pct": "abc",
+        },
+        _FakeSpot(0.09),
+    )
+    assert all(p == pytest.approx(0.09) for p in inputs.feedin_price_series)

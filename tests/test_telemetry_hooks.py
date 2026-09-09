@@ -284,6 +284,8 @@ def test_profil_whitelist_laesst_fahrplan_parameter_durch():
             "schedule_night_end": "06:00",
             "schedule_ac_limit_kw": 8.8,
             "grid_export_limit_kw": 4.0,
+            "spot_feedin_fee_pct": 19,
+            "awattar_sunny_vertrag": "alt",
             # Darf NICHT gesendet werden:
             "battery_soc_sensor": "sensor.geheim",
             "modbus_host": "192.168.1.50",
@@ -303,6 +305,7 @@ def test_profil_whitelist_laesst_fahrplan_parameter_durch():
         "schedule_consumption_price", "schedule_grid_fee",
         "schedule_battery_cost", "schedule_night_start",
         "schedule_night_end", "schedule_ac_limit_kw", "grid_export_limit_kw",
+        "spot_feedin_fee_pct", "awattar_sunny_vertrag",
     ):
         assert key in settings, f"{key} fehlt im Profil"
     assert settings["schedule_feedin_price"] == 0.082

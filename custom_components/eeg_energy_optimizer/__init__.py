@@ -1297,6 +1297,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if str(config.get("schedule_feedin_source") or "manual").lower() == "spot":
         hass.async_create_task(spot_provider.async_fetch())
 
+    # Fester Monatstarif aWATTar SUNNY (awattar_sunny.py). Dieselbe Regel:
+    # immer angelegt (fürs Panel und den Assistenten), von selbst geholt nur
+    # als gewählter Basistarif. Die Vertragsvariante ist keine Eigenschaft
+    # des Anbieters — sie kommt bei jeder Abfrage aus der Konfiguration.
+    from .awattar_sunny import AwattarSunnyProvider
+    awattar_sunny_provider = AwattarSunnyProvider(hass, entry.entry_id)
+    await awattar_sunny_provider.async_load()
+    hass.data[DOMAIN][entry.entry_id]["awattar_sunny"] = awattar_sunny_provider
+    if str(config.get("schedule_feedin_source") or "manual").lower() == "awattar_sunny":
+        hass.async_create_task(awattar_sunny_provider.async_fetch())
+
     # If setup not complete, register panel only — skip platforms and optimizer
     if not setup_complete:
         entry.async_on_unload(entry.add_update_listener(_async_update_listener))
@@ -1882,8 +1893,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             # ----------------------------------------------------------
             async def _fremddaten_cycle(_now=None):
                 namen = ["peakshare", "oemag"]
-                # Börse und OeMAG-Hochrechnung nur abfragen, wenn sie der
-                # gewählte Basistarif sind.
+                # Börse, OeMAG-Hochrechnung und aWATTar SUNNY nur abfragen,
+                # wenn sie der gewählte Basistarif sind.
                 cfg = data.get("config") or {}
                 quelle_basis = str(
                     cfg.get("schedule_feedin_source") or "manual"
@@ -1892,6 +1903,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     namen.append("spot")
                 if quelle_basis == "oemag_estimate":
                     namen.append("oemag_schaetzung")
+                if quelle_basis == "awattar_sunny":
+                    namen.append("awattar_sunny")
                 for name in namen:
                     quelle = data.get(name)
                     if quelle is None:

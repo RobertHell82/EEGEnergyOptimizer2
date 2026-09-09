@@ -30,7 +30,7 @@ __init__.py: async_setup_entry()
   → Activity log: persistent ring buffer (5000 entries, paginated API)
   → 30s timer: _guard_cycle()          — ScheduleExecutor
   → 1min timer: ScheduleRunner.async_step()
-  → 30min timer: PeakShare + OeMAG refresh
+  → 30min timer: PeakShare + OeMAG refresh (+ spot / OeMAG estimate / aWATTar SUNNY, when chosen as base tariff)
 
 schedule.py: ScheduleRunner (planning, 1 min)
   → async_collect_inputs()  [event loop] — profile, battery, PV forecast,
@@ -71,6 +71,7 @@ schedule_executor.py: ScheduleExecutor (execution, 30 s)
 | `eeg_price.py` | Synthetic feed-in tariff from community demand — turns PeakShare demand into a price surcharge |
 | `oemag.py` | Optional base tariff: OeMAG monthly market price, scraped from the HTML table (no API), cached across restarts; also reads the per-month calculation basis + balancing-energy cost for the estimator |
 | `oemag_schaetzung.py` | Estimate of the OeMAG tariff for the *current* month (source `oemag_estimate`): aWATTar day-ahead prices weighted by Austrian solar generation (Energy-Charts), clamped to 60–100 % of the E-Control quarterly price (scraped; fallback derived from clamped months of the OeMAG table), minus balancing cost. Validated 2025-01…2026-08: MAE 0.21 ct |
+| `awattar_sunny.py` | Optional base tariff: aWATTar SUNNY fixed monthly feed-in price (source `awattar_sunny`). No API — reads the yearly tab of aWATTar's published price sheet (Google Sheet, gviz CSV) and falls back to the tariff page; two contract variants (`awattar_sunny_vertrag` = `neu`/`alt`, contracts after/until 25.02.2026) because the sheet carries two SUNNY columns; cached across restarts, hourly retry while the current month is missing |
 | `power_readings.py` | Shared sensor reads — house load, PV now, grid export, battery capacity resolution |
 | `schedule_archive.py` | Rolling archive of computed plans (7 days, gzip, ~8 KB each) for after-the-fact debugging |
 | `schedule_archive_view.py` | HTTP view that packs archive + settings + measured history into a downloadable ZIP |
@@ -83,7 +84,7 @@ schedule_executor.py: ScheduleExecutor (execution, 30 s)
 | `config_flow.py` | Single-click config flow (full setup happens in panel) |
 | `peakshare.py` | PeakShareProvider — fetches + caches community demand forecasts (half-hourly refresh; hourly values, `opt()` resamples to 15 min itself) |
 | `telemetry.py`, `telemetry_buffer.py` | Opt-in reporting — profile + failures only, ring buffer with backoff |
-| `websocket_api.py` | 24 WebSocket commands for panel (config, schedule, control state, PeakShare, OeMAG, spot price, feed-in statistics, daily balance, probes, telemetry, activity log) |
+| `websocket_api.py` | 25 WebSocket commands for panel (config, schedule, control state, PeakShare, OeMAG, spot price, aWATTar SUNNY, feed-in statistics, daily balance, probes, telemetry, activity log) |
 | `inverter/base.py` | Abstract inverter interface (InverterBase ABC) |
 | `inverter/huawei.py` | Huawei SUN2000 implementation via HA services — Single + Master/Slave (multi-device) |
 | `inverter/_distribution.py` | Shared proportional discharge distribution (SolarEdge + Huawei multi-battery) |
@@ -196,6 +197,7 @@ three intents. `Fahrplan-Status` shows what actually happened:
 | `eeg_optimizer/set_override` | Start a pause — `stunden` and/or `bis_soc_pct` (at least one); replaces a running one, takes effect immediately, answers with the state *after* the immediate guard run |
 | `eeg_optimizer/clear_override` | End the running override |
 | `eeg_optimizer/get_spot_preis` | Current exchange spot price, data range, age (base tariff option; `refresh` forces a fetch) |
+| `eeg_optimizer/get_awattar_sunny` | aWATTar SUNNY monthly tariff for both contract variants (`neu`/`alt`) with month, source (`tabelle`/`tarifseite`), age, last error (base tariff option; `refresh` forces a fetch) |
 | `eeg_optimizer/get_feedin_statistics` | Feed-in statistics for the panel card (daily + period summaries) |
 | `eeg_optimizer/tagesbilanz_jetzt` | Build yesterday's daily balance now instead of waiting for 00:15 |
 | `eeg_optimizer/refresh_consumption_profile` | Manually recompute the consumption profile from recorder statistics |
@@ -354,7 +356,7 @@ sensors (assigned once), steps 4–5 are the parameters:
    in the wizard *and* on save), export limit, battery power limit, minimum
    state of charge, maximum state of charge (always visible, no toggle —
    100 = charge to full, the value alone carries the state since v27)
-6. Tarife & Gemeinschaft — base tariff (manual, OeMAG published month, OeMAG current-month estimate, or spot; manual also takes a
+6. Tarife & Gemeinschaft — base tariff (manual, OeMAG published month, OeMAG current-month estimate, spot with cent and/or percent fee, or aWATTar SUNNY monthly tariff with contract variant; manual also takes a
    night rate `schedule_feedin_price_night`), consumption price, community
    shares/prices/weights. The night window lives in the Vergütung section
    (rendered once via `_nachtfensterFelder`) and appears when ANY night rate
