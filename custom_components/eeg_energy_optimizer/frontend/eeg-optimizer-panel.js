@@ -6458,7 +6458,7 @@ class EegOptimizerPanel extends HTMLElement {
         ${this._kostenFields(d, "settings_")}
       </div>
       <div class="card" style="margin-bottom:16px">
-        <h3 class="settings-karte-titel" style="margin:0 0 16px">Energiegemeinschaft (EW Ansfelden – PeakShare)</h3>
+        <h3 class="settings-karte-titel" style="margin:0 0 16px">Energiegemeinschaft</h3>
         ${this._gemeinschaftFields(d, "settings_")}
       </div>`;
 
