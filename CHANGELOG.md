@@ -10,6 +10,13 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
+## [2.1.0-dev2] - 2026-09-09
+
+### Hinzugefügt
+
+- **aWATTar SUNNY als Standardvergütung.** Neue Quelle „aWATTar SUNNY (fester Monatstarif)" im Einrichtungsassistenten und in den Einstellungen. Der Optimizer liest den Monatspreis zweimal täglich aus der Preistabelle „Berechnungsmethodik & Preise", die aWATTar auf der Tarifseite veröffentlicht, zur Not von der Tarifseite selbst, und zeigt Wert, Monat, Herkunft und Alter an — am Monatsanfang, solange der neue Wert fehlt, stündlich. Seit dem 25.02.2026 führt aWATTar zwei Preisspalten (Vertragsabschluss bis dahin bzw. danach), die je Monat um mehrere Cent auseinanderliegen können; welche gilt, wählt man unter „Vertragsabschluss", ein Wechsel wirkt sofort. Fehlt der laufende Monat noch, gilt der jüngste veröffentlichte; antwortet keine Quelle, bleibt der zuletzt gelesene Wert stehen, ohne einen solchen der fest eingetragene. Wie bei der OeMAG gibt es keinen Nachtsatz.
+- **Prozent-Abschlag beim Spotpreis — für aWATTar SUNNY Spot 60min.** Neben dem Cent-Abschlag lässt sich jetzt ein Prozentsatz vom Betrag des Stundenpreises abziehen (SUNNY Spot 60min: 19 %). Bei negativen Börsenpreisen wird die Einspeisung dadurch noch teurer — genau wie im Tarif; der Fahrplan regelt dann ab. Cent- und Prozent-Abschlag wirken zusammen, die Vorschau der Gemeinschaftsaufschläge rechnet beide mit.
+
 ## [2.1.0-dev1] - 2026-09-08
 
 ### Hinzugefügt
