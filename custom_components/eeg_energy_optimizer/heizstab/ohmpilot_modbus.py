@@ -1,10 +1,20 @@
 """Direkte Modbus-TCP-Steuerung des Fronius Ohmpilot.
 
-Schreibt einen stufenlosen Leistungs-Sollwert (0-6000 W) per Modbus TCP
-direkt an den Ohmpilot, ohne Umweg ueber den Fronius Gen24.
+Schreibt einen stufenlosen Leistungs-Sollwert (0 bis max_power W) per Modbus
+TCP direkt an den Ohmpilot, ohne Umweg über den Fronius Gen24.
 
-Watchdog: Der Ohmpilot schaltet nach 50s ohne neuen Sollwert automatisch ab.
-Empfohlenes Schreibintervall: alle 25-30 Sekunden.
+Watchdog: Der Ohmpilot schaltet nach 50 s ohne neuen Sollwert automatisch ab.
+Empfohlenes Schreibintervall: alle 25 bis 30 Sekunden.
+
+Voraussetzung: Der Ohmpilot ist vom Gen24 ENTKOPPELT (Kopplung im
+Gen24-Webinterface gelöst oder anderes Subnetz). Sonst schreiben zwei
+Master auf dasselbe Register — und der Gen24 regelt den Überschuss auf
+Einspeisung null, was jede EEG-Einspeisung auffrisst.
+
+Herkunft: HA_Optimierung_Gruenbach, ``energieoptimierung/ohmpilot_modbus.py``
+(Registerwerte dort am echten Gerät verifiziert). Geändert für die
+Integration: pymodbus wird erst beim Import dieses Moduls gebraucht, der
+Import ist gegen die Testumgebung abgesichert.
 """
 
 from __future__ import annotations
@@ -13,8 +23,14 @@ import asyncio
 import logging
 import time
 
-from pymodbus.client import AsyncModbusTcpClient
-from pymodbus.exceptions import ModbusException
+try:
+    from pymodbus.client import AsyncModbusTcpClient
+    from pymodbus.exceptions import ModbusException
+except ImportError:  # pragma: no cover — Testumgebung ohne pymodbus
+    AsyncModbusTcpClient = None  # type: ignore[assignment,misc]
+
+    class ModbusException(Exception):  # type: ignore[no-redef]
+        """Platzhalter, damit die except-Zweige unten gültig bleiben."""
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -73,6 +89,9 @@ class OhmpilotModbus:
         try:
             if self._client is not None and self._client.connected:
                 return True
+            if AsyncModbusTcpClient is None:
+                self._record_error("connect", "pymodbus nicht installiert")
+                return False
             self._client = AsyncModbusTcpClient(self._host, port=self._port, timeout=5)
             result = await self._client.connect()
             self._connected = result

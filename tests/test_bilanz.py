@@ -715,3 +715,62 @@ def test_bewerte_tag_liefert_begruendung_nur_bei_negativem_vorteil(monkeypatch):
     ergebnis = b.bewerte_tag(tag, _inputs())
     assert ergebnis["vorteil_begruendung"] is None
     assert ergebnis["vorteil_details"] is not None
+
+
+# ---------------------------------------------------------------------------
+# Heizstab in der Bilanz
+# ---------------------------------------------------------------------------
+
+
+def test_heizstab_wird_in_eigener_spalte_gebucht():
+    b = _bilanz()
+    now = datetime(2026, 8, 27, 12, 5, tzinfo=timezone.utc)
+    b._summiere(
+        "32",
+        {"pv": 9.0, "haus": 0.5, "netz": 4.0, "batterie": 2.0, "heizstab": 2.5, "soc": 80.0},
+        60.0,
+        "Ein",
+        None,
+        now,
+    )
+    slot = b._heute["slots"]["32"]
+    assert slot["heizstab"] == pytest.approx(2.5 / 60)
+    assert slot["haus"] == pytest.approx(0.5 / 60)
+    assert b.heizstab_kwh_heute() == pytest.approx(2.5 / 60, abs=1e-3)
+
+
+def test_alte_slots_ohne_heizstab_feld_bleiben_lesbar():
+    b = _bilanz()
+    slot = _slot(pv=1.0, haus=0.5, export=0.5, kwp=0.26)
+    del slot["heizstab"]
+    tag = _tag_mit({40: slot})
+    ergebnis = b.bewerte_tag(tag, None)
+    assert ergebnis["heizstab_kwh"] == 0.0
+    assert ergebnis["waerme"] == 0.0
+    assert ergebnis["eigen_kwh"] == pytest.approx(0.5)
+
+
+def test_waerme_aus_pv_zaehlt_zur_ersparnis_netzbezug_nicht():
+    """Mittags 1 kWh in den Heizstab aus PV → Wärme zum Wärmewert; nachts
+    1 kWh aus dem Netz (Mindesttemperatur) → keine PV-Ersparnis."""
+    b = _bilanz()
+    inputs = _inputs(heizstab_max_kw=6.0, heizstab_waermewert=0.10)
+    tag = _tag_mit({
+        32: _slot(pv=3.0, haus=0.5, export=1.5, heizstab=1.0, kwp=0.26, basis=0.06),
+        80: _slot(pv=0.0, haus=0.2, bezug=1.2, heizstab=1.0, kwp=0.26, basis=0.06),
+    })
+    ergebnis = b.bewerte_tag(tag, inputs)
+    assert ergebnis["heizstab_kwh"] == pytest.approx(2.0)
+    assert ergebnis["waerme"] == pytest.approx(0.10)          # nur die PV-Kilowattstunde
+    assert ergebnis["eigen_kwh"] == pytest.approx(0.5)        # Haus mittags; nachts alles Bezug
+    assert ergebnis["pv_ersparnis"] == pytest.approx(
+        ergebnis["vermieden"] + ergebnis["erloes"] + 0.10, abs=1e-4
+    )
+
+
+def test_als_slots_traegt_heizstab_leistung():
+    b = _bilanz()
+    paare = [(32, _slot(pv=1.0, haus=0.25, heizstab=0.5))]
+    slots = b._als_slots(paare, TAG)
+    assert slots[0]["heizstab"] == pytest.approx(2.0)       # 0,5 kWh je Viertelstunde = 2 kW
+    assert slots[0]["consumption"] == pytest.approx(1.0)

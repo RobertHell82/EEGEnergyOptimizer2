@@ -125,6 +125,11 @@ _QUELLEN = {
     "batterie": "batterieleistung",
     "haus": "hausverbrauch",
 }
+# Optionale Quellen: gibt es die Entität nicht (kein Heizstab konfiguriert),
+# zählt der Wert als 0 — die Bilanz läuft trotzdem.
+_QUELLEN_OPTIONAL = {
+    "heizstab": "heizstab_leistung",
+}
 
 
 def _jetzt_lokal(now_utc: datetime) -> datetime:
@@ -157,6 +162,7 @@ def _leerer_slot() -> dict[str, Any]:
         "export": 0.0,      # kWh ins Netz
         "laden": 0.0,       # kWh in die Batterie
         "entladen": 0.0,    # kWh aus der Batterie
+        "heizstab": 0.0,    # kWh in den Heizstab (nicht in "haus" enthalten)
         "soc_a": None,      # Ladestand am Slot-Anfang (%)
         "soc_e": None,      # Ladestand am Slot-Ende (%)
         "basis": None,      # eingefrorener Basistarif (EUR/kWh)
@@ -374,8 +380,9 @@ class EnergieBilanz:
             roh = read_power_kw(self._hass, entity_id)
             if roh is None:
                 # Die PV meldet sich nachts ab — das ist kein Fehler,
-                # sondern 0 kW. Alle anderen Sensoren müssen liefern.
-                if name == "pv":
+                # sondern 0 kW. Der Heizstab ist optional: ohne Messwert
+                # zieht er nichts (Watchdog). Alle anderen müssen liefern.
+                if name == "pv" or name in _QUELLEN_OPTIONAL:
                     roh = 0.0
                 else:
                     return None
@@ -415,6 +422,12 @@ class EnergieBilanz:
             # Nicht merken — die Plattformen sind beim ersten Takt
             # moeglicherweise noch nicht fertig.
             return None
+
+        for name, endung in _QUELLEN_OPTIONAL.items():
+            unique_id = f"{DOMAIN}_{self._entry_id}_{endung}"
+            entity_id = registry.async_get_entity_id("sensor", DOMAIN, unique_id)
+            if entity_id:
+                gefunden[name] = entity_id
 
         self._quellen = gefunden
         return gefunden
@@ -463,6 +476,10 @@ class EnergieBilanz:
         # Batterie: positiv = Laden, negativ = Entladen.
         slot["laden"] += max(batterie, 0.0) * stunden
         slot["entladen"] += max(-batterie, 0.0) * stunden
+        # Heizstab: eigene Spalte, denn "haus" ist bereits um ihn bereinigt.
+        slot["heizstab"] = slot.get("heizstab", 0.0) + max(
+            werte.get("heizstab", 0.0), 0.0
+        ) * stunden
         slot["s"] += sekunden
         if mode == MODE_EIN:
             slot["ein_s"] += sekunden
@@ -585,6 +602,8 @@ class EnergieBilanz:
             "bezug_kwh": 0.0,
             "pv_kwh": 0.0,
             "eeg_kwh": 0.0,
+            "heizstab_kwh": 0.0,
+            "waerme": 0.0,
             "ein_anteil": 0.0,
             "ist_summe": None,
             "ref_summe": None,
@@ -601,6 +620,7 @@ class EnergieBilanz:
         eigen_kwh = 0.0
         vermieden = 0.0
         pv_kwh = export_kwh = bezug_kwh = 0.0
+        heizstab_kwh = heizstab_pv_kwh = 0.0
         netzgeladen_kwh = 0.0
         ein_s = gesamt_s = 0.0
         for slot in slots:
@@ -609,9 +629,17 @@ class EnergieBilanz:
             bezug_kwh += slot.get("bezug", 0.0)
             ein_s += slot.get("ein_s", 0.0)
             gesamt_s += slot.get("s", 0.0)
-            # Eigenverbrauch: was das Haus verbraucht hat, ohne den Anteil aus
-            # dem Netz. Was aus der Batterie kam, zaehlt mit — es war PV.
-            eigen = max(slot.get("haus", 0.0) - slot.get("bezug", 0.0), 0.0)
+            heizstab = max(slot.get("heizstab", 0.0), 0.0)
+            heizstab_kwh += heizstab
+            # Eigenverbrauch: was Haus UND Heizstab verbraucht haben, ohne
+            # den Anteil aus dem Netz. Was aus der Batterie kam, zaehlt mit —
+            # es war PV. Der Netzbezug wird zuerst dem Haus zugerechnet: der
+            # Heizstab heizt nur aus Ueberschuss, ausser die Mindesttemperatur
+            # verlangt es — und dann ist es sein Bezug, nicht der des Hauses.
+            lokal = max(slot.get("haus", 0.0) + heizstab - slot.get("bezug", 0.0), 0.0)
+            heizstab_pv = min(heizstab, lokal)
+            heizstab_pv_kwh += heizstab_pv
+            eigen = lokal - heizstab_pv
             eigen_kwh += eigen
             preis = slot.get("kwp")
             if preis is not None:
@@ -636,12 +664,25 @@ class EnergieBilanz:
                 vermieden *= max(0.0, (eigen_kwh - anteil)) / eigen_kwh
             eigen_kwh -= anteil
 
+        # Waerme aus PV-Ueberschuss, bewertet mit dem Waermewert (eine
+        # Einstellung, wie die Alterungskosten — nicht je Slot eingefroren).
+        # Der aus dem Netz geheizte Anteil ist keine PV-Ersparnis.
+        waermewert = 0.0
+        if inputs is not None:
+            try:
+                waermewert = max(0.0, float(getattr(inputs, "heizstab_waermewert", 0.0) or 0.0))
+            except (TypeError, ValueError):
+                waermewert = 0.0
+        waerme = heizstab_pv_kwh * waermewert
+
         ergebnis = dict(leer)
         ergebnis.update({
             "eigen_kwh": round(eigen_kwh, 3),
             "pv_kwh": round(pv_kwh, 3),
             "export_kwh": round(export_kwh, 3),
             "bezug_kwh": round(bezug_kwh, 3),
+            "heizstab_kwh": round(heizstab_kwh, 3),
+            "waerme": round(waerme, 4),
             "vermieden": round(vermieden, 4),
             "ein_anteil": round(ein_s / gesamt_s, 3) if gesamt_s > 0 else 0.0,
         })
@@ -656,13 +697,13 @@ class EnergieBilanz:
         ist_slots = self._als_slots(paare, datum)
         bewertung = self._bewerte(ist_slots, slots, inputs)
         if bewertung is None:
-            ergebnis["pv_ersparnis"] = ergebnis["vermieden"]
+            ergebnis["pv_ersparnis"] = round(ergebnis["vermieden"] + ergebnis["waerme"], 4)
             return ergebnis
 
         ergebnis["erloes"] = bewertung.get("erloes", 0.0)
         ergebnis["eeg_kwh"] = bewertung.get("eeg_kwh", 0.0)
         ergebnis["pv_ersparnis"] = round(
-            ergebnis["vermieden"] + ergebnis["erloes"], 4
+            ergebnis["vermieden"] + ergebnis["erloes"] + ergebnis["waerme"], 4
         )
 
         vorteil, referenz = self._optimierungs_vorteil(
@@ -745,8 +786,19 @@ class EnergieBilanz:
                 "PV": round(slot.get("pv", 0.0) / stunden, 4),
                 "consumption": round(slot.get("haus", 0.0) / stunden, 4),
                 "soc": slot.get("soc_e"),
+                "heizstab": round(slot.get("heizstab", 0.0) / stunden, 4),
             })
         return gebaut
+
+    def heizstab_kwh_heute(self) -> float:
+        """Energie in den Heizstab seit Beginn des Bilanztags (kWh)."""
+        return round(
+            sum(
+                max(float(slot.get("heizstab", 0.0) or 0.0), 0.0)
+                for slot in (self._heute.get("slots") or {}).values()
+            ),
+            3,
+        )
 
     def _inputs_fuer(
         self, ist_slots: list[dict[str, Any]], slots: list[dict[str, Any]], inputs: Any

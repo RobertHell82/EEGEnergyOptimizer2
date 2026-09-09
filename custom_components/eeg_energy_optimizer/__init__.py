@@ -34,6 +34,10 @@ from .const import (
     CONF_GRID_POWER_SENSOR,
     CONF_GRID_POWER_EXPORT_SENSOR,
     CONF_GRID_POWER_IMPORT_SENSOR,
+    CONF_HEIZSTAB_ENABLED,
+    CONF_HEIZSTAB_HOST,
+    CONF_HEIZSTAB_MAX_KW,
+    CONF_HEIZSTAB_PORT,
     CONF_LOOKBACK_WEEKS,
     CONF_TELEMETRY_ENABLED,
     COMBINED_BATTERY_CAPACITY_SENSOR_ID,
@@ -45,6 +49,9 @@ from .const import (
     FAILURE_DEDUP_WINDOW_S,
     FAILURE_PERSISTENT_DEDUP_WINDOW_S,
     FORECAST_NONE_STREAK_THRESHOLD,
+    HEIZSTAB_READ_INTERVAL_S,
+    HEIZSTAB_TIMESYNC_INTERVAL_H,
+    HEIZSTAB_WRITE_INTERVAL_S,
     INVERTER_SIGN_CONVENTIONS,
     SENSOR_UNAVAIL_THRESHOLD_S,
     TELEMETRY_PROFILE_HEARTBEAT_S,
@@ -52,6 +59,7 @@ from .const import (
     TELEMETRY_SNAPSHOT_INTERVAL_MIN,
     TELEMETRY_STEUERUNG,
 )
+from .heizstab.controller import create_heizstab
 from .inverter import create_inverter
 from .schedule_executor import ScheduleExecutor
 from .telemetry import TelemetryReporter
@@ -1328,6 +1336,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         return False
     hass.data[DOMAIN][entry.entry_id]["inverter"] = inverter
 
+    # Heizstab (heizstab/): zweite Senke neben der Batterie, direkt per
+    # Modbus TCP. None, wenn keiner konfiguriert ist — dann bleibt alles
+    # Weitere unverändert.
+    heizstab = create_heizstab(hass, config)
+    hass.data[DOMAIN][entry.entry_id]["heizstab"] = heizstab
+
     # Restore persisted register write counter
     from homeassistant.helpers.storage import Store as _Store
     writes_store = _Store(hass, 1, f"{DOMAIN}_{entry.entry_id}_register_writes")
@@ -1561,6 +1575,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         executor = ScheduleExecutor(
             hass, entry.entry_id, config, inverter,
             failure_callback=_executor_failure_callback,
+            heizstab=heizstab,
         )
         data["executor"] = executor
 
@@ -1657,6 +1672,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 "plan": status.get("plan_action"),
                 "schreibfehler": status.get("write_failures"),
                 "ausführung": mode == MODE_EIN,
+                "heizstab_kw": (status.get("heizstab") or {}).get("sollwert_kw"),
             }
             activity_log.append(entry_data)
             hass.bus.async_fire("eeg_optimizer_activity", entry_data)
@@ -1840,6 +1856,34 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 hass, _guard_cycle, timedelta(seconds=30)
             )
             entry.async_on_unload(unsub)
+
+            # ----------------------------------------------------------
+            # Heizstab: eigener Schreibtakt, unabhängig vom Guard-Lauf. Der
+            # Ohmpilot schaltet nach 50 s ohne Sollwert ab — der Guard-Lauf
+            # setzt den Wert, dieser Takt hält ihn am Leben. Lesen alle 10 s
+            # (Ist-Leistung, Temperatur), Zeitsynchronisation alle 6 h.
+            # ----------------------------------------------------------
+            if heizstab is not None:
+                async def _heizstab_schreiben(_now=None):
+                    await heizstab.async_schreiben()
+
+                async def _heizstab_lesen(_now=None):
+                    await heizstab.async_lesen()
+
+                async def _heizstab_zeit(_now=None):
+                    await heizstab.async_zeit_sync()
+
+                entry.async_on_unload(async_track_time_interval(
+                    hass, _heizstab_schreiben, timedelta(seconds=HEIZSTAB_WRITE_INTERVAL_S)
+                ))
+                entry.async_on_unload(async_track_time_interval(
+                    hass, _heizstab_lesen, timedelta(seconds=HEIZSTAB_READ_INTERVAL_S)
+                ))
+                entry.async_on_unload(async_track_time_interval(
+                    hass, _heizstab_zeit, timedelta(hours=HEIZSTAB_TIMESYNC_INTERVAL_H)
+                ))
+                hass.async_create_task(heizstab.async_lesen())
+                hass.async_create_task(heizstab.async_zeit_sync())
 
             # Run initial cycle immediately — sensors are already populated
             # by the synchronous slow+fast update in async_setup_entry
@@ -2168,6 +2212,13 @@ _RELOAD_CONFIG_KEYS = frozenset({
     CONF_BATTERY_POWER_DISCHARGE_SENSOR,
     CONF_GRID_POWER_EXPORT_SENSOR,
     CONF_GRID_POWER_IMPORT_SENSOR,
+    # Heizstab-Anbindung: Treiber wird mit Host/Port/Maximum neu gebaut.
+    # Zieltemperatur, Mindesttemperatur, Vorrang und Wärmewert dagegen
+    # nehmen den Hot-Reload-Pfad (HeizstabController.update_config).
+    CONF_HEIZSTAB_ENABLED,
+    CONF_HEIZSTAB_HOST,
+    CONF_HEIZSTAB_PORT,
+    CONF_HEIZSTAB_MAX_KW,
 })
 # Präfixe decken Inverter-Anbindung (Modbus-Hosts/Ports, Geräte-IDs,
 # Steuer-Entities) und Forecast-Quellen ab, ohne jeden Key einzeln zu pflegen.
@@ -2248,6 +2299,9 @@ async def _async_update_listener(
                     hass.async_create_task(refresh_fn())
 
         executor.update_config(config)
+        heizstab = data.get("heizstab")
+        if heizstab is not None:
+            heizstab.update_config(config)
         _LOGGER.info("EEG Energy Optimizer: Config hot-reloaded")
 
         # ----------------------------------------------------------
@@ -2331,6 +2385,16 @@ async def async_unload_entry(
             except Exception:
                 _LOGGER.exception(
                     "EEG Energy Optimizer: error releasing schedule executor on unload"
+                )
+        # Heizstab: 0 W schreiben und die Modbus-Verbindung schließen — sonst
+        # heizt er bis zum Watchdog des Ohmpilot (50 s) weiter.
+        heizstab = data.get("heizstab")
+        if heizstab is not None:
+            try:
+                await heizstab.async_shutdown()
+            except Exception:
+                _LOGGER.exception(
+                    "EEG Energy Optimizer: error shutting down heizstab on unload"
                 )
         # Close inverter resources (e.g. Fronius pymodbus TCP socket)
         # before dropping the entry. Other inverters use HA-managed

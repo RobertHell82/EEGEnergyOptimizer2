@@ -42,6 +42,7 @@ from .const import (
     DOMAIN,
     FORECAST_SOURCE_SOLCAST,
 )
+from .heizstab.controller import heizstab_max_kw, heizstab_waermewert
 from .power_readings import (
     compute_house_load_kw,
     compute_pv_now_kw,
@@ -275,6 +276,13 @@ class ScheduleInputs:
     # None = wie das Standard-Fenster.
     eeg_night_start_hour: int | None = None
     eeg_night_end_hour: int | None = None
+    # Heizstab als Senke für abgeregelten Überschuss (heizstab/): maximale
+    # Leistung in kW (0 = kein Heizstab) und der Wert einer Kilowattstunde
+    # Wärme in €/kWh (0 = unbewertet). Beides wirkt NICHT im LP — Haralds
+    # Modell bleibt unverändert; die geplante Heizstab-Leistung wird aus der
+    # Spalte ``discard`` abgeleitet (siehe ``_heizstab_plan_kw``).
+    heizstab_max_kw: float = 0.0
+    heizstab_waermewert: float = 0.0
 
 
 class _Forecast:
@@ -1376,6 +1384,8 @@ async def async_collect_inputs(
         # Gemeinschaft laut Prognose tatsächlich aufnimmt.
         eeg_tarife=echte_tarife or None,
         eeg_bedarf=eeg_bedarf,
+        heizstab_max_kw=heizstab_max_kw(config),
+        heizstab_waermewert=heizstab_waermewert(config),
     )
     return inputs, None
 
@@ -1432,6 +1442,10 @@ def solve(inputs: ScheduleInputs) -> dict[str, Any]:
             / inputs.battery_capacity_kwh,
             1,
         )
+        # Geplante Heizstab-Leistung: was das Modell abregeln würde, nimmt
+        # der Heizstab — bis zu seiner Maximalleistung. Reine Nachbearbeitung,
+        # keine Variable im LP (siehe ScheduleInputs.heizstab_max_kw).
+        slot["heizstab"] = _heizstab_plan_kw(slot.get("discard"), inputs)
         slots.append(slot)
 
     result = {
@@ -1473,6 +1487,18 @@ def solve(inputs: ScheduleInputs) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 # Gewinnberechnung (Executor): Standardbetrieb als Referenz, echte Geldflüsse
 # ---------------------------------------------------------------------------
+
+
+def _heizstab_plan_kw(discard_kw: float | None, inputs: ScheduleInputs) -> float:
+    """Heizstab-Leistung (AC, kW) aus abgeregeltem DC-Überschuss.
+
+    ``discard`` ist DC-Leistung vor dem Wechselrichter; am Heizstab kommt sie
+    hinter dem Wirkungsgrad an. Gedeckelt auf die Maximalleistung — mehr kann
+    er nicht aufnehmen, der Rest bleibt abgeregelt. Ohne Heizstab 0.
+    """
+    if inputs.heizstab_max_kw <= 0 or discard_kw is None or discard_kw <= 0:
+        return 0.0
+    return round(min(discard_kw * HAConfig.ac_efficiency, inputs.heizstab_max_kw), 4)
 
 
 def _batterie_verluste_kw(p_kw: float, kapazitaet_kwh: float) -> float:
@@ -1702,7 +1728,11 @@ def simuliere_standardbetrieb(
             inhalt += laden * dt_h
             batterie_p = -laden
             netz_p = export
+            # Was weder Batterie noch Netz nehmen, regelt das Gerät ab — bei
+            # einem Heizstab landet es dort (dieselbe Regel wie im Fahrplan).
+            abgeregelt = max(0.0, ueberschuss - laden - verlust - export / eff)
         else:
+            abgeregelt = 0.0
             defizit = bedarf_dc - pv
             # Die Batterie muss mehr liefern, als beim Haus ankommt.
             entladen = min(
@@ -1720,6 +1750,8 @@ def simuliere_standardbetrieb(
                 "grid_p": round(netz_p, 4),
                 "battery_p": round(batterie_p, 4),
                 "soc": round(100.0 * inhalt / kapazitaet, 1),
+                "discard": round(abgeregelt, 4),
+                "heizstab": _heizstab_plan_kw(abgeregelt, inputs),
             }
         )
     return referenz
@@ -1837,10 +1869,14 @@ def bewerte_geldfluesse(
 
     erloes = bezug = alterung = 0.0
     eeg_kwh = export_gesamt_kwh = 0.0
+    # Wärme: was der Heizstab aufnimmt, bewertet mit dem konfigurierten
+    # Wärmewert (heizstab/). Ohne Wärmewert zählt die Energie, aber kein Geld.
+    heizstab_kwh = 0.0
     soc_ende: float | None = None
     for slot, basis in zip(slots, basis_je_slot):
         grid = slot.get("grid_p") or 0.0
         bat = slot.get("battery_p") or 0.0
+        heizstab_kwh += max(0.0, float(slot.get("heizstab") or 0.0)) * dt_h
         if grid > 0:
             export_kwh = grid * dt_h
             export_gesamt_kwh += export_kwh
@@ -1883,6 +1919,7 @@ def bewerte_geldfluesse(
         )
     satz = endbestand_satz(inputs)
     endbestand = rest_kwh * satz
+    waerme = heizstab_kwh * max(0.0, float(getattr(inputs, "heizstab_waermewert", 0.0) or 0.0))
 
     return {
         "erloes": round(erloes, 4),
@@ -1895,7 +1932,10 @@ def bewerte_geldfluesse(
         # wurde — macht im Panel sichtbar, wo der Zeitvorteil herkommt.
         "eeg_kwh": round(eeg_kwh, 2),
         "export_kwh": round(export_gesamt_kwh, 2),
-        "summe": round(erloes - bezug - alterung + endbestand, 4),
+        # Heizstab: aufgenommene Energie und ihr Wert als Wärme.
+        "heizstab_kwh": round(heizstab_kwh, 2),
+        "waerme": round(waerme, 4),
+        "summe": round(erloes - bezug - alterung + endbestand + waerme, 4),
     }
 
 

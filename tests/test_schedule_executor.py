@@ -1007,3 +1007,234 @@ async def test_wiederholtes_umschalten_gibt_jedes_mal_frei(mock_hass, mock_inver
         assert mock_inverter.async_stop_forcible.call_count == 2, (
             "zweites Umschalten auf Aus nahm die Steuerwerte nicht zurueck"
         )
+
+
+# ---------------------------------------------------------------------------
+# Heizstab: zweite Senke neben der Batterie
+# ---------------------------------------------------------------------------
+
+from unittest.mock import AsyncMock, MagicMock  # noqa: E402
+
+from custom_components.eeg_energy_optimizer.const import (  # noqa: E402
+    CONF_HEIZSTAB_ENABLED,
+    CONF_HEIZSTAB_MAX_KW,
+    CONF_HEIZSTAB_MINTEMP_C,
+    CONF_HEIZSTAB_VORRANG,
+    CONF_HEIZSTAB_ZIELTEMP_C,
+    HEIZSTAB_STEP_KW,
+)
+from custom_components.eeg_energy_optimizer.heizstab.controller import (  # noqa: E402
+    HeizstabController,
+)
+
+
+def _heizstab(config, power_w=0, temp=50.0):
+    """Controller mit gemocktem Treiber — geschrieben wird nur über async_set_power."""
+    treiber = MagicMock()
+    treiber.last_power_w = power_w
+    treiber.last_temperature = temp
+    treiber.connected = True
+    treiber.last_error = None
+    treiber.async_set_power = AsyncMock(return_value=True)
+    treiber.async_read_sensors = AsyncMock()
+    treiber.async_close = AsyncMock()
+    return HeizstabController(MagicMock(), config, treiber), treiber
+
+
+def _cfg_heizstab(vorrang=True, mintemp=0.0):
+    return {
+        **CFG_LIMIT,
+        CONF_HEIZSTAB_ENABLED: True,
+        CONF_HEIZSTAB_MAX_KW: 6.0,
+        CONF_HEIZSTAB_ZIELTEMP_C: 80.0,
+        CONF_HEIZSTAB_MINTEMP_C: mintemp,
+        CONF_HEIZSTAB_VORRANG: vorrang,
+    }
+
+
+def _make_executor_mit_heizstab(mock_hass, mock_inverter, config, **hz):
+    controller, treiber = _heizstab(config, **hz)
+    ex = ScheduleExecutor(mock_hass, "entry1", config, mock_inverter, heizstab=controller)
+    ex._created_at = NOW - timedelta(minutes=10)
+    return ex, controller, treiber
+
+
+async def test_heizstab_modus_aus_setzt_null(mock_hass, mock_inverter):
+    cfg = _cfg_heizstab()
+    ex, hz, treiber = _make_executor_mit_heizstab(mock_hass, mock_inverter, cfg)
+    hz.sollwert_kw = 3.0
+    with _messwerte(export=4.0, haus=0.5, pv=8.0):
+        await ex.async_guard_cycle(_state(_slot(0, battery_p=-1.0)), MODE_AUS, now=NOW)
+    assert hz.sollwert_kw == 0.0
+    assert hz.grund == "Optimierung aus"
+    treiber.async_set_power.assert_awaited_with(0)
+
+
+async def test_heizstab_startphase_setzt_null(mock_hass, mock_inverter):
+    cfg = _cfg_heizstab()
+    ex, hz, _ = _make_executor_mit_heizstab(mock_hass, mock_inverter, cfg)
+    ex._created_at = NOW
+    hz.sollwert_kw = 2.0
+    with _messwerte(export=4.0, haus=0.5, pv=8.0):
+        await ex.async_guard_cycle(_state(_slot(0, battery_p=-1.0)), MODE_EIN, now=NOW)
+    assert hz.sollwert_kw == 0.0
+    assert hz.grund == "Startphase"
+
+
+async def test_heizstab_nimmt_ueberschuss_am_limit_in_schritten(mock_hass, mock_inverter):
+    """Einspeisung klebt am Limit, Slot lädt nach Plan → Heizstab +0,5 kW je Lauf."""
+    cfg = _cfg_heizstab()
+    ex, hz, treiber = _make_executor_mit_heizstab(mock_hass, mock_inverter, cfg)
+    mock_inverter.async_get_charge_limit_kw = AsyncMock(return_value=2.0)
+    mock_inverter.get_charge_limit_max_kw = MagicMock(return_value=5.0)
+    with _messwerte(export=4.0, haus=0.5, pv=8.0):
+        await ex.async_guard_cycle(_state(_slot(0, battery_p=-2.0)), MODE_EIN, now=NOW)
+        assert hz.sollwert_kw == pytest.approx(HEIZSTAB_STEP_KW)
+        await ex.async_guard_cycle(_state(_slot(0, battery_p=-2.0)), MODE_EIN, now=NOW)
+        assert hz.sollwert_kw == pytest.approx(2 * HEIZSTAB_STEP_KW)
+    treiber.async_set_power.assert_awaited_with(1000)
+
+
+async def test_heizstab_vorrang_haelt_guard1_zurueck(mock_hass, mock_inverter):
+    """Mit Heizstab-Vorrang bleibt das Ladelimit beim Planwert, solange der
+    Heizstab nicht gesättigt ist — das Kleben am Limit ist SEIN Signal."""
+    cfg = _cfg_heizstab(vorrang=True)
+    ex, hz, _ = _make_executor_mit_heizstab(mock_hass, mock_inverter, cfg)
+    mock_inverter.async_get_charge_limit_kw = AsyncMock(return_value=2.0)
+    mock_inverter.get_charge_limit_max_kw = MagicMock(return_value=5.0)
+    with _messwerte(export=4.0, haus=0.5, pv=8.0):
+        await ex.async_guard_cycle(_state(_slot(0, battery_p=-2.0)), MODE_EIN, now=NOW)
+    mock_inverter.async_set_charge_limit.assert_awaited_once_with(2.0)
+    assert "Guard 1 wartet" in ex.last_status
+    assert hz.sollwert_kw == pytest.approx(HEIZSTAB_STEP_KW)
+
+
+async def test_heizstab_gesaettigt_gibt_guard1_frei(mock_hass, mock_inverter):
+    """Heizstab am Maximum → Guard 1 hebt das Ladelimit wieder an."""
+    cfg = _cfg_heizstab(vorrang=True)
+    ex, hz, _ = _make_executor_mit_heizstab(mock_hass, mock_inverter, cfg)
+    hz.sollwert_kw = 6.0
+    mock_inverter.async_get_charge_limit_kw = AsyncMock(return_value=2.0)
+    mock_inverter.get_charge_limit_max_kw = MagicMock(return_value=5.0)
+    with _messwerte(export=4.0, haus=0.5, pv=8.0):
+        await ex.async_guard_cycle(_state(_slot(0, battery_p=-2.0)), MODE_EIN, now=NOW)
+    mock_inverter.async_set_charge_limit.assert_awaited_once_with(2.5)
+    assert hz.sollwert_kw == pytest.approx(6.0)
+
+
+async def test_heizstab_zieltemperatur_gibt_guard1_frei(mock_hass, mock_inverter):
+    cfg = _cfg_heizstab(vorrang=True)
+    ex, hz, _ = _make_executor_mit_heizstab(mock_hass, mock_inverter, cfg, temp=81.0)
+    mock_inverter.async_get_charge_limit_kw = AsyncMock(return_value=2.0)
+    mock_inverter.get_charge_limit_max_kw = MagicMock(return_value=5.0)
+    with _messwerte(export=4.0, haus=0.5, pv=8.0):
+        await ex.async_guard_cycle(_state(_slot(0, battery_p=-2.0)), MODE_EIN, now=NOW)
+    mock_inverter.async_set_charge_limit.assert_awaited_once_with(2.5)
+    assert hz.sollwert_kw == 0.0
+    assert "Zieltemperatur" in hz.grund
+
+
+async def test_batterie_vorrang_heizstab_wartet_bis_ladelimit_am_maximum(mock_hass, mock_inverter):
+    """Batterie zuerst: Guard 1 hebt an, der Heizstab hält — bis das Ladelimit
+    am Hardware-Maximum steht, dann rückt er nach."""
+    cfg = _cfg_heizstab(vorrang=False)
+    ex, hz, _ = _make_executor_mit_heizstab(mock_hass, mock_inverter, cfg)
+    mock_inverter.async_get_charge_limit_kw = AsyncMock(return_value=4.0)
+    mock_inverter.get_charge_limit_max_kw = MagicMock(return_value=5.0)
+    with _messwerte(export=4.0, haus=0.5, pv=8.0):
+        # Lauf 1: 4,0 → 4,5 kW, Batterie noch nicht am Maximum → Heizstab hält.
+        await ex.async_guard_cycle(_state(_slot(0, battery_p=-2.0)), MODE_EIN, now=NOW)
+        assert mock_inverter.async_set_charge_limit.await_args.args[0] == pytest.approx(4.5)
+        assert hz.sollwert_kw == 0.0
+        assert "Batterie hat Vorrang" in hz.grund
+        # Lauf 2: das Gerät meldet 4,5 → Guard 1 clampt bei 5,0 = Maximum.
+        mock_inverter.async_get_charge_limit_kw = AsyncMock(return_value=4.5)
+        await ex.async_guard_cycle(_state(_slot(0, battery_p=-2.0)), MODE_EIN, now=NOW)
+        assert ex._ladelimit_am_maximum is True
+        assert hz.sollwert_kw == pytest.approx(HEIZSTAB_STEP_KW)
+
+
+async def test_batterie_voll_gibt_heizstab_frei_auch_bei_batterie_vorrang(mock_hass, mock_inverter):
+    cfg = _cfg_heizstab(vorrang=False)
+    ex, hz, _ = _make_executor_mit_heizstab(mock_hass, mock_inverter, cfg)
+    with _messwerte(export=4.0, haus=0.5, pv=8.0):
+        # Batterie voll (soc 99.5) → Absicht release → Batterie gesättigt.
+        await ex.async_guard_cycle(_state(_slot(0, battery_p=0.0, soc=99.5)), MODE_EIN, now=NOW)
+    assert hz.sollwert_kw == pytest.approx(HEIZSTAB_STEP_KW)
+
+
+async def test_entladung_setzt_heizstab_null(mock_hass, mock_inverter):
+    """Einspeisung aus der Batterie ist kein Überschuss — der Heizstab bleibt aus,
+    auch wenn die gemessene Einspeisung an der Grenze liegt."""
+    cfg = _cfg_heizstab()
+    ex, hz, treiber = _make_executor_mit_heizstab(mock_hass, mock_inverter, cfg)
+    hz.sollwert_kw = 2.0
+    with _messwerte(export=4.0, haus=0.5, pv=0.0):
+        await ex.async_guard_cycle(_state(_slot(0, battery_p=3.0, grid_p=2.5, soc=60)), MODE_EIN, now=NOW)
+    mock_inverter.async_set_discharge.assert_awaited_once()
+    assert hz.sollwert_kw == 0.0
+    assert "Entladung" in hz.grund
+    treiber.async_set_power.assert_awaited_with(0)
+
+
+async def test_mindesttemperatur_unterdrueckt_entladung(mock_hass, mock_inverter):
+    """Unter der Mindesttemperatur heizt der Heizstab voll — statt der geplanten
+    Entladung ins Netz gibt der Executor frei, sonst landete die Batterie im Boiler."""
+    cfg = _cfg_heizstab(mintemp=40.0)
+    ex, hz, treiber = _make_executor_mit_heizstab(mock_hass, mock_inverter, cfg, temp=35.0)
+    with _messwerte(export=-3.0, haus=0.5, pv=0.0):
+        await ex.async_guard_cycle(_state(_slot(0, battery_p=3.0, grid_p=2.5, soc=60)), MODE_EIN, now=NOW)
+    mock_inverter.async_set_discharge.assert_not_awaited()
+    assert ex.last_action is not None and ex.last_action.kind == "release"
+    assert "Mindesttemperatur" in (ex.last_action.reason or "")
+    assert hz.sollwert_kw == pytest.approx(6.0)
+    treiber.async_set_power.assert_awaited_with(6000)
+
+
+async def test_heizstab_bei_netzbezug_sofort_null(mock_hass, mock_inverter):
+    cfg = _cfg_heizstab()
+    ex, hz, _ = _make_executor_mit_heizstab(mock_hass, mock_inverter, cfg)
+    hz.sollwert_kw = 3.0
+    with _messwerte(export=-0.6, haus=0.5, pv=1.0):
+        await ex.async_guard_cycle(_state(_slot(0, battery_p=-1.0)), MODE_EIN, now=NOW)
+    assert hz.sollwert_kw == 0.0
+    assert "Netzbezug" in hz.grund
+
+
+async def test_heizstab_ohne_einspeisegrenze_regelt_auf_ac_grenze(mock_hass, mock_inverter):
+    """Ohne Netzbetreiber-Grenze gilt AC-Grenzleistung − 0,5 kW, wie im LP."""
+    cfg = {**_cfg_heizstab(), "grid_export_limit_enabled": False, "inverter_ac_limit_kw": 10.0}
+    ex, hz, _ = _make_executor_mit_heizstab(mock_hass, mock_inverter, cfg)
+    assert ex._heizstab_grenze_kw() == pytest.approx(9.5)
+    with _messwerte(export=9.5, haus=0.5, pv=12.0):
+        await ex.async_guard_cycle(_state(_slot(0, battery_p=-2.0)), MODE_EIN, now=NOW)
+    assert hz.sollwert_kw == pytest.approx(HEIZSTAB_STEP_KW)
+
+
+async def test_heizstab_laeuft_auch_ohne_plan_nach_messung(mock_hass, mock_inverter):
+    """Failsafe-Fall: kein Plan, aber echter Überschuss am Limit → der Heizstab
+    regelt weiter nach der Messung (er hängt nicht am Plan, nur an der Grenze)."""
+    cfg = _cfg_heizstab()
+    ex, hz, _ = _make_executor_mit_heizstab(mock_hass, mock_inverter, cfg)
+    with _messwerte(export=4.0, haus=0.5, pv=8.0):
+        await ex.async_guard_cycle(_state(available=False), MODE_EIN, now=NOW)
+    assert hz.sollwert_kw == pytest.approx(HEIZSTAB_STEP_KW)
+
+
+async def test_status_traegt_heizstab(mock_hass, mock_inverter):
+    cfg = _cfg_heizstab()
+    ex, hz, _ = _make_executor_mit_heizstab(mock_hass, mock_inverter, cfg, power_w=1200, temp=55.0)
+    st = ex.status()
+    assert st["heizstab"]["leistung_kw"] == pytest.approx(1.2)
+    assert st["heizstab"]["temperatur_c"] == pytest.approx(55.0)
+    assert st["heizstab"]["max_kw"] == 6.0
+
+
+async def test_ohne_heizstab_bleibt_alles_wie_bisher(mock_hass, mock_inverter):
+    ex = _make_executor(mock_hass, mock_inverter, dict(CFG_LIMIT))
+    assert ex.status()["heizstab"] is None
+    mock_inverter.async_get_charge_limit_kw = AsyncMock(return_value=2.0)
+    mock_inverter.get_charge_limit_max_kw = MagicMock(return_value=5.0)
+    with _messwerte(export=4.0, haus=0.5, pv=8.0):
+        await ex.async_guard_cycle(_state(_slot(0, battery_p=-2.0)), MODE_EIN, now=NOW)
+    mock_inverter.async_set_charge_limit.assert_awaited_once_with(2.5)

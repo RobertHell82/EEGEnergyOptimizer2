@@ -233,6 +233,56 @@ SCHEDULE_BATTERY_FULL_SOC_PCT = 99.0
 
 SCHEDULE_FAILSAFE_MINUTES = 15
 
+# ---------------------------------------------------------------------------
+# Heizstab (heizstab/) — ein Fronius Ohmpilot als steuerbare Senke für
+# PV-Überschuss, den weder Batterie noch Netz aufnehmen. Direkt per Modbus TCP
+# gesteuert; Voraussetzung ist ein vom Gen24 ENTKOPPELTER Ohmpilot, sonst
+# schreiben zwei Master auf dasselbe Register.
+# ---------------------------------------------------------------------------
+CONF_HEIZSTAB_ENABLED = "heizstab_enabled"
+CONF_HEIZSTAB_HOST = "heizstab_host"
+CONF_HEIZSTAB_PORT = "heizstab_port"
+# Maximale Leistung des Heizstabs in kW (Ohmpilot: 3 kW einphasig, 6 bzw.
+# 9 kW dreiphasig — der Wert steht auf dem Heizstab, nicht am Ohmpilot).
+CONF_HEIZSTAB_MAX_KW = "heizstab_max_kw"
+# Zieltemperatur: ab hier wird nicht mehr geheizt (Hysterese darunter).
+CONF_HEIZSTAB_ZIELTEMP_C = "heizstab_zieltemp_c"
+# Mindesttemperatur: darunter heizt der Heizstab mit voller Leistung, auch
+# aus dem Netz — Komfort geht vor Optimierung. 0 = keine Mindesttemperatur.
+CONF_HEIZSTAB_MINTEMP_C = "heizstab_mintemp_c"
+# Vorrang bei ungeplantem Überschuss (Einspeisung klebt an der Grenze):
+# True = zuerst der Heizstab, das Ladelimit der Batterie wird erst angehoben,
+# wenn er gesättigt ist; False = zuerst die Batterie (Guard 1 wie bisher),
+# der Heizstab bekommt, was sie nicht mehr aufnimmt.
+CONF_HEIZSTAB_VORRANG = "heizstab_vorrang"
+# Was eine Kilowattstunde Wärme wert ist (EUR/kWh) — der Preis der Energie,
+# die sie ersetzt (Gas, Wärmepumpe, Strom). 0 = Wärme bleibt unbewertet.
+CONF_HEIZSTAB_WAERMEWERT = "heizstab_waermewert"
+DEFAULT_HEIZSTAB_ENABLED = False
+DEFAULT_HEIZSTAB_PORT = 502
+DEFAULT_HEIZSTAB_MAX_KW = 6.0
+DEFAULT_HEIZSTAB_ZIELTEMP_C = 80.0
+DEFAULT_HEIZSTAB_MINTEMP_C = 0.0
+DEFAULT_HEIZSTAB_VORRANG = True
+DEFAULT_HEIZSTAB_WAERMEWERT = 0.0
+
+# Nachführung: klebt die Einspeisung an der Grenze, ist die wahre Höhe des
+# Überschusses unsichtbar (der Wechselrichter regelt bereits ab) — deshalb
+# in Schritten nach oben; nach unten ist die Lücke messbar und wird in einem
+# Lauf geschlossen. Dieselben Bänder wie Guard 1 (GUARD_EXPORT_*).
+HEIZSTAB_STEP_KW = 0.5
+# Watchdog des Ohmpilot: 50 s ohne Sollwert → Heizstab aus. Geschrieben
+# wird deshalb alle 30 s, unabhängig davon, ob sich der Wert geändert hat.
+HEIZSTAB_WRITE_INTERVAL_S = 30
+HEIZSTAB_READ_INTERVAL_S = 10
+HEIZSTAB_TIMESYNC_INTERVAL_H = 6
+# Zieltemperatur: gesperrt ab Ziel, frei erst wieder unter Ziel − Hysterese.
+HEIZSTAB_TEMP_HYSTERESE_K = 3.0
+# Mindesttemperatur: Komfortheizen ab unter Minimum, Ende bei Minimum + Hysterese.
+HEIZSTAB_MINTEMP_HYSTERESE_K = 5.0
+# Ab diesem Abstand zum Maximum gilt der Heizstab als gesättigt.
+HEIZSTAB_SATT_TOLERANZ_KW = 0.05
+
 # ------------------------------------------------------------------
 # Phase 8: Telemetry (v1.1)
 # ------------------------------------------------------------------
@@ -311,6 +361,14 @@ TELEMETRY_SETTINGS_KEYS = (
     "peakshare_night_start",
     "peakshare_night_end",
     "schedule_ac_limit_kw",
+    # Heizstab als Senke — erklaert, warum ein Plan abgeregelte Energie nutzt.
+    # Bewusst OHNE Host und Port.
+    "heizstab_enabled",
+    "heizstab_max_kw",
+    "heizstab_zieltemp_c",
+    "heizstab_mintemp_c",
+    "heizstab_vorrang",
+    "heizstab_waermewert",
 )
 # ``discharge_a_start_time`` steht bewusst nicht mehr drin: der Schluessel
 # bleibt in der Konfiguration (Rueckwechsel-Garantie), verschiebt aber nur

@@ -32,6 +32,11 @@ from .const import (
     CONF_GRID_EXPORT_LIMIT_ENABLED,
     CONF_GRID_EXPORT_LIMIT_KW,
     CONF_GRID_POWER_SENSOR,
+    CONF_HEIZSTAB_ENABLED,
+    CONF_HEIZSTAB_HOST,
+    CONF_HEIZSTAB_MAX_KW,
+    CONF_HEIZSTAB_PORT,
+    DEFAULT_HEIZSTAB_PORT,
     CONF_HUAWEI_DEVICE_ID,
     CONF_HUAWEI_DEVICE_IDS,
     CONF_INVERTER_TYPE,
@@ -662,6 +667,43 @@ async def ws_save_config(
             )
             return
         new_data[CONF_SMA_MODBUS_PORT] = port
+
+    # Heizstab (Ohmpilot per Modbus TCP): bei eingeschaltetem Heizstab muss
+    # der Endpunkt stimmen — dieselbe Prüfung wie bei den Modbus-Treibern.
+    if new_data.get(CONF_HEIZSTAB_ENABLED):
+        host = new_data.get(CONF_HEIZSTAB_HOST, "")
+        if not isinstance(host, str) or not host.strip() or len(host) > 255:
+            connection.send_error(
+                msg["id"], "invalid_config", "Ungültiger Heizstab-Host (Ohmpilot)"
+            )
+            return
+        new_data[CONF_HEIZSTAB_HOST] = host.strip()
+        try:
+            port = int(new_data.get(CONF_HEIZSTAB_PORT) or DEFAULT_HEIZSTAB_PORT)
+        except (TypeError, ValueError):
+            connection.send_error(
+                msg["id"], "invalid_config", "Ungültiger Heizstab-Port"
+            )
+            return
+        if not 1 <= port <= 65535:
+            connection.send_error(
+                msg["id"], "invalid_config", "Heizstab-Port außerhalb des gültigen Bereichs"
+            )
+            return
+        new_data[CONF_HEIZSTAB_PORT] = port
+        try:
+            max_kw = float(new_data.get(CONF_HEIZSTAB_MAX_KW) or 0.0)
+        except (TypeError, ValueError):
+            connection.send_error(
+                msg["id"], "invalid_config", "Ungültige Heizstab-Leistung (kW)"
+            )
+            return
+        if max_kw <= 0:
+            connection.send_error(
+                msg["id"], "invalid_config", "Heizstab-Leistung muss größer als 0 kW sein"
+            )
+            return
+        new_data[CONF_HEIZSTAB_MAX_KW] = max_kw
 
     # Einspeisegrenze des Fahrplans: bei aktivierter Grenze muss ein
     # positiver Wert gesetzt sein — sie fließt ins LP-Modell ein und
@@ -2761,6 +2803,40 @@ async def ws_get_control_state(
     except Exception:
         _LOGGER.exception("Steuerwerte des Wechselrichters nicht lesbar")
 
+    # Heizstab: Ist-Leistung gegen unseren Sollwert, dazu die Temperatur.
+    heizstab = data.get("heizstab")
+    heizstab_status = None
+    if heizstab is not None and getattr(heizstab, "enabled", False):
+        try:
+            heizstab_status = heizstab.status()
+            leistung = heizstab_status.get("leistung_kw")
+            rows.append(
+                {
+                    "label": "Heizstab Leistung",
+                    "entity_id": None,
+                    "role": "heizstab",
+                    "value": None if leistung is None else round(leistung * 1000),
+                    "unit": "W",
+                    "max": round(float(heizstab_status.get("max_kw") or 0.0) * 1000),
+                    "written": heizstab_status.get("sollwert_kw"),
+                    "written_unit": "kW",
+                }
+            )
+            rows.append(
+                {
+                    "label": "Heizstab Temperatur",
+                    "entity_id": None,
+                    "role": "heizstab_temperatur",
+                    "value": heizstab_status.get("temperatur_c"),
+                    "unit": "°C",
+                    "max": None,
+                    "written": None,
+                    "written_unit": None,
+                }
+            )
+        except Exception:
+            _LOGGER.exception("Steuerwerte des Heizstabs nicht lesbar")
+
     connection.send_result(
         msg["id"],
         {
@@ -2771,5 +2847,6 @@ async def ws_get_control_state(
             "last_run": status.get("last_run"),
             "status": status.get("status"),
             "rows": rows,
+            "heizstab": heizstab_status,
         },
     )

@@ -15,6 +15,15 @@ Entscheiden und Setzen sind strikt getrennt:
 
 Gesteuert wird nur ein Treiber mit ``supports_schedule_control=True``
 (derzeit Huawei). Alle anderen Treiber rechnen und zeigen an.
+
+Heizstab (heizstab/): eine zweite Senke neben der Batterie. Nach jedem
+Guard-Lauf bestimmt ``_heizstab_schritt`` den Sollwert des Heizstabs aus der
+gemessenen Einspeisung — klebt sie an der Einspeisegrenze, nimmt der
+Heizstab den Überschuss in Schritten auf; bei einer Entladung ins Netz, im
+Modus Aus und in der Startphase steht er auf 0. Wer bei ungeplantem
+Überschuss zuerst an der Reihe ist (Heizstab oder Batterie), sagt die
+Einstellung ``heizstab_vorrang``: Guard 1 wartet auf einen gesättigten
+Heizstab, oder der Heizstab wartet auf eine gesättigte Batterie.
 """
 
 from __future__ import annotations
@@ -28,6 +37,8 @@ from .const import (
     CONF_DISCHARGE_POWER_KW,
     CONF_GRID_EXPORT_LIMIT_ENABLED,
     CONF_GRID_EXPORT_LIMIT_KW,
+    CONF_INVERTER_AC_LIMIT_KW,
+    CONF_PV_PEAK_KWP,
     DEFAULT_DISCHARGE_POWER_KW,
     DEFAULT_GRID_EXPORT_LIMIT_ENABLED,
     DEFAULT_GRID_EXPORT_LIMIT_KW,
@@ -53,7 +64,7 @@ from .power_readings import (
     compute_house_load_kw,
     compute_pv_now_kw,
 )
-from .schedule import _now_local, slot_for
+from .schedule import DEFAULT_AC_LIMIT_KW, _now_local, slot_for
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -185,11 +196,19 @@ class ScheduleExecutor:
         config: dict,
         inverter: Any,
         failure_callback: Any = None,
+        heizstab: Any = None,
     ) -> None:
         self._hass = hass
         self._entry_id = entry_id
         self._config = config
         self._inverter = inverter
+        # Heizstab-Controller (heizstab/controller.py) oder None. Der Executor
+        # bestimmt seinen Sollwert je Lauf, geschrieben wird dort.
+        self._heizstab = heizstab
+        # Guard 1 stand zuletzt am Hardware-Maximum des Ladelimits — dann ist
+        # die Batterie gesättigt und der Heizstab darf nachrücken (bei
+        # Batterie-Vorrang).
+        self._ladelimit_am_maximum = False
         # Wird bei Schreibfehlern mit der Aktion ("charge_limit" / "discharge"
         # / "release") aufgerufen — Telemetrie-Anbindung aus __init__.py.
         self._failure_callback = failure_callback
@@ -296,8 +315,33 @@ class ScheduleExecutor:
         ``schedule_state`` ist das ``ScheduleRunner.to_dict()``-Payload,
         ``mode`` der Wert des Optimizer-Selects (nur MODE_EIN schreibt).
         ``now`` ist injizierbar für Tests.
+
+        Der Heizstab kommt nach dem Wechselrichter dran — in jedem Fall, auch
+        wenn der Lauf früh aussteigt (Treiber nicht steuerbar, Startphase,
+        Failsafe): sein Sollwert muss dann 0 werden, sonst stünde er bis zum
+        Watchdog des Ohmpilot mit dem letzten Wert da.
         """
         now = now or _now_local()
+        if self._heizstab is not None:
+            # Hysteresen fortschreiben, BEVOR die Absicht übersetzt wird —
+            # unter der Mindesttemperatur wird eine Entladung unterdrückt.
+            self._heizstab.pruefe_temperaturen()
+        try:
+            await self._guard_cycle_wechselrichter(
+                schedule_state, mode, now, pause_bis, pause_soc_pct
+            )
+        finally:
+            await self._heizstab_schritt(mode, now, pause_bis)
+
+    async def _guard_cycle_wechselrichter(
+        self,
+        schedule_state: dict | None,
+        mode: str,
+        now: datetime,
+        pause_bis: datetime | None,
+        pause_soc_pct: float | None,
+    ) -> None:
+        """Der Wechselrichter-Teil des Guard-Laufs (siehe async_guard_cycle)."""
         self.last_run_iso = now.isoformat()
 
         # Eine Pause ist ein Aus mit Ablaufzeit: dieselbe Freigabe beim
@@ -335,6 +379,23 @@ class ScheduleExecutor:
             action = plan_action(schedule_state, now)
         else:
             action = None
+        if (
+            action is not None
+            and action.kind == "discharge"
+            and self._heizstab is not None
+            and self._heizstab.komfort_aktiv
+        ):
+            # Unter der Mindesttemperatur heizt der Heizstab mit voller
+            # Leistung — eine erzwungene Entladung landete jetzt im Boiler
+            # statt in der Gemeinschaft. Also Freigabe: der Automatikmodus
+            # deckt Haus und Heizstab aus PV und Batterie, den Rest holt
+            # sich der Heizstab aus dem Netz. Das ist der Preis des Komforts.
+            action = PlanAction(
+                "release",
+                slot_t=action.slot_t,
+                consumption_kw=action.consumption_kw,
+                reason="Normalbetrieb (Heizstab unter Mindesttemperatur — keine Entladung ins Netz)",
+            )
         self.last_action = action
 
         # Slotwechsel: Not-Aus-Sperre gilt nur bis zum nächsten Slot. Ein
@@ -509,7 +570,105 @@ class ScheduleExecutor:
             "emergency_blocked_slot": self._emergency_blocked_slot,
             "write_failures": self.write_failures,
             "last_write_ok": self.last_write_ok,
+            "heizstab": None if self._heizstab is None else self._heizstab.status(),
         }
+
+    # ------------------------------------------------------------------
+    # Heizstab — zweite Senke neben der Batterie
+    # ------------------------------------------------------------------
+    def _heizstab_grenze_kw(self) -> float:
+        """Die Einspeisegrenze, auf die der Heizstab regelt.
+
+        Dieselbe Schranke wie im LP (schedule.py): die konfigurierte
+        Einspeisegrenze, sonst die AC-Grenzleistung abzüglich 0,5 kW — ohne
+        Netzbetreiber-Grenze begrenzt allein der Wechselrichter, und alles
+        darüber wäre abgeregelt.
+        """
+        enabled = bool(
+            self._config.get(CONF_GRID_EXPORT_LIMIT_ENABLED, DEFAULT_GRID_EXPORT_LIMIT_ENABLED)
+        )
+        try:
+            limit_kw = float(
+                self._config.get(CONF_GRID_EXPORT_LIMIT_KW, DEFAULT_GRID_EXPORT_LIMIT_KW) or 0.0
+            )
+        except (TypeError, ValueError):
+            limit_kw = 0.0
+        if enabled and limit_kw > 0:
+            return limit_kw
+        ac = (
+            self._config.get(CONF_INVERTER_AC_LIMIT_KW)
+            or self._config.get("schedule_ac_limit_kw")
+            or self._config.get(CONF_PV_PEAK_KWP)
+        )
+        try:
+            ac_kw = float(ac) if ac else DEFAULT_AC_LIMIT_KW
+        except (TypeError, ValueError):
+            ac_kw = DEFAULT_AC_LIMIT_KW
+        return max(0.5, ac_kw - 0.5)
+
+    def _batterie_gesaettigt(self) -> bool:
+        """Kann die Batterie gerade nichts (mehr) aufnehmen?
+
+        Dann ist der Heizstab auch bei Batterie-Vorrang an der Reihe. Ein
+        nicht steuerbarer Treiber zählt als gesättigt — sein Ladelimit lässt
+        sich nicht anheben, der Überschuss ginge sonst verloren.
+        """
+        if not self._supported:
+            return True
+        action = self.last_action
+        if action is not None and action.kind == "release":
+            # Batterie voll oder Entladung fürs Haus — Laden ist kein Thema.
+            return True
+        return self._ladelimit_am_maximum
+
+    def _heizstab_vorrang_frei(self) -> bool:
+        """Darf der Heizstab jetzt Überschuss aufnehmen (Reihenfolge)?"""
+        if self._heizstab is None:
+            return False
+        if self._heizstab.vorrang_heizstab:
+            return True
+        return self._batterie_gesaettigt()
+
+    def _heizstab_gesaettigt(self) -> bool:
+        """Muss Guard 1 auf den Heizstab warten? Nein, wenn er gesättigt ist."""
+        if self._heizstab is None or not self._heizstab.enabled:
+            return True
+        return self._heizstab.gesaettigt
+
+    async def _heizstab_schritt(
+        self, mode: str, now: datetime, pause_bis: datetime | None
+    ) -> None:
+        """Sollwert des Heizstabs für diesen Lauf bestimmen und übergeben.
+
+        Läuft nach dem Wechselrichter-Teil, mit dessen Ergebnis: ob gerade
+        entladen wird (dann 0), ob die Batterie gesättigt ist (dann darf der
+        Heizstab bei Batterie-Vorrang nachrücken). Mode Aus, Pause und
+        Startphase heißen 0 — „wenn die Optimierung aus ist, ist der Heizstab
+        aus", auch unter der Mindesttemperatur.
+        """
+        hz = self._heizstab
+        if hz is None or not hz.enabled:
+            return
+        try:
+            if pause_bis is not None or mode != MODE_EIN:
+                await hz.async_set_sollwert(0.0, "Optimierung aus")
+                return
+            if (now - self._created_at).total_seconds() < STARTUP_GRACE_SECONDS:
+                await hz.async_set_sollwert(0.0, "Startphase")
+                return
+            entladung = self._active_kind == "discharge" or (
+                self.last_action is not None and self.last_action.kind == "discharge"
+            )
+            export = compute_grid_export_kw(self._hass, self._config)
+            soll, grund = hz.regeln(
+                entladung=entladung,
+                export_kw=export,
+                grenze_kw=self._heizstab_grenze_kw(),
+                vorrang_frei=self._heizstab_vorrang_frei(),
+            )
+            await hz.async_set_sollwert(soll, grund)
+        except Exception:  # noqa: BLE001 — der Heizstab darf den Takt nie kippen
+            _LOGGER.exception("Executor: Heizstab-Schritt fehlgeschlagen")
 
     # ------------------------------------------------------------------
     # Fahrplan-Frische
@@ -621,11 +780,28 @@ class ScheduleExecutor:
             # Klebt am Limit (oder liegt darüber) → ein Schritt hoch. Deckt
             # alle drei Fälle ab: aktuell > Plan → aktuell + Schritt;
             # aktuell == Plan → + Schritt; Plan > aktuell → Planwert.
+            #
+            # Mit Heizstab-Vorrang wartet Guard 1, solange der Heizstab noch
+            # aufnehmen kann: das Kleben am Limit ist dann kein Verlust,
+            # sondern sein Signal. Erst ein gesättigter Heizstab (Maximum,
+            # Zieltemperatur, nicht erreichbar) gibt die Batterie frei.
+            if (
+                self._heizstab is not None
+                and self._heizstab.enabled
+                and self._heizstab.vorrang_heizstab
+                and not self._heizstab_gesaettigt()
+            ):
+                self._ladelimit_am_maximum = False
+                return max(plan_kw, basis), "Guard 1 wartet — Heizstab nimmt den Überschuss"
             neu = max(plan_kw, basis + GUARD_CHARGE_STEP_KW)
             max_kw = self._inverter.get_charge_limit_max_kw()
             if max_kw is not None:
                 neu = min(neu, max_kw)
+                self._ladelimit_am_maximum = neu >= max_kw - 0.01
+            else:
+                self._ladelimit_am_maximum = False
             return neu, "Guard 1: Einspeisung am Limit — Ladelimit angehoben"
+        self._ladelimit_am_maximum = False
         if export < limit_kw - GUARD_EXPORT_RELEASE_KW:
             # Deutlich unter der Grenze → zurück Richtung Fahrplanwert, nie
             # darunter. Je Lauf wird der halbe Abstand abgebaut, mindestens

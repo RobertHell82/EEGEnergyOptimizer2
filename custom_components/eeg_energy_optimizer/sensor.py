@@ -12,6 +12,8 @@ Sensoren:
        früheren Entscheidungs-Sensors, damit Entität + Historie bleiben)
   +    Fahrplan Batterieleistung / Netzleistung (Plan-Werte des laufenden Slots)
   +    Combined-Sensoren (Paar-Setups, Multi-Battery)
+  +    Heizstab Leistung / Temperatur / Sollwert / Energie heute (nur mit
+       konfiguriertem Heizstab; Push aus dem 10-s-Lesetakt des Controllers)
 """
 
 from __future__ import annotations
@@ -431,9 +433,11 @@ class PVForecastTomorrowSensor(SensorEntity):
 class HausverbrauchSensor(SensorEntity):
     """Calculates actual house consumption from PV input, battery, and grid power.
 
-    Formula: Hausverbrauch = PV-Eingangsleistung - Batterie-Lade/Entladeleistung - Netz-Wirkleistung
+    Formula: Hausverbrauch = PV-Eingangsleistung - Batterie-Lade/Entladeleistung - Netz-Wirkleistung - Heizstab
     (battery positive = charging, negative = discharging; grid positive = export, negative = import)
-    Result clamped to >= 0.
+    Result clamped to >= 0. Der Heizstab (heizstab/) ist eine gesteuerte
+    Senke, kein Hausverbrauch — bliebe er drin, lernte das Verbrauchsprofil
+    aus jedem Sonnentag einen Mittagsverbrauch von mehreren Kilowatt.
     state_class=MEASUREMENT so HA recorder stores mean statistics.
     """
 
@@ -465,6 +469,8 @@ class HausverbrauchSensor(SensorEntity):
         self._attr_device_info = _device_info(entry.entry_id)
         self._attr_native_value: float | None = None
         self._attr_extra_state_attributes: dict[str, Any] = {}
+        # Für compute_heizstab_kw (liest den Heizstab-Controller aus hass.data).
+        self._config = config
 
     async def async_update(self) -> None:
         pv_power = _read_power_kw(self.hass, self._pv_sensor_id)
@@ -515,13 +521,18 @@ class HausverbrauchSensor(SensorEntity):
         # battery positive = charging, negative = discharging
         # grid positive = export, negative = import
         # All values normalized to kW by _read_power_kw
-        hausverbrauch = max(pv_power - battery_power - grid_power, 0.0)
+        from .power_readings import compute_heizstab_kw
+
+        heizstab_power = compute_heizstab_kw(self.hass, self._config)
+        hausverbrauch = max(pv_power - battery_power - grid_power - heizstab_power, 0.0)
         self._attr_native_value = round(hausverbrauch, 3)
         attrs = {
             "pv_leistung_kw": round(max(pv_power, 0.0), 3),
             "batterie_leistung_kw": round(battery_power, 3),
             "netz_leistung_kw": round(grid_power, 3),
         }
+        if heizstab_power:
+            attrs["heizstab_leistung_kw"] = round(heizstab_power, 3)
         if self._pv_sensor_2_id:
             pv2_val = _read_power_kw(self.hass, self._pv_sensor_2_id)
             if pv2_val is not None:
@@ -780,6 +791,16 @@ class FahrplanStatusSensor(SensorEntity):
             "pause_soc_pct": status.get("pause_soc_pct"),
             "override": status.get("override"),
         }
+        heizstab = status.get("heizstab")
+        if heizstab:
+            self._attr_extra_state_attributes.update({
+                "heizstab_sollwert_kw": heizstab.get("sollwert_kw"),
+                "heizstab_leistung_kw": heizstab.get("leistung_kw"),
+                "heizstab_temperatur_c": heizstab.get("temperatur_c"),
+                "heizstab_grund": heizstab.get("grund"),
+                "heizstab_komfort": bool(heizstab.get("komfort_aktiv")),
+                "heizstab_verfuegbar": bool(heizstab.get("verfuegbar")),
+            })
         self.async_write_ha_state()
         return kurz
 
@@ -1029,6 +1050,160 @@ class EntladungInsNetzSensor(SensorEntity):
             "zaehlweise": ZAEHLWEISE,
             "umgestellt_am": UMGESTELLT_AM,
         }
+
+
+# ---------------------------------------------------------------------------
+# Heizstab (heizstab/): Ist-Leistung, Temperatur, Sollwert, Energie heute
+# ---------------------------------------------------------------------------
+
+
+class _HeizstabSensor(SensorEntity):
+    """Basis der Heizstab-Sensoren — Push-Modell.
+
+    Die Werte kommen aus dem Cache des Heizstab-Controllers (Modbus, alle
+    10 s). Der Controller ruft nach jedem Lesen ``async_write_ha_state`` auf
+    (Listener in ``async_setup_entry``), der Fast-Takt sichert zusätzlich ab.
+    Deshalb liest ``native_value`` live statt in ``async_update`` zu kopieren.
+    """
+
+    _attr_has_entity_name = True
+
+    def __init__(self, hass: Any, entry: Any, controller: Any, endung: str) -> None:
+        self.hass = hass
+        self._controller = controller
+        self._attr_unique_id = f"{DOMAIN}_{entry.entry_id}_{endung}"
+        self._attr_device_info = _device_info(entry.entry_id)
+        self._attr_extra_state_attributes: dict[str, Any] = {}
+
+    async def async_update(self) -> None:  # Werte kommen live aus dem Controller
+        return None
+
+
+class HeizstabLeistungSensor(_HeizstabSensor):
+    """Gemessene Leistungsaufnahme des Heizstabs (kW).
+
+    unique_id-Endung ``heizstab_leistung`` — die Energiebilanz (bilanz.py)
+    findet den Sensor darüber und bucht die Energie in eine eigene Spalte.
+    """
+
+    _attr_name = "Heizstab Leistung"
+    _attr_native_unit_of_measurement = UnitOfPower.KILO_WATT
+    _attr_device_class = SensorDeviceClass.POWER
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = "mdi:heating-coil"
+    _attr_suggested_display_precision = 2
+
+    def __init__(self, hass: Any, entry: Any, controller: Any) -> None:
+        super().__init__(hass, entry, controller, "heizstab_leistung")
+
+    @property
+    def native_value(self) -> float | None:
+        kw = self._controller.leistung_kw
+        return None if kw is None else round(kw, 3)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        st = self._controller.status()
+        return {
+            "verfuegbar": st.get("verfuegbar"),
+            "host": st.get("host"),
+            "letzter_fehler": st.get("last_error"),
+            "schreibfehler": st.get("write_failures"),
+        }
+
+
+class HeizstabTemperaturSensor(_HeizstabSensor):
+    """Wassertemperatur am Fühler des Ohmpilot (°C)."""
+
+    _attr_name = "Heizstab Temperatur"
+    _attr_native_unit_of_measurement = "°C"
+    _attr_device_class = getattr(SensorDeviceClass, "TEMPERATURE", "temperature")
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = "mdi:thermometer-water"
+    _attr_suggested_display_precision = 1
+
+    def __init__(self, hass: Any, entry: Any, controller: Any) -> None:
+        super().__init__(hass, entry, controller, "heizstab_temperatur")
+
+    @property
+    def native_value(self) -> float | None:
+        temp = self._controller.temperatur_c
+        return None if temp is None else round(temp, 1)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        return {
+            "zieltemperatur_c": self._controller.zieltemp_c,
+            "mindesttemperatur_c": self._controller.mintemp_c or None,
+            "ziel_erreicht": self._controller.ziel_erreicht,
+            "komfort_aktiv": self._controller.komfort_aktiv,
+        }
+
+
+class HeizstabSollwertSensor(_HeizstabSensor):
+    """Was die Steuerung dem Heizstab zuletzt vorgegeben hat (kW) — samt Grund.
+
+    Gegenstück zur gemessenen Leistung, wie „Fahrplan Batterieleistung" zur
+    „Batterieleistung": Plan und Ist nebeneinander in der Historie.
+    """
+
+    _attr_name = "Heizstab Sollwert"
+    _attr_native_unit_of_measurement = UnitOfPower.KILO_WATT
+    _attr_device_class = SensorDeviceClass.POWER
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = "mdi:heating-coil"
+    _attr_suggested_display_precision = 2
+
+    def __init__(self, hass: Any, entry: Any, controller: Any) -> None:
+        super().__init__(hass, entry, controller, "heizstab_sollwert")
+
+    @property
+    def native_value(self) -> float:
+        return round(self._controller.sollwert_kw, 3)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        st = self._controller.status()
+        return {
+            "grund": st.get("grund"),
+            "max_kw": st.get("max_kw"),
+            "vorrang_heizstab": st.get("vorrang_heizstab"),
+            "gesaettigt": st.get("gesaettigt"),
+            "letzter_schreibversuch_ok": st.get("last_write_ok"),
+        }
+
+
+class HeizstabEnergieHeuteSensor(_HeizstabSensor):
+    """Energie in den Heizstab seit 04:00 (kWh, TOTAL mit last_reset).
+
+    Aus der Energiebilanz (bilanz.py), die den Heizstab je Viertelstunde
+    bucht — derselbe Bilanztag wie „Ersparnis durch PV heute".
+    """
+
+    _attr_name = "Heizstab Energie heute"
+    _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
+    _attr_device_class = SensorDeviceClass.ENERGY
+    _attr_state_class = SensorStateClass.TOTAL
+    _attr_icon = "mdi:water-boiler"
+    _attr_suggested_display_precision = 2
+
+    def __init__(self, hass: Any, entry: Any, controller: Any) -> None:
+        super().__init__(hass, entry, controller, "heizstab_energie_heute")
+        self._entry_id = entry.entry_id
+
+    @property
+    def native_value(self) -> float | None:
+        bilanz = self.hass.data.get(DOMAIN, {}).get(self._entry_id, {}).get("bilanz")
+        if bilanz is None:
+            return None
+        try:
+            return bilanz.heizstab_kwh_heute()
+        except Exception:  # noqa: BLE001 - Anzeige, kein Aktor
+            return None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        return {"last_reset": _bilanztag_start().isoformat()}
 
 
 # ---------------------------------------------------------------------------
@@ -1473,6 +1648,26 @@ async def async_setup_entry(
     decision_sensor = FahrplanStatusSensor(entry.entry_id)
     data["decision_sensor"] = decision_sensor
 
+    # Heizstab-Sensoren — nur mit konfiguriertem Heizstab (heizstab/). Push
+    # aus dem Lesetakt des Controllers, damit Leistung und Temperatur nicht
+    # eine Minute hinterherhängen.
+    heizstab = data.get("heizstab")
+    heizstab_sensors: list[SensorEntity] = []
+    if heizstab is not None:
+        heizstab_sensors = [
+            HeizstabLeistungSensor(hass, entry, heizstab),
+            HeizstabTemperaturSensor(hass, entry, heizstab),
+            HeizstabSollwertSensor(hass, entry, heizstab),
+            HeizstabEnergieHeuteSensor(hass, entry, heizstab),
+        ]
+
+        def _heizstab_push() -> None:
+            for sensor in heizstab_sensors:
+                if getattr(sensor, "hass", None) is not None and getattr(sensor, "entity_id", None):
+                    sensor.async_write_ha_state()
+
+        entry.async_on_unload(heizstab.add_listener(_heizstab_push))
+
     slow_sensors: list[SensorEntity] = [profil_sensor]
     fast_sensors: list[SensorEntity] = (
         daily_sensors
@@ -1500,6 +1695,7 @@ async def async_setup_entry(
             OptimierungsVorteilSensor(hass, entry, zeitraum)
             for zeitraum in ("heute", "monat", "jahr")
         ]
+        + heizstab_sensors
     )
 
     async_add_entities(slow_sensors + fast_sensors + [decision_sensor], False)

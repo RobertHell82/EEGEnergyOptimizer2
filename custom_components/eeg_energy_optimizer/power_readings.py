@@ -22,9 +22,11 @@ from .const import (
     CONF_GRID_POWER_EXPORT_SENSOR,
     CONF_GRID_POWER_IMPORT_SENSOR,
     CONF_GRID_POWER_SENSOR,
+    CONF_HEIZSTAB_ENABLED,
     CONF_INVERTER_TYPE,
     CONF_PV_POWER_SENSOR,
     CONF_PV_POWER_SENSOR_2,
+    DOMAIN,
     EMMA_SENSOR_PREFIX,
     INVERTER_SIGN_CONVENTIONS,
     INVERTER_TYPE_HUAWEI,
@@ -295,12 +297,40 @@ def compute_battery_now_kw(hass: Any, config: dict) -> float | None:
     return battery_power * resolve_sign(inv_type, bat_id, "battery_sign")
 
 
+def compute_heizstab_kw(hass: Any, config: dict) -> float:
+    """Live-Leistung des Heizstabs in kW; 0, wenn keiner konfiguriert ist.
+
+    Quelle ist der ``HeizstabController`` in ``hass.data`` (Modbus-Cache,
+    alle 10 s frisch) — nicht ein HA-Sensor, dessen entity_id der Nutzer
+    umbenennen kann. Ohne Messwert 0: dann ist der Heizstab aus oder nicht
+    erreichbar, und in beiden Fällen zieht er nichts (Watchdog des Ohmpilot).
+    """
+    if not config.get(CONF_HEIZSTAB_ENABLED):
+        return 0.0
+    try:
+        for data in (hass.data.get(DOMAIN) or {}).values():
+            if not isinstance(data, dict):
+                continue
+            controller = data.get("heizstab")
+            if controller is None:
+                continue
+            kw = getattr(controller, "leistung_kw", None)
+            return float(kw) if kw else 0.0
+    except (AttributeError, TypeError):
+        return 0.0
+    return 0.0
+
+
 def compute_house_load_kw(hass: Any, config: dict) -> float | None:
     """Live-Hauslast in kW — identisch zu sensor.HausverbrauchSensor.
 
-    Formel: Hausverbrauch = PV − Batterie − Netz, Vorzeichen über
+    Formel: Hausverbrauch = PV − Batterie − Netz − Heizstab, Vorzeichen über
     ``resolve_sign`` normalisiert (Batterie positiv = laden, Netz positiv =
-    Einspeisung), Ergebnis auf ≥ 0 begrenzt.
+    Einspeisung), Ergebnis auf ≥ 0 begrenzt. Der Heizstab wird abgezogen,
+    weil er kein Hausverbrauch ist, sondern eine gesteuerte Senke: bliebe er
+    drin, lernte das Verbrauchsprofil an jedem Sonnentag einen Mittagsverbrauch
+    von mehreren Kilowatt, den es gar nicht gibt — und die Entlade-Nachführung
+    hielte ihn für Last, die die Batterie decken muss.
 
     Direkt lesbar im 30-Sekunden-Takt — der Fahrplan braucht die Hauslast als
     Messwert für den ersten Stützpunkt und der Executor für die Nachführung
@@ -350,4 +380,8 @@ def compute_house_load_kw(hass: Any, config: dict) -> float | None:
     battery_power *= resolve_sign(inv_type, bat_id, "battery_sign")
     grid_power *= resolve_sign(inv_type, grid_id, "grid_sign")
 
-    return max(pv_power - battery_power - grid_power, 0.0)
+    haus = pv_power - battery_power - grid_power
+    heizstab = compute_heizstab_kw(hass, config)
+    if heizstab:
+        haus -= heizstab
+    return max(haus, 0.0)

@@ -208,7 +208,10 @@ def test_standardbetrieb_hat_die_slotstruktur_des_fahrplans():
 
     assert [s["t"] for s in ref] == [s["t"] for s in slots]
     for slot in ref:
-        assert set(slot) == {"t", "grid_p", "battery_p", "soc"}
+        # discard/heizstab: was die Referenz abregeln würde und was davon
+        # ein Heizstab nähme — dieselben Spalten wie im Fahrplan, damit
+        # bewerte_geldfluesse beide Seiten gleich bewertet.
+        assert set(slot) == {"t", "grid_p", "battery_p", "soc", "discard", "heizstab"}
 
 
 def test_standardbetrieb_haelt_die_endauflage_des_fahrplans():
@@ -732,3 +735,58 @@ def test_bewertung_quote_null_faellt_zum_basistarif():
     ergebnis = sched.bewerte_geldfluesse([slot], inputs)
     assert ergebnis["eeg_kwh"] == 0.0
     assert ergebnis["erloes"] == pytest.approx(0.06)
+
+
+# ---------------------------------------------------------------------------
+# Heizstab: geplante Leistung aus dem abgeregelten Überschuss, Wärme im Geld
+# ---------------------------------------------------------------------------
+
+
+def test_heizstab_plan_aus_discard_gedeckelt():
+    inputs = _inputs(heizstab_max_kw=6.0)
+    assert sched._heizstab_plan_kw(None, inputs) == 0.0
+    assert sched._heizstab_plan_kw(0.0, inputs) == 0.0
+    assert sched._heizstab_plan_kw(2.0, inputs) == pytest.approx(2.0 * EFF)
+    assert sched._heizstab_plan_kw(20.0, inputs) == pytest.approx(6.0)
+    assert sched._heizstab_plan_kw(20.0, _inputs()) == 0.0  # kein Heizstab
+
+
+def test_standardbetrieb_gibt_abgeregeltes_dem_heizstab():
+    """Batterie voll, Grenze 4 kW, PV 12 kW: 4 kW ins Netz, der Rest wäre
+    abgeregelt — mit Heizstab landet er dort, bis zu dessen Maximum."""
+    inputs = _inputs(soc_pct=100.0, feedin_limit_kw=4.0, ac_limit_kw=15.0, heizstab_max_kw=6.0)
+    slots = [_slot(MITTAG, 0, PV=12.0, consumption=0.5)]
+
+    ref = sched.simuliere_standardbetrieb(slots, inputs)
+
+    assert ref[0]["grid_p"] == pytest.approx(4.0)
+    # DC-Überschuss: 12 − 0,5/η − 4/η
+    erwartet_discard = 12.0 - 0.5 / EFF - 4.0 / EFF
+    assert ref[0]["discard"] == pytest.approx(erwartet_discard, abs=1e-3)
+    assert ref[0]["heizstab"] == pytest.approx(min(6.0, erwartet_discard * EFF), abs=1e-3)
+
+
+def test_standardbetrieb_ohne_heizstab_kein_heizstab():
+    inputs = _inputs(soc_pct=100.0, feedin_limit_kw=4.0, ac_limit_kw=15.0)
+    ref = sched.simuliere_standardbetrieb([_slot(MITTAG, 0, PV=12.0, consumption=0.5)], inputs)
+    assert ref[0]["discard"] > 0
+    assert ref[0]["heizstab"] == 0.0
+
+
+def test_bewertung_zaehlt_waerme_mit_waermewert():
+    inputs = _inputs(heizstab_max_kw=6.0, heizstab_waermewert=0.08)
+    slots = [_slot(MITTAG, i * 15, grid_p=0.0, battery_p=0.0, heizstab=4.0) for i in range(4)]
+
+    geld = sched.bewerte_geldfluesse(slots, inputs)
+
+    assert geld["heizstab_kwh"] == pytest.approx(4.0)   # 4 kW × 1 h
+    assert geld["waerme"] == pytest.approx(0.32)
+    assert geld["summe"] == pytest.approx(geld["erloes"] - geld["bezug"] - geld["alterung"] + geld["endbestand"] + 0.32)
+
+
+def test_bewertung_ohne_waermewert_zaehlt_energie_aber_kein_geld():
+    inputs = _inputs(heizstab_max_kw=6.0, heizstab_waermewert=0.0)
+    slots = [_slot(MITTAG, 0, heizstab=4.0)]
+    geld = sched.bewerte_geldfluesse(slots, inputs)
+    assert geld["heizstab_kwh"] == pytest.approx(1.0)
+    assert geld["waerme"] == 0.0

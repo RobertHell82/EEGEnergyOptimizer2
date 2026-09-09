@@ -634,3 +634,70 @@ class TestComputeBatteryNowKw:
         last = compute_house_load_kw(hass, config)
         assert last == pytest.approx(pv - bat - 1.0)
         assert last == pytest.approx(2.0)
+
+
+# ---------------------------------------------------------------------------
+# compute_heizstab_kw / Hauslast ohne Heizstab
+# ---------------------------------------------------------------------------
+
+from unittest.mock import MagicMock as _MM  # noqa: E402
+
+from custom_components.eeg_energy_optimizer.const import (  # noqa: E402
+    CONF_HEIZSTAB_ENABLED,
+    DOMAIN,
+)
+from custom_components.eeg_energy_optimizer.power_readings import (  # noqa: E402
+    compute_heizstab_kw,
+)
+
+
+def _hass_mit_heizstab(states: dict, leistung_kw):
+    hass = _make_hass(states)
+    controller = _MM()
+    controller.leistung_kw = leistung_kw
+    hass.data = {DOMAIN: {"entry1": {"heizstab": controller}}}
+    return hass
+
+
+class TestHeizstabInDerHauslast:
+    def _cfg(self, **extra):
+        base = {
+            CONF_INVERTER_TYPE: "fronius_gen24",
+            CONF_PV_POWER_SENSOR: "sensor.pv",
+            CONF_BATTERY_POWER_SENSOR: "sensor.bat",
+            CONF_GRID_POWER_SENSOR: "sensor.grid",
+            CONF_HEIZSTAB_ENABLED: True,
+        }
+        base.update(extra)
+        return base
+
+    def test_heizstab_wird_aus_der_hauslast_gerechnet(self):
+        """PV 9, Batterie lädt 2, Export 4, Heizstab 2,5 → Haus 0,5."""
+        hass = _hass_mit_heizstab({
+            "sensor.pv": _make_state("9.0", "kW"),
+            "sensor.bat": _make_state("2.0", "kW"),
+            "sensor.grid": _make_state("4.0", "kW"),
+        }, 2.5)
+        assert compute_heizstab_kw(hass, self._cfg()) == pytest.approx(2.5)
+        assert compute_house_load_kw(hass, self._cfg()) == pytest.approx(0.5)
+
+    def test_ohne_heizstab_konfiguration_null(self):
+        hass = _hass_mit_heizstab({}, 2.5)
+        assert compute_heizstab_kw(hass, self._cfg(**{CONF_HEIZSTAB_ENABLED: False})) == 0.0
+
+    def test_ohne_messwert_null(self):
+        hass = _hass_mit_heizstab({}, None)
+        assert compute_heizstab_kw(hass, self._cfg()) == 0.0
+
+    def test_hass_data_ohne_controller_null(self):
+        hass = _make_hass({})
+        hass.data = {DOMAIN: {"entry1": {}}}
+        assert compute_heizstab_kw(hass, self._cfg()) == 0.0
+
+    def test_hauslast_nie_negativ_durch_heizstab(self):
+        hass = _hass_mit_heizstab({
+            "sensor.pv": _make_state("3.0", "kW"),
+            "sensor.bat": _make_state("0.0", "kW"),
+            "sensor.grid": _make_state("2.0", "kW"),
+        }, 5.0)
+        assert compute_house_load_kw(hass, self._cfg()) == 0.0
