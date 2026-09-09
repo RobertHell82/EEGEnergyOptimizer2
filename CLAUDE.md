@@ -59,6 +59,12 @@ schedule_executor.py: ScheduleExecutor (execution, 30 s)
         Deadbands — 0.2 kW / 1 % SOC, so we don't write on LP noise
   → writes only via InverterBase, only in mode "Ein", only for drivers with
     supports_schedule_control=True (currently Huawei only)
+  → _heizstab_schritt() after every run — the heater (heizstab/) is a second
+    sink: export sticks to the limit → +0.5 kW per run, below the limit → down
+    by the measured gap, discharge / mode Aus / startup → 0. Priority vs.
+    Guard 1 from `heizstab_vorrang` (heater first: Guard 1 waits until the
+    heater is saturated; battery first: the heater waits until the charge
+    limit sits at the hardware maximum or the battery is full)
 ```
 
 ### Key Files
@@ -72,7 +78,9 @@ schedule_executor.py: ScheduleExecutor (execution, 30 s)
 | `oemag.py` | Optional base tariff: OeMAG monthly market price, scraped from the HTML table (no API), cached across restarts; also reads the per-month calculation basis + balancing-energy cost for the estimator |
 | `oemag_schaetzung.py` | Estimate of the OeMAG tariff for the *current* month (source `oemag_estimate`): aWATTar day-ahead prices weighted by Austrian solar generation (Energy-Charts), clamped to 60–100 % of the E-Control quarterly price (scraped; fallback derived from clamped months of the OeMAG table), minus balancing cost. Validated 2025-01…2026-08: MAE 0.21 ct |
 | `awattar_sunny.py` | Optional base tariff: aWATTar SUNNY fixed monthly feed-in price (source `awattar_sunny`). No API — reads the yearly tab of aWATTar's published price sheet (Google Sheet, gviz CSV) and falls back to the tariff page; two contract variants (`awattar_sunny_vertrag` = `neu`/`alt`, contracts after/until 25.02.2026) because the sheet carries two SUNNY columns; cached across restarts, hourly retry while the current month is missing |
-| `power_readings.py` | Shared sensor reads — house load, PV now, grid export, battery capacity resolution |
+| `power_readings.py` | Shared sensor reads — house load (minus heater), PV now, grid export, heater power, battery capacity resolution |
+| `heizstab/controller.py` | Heater as a controllable surplus sink — `HeizstabController` (surplus rule `naechster_sollwert`, target/minimum temperature hysteresis, saturation, 30-s watchdog write, 10-s read, 6-h time sync), `create_heizstab()` factory |
+| `heizstab/ohmpilot_modbus.py` | Fronius Ohmpilot driver via direct Modbus TCP (setpoint 40599 int32 W big-endian, actual power 40800, temperature 40808 in 0.1 °C, unix time 40400; 50-s device watchdog). Taken over from HA_Optimierung_Gruenbach, registers verified on the device there |
 | `schedule_archive.py` | Rolling archive of computed plans (7 days, gzip, ~8 KB each) for after-the-fact debugging |
 | `schedule_archive_view.py` | HTTP view that packs archive + settings + measured history into a downloadable ZIP |
 | `chamo/` | **Upstream, unmodified** — Harald Geyer's LP optimizer (`opt_highs.py`, `timetableopt`) plus a HiGHS adapter |
@@ -126,8 +134,11 @@ schedule_executor.py: ScheduleExecutor (execution, 30 s)
 > (attribute `modus_ein_anteil` makes this verifiable).
 
 Conditional, created only when the setup calls for them: *Batterieleistung* /
-*Netzleistung* combined-pair sensors (split-sensor inverters like Fronius) and
-*Batterie-Ladestand/-Kapazität kombiniert* (multi-battery drivers).
+*Netzleistung* combined-pair sensors (split-sensor inverters like Fronius),
+*Batterie-Ladestand/-Kapazität kombiniert* (multi-battery drivers), and with a
+configured heater *Heizstab Leistung / Temperatur / Sollwert / Energie heute*
+(push from the controller's 10-s read cycle; `Hausverbrauch` is then net of
+the heater — it is a steered sink, not load the profile should learn).
 
 `Fahrplan-Status` keeps the unique_id of the former `Entscheidung` sensor so
 the entity and its history survive — but its attributes changed completely
@@ -334,6 +345,25 @@ the event loop is long enough for HA to flag a blocking call.
   `opt()` resamples to 15 min itself (hourly means deviate ≤ 5 %, no time
   shift). Refreshed every 30 min, because when fetched only at startup the
   timestamps age into the past within a day and the surcharge goes silent.
+- **Heizstab (heater)**: A Fronius Ohmpilot as a second sink for surplus that
+  neither battery nor grid can take. Deliberately **not** an LP variable —
+  Harald's model stays untouched; the plan's `discard` column (DC power the
+  model would throw away) becomes `heizstab = min(discard · η, P_max)` per
+  slot for display and money evaluation (`bewerte_geldfluesse` adds `waerme`
+  = heater kWh × `heizstab_waermewert`; the reference simulation computes its
+  own discard/heater the same way). Steering follows the **measurement**, not
+  the forecast: the executor regulates the heater on "export = limit" (up in
+  0.5-kW steps because curtailment hides the true surplus, down by the measured
+  gap in one run, 0 on grid import), never during a forced discharge, never in
+  mode Aus ("Optimierung aus heißt Heizstab aus" — no fallback regulator).
+  Minimum temperature = comfort guard: full power even from the grid, and the
+  executor turns a planned discharge into a release meanwhile. Requires the
+  Ohmpilot to be **decoupled from the Gen24** (its own energy management
+  regulates export to zero, which would eat all EEG feed-in). House load,
+  consumption profile, Guard 2 and the balance all subtract the heater
+  (`compute_heizstab_kw`; bilanz column `heizstab`, PV saving counts only the
+  PV-fed share as `waerme`). Config keys `heizstab_*` (settings → Anlage →
+  Heizstab); host/port/max/enabled trigger a full reload, the rest hot-reload.
 - **Consumption Profile**: Hourly averages from recorder, split by 7 individual weekdays (mo–so), rolling window (default 4 weeks), with weekday fallback chain for missing data.
 - **Dual Update Timers**: Slow sensors (profile) every 15min, fast sensors (forecasts, battery, Hausverbrauch) every 1min. Hard-wired since v26 — the former config keys `update_interval_fast_min`/`update_interval_slow_min` are removed by migration.
 
@@ -367,7 +397,9 @@ sensors (assigned once), steps 4–5 are the parameters:
 7. Zusammenfassung
 
 Settings live in three tabs: **Tarife** and **Anlage** are exactly the two
-parameter wizard steps (same field renderers, `settings_` prefix); **System**
+parameter wizard steps (same field renderers, `settings_` prefix) — **Anlage**
+additionally carries the *Heizstab* card (`_heizstabFields`, settings only, not
+in the wizard); **System**
 holds the expert-mode switch, a read-only sensor overview (with the
 restart-wizard button — sensor mappings are wizard-only by design), telemetry
 opt-in, schedule archive, and (expert) balance card + profile lookback. In the

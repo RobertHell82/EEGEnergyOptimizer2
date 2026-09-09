@@ -38,6 +38,12 @@ Eine der beiden Prognose-Quellen wird benötigt:
 - **[Solcast Solar einrichten](guides/solcast.md)** (empfohlen — 7-Tage-Prognose)
 - **[Forecast.Solar einrichten](guides/forecast_solar.md)** (ohne Registrierung nutzbar)
 
+## 🔥 Heizstab (optional)
+
+Wer mehr erzeugt, als Batterie, Haus und Einspeisegrenze aufnehmen, kann den Rest in einen Heizstab schicken statt ihn abzuregeln:
+
+- **[Heizstab (Fronius Ohmpilot) einrichten](guides/heizstab.md)** — direkt per Modbus TCP gesteuert, nur der Überschuss oberhalb der Einspeisegrenze
+
 > [!TIP]
 > Alle Einrichtungs-Anleitungen sind auch direkt im Einrichtungsassistenten der Integration verfügbar — einfach auf die „Anleitung"-Buttons im Panel klicken.
 

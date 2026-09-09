@@ -245,6 +245,15 @@ const WIZARD_DEFAULTS = {
   grid_export_limit_enabled: false,
   grid_export_limit_kw: 4,
   inverter_ac_limit_kw: "",
+  // Heizstab (Fronius Ohmpilot per Modbus TCP) — Opt-in in den Einstellungen.
+  heizstab_enabled: false,
+  heizstab_host: "",
+  heizstab_port: 502,
+  heizstab_max_kw: 6,
+  heizstab_zieltemp_c: 80,
+  heizstab_mintemp_c: 0,
+  heizstab_vorrang: true,
+  heizstab_waermewert: 0,
   expert_mode: false,
 };
 
@@ -279,6 +288,7 @@ const DIALOG_CONTENT = {
   kostal: { file: "kostal.html" },
   sma: { file: "sma.html" },
   einspeisegrenze: { file: "einspeisegrenze.html" },
+  heizstab: { file: "heizstab.html" },
 };
 
 // Suppress HA-internal unhandled promise rejections that crash the panel
@@ -2253,6 +2263,11 @@ class EegOptimizerPanel extends HTMLElement {
     if (d.grid_export_limit_enabled && !(Number(d.grid_export_limit_kw) > 0)) {
       fehlt.push("Höhe der Einspeisegrenze");
     }
+    if (d.heizstab_enabled) {
+      if (!String(d.heizstab_host || "").trim()) fehlt.push("Adresse des Ohmpilot (Heizstab)");
+      if (!(Number(d.heizstab_max_kw) > 0)) fehlt.push("Leistung des Heizstabs");
+      if (!(Number(d.heizstab_zieltemp_c) > 0)) fehlt.push("Zieltemperatur des Heizstabs");
+    }
     if ((d.schedule_feedin_source || "manual") === "manual"
         && !(Number(d.schedule_feedin_price) > 0)) fehlt.push("Standardvergütung");
     if (!(Number(d.schedule_consumption_price) > 0)) fehlt.push("Bezugspreis");
@@ -2713,7 +2728,8 @@ class EegOptimizerPanel extends HTMLElement {
           + line("Verbrauch", d.pcons, "kW", "#616161")
           + line("Netz", d.pgrid, "kW", "#43a047")
           + line("Batterie", batText, "", bat > 0 ? "#1e88e5" : "#ef6c00")
-          + line("Ladestand", d.psoc, "%", "#7cb342");
+          + line("Ladestand", d.psoc, "%", "#7cb342")
+          + (d.pheiz != null ? line("Heizstab", d.pheiz, "kW", "#c62828") : "");
       }
       if (d.preis != null) {
         tt.innerHTML +=
@@ -2821,6 +2837,9 @@ class EegOptimizerPanel extends HTMLElement {
     // „Batterieleistung" / „Fahrplan Batterieleistung" dasselbe Vorzeichen —
     // vorher widersprach die Karte den eigenen Sensoren.
     const slotBat = slots.map(s => (s.battery_p == null ? null : -s.battery_p));
+    // Heizstab: nur zeichnen, wenn der Plan ihm überhaupt etwas zuweist —
+    // ohne Heizstab ist die Spalte 0 und die Serie wäre Rauschen.
+    const hatHeizstab = slots.some(s => Number(s.heizstab) > 0.01);
     const histRange = this._schedHistRange || "off";
     const hist = (histRange !== "off" && this._schedHist?.range === histRange)
       ? this._schedHist : null;
@@ -2943,6 +2962,7 @@ class EegOptimizerPanel extends HTMLElement {
     slots.forEach((s, i) => {
       for (const key of ["PV", "consumption", "grid_p"]) messen(s[key] ?? 0);
       messen(slotBat[i] ?? 0);
+      if (hatHeizstab) messen(s.heizstab ?? 0);
     });
     // Der Ist-Verlauf gehört auf dieselbe Achse — sonst wird er abgeschnitten.
     for (const r of rows) {
@@ -3276,6 +3296,7 @@ class EegOptimizerPanel extends HTMLElement {
         + ` data-time="${tag} ${hhmm}"`
         + ` data-ppv="${kw(p ? p.PV : null)}" data-pcons="${kw(p ? p.consumption : null)}"`
         + ` data-pgrid="${kw(pGrid)}" data-pbat="${kw(pBat)}" data-psoc="${pct(p ? p.soc : null)}"`
+        + (hatHeizstab ? ` data-pheiz="${kw(p ? p.heizstab : null)}"` : "")
         + (ist
           ? ` data-past="1" data-ipv="${kw(ist.pv)}" data-icons="${kw(ist.cons)}"`
             + ` data-igrid="${kw(ist.grid)}" data-ibat="${kw(ist.bat)}" data-isoc="${pct(ist.soc)}"`
@@ -3300,6 +3321,7 @@ class EegOptimizerPanel extends HTMLElement {
       ["#fbc02d", "PV (Prognose)"],
       ["#616161", "Verbrauch (Prognose)"],
       ["#43a047", "Netz geplant"],
+      ...(hatHeizstab ? [["#c62828", "Heizstab geplant"]] : []),
       ...(preisImFeld ? [["#d81b60", "Einspeisepreis (Börse)"]] : []),
       ["#1e88e5", "Batterie laden"],
       ["#ef6c00", "Batterie entladen"],
@@ -3407,6 +3429,7 @@ class EegOptimizerPanel extends HTMLElement {
               <path d="${path("PV")}" fill="none" stroke="#fbc02d" stroke-width="1.8"/>
               <path d="${path("consumption")}" fill="none" stroke="#616161" stroke-width="1.5" stroke-dasharray="4 3"/>
               <path d="${path("grid_p")}" fill="none" stroke="#43a047" stroke-width="2"/>
+              ${hatHeizstab ? `<path d="${path("heizstab")}" fill="none" stroke="#c62828" stroke-width="1.8" stroke-dasharray="6 3"/>` : ""}
               ${hist ? `
               <path d="${histPath("planGrid", y)}" fill="none" stroke="#43a047" stroke-width="1.6" stroke-opacity="0.75"/>
               <path d="${histPath("pv", y)}" fill="none" stroke="#fbc02d" stroke-width="1.1" stroke-opacity="0.55"/>
@@ -3546,7 +3569,9 @@ class EegOptimizerPanel extends HTMLElement {
         <table style="width:100%;border-collapse:collapse;font-size:13px;margin-top:12px">
           ${zeile("Nicht gekaufter Strom", heute.vermieden, "eur")}
           ${zeile("Einspeiseerlös", heute.erloes, "eur")}
+          ${Number(heute.waerme) > 0 ? zeile("Wärme aus dem Heizstab", heute.waerme, "eur") : ""}
           ${zeile("Selbst verbraucht", heute.eigen_kwh, "kWh", sHaus)}
+          ${Number(heute.heizstab_kwh) > 0 ? zeile("In den Heizstab", heute.heizstab_kwh, "kWh") : ""}
           ${zeile("Eingespeist", heute.export_kwh, "kWh", sNetz)}
           ${zeile("Aus dem Netz bezogen", heute.bezug_kwh, "kWh", sNetz)}
           ${zeile("Erzeugt", heute.pv_kwh, "kWh", sPv)}
@@ -3623,6 +3648,7 @@ class EegOptimizerPanel extends HTMLElement {
         ["Netzbezug", -m.bezug, -o.bezug],
         ["Batteriealterung", -m.alterung, -o.alterung],
         ["Endbestand (Gutschrift)", m.endbestand, o.endbestand],
+        ...((Number(m.waerme) || Number(o.waerme)) ? [["Wärme (Heizstab)", m.waerme || 0, o.waerme || 0]] : []),
         ["Summe", m.summe, o.summe],
       ];
       const zellenStil = "padding:3px 10px;text-align:right;white-space:nowrap";
@@ -6257,6 +6283,64 @@ class EegOptimizerPanel extends HTMLElement {
     </div>`;
   }
 
+  _heizstabFields(d, prefix) {
+    // Heizstab (Fronius Ohmpilot per Modbus TCP) als Senke für Überschuss,
+    // den weder Batterie noch Netz aufnehmen. Nur in den Einstellungen —
+    // wer keinen hat, sieht eine ausgeschaltete Karte und sonst nichts.
+    // Die Regel dahinter steht in heizstab/controller.py.
+    const vorrang = d.heizstab_vorrang !== false;
+    return this._featureCard({
+      on: !!d.heizstab_enabled,
+      action: prefix ? "toggle-settings-feature" : "toggle-feature",
+      feature: "heizstab_enabled",
+      icon: "mdi:heating-coil",
+      titel: "Heizstab (Fronius Ohmpilot)",
+      beschreibung: "Überschuss, den weder Batterie noch Netz aufnehmen, geht in den Heizstab statt abgeregelt zu werden. Gesteuert wird direkt per Modbus TCP — der Ohmpilot muss dafür vom Wechselrichter entkoppelt sein. Ist die Optimierung aus, ist auch der Heizstab aus.",
+      params: `
+        <div class="field-group">
+          <label>Adresse des Ohmpilot (IP oder Hostname) *</label>
+          <input type="text" data-field="${prefix}heizstab_host" value="${this._escapeHtml(d.heizstab_host || "")}" placeholder="z.B. 192.168.1.58">
+          <div class="help-text">Der Ohmpilot hat einen eigenen Modbus-TCP-Server. Die Kopplung zum Gen24 im Wechselrichter lösen — sonst schreiben zwei Steuerungen auf dasselbe Register, und der Gen24 regelt die Einspeisung auf null.
+            <button class="btn-link btn-tap" data-action="show-dialog" data-dialog="heizstab">Anleitung: Heizstab</button>
+          </div>
+        </div>
+        <div class="field-group">
+          <label>Modbus-Port</label>
+          <input type="number" data-field="${prefix}heizstab_port" value="${d.heizstab_port ?? 502}" min="1" max="65535" step="1">
+        </div>
+        <div class="field-group">
+          <label>Leistung des Heizstabs (kW) *</label>
+          <input type="number" data-field="${prefix}heizstab_max_kw" value="${d.heizstab_max_kw ?? 6}" min="0.5" max="30" step="0.5">
+          <div class="help-text">Nennleistung des angeschlossenen Heizstabs — 3 kW einphasig, 6 oder 9 kW dreiphasig. Mehr kann der Ohmpilot nicht vorgeben.</div>
+        </div>
+        <div class="field-group">
+          <label>Zieltemperatur (°C) *</label>
+          <input type="number" data-field="${prefix}heizstab_zieltemp_c" value="${d.heizstab_zieltemp_c ?? 80}" min="30" max="95" step="1">
+          <div class="help-text">Ab dieser Wassertemperatur wird nicht mehr geheizt; weiter geht es 3 K darunter. Der Ohmpilot hat zusätzlich seinen eigenen Übertemperaturschutz.</div>
+        </div>
+        <div class="field-group">
+          <label>Mindesttemperatur (°C)</label>
+          <input type="number" data-field="${prefix}heizstab_mintemp_c" value="${d.heizstab_mintemp_c ?? 0}" min="0" max="90" step="1">
+          <div class="help-text">Darunter heizt der Heizstab mit voller Leistung, auch aus dem Netz, bis 5 K darüber — und die Optimierung entlädt derweil nicht ins Netz. 0 = keine Mindesttemperatur, der Heizstab nimmt nur Überschuss.</div>
+        </div>
+        <div class="field-group">
+          <label style="display:flex;align-items:center;gap:12px;cursor:pointer">
+            <input type="checkbox" data-field="${prefix}heizstab_vorrang" ${vorrang ? "checked" : ""}>
+            <div>
+              <div style="font-weight:500">Überschuss zuerst in den Heizstab</div>
+              <div class="help-text" style="margin-top:4px">Klebt die Einspeisung an der Grenze, bekommt zuerst der Heizstab den Überschuss; das Ladelimit der Batterie wird erst angehoben, wenn er voll ausgelastet ist oder die Zieltemperatur erreicht hat. Ausgeschaltet gilt die umgekehrte Reihenfolge: erst die Batterie, dann der Heizstab.</div>
+            </div>
+          </label>
+        </div>
+        <div class="field-group">
+          <label>Wärmewert (ct/kWh)</label>
+          <input type="number" data-field="${prefix}heizstab_waermewert" data-unit="ct"
+                 value="${ctAus(d.heizstab_waermewert ?? 0)}" min="0" max="100" step="0.1">
+          <div class="help-text">Was eine Kilowattstunde Wärme ersetzt — der Preis der Energie, mit der du sonst heizen würdest (Gas, Wärmepumpe, Strom). Fließt in „Ersparnis durch PV" und in den Optimierungsgewinn ein. 0 = Wärme wird gezählt, aber nicht bewertet.</div>
+        </div>`,
+    });
+  }
+
   _renderStepAnlage() {
     // Alle physikalischen Grenzen an einem Ort: was die Anlage netzseitig
     // kann (AC-Grenze, PV-Spitze, Einspeisegrenze) und was die Batterie darf
@@ -6471,6 +6555,10 @@ class EegOptimizerPanel extends HTMLElement {
       <div class="card" style="margin-bottom:16px">
         <h3 class="settings-karte-titel" style="margin:0 0 16px">Batterie</h3>
         ${this._batterieOptFields(d, "settings_")}
+      </div>
+      <div class="card" style="margin-bottom:16px">
+        <h3 class="settings-karte-titel" style="margin:0 0 16px">Heizstab</h3>
+        ${this._heizstabFields(d, "settings_")}
       </div>`;
 
     // --- Tab: System ---
@@ -6919,6 +7007,15 @@ class EegOptimizerPanel extends HTMLElement {
     } else if (a.plan_aktion === "release") {
       gesetzt.push("kein Eingriff, Eigenverbrauch des Wechselrichters");
     }
+    // Heizstab: Sollwert, Ist-Leistung und Wassertemperatur in einer Zeile.
+    if (a.heizstab_sollwert_kw != null) {
+      let hz = Number(a.heizstab_sollwert_kw) > 0.05
+        ? `Heizstab <strong>${fmtDe(a.heizstab_sollwert_kw, 2)} kW</strong>`
+        : "Heizstab <strong>aus</strong>";
+      if (a.heizstab_leistung_kw != null) hz += ` (Ist ${fmtDe(a.heizstab_leistung_kw, 2)} kW)`;
+      if (a.heizstab_temperatur_c != null) hz += `, ${fmtDe(a.heizstab_temperatur_c, 0)} °C`;
+      gesetzt.push(hz);
+    }
     if (a.plan_slot) gesetzt.push(`Slot ${String(a.plan_slot).slice(11, 16)}`);
 
     // Klartext des letzten Laufs, aber ohne den Zustand zu wiederholen.
@@ -6963,6 +7060,14 @@ class EegOptimizerPanel extends HTMLElement {
     if (!gesteuert) {
       warnings += warnRow("mdi:information-outline", "var(--info-color, #2196f3)",
         "Dieser Wechselrichter wird nicht gesteuert \u2014 der Optimierungsplan ist nur Anzeige (Steuerung derzeit nur Fronius, Huawei, Sigenergy und SolaX).");
+    }
+    if (a.heizstab_sollwert_kw != null && a.heizstab_verfuegbar === false) {
+      warnings += warnRow("mdi:heating-coil", "#ff9800",
+        "Heizstab nicht erreichbar \u2014 der Ohmpilot antwortet nicht auf Modbus, es wird nicht geheizt.");
+    }
+    if (a.heizstab_komfort) {
+      warnings += warnRow("mdi:thermometer-alert", "var(--info-color, #2196f3)",
+        "Heizstab unter der Mindesttemperatur \u2014 heizt mit voller Leistung, auch aus dem Netz; solange das dauert, wird nicht ins Netz entladen.");
     }
 
     const trenner = " " + String.fromCharCode(0x00B7) + " ";

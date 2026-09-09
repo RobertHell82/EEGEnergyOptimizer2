@@ -1,0 +1,130 @@
+<!-- GENERATED FILE - DO NOT EDIT.
+     Quelle: docs/guides/heizstab.md
+     Neu generieren mit: python scripts/build_guides.py -->
+<h2 class="guide-title">Heizstab (Fronius Ohmpilot)</h2>
+<p>Eine bewusst groß gebaute PV-Anlage erzeugt an guten Tagen mehr, als Batterie, Haus und Einspeisegrenze zusammen aufnehmen. Der Wechselrichter regelt den Rest ab — diese Energie ist verloren. Mit einem Heizstab am Warmwasserspeicher bekommt sie eine Verwendung: Der Optimizer steuert einen <strong>Fronius Ohmpilot</strong> direkt per Modbus TCP und gibt ihm genau den Überschuss, den sonst niemand nimmt.</p>
+<h3>Warum nicht das Energiemanagement des Wechselrichters?</h3>
+<p>Der Gen24 kann den Ohmpilot selbst regeln — aber er regelt die <strong>Einspeisung auf null</strong>. Für eine Anlage in einer Energiegemeinschaft ist das falsch: Die Einspeisung bis zur Grenze soll ins Netz, dort ist sie Geld wert. Nur was <strong>über</strong> die Grenze hinausgeht, gehört in den Heizstab. Deshalb steuert der Optimizer den Ohmpilot selbst, und deshalb muss der Ohmpilot vom Gen24 entkoppelt sein.</p>
+<h3>Voraussetzungen</h3>
+<ul>
+<li>Ein <strong>Fronius Ohmpilot</strong> mit Netzwerkanschluss (LAN oder WLAN) und einem angeschlossenen Heizstab</li>
+<li>Der Ohmpilot ist <strong>vom Wechselrichter entkoppelt</strong>: Kopplung im Gen24-Webinterface unter <em>Geräte- und Systemeinstellungen → Komponenten</em> lösen, oder den Ohmpilot in ein anderes Subnetz stellen</li>
+<li>Eine konfigurierte <strong>Einspeisegrenze</strong> (siehe Anleitung „Einspeisegrenze"). Ohne sie gilt die AC-Grenzleistung des Wechselrichters als Grenze</li>
+<li>Ein <strong>Netzleistungs-Sensor</strong>, der Einspeisung und Bezug misst</li>
+</ul>
+<div class="guide-alert caution"><p><strong>Zwei Steuerungen auf einem Gerät gehen nicht.</strong> Bleibt der Ohmpilot mit dem Gen24 gekoppelt, schreiben beide auf dasselbe Register: Der Gen24 heizt jede Einspeisung weg, der Optimizer setzt sie zurück, und am Ende gewinnt keiner. Erst entkoppeln, dann einschalten.</p></div>
+
+<h3>So funktioniert es</h3>
+<p>Der Heizstab ist eine <strong>zweite Senke</strong> neben der Batterie. Alle 30 Sekunden schaut die Steuerung auf die gemessene Einspeisung:</p>
+<table>
+<thead>
+<tr>
+<th>Gemessene Einspeisung</th>
+<th>Heizstab</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Klebt an der Grenze</strong> (± 0,1 kW)</td>
+<td>Der Wechselrichter regelt gerade ab. Der Heizstab bekommt 0,5 kW mehr — in Schritten, weil die wahre Höhe des Überschusses unsichtbar ist</td>
+</tr>
+<tr>
+<td><strong>Deutlich unter der Grenze</strong> (mehr als 0,3 kW)</td>
+<td>Der Heizstab gibt genau die Lücke wieder her, in einem Schritt. Bei Netzbezug fällt er sofort auf 0</td>
+</tr>
+<tr>
+<td><strong>Dazwischen</strong></td>
+<td>Nichts ändern</td>
+</tr>
+</tbody>
+</table>
+<p>Was der Heizstab <strong>nie</strong> tut:</p>
+<ul>
+<li><strong>Einspeisung wegheizen.</strong> Solange die Einspeisung unter der Grenze liegt, bleibt er aus — die Energie gehört der Gemeinschaft.</li>
+<li><strong>Aus der Batterie heizen.</strong> Entlädt die Optimierung gerade ins Netz, steht der Heizstab auf 0. Eine Einspeisung aus der Batterie ist kein Überschuss.</li>
+<li><strong>Weiterlaufen, wenn niemand steuert.</strong> Der Ohmpilot schaltet nach 50 Sekunden ohne neuen Sollwert selbst ab. Bricht die Verbindung ab oder ist die Optimierung aus, ist auch der Heizstab aus.</li>
+</ul>
+<p>Die geplante Heizstab-Leistung steht auch im <strong>Optimierungsplan</strong> (rote gestrichelte Linie): Der Plan weiß je Viertelstunde, was er abregeln müsste — genau das würde der Heizstab nehmen. Gesteuert wird trotzdem nach der Messung, nicht nach der Prognose.</p>
+<h3>Reihenfolge: Heizstab oder Batterie zuerst?</h3>
+<p>Meist ist die Batterie schon nach Plan am Laden, wenn die Einspeisung ans Limit kommt. Für den <strong>ungeplanten</strong> Überschuss — mehr Sonne als vorhergesagt — entscheidet die Einstellung <strong>„Überschuss zuerst in den Heizstab"</strong>:</p>
+<ul>
+<li><strong>Eingeschaltet</strong> (Vorgabe): Der Heizstab nimmt den Überschuss. Erst wenn er mit voller Leistung läuft oder die Zieltemperatur erreicht hat, hebt die Steuerung das Ladelimit der Batterie über den Planwert an.</li>
+<li><strong>Ausgeschaltet</strong>: Erst die Batterie — das Ladelimit wird angehoben, bis sie am Maximum lädt oder voll ist. Dann bekommt der Heizstab den Rest.</li>
+</ul>
+<p>Der Plan für die Batterie bleibt in beiden Fällen unangetastet. Es geht nur darum, wer den Teil bekommt, den die Prognose nicht kannte.</p>
+<h3>Konfiguration</h3>
+<p>Alle Felder stehen in den <strong>Einstellungen → Anlage → Heizstab</strong>.</p>
+<table>
+<thead>
+<tr>
+<th>Feld</th>
+<th>Bedeutung</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Heizstab (Fronius Ohmpilot)</strong></td>
+<td>Schaltet die Steuerung ein. Aus = der Optimizer fasst den Ohmpilot nicht an</td>
+</tr>
+<tr>
+<td><strong>Adresse des Ohmpilot</strong></td>
+<td>IP-Adresse oder Hostname des Ohmpilot im Netzwerk</td>
+</tr>
+<tr>
+<td><strong>Modbus-Port</strong></td>
+<td>Standard 502</td>
+</tr>
+<tr>
+<td><strong>Leistung des Heizstabs (kW)</strong></td>
+<td>Nennleistung des angeschlossenen Heizstabs — 3 kW einphasig, 6 oder 9 kW dreiphasig</td>
+</tr>
+<tr>
+<td><strong>Zieltemperatur (°C)</strong></td>
+<td>Ab dieser Temperatur wird nicht mehr geheizt; weiter geht es 3 K darunter</td>
+</tr>
+<tr>
+<td><strong>Mindesttemperatur (°C)</strong></td>
+<td>Darunter heizt der Heizstab mit voller Leistung, auch aus dem Netz, bis 5 K darüber. Solange das dauert, wird nicht ins Netz entladen. 0 = aus</td>
+</tr>
+<tr>
+<td><strong>Überschuss zuerst in den Heizstab</strong></td>
+<td>Reihenfolge bei ungeplantem Überschuss, siehe oben</td>
+</tr>
+<tr>
+<td><strong>Wärmewert (ct/kWh)</strong></td>
+<td>Was eine Kilowattstunde Wärme ersetzt. Fließt in „Ersparnis durch PV" und in den Optimierungsgewinn ein. 0 = Wärme wird gezählt, aber nicht bewertet</td>
+</tr>
+</tbody>
+</table>
+<div class="guide-alert note"><p><strong>Optimierung aus heißt Heizstab aus.</strong> Es gibt keinen Notbetrieb, der den Ohmpilot ohne Optimierung weiterregelt. Wer den Ohmpilot ohne Optimizer betreiben will, koppelt ihn wieder an den Gen24.</p></div>
+
+<div class="guide-alert note"><p><strong>Der Hausverbrauch ist ohne den Heizstab.</strong> Sensor „Hausverbrauch", Verbrauchsprofil und Entlade-Nachführung rechnen den Heizstab heraus — er ist eine gesteuerte Senke, kein Verbrauch, den das Profil lernen soll. Sein Anteil steht in den eigenen Sensoren „Heizstab Leistung", „Heizstab Sollwert", „Heizstab Temperatur" und „Heizstab Energie heute".</p></div>
+
+<h3>Was der Optimizer am Gerät tut</h3>
+<table>
+<thead>
+<tr>
+<th>Register</th>
+<th>Zweck</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>40599</td>
+<td>Leistungs-Sollwert in Watt — alle 30 s geschrieben, auch wenn er sich nicht ändert (Watchdog des Ohmpilot: 50 s)</td>
+</tr>
+<tr>
+<td>40800</td>
+<td>Ist-Leistung, alle 10 s gelesen</td>
+</tr>
+<tr>
+<td>40808</td>
+<td>Wassertemperatur in 0,1 °C, alle 10 s gelesen</td>
+</tr>
+<tr>
+<td>40400</td>
+<td>Unix-Zeit, alle 6 Stunden gesetzt — sonst meldet der Ohmpilot Fehler 925</td>
+</tr>
+</tbody>
+</table>
+<p>Beim Beenden der Integration wird 0 W geschrieben und die Verbindung geschlossen.</p>
