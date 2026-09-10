@@ -17,6 +17,12 @@ from .power_readings import (
     resolve_battery_capacity_kwh,
 )
 from .const import (
+    AMBIBOX_READ_INTERVAL_S,
+    CONF_AMBIBOX_CONNECTOR,
+    CONF_AMBIBOX_HOST,
+    CONF_AMBIBOX_PORT,
+    CONF_AMBIBOX_UNIT_ID,
+    CONF_WALLBOX_TYPE,
     DOMAIN,
     MODE_AUS,
     MODE_EIN,
@@ -52,6 +58,7 @@ from .const import (
     TELEMETRY_SNAPSHOT_INTERVAL_MIN,
     TELEMETRY_STEUERUNG,
 )
+from .ambibox import create_ambibox
 from .inverter import create_inverter
 from .schedule_executor import ScheduleExecutor
 from .telemetry import TelemetryReporter
@@ -1328,6 +1335,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         return False
     hass.data[DOMAIN][entry.entry_id]["inverter"] = inverter
 
+    # Ambibox (ambibox/): bidirektionale Wallbox, vorerst nur gelesen —
+    # sie zeigt, welches Fahrzeug angesteckt ist. None, wenn keine
+    # konfiguriert ist; dann bleibt alles Weitere unverändert.
+    ambibox = create_ambibox(hass, config)
+    hass.data[DOMAIN][entry.entry_id]["ambibox"] = ambibox
+
     # Restore persisted register write counter
     from homeassistant.helpers.storage import Store as _Store
     writes_store = _Store(hass, 1, f"{DOMAIN}_{entry.entry_id}_register_writes")
@@ -1841,6 +1854,20 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             )
             entry.async_on_unload(unsub)
 
+            # ----------------------------------------------------------
+            # Ambibox: eigener Lesetakt. Ein Zug über den EV-Charger-Block
+            # je Lauf; die Sensoren bekommen den Wert per Push, sobald er
+            # da ist, statt bis zum Minutentakt zu warten.
+            # ----------------------------------------------------------
+            if ambibox is not None:
+                async def _ambibox_lesen(_now=None):
+                    await ambibox.async_lesen()
+
+                entry.async_on_unload(async_track_time_interval(
+                    hass, _ambibox_lesen, timedelta(seconds=AMBIBOX_READ_INTERVAL_S)
+                ))
+                hass.async_create_task(ambibox.async_lesen())
+
             # Run initial cycle immediately — sensors are already populated
             # by the synchronous slow+fast update in async_setup_entry
             await _guard_cycle()
@@ -2168,6 +2195,13 @@ _RELOAD_CONFIG_KEYS = frozenset({
     CONF_BATTERY_POWER_DISCHARGE_SENSOR,
     CONF_GRID_POWER_EXPORT_SENSOR,
     CONF_GRID_POWER_IMPORT_SENSOR,
+    # Wallbox-Anbindung: der Treiber wird mit Adresse, Port, Unit-ID und
+    # Ladepunkt gebaut — geänderte Werte brauchen einen neuen Treiber.
+    CONF_WALLBOX_TYPE,
+    CONF_AMBIBOX_HOST,
+    CONF_AMBIBOX_PORT,
+    CONF_AMBIBOX_UNIT_ID,
+    CONF_AMBIBOX_CONNECTOR,
 })
 # Präfixe decken Inverter-Anbindung (Modbus-Hosts/Ports, Geräte-IDs,
 # Steuer-Entities) und Forecast-Quellen ab, ohne jeden Key einzeln zu pflegen.
@@ -2248,6 +2282,9 @@ async def _async_update_listener(
                     hass.async_create_task(refresh_fn())
 
         executor.update_config(config)
+        ambibox = data.get("ambibox")
+        if ambibox is not None:
+            ambibox.update_config(config)
         _LOGGER.info("EEG Energy Optimizer: Config hot-reloaded")
 
         # ----------------------------------------------------------
@@ -2331,6 +2368,16 @@ async def async_unload_entry(
             except Exception:
                 _LOGGER.exception(
                     "EEG Energy Optimizer: error releasing schedule executor on unload"
+                )
+        # Ambibox: die Modbus-Verbindung schließen. Geschrieben wird nichts,
+        # es bleibt also nichts stehen — nur der Socket muss weg.
+        ambibox = data.get("ambibox")
+        if ambibox is not None:
+            try:
+                await ambibox.async_shutdown()
+            except Exception:
+                _LOGGER.exception(
+                    "EEG Energy Optimizer: error shutting down ambibox on unload"
                 )
         # Close inverter resources (e.g. Fronius pymodbus TCP socket)
         # before dropping the entry. Other inverters use HA-managed

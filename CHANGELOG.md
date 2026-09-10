@@ -10,6 +10,18 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
+## [2.1.0-ambibox1] - 2026-09-10
+
+### Hinzugefügt
+
+- **Das angesteckte Auto wird angezeigt.** Neue Karte „Auto" im Dashboard: Ladestand als Balken samt Energie im Akku, Ladeleistung mit Richtung, Zustand der Ladesitzung, Zielladestand, Zeit bis zur Abfahrt, Ladeprotokoll und Störungen der Wallbox. Sie erscheint nur, wenn eine Wallbox eingerichtet ist, und sagt es deutlich, wenn keine erreichbar ist oder kein Fahrzeug hängt.
+- **Wallbox-Einstellungen (Einstellungen → Anlage, nur im Expertenmodus).** Auswahl des Typs — vorerst nur Ambibox (ambiCHARGE) —, dazu Adresse, Modbus-Port, Unit-ID und Ladepunkt sowie ein Verbindungstest, der einmal liest und zeigt, was dabei herauskommt. Bewusst nicht im Einrichtungsassistenten: Das Auto ist Zubehör, keine Voraussetzung für den Fahrplan.
+- **Vier neue Sensoren mit eingerichteter Wallbox:** Auto Status, Auto Ladestand, Auto Ladeleistung und Auto Energie Ladesitzung. Sie stehen auf „nicht verfügbar", solange die Wallbox nicht antwortet — der zuletzt gelesene Ladestand eines längst weggefahrenen Autos wäre schlimmer als gar kein Wert.
+
+### Hinweise
+
+- **Gelesen wird nur.** Laden und Entladen des Autos steuert die Optimierung noch nicht. Drei Fragen sind dafür offen, die das Herstellerdokument nicht beantwortet: Wie lange ein Leistungssollwert ohne Nachschreiben gilt (Watchdog), mit welchem Vorzeichen geladen wird, und was passiert, wenn die Ambibox gleichzeitig selbst regelt. Die Anzeige umgeht die Vorzeichenfrage, indem sie die Richtung aus dem Batteriezustand der Wallbox nimmt statt aus dem Vorzeichen der Leistung.
+
 ## [2.1.0-dev5] - 2026-09-10
 
 ### Behoben

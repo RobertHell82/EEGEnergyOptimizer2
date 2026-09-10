@@ -245,6 +245,13 @@ const WIZARD_DEFAULTS = {
   grid_export_limit_enabled: false,
   grid_export_limit_kw: 4,
   inverter_ac_limit_kw: "",
+  // Wallbox (vorerst nur Ambibox) — reine Anzeige des angesteckten
+  // Fahrzeugs. Nur in den Einstellungen und nur im Expertenmodus.
+  wallbox_type: "",
+  ambibox_host: "",
+  ambibox_port: 502,
+  ambibox_unit_id: 1,
+  ambibox_connector: 1,
   expert_mode: false,
 };
 
@@ -420,6 +427,14 @@ class EegOptimizerPanel extends HTMLElement {
     this._scheduleLoaded = false;
     // Transparenz-Ansicht: welche Stellgröße gerade auf welchem Wert steht.
     this._controlState = null;
+    // Ambibox: Zustand des angesteckten Fahrzeugs (Auto-Karte) und der
+    // Verbindungstest aus den Einstellungen.
+    this._ambiboxState = null;
+    this._ambiboxStateStamp = null;
+    this._ambiboxStateBusy = false;
+    this._ambiboxStateRequested = false;
+    this._ambiboxProbing = false;
+    this._ambiboxProbeResult = null;
     // Zeitstempel des Guard-Laufs, zu dem die Steuerwerte zuletzt geladen
     // wurden — ändert er sich, zieht die Karte nach (siehe _ensureControlState).
     this._controlStateStamp = null;
@@ -1653,6 +1668,12 @@ class EegOptimizerPanel extends HTMLElement {
       case "refresh-control-state":
         this._loadControlState();
         break;
+      case "test-ambibox":
+        this._probeAmbiboxConnection(dataset.prefix || "");
+        break;
+      case "refresh-ambibox-state":
+        this._loadAmbiboxState();
+        break;
       case "toggle-schedule":
         this._scheduleOpen = !this._scheduleOpen;
         this._savePref(this._narrow ? "schedule_open_narrow" : "schedule_open",
@@ -1884,6 +1905,79 @@ class EegOptimizerPanel extends HTMLElement {
       return false;
     } finally {
       this._froniusProbing = false;
+      this._render();
+    }
+  }
+
+  // Zustand des angesteckten Fahrzeugs holen. Der Controller liest ohnehin
+  // alle 15 s; hier wird nur sein Zwischenstand abgeholt.
+  async _loadAmbiboxState() {
+    if (!this._hass || this._ambiboxStateBusy) return;
+    this._ambiboxStateBusy = true;
+    try {
+      this._ambiboxState = await this._hass.callWS({
+        type: "eeg_optimizer/get_ambibox_state",
+      });
+    } catch (e) {
+      this._ambiboxState = { konfiguriert: true, error: e.message || String(e) };
+    } finally {
+      this._ambiboxStateBusy = false;
+      this._render();
+    }
+  }
+
+  // Mit jedem Guard-Lauf nachziehen — derselbe Auslöser wie bei den
+  // Steuerwerten: Der Fahrplan-Status-Sensor kommt ohnehin alle 30 s.
+  _ensureAmbiboxState(decisionState) {
+    if (!this._hass) return;
+    const stamp = decisionState?.attributes?.letzte_aktualisierung || null;
+    if (!this._ambiboxStateRequested) {
+      this._ambiboxStateRequested = true;
+      this._ambiboxStateStamp = stamp;
+      this._loadAmbiboxState();
+      return;
+    }
+    if (stamp && stamp !== this._ambiboxStateStamp && !this._ambiboxStateBusy) {
+      this._ambiboxStateStamp = stamp;
+      this._loadAmbiboxState();
+    }
+  }
+
+  // Verbindungstest aus den Einstellungen: liest einmal den Block und zeigt,
+  // was dabei herauskommt. Schreibt nichts — die Ambibox wird von uns
+  // vorerst nur gelesen.
+  async _probeAmbiboxConnection(prefix) {
+    const d = prefix ? this._settingsData : this._wizardData;
+    const host = String(d.ambibox_host || "").trim();
+    if (!host) {
+      this._showValidationError("Bitte zuerst die Adresse der Ambibox eintragen.");
+      return false;
+    }
+    this._ambiboxProbing = true;
+    this._ambiboxProbeResult = null;
+    this._render();
+    try {
+      const res = await this._hass.callWS({
+        type: "eeg_optimizer/probe_ambibox",
+        host,
+        port: parseInt(d.ambibox_port, 10) || 502,
+        unit_id: parseInt(d.ambibox_unit_id, 10) || 1,
+        connector: parseInt(d.ambibox_connector, 10) || 1,
+      });
+      this._ambiboxProbeResult = res;
+      if (!res || !res.success) {
+        this._showValidationError(
+          `Ambibox unter ${host} nicht erreichbar — ${res?.error || "unbekannter Fehler"}. Ist Modbus TCP in der Ambibox freigeschaltet?`
+        );
+        return false;
+      }
+      return true;
+    } catch (e) {
+      this._ambiboxProbeResult = { success: false, error: e?.message || String(e) };
+      this._showValidationError(`Verbindungstest fehlgeschlagen: ${e?.message || e}`);
+      return false;
+    } finally {
+      this._ambiboxProbing = false;
       this._render();
     }
   }
@@ -5587,6 +5681,63 @@ class EegOptimizerPanel extends HTMLElement {
       </div>`;
   }
 
+  _wallboxFields(d, prefix) {
+    // Wallbox-Anbindung. Vorerst kennt die Integration nur die Ambibox, der
+    // Typ steht trotzdem als Auswahl da — wie beim Wechselrichter, damit
+    // weitere Fabrikate dazukommen können, ohne die Einstellungen umzubauen.
+    // Gelesen wird nur: angestecktes Fahrzeug anzeigen. Laden und Entladen
+    // steuert die Optimierung (noch) nicht.
+    const typ = d.wallbox_type || "";
+    const res = this._ambiboxProbeResult;
+    const probeBox = !res ? "" : (res.success
+      ? `<div class="help-text" style="margin-top:8px;padding:10px 12px;background:var(--success-color,#4caf50)18;border-left:3px solid var(--success-color,#4caf50);border-radius:4px">
+           <strong>Verbindung steht.</strong><br>
+           ${res.verbunden
+             ? `Fahrzeug angesteckt — ${res.session_text || "Zustand unbekannt"}${res.soc_pct != null ? `, Ladestand ${fmtDe(res.soc_pct, 0)} %` : ""}${res.kapazitaet_kwh ? `, Kapazität ${fmtDe(res.kapazitaet_kwh, 1)} kWh` : ""}.`
+             : "Kein Fahrzeug angesteckt — die Wallbox antwortet trotzdem."}
+           ${res.protokoll ? `<br>Ladeprotokoll: ${this._escapeHtml(res.protokoll)}` : ""}
+           ${res.control_mode_text ? `<br>Steuerbarkeit laut Wallbox: ${this._escapeHtml(res.control_mode_text)}` : ""}
+         </div>`
+      : `<div class="help-text" style="margin-top:8px;padding:10px 12px;background:var(--error-color,#f44336)18;border-left:3px solid var(--error-color,#f44336);border-radius:4px">
+           ${this._escapeHtml(res.error || "Verbindung fehlgeschlagen.")}
+         </div>`);
+
+    return `
+      <div class="field-group">
+        <label>Typ der Wallbox</label>
+        <select data-field="${prefix}wallbox_type">
+          <option value="" ${typ === "" ? "selected" : ""}>Keine</option>
+          <option value="ambibox" ${typ === "ambibox" ? "selected" : ""}>Ambibox (ambiCHARGE)</option>
+        </select>
+        <div class="help-text">Bindet eine Wallbox per Modbus TCP an, um das angesteckte Fahrzeug anzuzeigen — Ladestand, Ladeleistung und Zustand der Ladesitzung. Gesteuert wird die Wallbox dabei nicht: Die Optimierung liest nur mit.</div>
+      </div>
+      ${typ === "ambibox" ? `
+      <div class="field-group">
+        <label>Adresse der Ambibox (IP oder Hostname) *</label>
+        <input type="text" data-field="${prefix}ambibox_host" value="${this._escapeHtml(d.ambibox_host || "")}" placeholder="z.B. 192.168.1.70">
+        <div class="help-text">Nur die Adresse, keine URL — also <code>192.168.1.70</code> statt <code>http://192.168.1.70/</code> (eine URL wird beim Speichern automatisch gekürzt). Modbus TCP muss in der Ambibox freigeschaltet sein.</div>
+      </div>
+      <div class="field-group">
+        <label>Modbus-Port</label>
+        <input type="number" data-field="${prefix}ambibox_port" value="${d.ambibox_port ?? 502}" min="1" max="65535" step="1">
+      </div>
+      <div class="field-group">
+        <label>Modbus-Unit-ID</label>
+        <input type="number" data-field="${prefix}ambibox_unit_id" value="${d.ambibox_unit_id ?? 1}" min="0" max="247" step="1">
+        <div class="help-text">Bleibt üblicherweise auf 1. Nur ändern, wenn die Ambibox hinter einem Gateway hängt, das die Geräte durchnummeriert.</div>
+      </div>
+      <div class="field-group">
+        <label>Ladepunkt</label>
+        <input type="number" data-field="${prefix}ambibox_connector" value="${d.ambibox_connector ?? 1}" min="1" max="10" step="1">
+        <div class="help-text">Die Ambibox führt bis zu zehn Ladepunkte. Bei einer einzelnen Wallbox ist es der erste.</div>
+      </div>
+      <button class="btn-secondary btn-tap" data-action="test-ambibox" data-prefix="${prefix}" ${this._ambiboxProbing ? "disabled" : ""} style="margin-top:4px">
+        <ha-icon icon="mdi:lan-connect" style="--mdc-icon-size:16px;vertical-align:middle"></ha-icon>
+        ${this._ambiboxProbing ? "Teste…" : "Verbindung testen"}
+      </button>
+      ${probeBox}` : ""}`;
+  }
+
   _controlHint(inverterType) {
     // Nur der Sonderfall wird gemeldet. Die Bestaetigung „wird gesteuert" war
     // Rauschen: dass gesteuert wird, ist der Normalfall, und ob gerade
@@ -6478,7 +6629,16 @@ class EegOptimizerPanel extends HTMLElement {
       <div class="card" style="margin-bottom:16px">
         <h3 class="settings-karte-titel" style="margin:0 0 16px">Batterie</h3>
         ${this._batterieOptFields(d, "settings_")}
-      </div>`;
+      </div>
+      ${isExpert ? `
+      <div class="card" style="margin-bottom:16px">
+        <h3 class="settings-karte-titel" style="margin:0 0 4px">Wallbox</h3>
+        <div class="help-text" style="margin-bottom:16px">
+          Zeigt das angesteckte Fahrzeug an. Noch ohne Steuerung — Laden und
+          Entladen des Autos folgen in einem späteren Schritt.
+        </div>
+        ${this._wallboxFields(d, "settings_")}
+      </div>` : ""}`;
 
     // --- Tab: System ---
     // Reihenfolge auf Nutzerwunsch: Verbrauchsprofil (Experte) ganz oben,
@@ -7009,6 +7169,130 @@ class EegOptimizerPanel extends HTMLElement {
       this._controlStateStamp = stamp;
       this._loadControlState();
     }
+  }
+
+  // Dauer in Klartext — für „Abfahrt in ...". Sekundengenau wäre hier
+  // Scheingenauigkeit: Die Angabe kommt aus einer Planung, nicht aus einer
+  // Messung.
+  _dauerText(sekunden) {
+    const s = Number(sekunden);
+    if (!Number.isFinite(s) || s <= 0) return null;
+    const std = Math.floor(s / 3600);
+    const min = Math.round((s % 3600) / 60);
+    if (std >= 24) return `${Math.round(std / 24)} Tage`;
+    if (std > 0) return min > 0 ? `${std} h ${min} min` : `${std} h`;
+    return `${Math.max(min, 1)} min`;
+  }
+
+  _renderAutoKarte(decisionState) {
+    // Das angesteckte Fahrzeug. Eigene Karte, weil das Auto weder zur
+    // Anlage noch zum Fahrplan gehört: Es kommt und geht, und die
+    // Optimierung rechnet (noch) nicht damit.
+    if (!this._config?.wallbox_type) return "";
+    this._ensureAmbiboxState(decisionState);
+
+    const head = `
+      <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+          <h3 style="margin:0">
+            <ha-icon icon="mdi:car-electric" style="--mdc-icon-size:20px;color:var(--primary-color,#03a9f4);vertical-align:middle"></ha-icon>
+            Auto
+          </h3>
+          <button class="btn-link btn-tap" data-action="refresh-ambibox-state" style="font-size:12px">
+            <ha-icon icon="mdi:refresh" style="--mdc-icon-size:14px;vertical-align:middle"></ha-icon>
+          </button>
+        </div>`;
+    const foot = `</div>`;
+    const hinweis = (text, farbe) => `<p style="font-size:13px;color:${farbe || "var(--secondary-text-color)"};margin:8px 0 0">${text}</p>`;
+
+    const a = this._ambiboxState;
+    if (!a) return head + hinweis("Lade Fahrzeugdaten…") + foot;
+    if (a.konfiguriert === false) {
+      return head + hinweis('Keine Wallbox eingerichtet. Der Typ steht in den Einstellungen unter „Anlage".') + foot;
+    }
+    if (a.error) {
+      return head + hinweis(this._escapeHtml(a.error), "var(--error-color,#f44336)") + foot;
+    }
+    if (!a.verfuegbar) {
+      return head + hinweis(
+        `Die Wallbox unter ${this._escapeHtml(a.host || "?")} antwortet nicht${a.last_error ? ` — ${this._escapeHtml(a.last_error)}` : ""}.`,
+        "var(--warning-color,#ff9800)"
+      ) + foot;
+    }
+
+    if (!a.verbunden) {
+      return head
+        + hinweis("Kein Fahrzeug angesteckt.")
+        + (a.replug_required
+          ? hinweis("Die Wallbox meldet: Stecker ziehen und neu anstecken.", "var(--warning-color,#ff9800)")
+          : "")
+        + foot;
+    }
+
+    // Ladestand als Balken — die eine Zahl, um die es beim Auto geht.
+    const soc = Number(a.soc_pct);
+    const socBekannt = Number.isFinite(soc);
+    const ziel = Number(a.abfahrt_soc_pct);
+    const zielBekannt = Number.isFinite(ziel) && ziel > 0;
+    const balken = socBekannt ? `
+      <div style="position:relative;height:22px;border-radius:11px;background:var(--divider-color,#e0e0e0);overflow:hidden;margin:10px 0 6px">
+        <div style="position:absolute;inset:0 auto 0 0;width:${Math.max(0, Math.min(100, soc))}%;background:#7cb342"></div>
+        ${zielBekannt ? `<div style="position:absolute;top:0;bottom:0;left:${Math.max(0, Math.min(100, ziel))}%;width:2px;background:var(--primary-text-color);opacity:.55"></div>` : ""}
+        <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600">
+          ${fmtDe(soc, 0)} %${a.energie_kwh != null ? ` · ${fmtDe(a.energie_kwh, 1)} kWh` : ""}
+        </div>
+      </div>` : "";
+
+    const richtung = a.richtung === "laden" ? "lädt"
+      : a.richtung === "entladen" ? "speist zurück" : "steht";
+    const farbe = a.richtung === "laden" ? "#1e88e5"
+      : a.richtung === "entladen" ? "#ef6c00" : "var(--secondary-text-color)";
+    const leistung = a.leistung_kw == null
+      ? "—"
+      : `${fmtDe(a.leistung_kw, 2)} kW`;
+
+    const zeile = (label, wert) => wert == null || wert === ""
+      ? ""
+      : `<tr>
+          <td style="padding:3px 12px 3px 0;color:var(--secondary-text-color);white-space:nowrap">${label}</td>
+          <td style="padding:3px 0;font-variant-numeric:tabular-nums">${wert}</td>
+        </tr>`;
+
+    const abfahrt = this._dauerText(a.abfahrt_in_s);
+    const details = `
+      <table style="width:100%;border-collapse:collapse;font-size:13px;margin-top:4px">
+        ${zeile("Zustand", this._escapeHtml(a.session_text || "—"))}
+        ${zeile("Leistung", `<span style="color:${farbe};font-weight:500">${leistung}</span> <small style="color:var(--secondary-text-color)">(${richtung})</small>`)}
+        ${zeile("Kapazität", a.kapazitaet_kwh ? `${fmtDe(a.kapazitaet_kwh, 1)} kWh` : null)}
+        ${zeile("Zielladestand", zielBekannt ? `${fmtDe(ziel, 0)} %` : null)}
+        ${zeile("Abfahrt", abfahrt ? `in ${abfahrt}` : null)}
+        ${zeile("Ladeprotokoll", a.protokoll ? this._escapeHtml(a.protokoll) : null)}
+        ${zeile("Batterietemperatur", a.temperatur_c != null ? `${fmtDe(a.temperatur_c, 1)} °C` : null)}
+      </table>`;
+
+    // Was die Wallbox über ihre eigene Regelbarkeit sagt — die Vorbereitung
+    // auf Schritt 2. „Nicht steuerbar" heißt: Dieses Fahrzeug ließe sich
+    // auch später nicht führen, unabhängig von unserer Umsetzung.
+    const steuerHinweis = a.control_mode_text
+      ? `<div style="font-size:12px;color:var(--secondary-text-color);margin-top:8px">
+           <ha-icon icon="mdi:tune-variant" style="--mdc-icon-size:14px;vertical-align:middle"></ha-icon>
+           Laut Wallbox: ${this._escapeHtml(a.control_mode_text)}${a.bidirektional_faehig ? ", Rückspeisen möglich" : ""}.
+           Die Optimierung liest derzeit nur mit.
+         </div>`
+      : "";
+
+    const fehler = (a.fehler || []).length
+      ? `<div style="font-size:12px;color:var(--error-color,#f44336);margin-top:8px">
+           <ha-icon icon="mdi:alert-outline" style="--mdc-icon-size:14px;vertical-align:middle"></ha-icon>
+           ${a.fehler.map(f => this._escapeHtml(f)).join(", ")}
+         </div>`
+      : "";
+
+    return head + balken + details + steuerHinweis + fehler
+      + (a.replug_required
+        ? `<div style="font-size:12px;color:var(--warning-color,#ff9800);margin-top:8px">Stecker ziehen und neu anstecken.</div>`
+        : "")
+      + foot;
   }
 
   _renderControlStateKarte(decisionState) {
@@ -8076,6 +8360,9 @@ class EegOptimizerPanel extends HTMLElement {
 
         <!-- Optimierungsgewinn: was die Optimierung gegenüber Standardbetrieb bringt -->
         ${this._renderGewinnKarte()}
+
+        <!-- Angestecktes Fahrzeug (nur mit eingerichteter Wallbox) -->
+        ${this._renderAutoKarte(decisionState)}
 
         ${this._config?.expert_mode ? this._renderControlStateKarte(decisionState) : ""}
 

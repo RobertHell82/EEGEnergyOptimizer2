@@ -96,9 +96,11 @@ schedule_executor.py: ScheduleExecutor (execution, 30 s)
 | `inverter/__init__.py` | Factory function `create_inverter()` |
 | `select.py` | Mode select entity (Ein/Test), restores state across restarts |
 | `const.py` | All constants, defaults, mode enums, state names |
+| `ambibox/modbus.py` | Ambibox (sidOS) Modbus TCP — **read-only** bulk read of the EV charger block (104 registers at 4000 + 200 × connector) |
+| `ambibox/controller.py` | Interprets those registers into an `AutoZustand`, polls every 15 s, pushes to sensors/panel |
 | `frontend/eeg-optimizer-panel.js` | Dashboard + onboarding panel (plain HTMLElement, Shadow DOM) |
 
-### Sensors (25 always + up to 4 conditional)
+### Sensors (25 always + up to 8 conditional)
 
 | # | Sensor | Update | Description |
 |---|--------|--------|-------------|
@@ -126,8 +128,10 @@ schedule_executor.py: ScheduleExecutor (execution, 30 s)
 > (attribute `modus_ein_anteil` makes this verifiable).
 
 Conditional, created only when the setup calls for them: *Batterieleistung* /
-*Netzleistung* combined-pair sensors (split-sensor inverters like Fronius) and
-*Batterie-Ladestand/-Kapazität kombiniert* (multi-battery drivers).
+*Netzleistung* combined-pair sensors (split-sensor inverters like Fronius),
+*Batterie-Ladestand/-Kapazität kombiniert* (multi-battery drivers) and the four
+*Auto*-sensors (Status / Ladestand / Ladeleistung / Energie Ladesitzung) that
+come with a configured wallbox.
 
 `Fahrplan-Status` keeps the unique_id of the former `Entscheidung` sensor so
 the entity and its history survive — but its attributes changed completely
@@ -172,12 +176,14 @@ three intents. `Fahrplan-Status` shows what actually happened:
 - **API**: Paginated WebSocket endpoint (`get_activity_log` with `offset`/`limit`)
 - **Frontend**: Loads 100 entries initially, "Mehr laden" fetches 100 more per click, live events via subscription
 
-### WebSocket API (28 commands)
+### WebSocket API (30 commands)
 
 | Command | Description |
 |---------|-------------|
 | `eeg_optimizer/get_config` | Read config entry data |
 | `eeg_optimizer/save_config` | Update config entry |
+| `eeg_optimizer/get_ambibox_state` | Cached state of the plugged-in car (Auto card) |
+| `eeg_optimizer/probe_ambibox` | Read-only Modbus probe of an Ambibox (settings connection test) |
 | `eeg_optimizer/check_prerequisites` | Check required integrations |
 | `eeg_optimizer/detect_sensors` | Auto-detect Huawei sensors |
 | `eeg_optimizer/get_entity_ids` | Resolve the integration's own entity_ids for the panel |
@@ -336,6 +342,29 @@ the event loop is long enough for HA to flag a blocking call.
   timestamps age into the past within a day and the surcharge goes silent.
 - **Consumption Profile**: Hourly averages from recorder, split by 7 individual weekdays (mo–so), rolling window (default 4 weeks), with weekday fallback chain for missing data.
 - **Dual Update Timers**: Slow sensors (profile) every 15min, fast sensors (forecasts, battery, Hausverbrauch) every 1min. Hard-wired since v26 — the former config keys `update_interval_fast_min`/`update_interval_slow_min` are removed by migration.
+
+### Wallbox / Ambibox (read-only, step 1)
+
+`wallbox_type` selects the driver the way `inverter_type` does; currently only
+`ambibox`. Configured **exclusively in the settings** (tab "Anlage", expert
+mode only) — deliberately not in the wizard: the car is an accessory, not a
+prerequisite for the schedule.
+
+What it does: read the EV charger block and show the plugged-in vehicle
+(charge level, power, session state, target SOC, departure). What it does
+**not** do: control anything. Charging and discharging are step 2, and three
+questions block them, none of which the vendor document answers:
+
+1. **Watchdog** — how long does a `Target Power AC` setpoint stay valid without
+   being rewritten? Unknown, so the keepalive cadence is unknown too.
+2. **Sign convention** — the document does not fix it, and evcc's driver (not
+   MIT-licensed, do not copy) treats setpoint and measurement in opposite
+   directions. This is why the controller derives the direction from
+   `Battery State` (SLEEP/IDLE/CHARGE/DISCHARGE) and keeps power as a
+   magnitude — the display is correct either way.
+3. **Coexistence** — sidOS optimises on its own (`ESS State`). What happens
+   when we write at the same time is undocumented; the Ohmpilot/Gen24 case
+   showed how that ends.
 
 ## Config Flow & Onboarding
 

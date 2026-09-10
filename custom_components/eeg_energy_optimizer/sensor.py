@@ -12,6 +12,8 @@ Sensoren:
        früheren Entscheidungs-Sensors, damit Entität + Historie bleiben)
   +    Fahrplan Batterieleistung / Netzleistung (Plan-Werte des laufenden Slots)
   +    Combined-Sensoren (Paar-Setups, Multi-Battery)
+  +    Auto Status / Ladestand / Ladeleistung / Energie der Ladesitzung
+       (nur mit konfigurierter Ambibox; Push aus deren Lesetakt)
 """
 
 from __future__ import annotations
@@ -1032,6 +1034,208 @@ class EntladungInsNetzSensor(SensorEntity):
 
 
 # ---------------------------------------------------------------------------
+# Auto an der Ambibox (ambibox/): Status, Ladestand, Leistung, Sitzungsenergie
+# ---------------------------------------------------------------------------
+
+
+class _AutoSensor(SensorEntity):
+    """Basis der Auto-Sensoren — Push-Modell.
+
+    Die Werte stehen im Zustand des Ambibox-Controllers, der sie alle
+    ``AMBIBOX_READ_INTERVAL_S`` Sekunden neu liest und danach seine Listener
+    ruft. ``native_value`` liest deshalb live aus dem Controller, statt in
+    ``async_update`` zu kopieren.
+    """
+
+    _attr_has_entity_name = True
+
+    def __init__(self, hass: Any, entry: Any, controller: Any, endung: str) -> None:
+        self.hass = hass
+        self._controller = controller
+        self._attr_unique_id = f"{DOMAIN}_{entry.entry_id}_{endung}"
+        self._attr_device_info = _device_info(entry.entry_id)
+        self._attr_extra_state_attributes: dict[str, Any] = {}
+
+    @property
+    def available(self) -> bool:
+        """Ohne Verbindung zur Ambibox ist kein Wert bekannt.
+
+        Wichtiger als es klingt: Fährt das Auto weg oder fällt die Box aus,
+        stünde sonst der letzte gelesene Ladestand unbegrenzt weiter da.
+        """
+        return bool(self._controller.verfuegbar)
+
+    async def async_update(self) -> None:  # Werte kommen live aus dem Controller
+        return None
+
+
+class AutoStatusSensor(_AutoSensor):
+    """Was das angesteckte Fahrzeug gerade tut — Klartext plus alle Details.
+
+    Der Sammelsensor der Ambibox: Der Zustand ist der Text der Ladesitzung
+    („Lädt", „Pausiert", „Kein Fahrzeug angesteckt"), alles Weitere steht in
+    den Attributen. So bleibt in der Historie nachvollziehbar, wann ein Auto
+    angesteckt war, ohne vier Entitäten nebeneinanderzulegen.
+    """
+
+    _attr_name = "Auto Status"
+    _attr_icon = "mdi:car-electric"
+
+    def __init__(self, hass: Any, entry: Any, controller: Any) -> None:
+        super().__init__(hass, entry, controller, "auto_status")
+
+    @property
+    def available(self) -> bool:
+        # Anders als die Messwert-Sensoren: „Ambibox nicht erreichbar" ist
+        # selbst eine Aussage, die die Karte anzeigen können muss.
+        return True
+
+    @property
+    def native_value(self) -> str:
+        if not self._controller.verfuegbar:
+            return "Ambibox nicht erreichbar"
+        return self._controller.zustand.session_text
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        st = self._controller.status()
+        # Adresse und Anschluss gehören in die Fehlersuche, nicht in die
+        # Anzeige — deshalb hier, nicht im Zustand.
+        return {
+            "verbunden": st.get("verbunden"),
+            "richtung": st.get("richtung"),
+            "ladeprotokoll": st.get("protokoll"),
+            "bidirektional_faehig": st.get("bidirektional_faehig"),
+            "steuerbar": st.get("steuerbar"),
+            "steuermodus": st.get("control_mode_text"),
+            "kapazitaet_kwh": st.get("kapazitaet_kwh"),
+            "energie_kwh": st.get("energie_kwh"),
+            "batteriegesundheit_pct": st.get("soh_pct"),
+            "batterietemperatur_c": st.get("temperatur_c"),
+            "ladezyklen": st.get("zyklen"),
+            "max_ladeleistung_kw": st.get("max_charge_kw"),
+            "max_entladeleistung_kw": st.get("max_discharge_kw"),
+            "abfahrt_in_s": st.get("abfahrt_in_s"),
+            "abfahrt_soc_pct": st.get("abfahrt_soc_pct"),
+            "neu_anstecken_noetig": st.get("replug_required"),
+            "fehler": st.get("fehler") or None,
+            "host": st.get("host"),
+            "anschluss": st.get("connector"),
+            "letzter_fehler": st.get("last_error"),
+        }
+
+
+class AutoLadestandSensor(_AutoSensor):
+    """Ladestand der Fahrzeugbatterie (%)."""
+
+    _attr_name = "Auto Ladestand"
+    _attr_native_unit_of_measurement = "%"
+    _attr_device_class = getattr(SensorDeviceClass, "BATTERY", "battery")
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = "mdi:battery-charging"
+    _attr_suggested_display_precision = 0
+
+    def __init__(self, hass: Any, entry: Any, controller: Any) -> None:
+        super().__init__(hass, entry, controller, "auto_ladestand")
+
+    @property
+    def available(self) -> bool:
+        # Ohne angestecktes Fahrzeug meldet die Box den Ladestand des zuletzt
+        # verbundenen Autos — der ist ab dem Abstecken eine Behauptung.
+        return super().available and self._controller.zustand.verbunden
+
+    @property
+    def native_value(self) -> float | None:
+        return self._controller.zustand.soc_pct
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        z = self._controller.zustand
+        return {
+            "energie_kwh": z.energie_kwh,
+            "kapazitaet_kwh": z.kapazitaet_kwh,
+            "min_soc_pct": z.min_soc_pct,
+            "max_soc_pct": z.max_soc_pct,
+            "zielladestand_pct": z.abfahrt_soc_pct,
+            "zeit_bis_voll_s": z.zeit_bis_voll_s,
+        }
+
+
+class AutoLeistungSensor(_AutoSensor):
+    """Ladeleistung am Fahrzeug (kW) — positiv beim Laden, negativ beim Rückspeisen.
+
+    Die Ambibox liefert den Betrag ohne verlässliche Vorzeichenkonvention;
+    die Richtung kommt aus ihrem Batteriezustand (CHARGE/DISCHARGE). Hier
+    wird daraus das im Projekt übliche Vorzeichen gemacht: Laden positiv,
+    Entladen negativ — dieselbe Leserichtung wie bei der Hausbatterie.
+    """
+
+    _attr_name = "Auto Ladeleistung"
+    _attr_native_unit_of_measurement = UnitOfPower.KILO_WATT
+    _attr_device_class = SensorDeviceClass.POWER
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = "mdi:ev-station"
+    _attr_suggested_display_precision = 2
+
+    def __init__(self, hass: Any, entry: Any, controller: Any) -> None:
+        super().__init__(hass, entry, controller, "auto_ladeleistung")
+
+    @property
+    def native_value(self) -> float | None:
+        z = self._controller.zustand
+        if z.leistung_kw is None:
+            return None
+        if z.richtung == "entladen":
+            return round(-z.leistung_kw, 3)
+        if z.richtung == "laden":
+            return round(z.leistung_kw, 3)
+        return 0.0
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        z = self._controller.zustand
+        return {
+            "richtung": z.richtung,
+            "batteriezustand": z.battery_text,
+            "min_ladeleistung_kw": z.min_charge_kw,
+            "max_ladeleistung_kw": z.max_charge_kw,
+            "min_entladeleistung_kw": z.min_discharge_kw,
+            "max_entladeleistung_kw": z.max_discharge_kw,
+        }
+
+
+class AutoSessionEnergieSensor(_AutoSensor):
+    """Geladene Energie der laufenden Ladesitzung (kWh).
+
+    TOTAL statt TOTAL_INCREASING: Die Ambibox setzt den Zähler mit jeder
+    neuen Sitzung zurück, und ein TOTAL_INCREASING-Sensor deutete jeden
+    Rücksprung als Zählerüberlauf und addierte ihn dazu.
+    """
+
+    _attr_name = "Auto Energie Ladesitzung"
+    _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
+    _attr_device_class = SensorDeviceClass.ENERGY
+    _attr_state_class = SensorStateClass.TOTAL
+    _attr_icon = "mdi:ev-plug-type2"
+    _attr_suggested_display_precision = 2
+
+    def __init__(self, hass: Any, entry: Any, controller: Any) -> None:
+        super().__init__(hass, entry, controller, "auto_session_energie")
+
+    @property
+    def native_value(self) -> float | None:
+        return self._controller.zustand.session_geladen_kwh
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        z = self._controller.zustand
+        return {
+            "rueckgespeist_kwh": z.session_entladen_kwh,
+            "ladeprotokoll": z.protokoll_text,
+        }
+
+
+# ---------------------------------------------------------------------------
 # Energiebilanz: was die PV bringt, und welcher Anteil daran die Optimierung ist
 # ---------------------------------------------------------------------------
 
@@ -1473,6 +1677,26 @@ async def async_setup_entry(
     decision_sensor = FahrplanStatusSensor(entry.entry_id)
     data["decision_sensor"] = decision_sensor
 
+    # Auto-Sensoren — nur mit konfigurierter Ambibox (ambibox/). Push aus
+    # deren Lesetakt, damit Ladestand und Leistung nicht eine Minute
+    # hinterherhängen.
+    ambibox = data.get("ambibox")
+    auto_sensors: list[SensorEntity] = []
+    if ambibox is not None:
+        auto_sensors = [
+            AutoStatusSensor(hass, entry, ambibox),
+            AutoLadestandSensor(hass, entry, ambibox),
+            AutoLeistungSensor(hass, entry, ambibox),
+            AutoSessionEnergieSensor(hass, entry, ambibox),
+        ]
+
+        def _auto_push() -> None:
+            for sensor in auto_sensors:
+                if getattr(sensor, "hass", None) is not None and getattr(sensor, "entity_id", None):
+                    sensor.async_write_ha_state()
+
+        entry.async_on_unload(ambibox.add_listener(_auto_push))
+
     slow_sensors: list[SensorEntity] = [profil_sensor]
     fast_sensors: list[SensorEntity] = (
         daily_sensors
@@ -1500,6 +1724,7 @@ async def async_setup_entry(
             OptimierungsVorteilSensor(hass, entry, zeitraum)
             for zeitraum in ("heute", "monat", "jahr")
         ]
+        + auto_sensors
     )
 
     async_add_entities(slow_sensors + fast_sensors + [decision_sensor], False)

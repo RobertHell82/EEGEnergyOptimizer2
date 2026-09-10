@@ -14,6 +14,15 @@ from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 
 from .const import (
+    CONF_AMBIBOX_CONNECTOR,
+    CONF_AMBIBOX_HOST,
+    CONF_AMBIBOX_PORT,
+    CONF_AMBIBOX_UNIT_ID,
+    CONF_WALLBOX_TYPE,
+    DEFAULT_AMBIBOX_CONNECTOR,
+    DEFAULT_AMBIBOX_PORT,
+    DEFAULT_AMBIBOX_UNIT_ID,
+    WALLBOX_TYPE_AMBIBOX,
     COMBINED_BATTERY_CAPACITY_SENSOR_ID,
     COMBINED_BATTERY_POWER_SENSOR_ID,
     COMBINED_BATTERY_SOC_SENSOR_ID,
@@ -525,6 +534,9 @@ def async_register_websocket_commands(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_telemetry_disable)
     websocket_api.async_register_command(hass, ws_telemetry_forget)
     websocket_api.async_register_command(hass, ws_get_feedin_statistics)
+    # Ambibox (ambibox/) — angestecktes Fahrzeug
+    websocket_api.async_register_command(hass, ws_get_ambibox_state)
+    websocket_api.async_register_command(hass, ws_probe_ambibox)
     # Fahrplan (chamo-Prototyp)
     websocket_api.async_register_command(hass, ws_tagesbilanz_jetzt)
     websocket_api.async_register_command(hass, ws_get_schedule_archive)
@@ -662,6 +674,62 @@ async def ws_save_config(
             )
             return
         new_data[CONF_SMA_MODBUS_PORT] = port
+
+    # Ambibox (bidirektionale Wallbox per Modbus TCP): Bei eingeschalteter
+    # Anbindung muss der Endpunkt stimmen — dieselbe Prüfung wie bei den
+    # Modbus-Treibern.
+    if str(new_data.get(CONF_WALLBOX_TYPE) or "").strip().lower() == WALLBOX_TYPE_AMBIBOX:
+        # Aus einer versehentlich eingetragenen URL die reine Adresse machen:
+        # die Ambibox hat ein Webinterface, dessen URL liegt nahe — pymodbus
+        # kann damit nichts anfangen (siehe normalisiere_host).
+        from .ambibox.controller import normalisiere_host
+
+        host = normalisiere_host(new_data.get(CONF_AMBIBOX_HOST))
+        if not host or len(host) > 255:
+            connection.send_error(
+                msg["id"], "invalid_config", "Ungültige Adresse der Ambibox"
+            )
+            return
+        new_data[CONF_AMBIBOX_HOST] = host
+        try:
+            port = int(new_data.get(CONF_AMBIBOX_PORT) or DEFAULT_AMBIBOX_PORT)
+        except (TypeError, ValueError):
+            connection.send_error(
+                msg["id"], "invalid_config", "Ungültiger Modbus-Port der Ambibox"
+            )
+            return
+        if not 1 <= port <= 65535:
+            connection.send_error(
+                msg["id"], "invalid_config", "Ambibox-Port außerhalb des gültigen Bereichs"
+            )
+            return
+        new_data[CONF_AMBIBOX_PORT] = port
+        try:
+            unit_id = int(new_data.get(CONF_AMBIBOX_UNIT_ID) or DEFAULT_AMBIBOX_UNIT_ID)
+        except (TypeError, ValueError):
+            connection.send_error(
+                msg["id"], "invalid_config", "Ungültige Modbus-Unit-ID der Ambibox"
+            )
+            return
+        if not 0 <= unit_id <= 247:
+            connection.send_error(
+                msg["id"], "invalid_config", "Ambibox-Unit-ID außerhalb des gültigen Bereichs"
+            )
+            return
+        new_data[CONF_AMBIBOX_UNIT_ID] = unit_id
+        try:
+            connector = int(new_data.get(CONF_AMBIBOX_CONNECTOR) or DEFAULT_AMBIBOX_CONNECTOR)
+        except (TypeError, ValueError):
+            connection.send_error(
+                msg["id"], "invalid_config", "Ungültiger Ladepunkt der Ambibox"
+            )
+            return
+        if not 1 <= connector <= 10:
+            connection.send_error(
+                msg["id"], "invalid_config", "Ladepunkt der Ambibox muss zwischen 1 und 10 liegen"
+            )
+            return
+        new_data[CONF_AMBIBOX_CONNECTOR] = connector
 
     # Einspeisegrenze des Fahrplans: bei aktivierter Grenze muss ein
     # positiver Wert gesetzt sein — sie fließt ins LP-Modell ein und
@@ -2773,3 +2841,154 @@ async def ws_get_control_state(
             "rows": rows,
         },
     )
+
+
+# ---------------------------------------------------------------------------
+# Ambibox (ambibox/): angestecktes Fahrzeug
+# ---------------------------------------------------------------------------
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "eeg_optimizer/get_ambibox_state",
+    }
+)
+@websocket_api.async_response
+async def ws_get_ambibox_state(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict,
+) -> None:
+    """Zustand des angesteckten Fahrzeugs für die Auto-Karte im Panel.
+
+    Liefert den Cache des Controllers, nicht einen frischen Lesevorgang: Der
+    Lesetakt läuft ohnehin, und ein Panel-Aufruf soll keine zweite
+    Modbus-Verbindung aufmachen.
+    """
+    entry, data = _get_entry_data(hass, connection, msg)
+    if entry is None:
+        return
+
+    ambibox = data.get("ambibox")
+    if ambibox is None:
+        connection.send_result(msg["id"], {"konfiguriert": False})
+        return
+    try:
+        status = ambibox.status()
+    except Exception as err:  # noqa: BLE001 — Anzeige, kein Aktor
+        _LOGGER.exception("Ambibox-Zustand nicht lesbar")
+        connection.send_result(
+            msg["id"], {"konfiguriert": True, "error": str(err)}
+        )
+        return
+    status["konfiguriert"] = True
+    connection.send_result(msg["id"], status)
+
+
+async def _probe_ambibox_modbus(
+    host: str, port: int, unit_id: int, connector: int
+) -> dict:
+    """Read-only-Probe einer Ambibox: Block lesen und deuten.
+
+    Für den Verbindungstest in den Einstellungen — die Werte lassen sich
+    dort gegen die Anzeige der Wallbox halten. Die Rohregister der
+    wichtigsten Offsets kommen mit: Sollte die Wortreihenfolge auf einem
+    Gerät doch anders liegen, sieht man es hier sofort, statt einer
+    plausibel aussehenden, aber falschen Kilowattzahl zu glauben.
+    """
+    import asyncio
+
+    from .ambibox import modbus as ambimb
+
+    result: dict = {"success": False}
+    treiber = ambimb.AmbiboxModbus(host, port=port, unit_id=unit_id, connector=connector)
+    try:
+        try:
+            regs = await asyncio.wait_for(treiber.async_read_block(), timeout=10)
+        except asyncio.TimeoutError:
+            result["error"] = f"Zeitüberschreitung bei {host}:{port}."
+            return result
+        if regs is None:
+            result["error"] = (
+                treiber.last_error
+                or f"Keine Modbus-TCP-Verbindung zu {host}:{port}."
+            )
+            return result
+
+        from .ambibox.controller import AmbiboxController
+
+        zustand = AmbiboxController(None, {}, None)._deuten(regs)
+        result.update(
+            {
+                "success": True,
+                "input_base": treiber.input_base,
+                "verbunden": zustand.verbunden,
+                "session_text": zustand.session_text,
+                "soc_pct": zustand.soc_pct,
+                "kapazitaet_kwh": zustand.kapazitaet_kwh,
+                "leistung_kw": zustand.leistung_kw,
+                "richtung": zustand.richtung,
+                "protokoll": zustand.protokoll_text,
+                "steuerbar": zustand.steuerbar,
+                "control_mode_text": zustand.control_mode_text,
+                "max_charge_kw": zustand.max_charge_kw,
+                "max_discharge_kw": zustand.max_discharge_kw,
+                "fehler": zustand.fehler,
+                # Rohregister zur Kontrolle der Dekodierung
+                "roh": {
+                    "power_ac": regs[ambimb.OFF_POWER_AC:ambimb.OFF_POWER_AC + 2],
+                    "soc": regs[ambimb.OFF_SOC:ambimb.OFF_SOC + 2],
+                    "capacity": regs[ambimb.OFF_CAPACITY:ambimb.OFF_CAPACITY + 2],
+                    "ev_connected": regs[ambimb.OFF_EV_CONNECTED:ambimb.OFF_EV_CONNECTED + 2],
+                },
+            }
+        )
+        return result
+    except Exception as err:  # noqa: BLE001
+        result["error"] = str(err)
+        return result
+    finally:
+        try:
+            await treiber.async_close()
+        except Exception:  # noqa: BLE001
+            pass
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "eeg_optimizer/probe_ambibox",
+        vol.Required("host"): str,
+        vol.Optional("port", default=DEFAULT_AMBIBOX_PORT): int,
+        vol.Optional("unit_id", default=DEFAULT_AMBIBOX_UNIT_ID): int,
+        vol.Optional("connector", default=DEFAULT_AMBIBOX_CONNECTOR): int,
+    }
+)
+@websocket_api.async_response
+async def ws_probe_ambibox(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict,
+) -> None:
+    """Verbindungstest zur Ambibox — liest nur, schreibt nie."""
+    from .ambibox.controller import normalisiere_host
+
+    host = normalisiere_host(msg.get("host"))
+    if not host:
+        connection.send_result(
+            msg["id"], {"success": False, "error": "Keine Adresse angegeben."}
+        )
+        return
+    connector = int(msg.get("connector") or DEFAULT_AMBIBOX_CONNECTOR)
+    if not 1 <= connector <= 10:
+        connection.send_result(
+            msg["id"],
+            {"success": False, "error": "Ladepunkt muss zwischen 1 und 10 liegen."},
+        )
+        return
+    result = await _probe_ambibox_modbus(
+        host,
+        int(msg.get("port") or DEFAULT_AMBIBOX_PORT),
+        int(msg.get("unit_id") or DEFAULT_AMBIBOX_UNIT_ID),
+        connector,
+    )
+    connection.send_result(msg["id"], result)
