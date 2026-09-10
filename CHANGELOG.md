@@ -10,6 +10,12 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
+## [2.1.0-heizstab4] - 2026-09-10
+
+### Hinzugefügt
+
+- **Der Heizstab steht jetzt auch in der Statuskarte.** Bisher tauchte er nur im Optimierungsplan und in den Detailzeilen auf — die Werteliste und das Energieflussdiagramm oben kannten ihn nicht. Das war nicht nur eine Lücke, sondern eine falsche Bilanz: Der Sensor „Hausverbrauch" rechnet den Heizstab heraus, seine Leistung fehlte im Bild also komplett, und die PV-Aufteilung ging um genau diesen Betrag nicht auf. Die Werteliste hat nun eine Kachel „Heizstab" mit Leistung und Wassertemperatur, das Flussdiagramm einen eigenen Kasten neben dem Haus samt der Linie, über die er seine Energie bekommt — gelb aus der PV, rot aus dem Netz beim Komfortheizen unter der Mindesttemperatur. Antwortet der Ohmpilot nicht, steht ein Gedankenstrich statt einer 0: nichts zu wissen ist nicht dasselbe wie zu wissen, dass er aus ist. Ohne konfigurierten Heizstab sieht die Karte unverändert aus.
+
 ## [2.1.0-heizstab3] - 2026-09-10
 
 ### Behoben
