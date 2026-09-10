@@ -17,6 +17,7 @@ from .power_readings import (
     resolve_battery_capacity_kwh,
 )
 from .const import (
+    AMBIBOX_KEEPALIVE_S,
     AMBIBOX_READ_INTERVAL_S,
     CONF_AMBIBOX_CONNECTOR,
     CONF_AMBIBOX_HOST,
@@ -1863,8 +1864,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 async def _ambibox_lesen(_now=None):
                     await ambibox.async_lesen()
 
+                # Der Sollwert eines laufenden Handtests wird nachgeschrieben:
+                # Wie lange die Wallbox einen Wert ohne Wiederholung hält, ist
+                # nicht dokumentiert. Derselbe Takt beendet den Test, wenn
+                # seine Zeit abgelaufen ist.
+                async def _ambibox_keepalive(_now=None):
+                    await ambibox.async_keepalive()
+
                 entry.async_on_unload(async_track_time_interval(
                     hass, _ambibox_lesen, timedelta(seconds=AMBIBOX_READ_INTERVAL_S)
+                ))
+                entry.async_on_unload(async_track_time_interval(
+                    hass, _ambibox_keepalive, timedelta(seconds=AMBIBOX_KEEPALIVE_S)
                 ))
                 hass.async_create_task(ambibox.async_lesen())
 

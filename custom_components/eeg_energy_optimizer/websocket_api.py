@@ -14,12 +14,15 @@ from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 
 from .const import (
+    AMBIBOX_MANUAL_MAX_MINUTES,
+    CONF_AMBIBOX_CHARGE_SIGN,
     CONF_AMBIBOX_CONNECTOR,
     CONF_AMBIBOX_HOST,
     CONF_AMBIBOX_PORT,
     CONF_AMBIBOX_UNIT_ID,
     CONF_WALLBOX_TYPE,
     DEFAULT_AMBIBOX_CONNECTOR,
+    DEFAULT_AMBIBOX_MANUAL_MINUTES,
     DEFAULT_AMBIBOX_PORT,
     DEFAULT_AMBIBOX_UNIT_ID,
     WALLBOX_TYPE_AMBIBOX,
@@ -534,9 +537,11 @@ def async_register_websocket_commands(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_telemetry_disable)
     websocket_api.async_register_command(hass, ws_telemetry_forget)
     websocket_api.async_register_command(hass, ws_get_feedin_statistics)
-    # Ambibox (ambibox/) — angestecktes Fahrzeug
-    websocket_api.async_register_command(hass, ws_get_ambibox_state)
+    # Ambibox (ambibox/) — Verbindungstest und manueller Lade-/Entladetest.
+    # Den Fahrzeugzustand holt das Panel nicht über einen Befehl, sondern
+    # aus den Auto-Sensoren; die sind live und brauchen kein Polling.
     websocket_api.async_register_command(hass, ws_probe_ambibox)
+    websocket_api.async_register_command(hass, ws_ambibox_manual)
     # Fahrplan (chamo-Prototyp)
     websocket_api.async_register_command(hass, ws_tagesbilanz_jetzt)
     websocket_api.async_register_command(hass, ws_get_schedule_archive)
@@ -730,6 +735,13 @@ async def ws_save_config(
             )
             return
         new_data[CONF_AMBIBOX_CONNECTOR] = connector
+        vorzeichen = str(new_data.get(CONF_AMBIBOX_CHARGE_SIGN) or "negative").strip().lower()
+        if vorzeichen not in ("negative", "positive"):
+            connection.send_error(
+                msg["id"], "invalid_config", "Ungültige Vorzeichenkonvention der Ambibox"
+            )
+            return
+        new_data[CONF_AMBIBOX_CHARGE_SIGN] = vorzeichen
 
     # Einspeisegrenze des Fahrplans: bei aktivierter Grenze muss ein
     # positiver Wert gesetzt sein — sie fließt ins LP-Modell ein und
@@ -2848,43 +2860,6 @@ async def ws_get_control_state(
 # ---------------------------------------------------------------------------
 
 
-@websocket_api.websocket_command(
-    {
-        vol.Required("type"): "eeg_optimizer/get_ambibox_state",
-    }
-)
-@websocket_api.async_response
-async def ws_get_ambibox_state(
-    hass: HomeAssistant,
-    connection: websocket_api.ActiveConnection,
-    msg: dict,
-) -> None:
-    """Zustand des angesteckten Fahrzeugs für die Auto-Karte im Panel.
-
-    Liefert den Cache des Controllers, nicht einen frischen Lesevorgang: Der
-    Lesetakt läuft ohnehin, und ein Panel-Aufruf soll keine zweite
-    Modbus-Verbindung aufmachen.
-    """
-    entry, data = _get_entry_data(hass, connection, msg)
-    if entry is None:
-        return
-
-    ambibox = data.get("ambibox")
-    if ambibox is None:
-        connection.send_result(msg["id"], {"konfiguriert": False})
-        return
-    try:
-        status = ambibox.status()
-    except Exception as err:  # noqa: BLE001 — Anzeige, kein Aktor
-        _LOGGER.exception("Ambibox-Zustand nicht lesbar")
-        connection.send_result(
-            msg["id"], {"konfiguriert": True, "error": str(err)}
-        )
-        return
-    status["konfiguriert"] = True
-    connection.send_result(msg["id"], status)
-
-
 async def _probe_ambibox_modbus(
     host: str, port: int, unit_id: int, connector: int
 ) -> dict:
@@ -2992,3 +2967,62 @@ async def ws_probe_ambibox(
         connector,
     )
     connection.send_result(msg["id"], result)
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "eeg_optimizer/ambibox_manual",
+        vol.Required("action"): vol.In(["charge", "discharge", "stop"]),
+        vol.Optional("power_kw"): vol.Coerce(float),
+        vol.Optional("minutes", default=DEFAULT_AMBIBOX_MANUAL_MINUTES): int,
+    }
+)
+@websocket_api.async_response
+async def ws_ambibox_manual(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict,
+) -> None:
+    """Laden oder Entladen des Autos von Hand starten und wieder stoppen.
+
+    Der einzige Weg, auf dem diese Integration die Wallbox beschreibt — und
+    er wird immer von jemandem ausgelöst, der davorsteht. Der Fahrplan rührt
+    sie nicht an: Vorzeichenkonvention, Watchdog und das Verhalten bei
+    gleichzeitiger Regelung durch sidOS sind nicht dokumentiert, und genau
+    das soll dieser Test klären.
+    """
+    entry, data = _get_entry_data(hass, connection, msg)
+    if entry is None:
+        return
+
+    ambibox = data.get("ambibox")
+    if ambibox is None:
+        connection.send_result(
+            msg["id"], {"success": False, "error": "Keine Wallbox eingerichtet."}
+        )
+        return
+
+    aktion = msg["action"]
+    try:
+        if aktion == "stop":
+            await ambibox.async_manuell_stopp()
+            connection.send_result(
+                msg["id"],
+                {"success": True, "message": "Gestoppt.", "status": ambibox.status()},
+            )
+            return
+
+        richtung = "laden" if aktion == "charge" else "entladen"
+        minuten = min(int(msg.get("minutes") or DEFAULT_AMBIBOX_MANUAL_MINUTES),
+                      AMBIBOX_MANUAL_MAX_MINUTES)
+        ok, meldung = await ambibox.async_manuell_start(
+            richtung, float(msg.get("power_kw") or 0.0), minuten
+        )
+        connection.send_result(
+            msg["id"],
+            {"success": ok, "message" if ok else "error": meldung,
+             "status": ambibox.status()},
+        )
+    except Exception as err:  # noqa: BLE001 — die Meldung gehört ins Panel
+        _LOGGER.exception("Ambibox: manueller Test fehlgeschlagen")
+        connection.send_result(msg["id"], {"success": False, "error": str(err)})

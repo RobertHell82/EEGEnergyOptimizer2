@@ -10,6 +10,22 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
+## [2.1.0-ambibox3] - 2026-09-10
+
+### Geändert
+
+- **Das Auto steht jetzt in der Statuskarte, nicht mehr in einer eigenen Karte.** Es gehört zum aktuellen Zustand der Anlage — Ladestand, Richtung, Leistung und Zielladestand stehen dort in einer Zeile unter den Steuerungsangaben, samt schmalem Ladestandsbalken.
+- **Die Anzeige läuft von selbst mit.** Sie liest die Auto-Sensoren statt einmalig einen WebSocket-Befehl; die schreibt der Controller mit jedem Lesevorgang fort (alle 15 s), und das Panel hängt an deren Zustandsmeldungen. Vorher aktualisierte sich die Karte nur im Takt des Steuerungslaufs.
+
+### Hinzugefügt
+
+- **Laden und Entladen von Hand starten** (Statuskarte, nur im Expertenmodus): Leistung und Laufzeit wählen, dann „Laden" oder „Entladen". Der Sollwert wird laufend nachgeschrieben und endet nach der eingestellten Zeit von selbst; „Stoppen" gibt die Wallbox sofort wieder frei. Der Optimierungsplan steuert die Wallbox weiterhin nicht — dieser Weg ist zum Ausprobieren am Gerät gedacht.
+- **Vorzeichen des Leistungssollwerts einstellbar** (Wallbox-Einstellungen). Welche Richtung die Ambibox als Laden versteht, steht in keiner Unterlage; die Vorgabe folgt der einzigen bekannten fremden Umsetzung. Lädt das Auto in die falsche Richtung oder gar nicht, kostet die Korrektur eine Einstellung statt eines neuen Releases.
+
+### Hinweise
+
+- Der Handbetrieb wird abgelehnt, wenn kein Fahrzeug angesteckt ist, die Wallbox das Fahrzeug als nicht steuerbar meldet oder für das Rückspeisen das nötige Protokoll (ISO 15118-20) fehlt — mit einer Meldung, die den Grund nennt. Beim Beenden der Integration wird ein laufender Handbetrieb gestoppt.
+
 ## [2.1.0-ambibox2] - 2026-09-10
 
 ### Behoben

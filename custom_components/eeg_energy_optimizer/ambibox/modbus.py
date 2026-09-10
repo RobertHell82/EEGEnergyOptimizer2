@@ -1,4 +1,4 @@
-"""Modbus-TCP-Zugriff auf eine Ambibox (sidOS) — nur lesend.
+"""Modbus-TCP-Zugriff auf eine Ambibox (sidOS).
 
 Grundlage ist das Herstellerdokument „User Interface (Modbus TCP) – v1 –
 sidOS – ambibox", Public release version 1.3.0. sidOS ist nicht nur die
@@ -11,11 +11,11 @@ zehn Instanzen. Uns interessiert die Klasse EV Charger:
 Jeder Wert belegt zwei Register (32 bit, high word zuerst). Die Offsets
 unten sind relativ zur Basisadresse.
 
-Bewusst nur lesend: Die Steuerung hängt an Fragen, die das Dokument nicht
-beantwortet — ob ein Sollwert nachgeschrieben werden muss (Watchdog), mit
-welchem Vorzeichen geladen wird, und was passiert, wenn sidOS gleichzeitig
-selbst regelt. Die Holding-Adressen stehen trotzdem hier, damit Schritt 2
-nicht wieder bei der Dokumentation anfängt.
+Geschrieben wird nur auf ausdrückliche Anweisung (manueller Test im Panel).
+Der Fahrplan steuert die Wallbox nicht: Das Dokument beantwortet weder, wie
+lange ein Sollwert ohne Nachschreiben gilt, noch mit welchem Vorzeichen
+geladen wird, noch was bei gleichzeitiger Regelung durch sidOS passiert.
+Genau diese Fragen soll der manuelle Test am Gerät beantworten.
 """
 
 from __future__ import annotations
@@ -84,8 +84,7 @@ OFF_REPLUG_REQUIRED = 102    # uint32 bool
 INPUT_LENGTH = 104
 
 # --------------------------------------------------------------------------
-# Holding-Register, Offset zur Basis. Für Schritt 2 dokumentiert, hier
-# ungenutzt — dieses Modul schreibt nicht.
+# Holding-Register, Offset zur Basis.
 # --------------------------------------------------------------------------
 OFF_TARGET_POWER = 0   # int32  W — Vorzeichenkonvention ungeprüft
 OFF_WAKE_UP = 2        # uint32, nur Wert 1
@@ -100,12 +99,14 @@ def _slave_kw(client: Any, unit_id: int) -> dict:
     kennen nur ``slave``. Gleiche Erkennung wie im Fronius-Treiber.
     """
     import inspect
-    try:
-        sig = inspect.signature(client.read_input_registers)
+    for methode in ("read_input_registers", "write_registers"):
+        try:
+            sig = inspect.signature(getattr(client, methode))
+        except (AttributeError, TypeError, ValueError):
+            continue
         if "device_id" in sig.parameters:
             return {"device_id": unit_id}
-    except (TypeError, ValueError):
-        pass
+        return {"slave": unit_id}
     return {"slave": unit_id}
 
 
@@ -190,6 +191,9 @@ class AmbiboxModbus:
         self.last_error: str | None = None
         self.last_success: float | None = None
         self.read_failures = 0
+        # Zahl der Schreibvorgänge — für die Diagnose interessant, weil an
+        # dieser Wallbox nur auf ausdrückliche Anweisung geschrieben wird.
+        self.writes = 0
 
     # -- Eigenschaften ----------------------------------------------------
 
@@ -310,3 +314,54 @@ class AmbiboxModbus:
                 "Ambibox %s:%s — %s (Fehler %d in Folge)",
                 self._host, self._port, self.last_error, self.read_failures,
             )
+
+    # -- Schreiben ---------------------------------------------------------
+    #
+    # Nur für den manuellen Test aus dem Panel. Jeder Schreibvorgang belegt
+    # zwei Register (32 bit, high word zuerst) und geht über
+    # write_registers (FC 16) — dieselbe Kodierung wie beim Lesen.
+
+    async def _async_write32(self, offset: int, roh: bytes) -> bool:
+        """Einen 32-Bit-Wert in den Holding-Block schreiben."""
+        async with self._lock:
+            if not await self.async_connect():
+                return False
+            werte = list(struct.unpack(">HH", roh))
+            adresse = self.holding_base + offset
+            try:
+                result = await self._client.write_registers(
+                    address=adresse,
+                    values=werte,
+                    **_slave_kw(self._client, self._unit_id),
+                )
+            except Exception as exc:  # noqa: BLE001
+                self._record_error("write", exc)
+                self._close_client()
+                return False
+            if result is None or result.isError():
+                self._record_error("write", f"Modbus-Fehler an Adresse {adresse}")
+                return False
+            self.writes += 1
+            _LOGGER.debug(
+                "Ambibox: Adresse %d = %s geschrieben", adresse, werte
+            )
+            return True
+
+    async def async_write_target_power(self, watts: int) -> bool:
+        """Leistungssollwert setzen (int32, Watt).
+
+        Das Vorzeichen legt der Aufrufer fest — welche Richtung die Ambibox
+        als Laden versteht, ist nicht dokumentiert und steht deshalb in der
+        Konfiguration (siehe controller.ambibox_charge_sign).
+        """
+        return await self._async_write32(
+            OFF_TARGET_POWER, struct.pack(">i", int(watts))
+        )
+
+    async def async_wake_up(self) -> bool:
+        """Die Wallbox aufwecken (nur der Wert 1 ist zulässig)."""
+        return await self._async_write32(OFF_WAKE_UP, struct.pack(">I", 1))
+
+    async def async_stop_charge(self) -> bool:
+        """Den Ladevorgang beenden (nur der Wert 1 ist zulässig)."""
+        return await self._async_write32(OFF_STOP_CHARGE, struct.pack(">I", 1))

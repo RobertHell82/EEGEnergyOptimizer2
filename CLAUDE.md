@@ -96,8 +96,8 @@ schedule_executor.py: ScheduleExecutor (execution, 30 s)
 | `inverter/__init__.py` | Factory function `create_inverter()` |
 | `select.py` | Mode select entity (Ein/Test), restores state across restarts |
 | `const.py` | All constants, defaults, mode enums, state names |
-| `ambibox/modbus.py` | Ambibox (sidOS) Modbus TCP — **read-only** bulk read of the EV charger block (104 registers at 4000 + 200 × connector) |
-| `ambibox/controller.py` | Interprets those registers into an `AutoZustand`, polls every 15 s, pushes to sensors/panel |
+| `ambibox/modbus.py` | Ambibox (sidOS) Modbus TCP — bulk read of the EV charger block (104 registers at 4000 + 200 × connector); writes only the manual-test setpoint (holding 3000 + 100 × connector) |
+| `ambibox/controller.py` | Interprets those registers into an `AutoZustand`, polls every 15 s, pushes to sensors/panel; owns the manual charge/discharge test (keepalive, time limit, stop) |
 | `frontend/eeg-optimizer-panel.js` | Dashboard + onboarding panel (plain HTMLElement, Shadow DOM) |
 
 ### Sensors (25 always + up to 8 conditional)
@@ -176,14 +176,14 @@ three intents. `Fahrplan-Status` shows what actually happened:
 - **API**: Paginated WebSocket endpoint (`get_activity_log` with `offset`/`limit`)
 - **Frontend**: Loads 100 entries initially, "Mehr laden" fetches 100 more per click, live events via subscription
 
-### WebSocket API (30 commands)
+### WebSocket API (29 commands)
 
 | Command | Description |
 |---------|-------------|
 | `eeg_optimizer/get_config` | Read config entry data |
 | `eeg_optimizer/save_config` | Update config entry |
-| `eeg_optimizer/get_ambibox_state` | Cached state of the plugged-in car (Auto card) |
 | `eeg_optimizer/probe_ambibox` | Read-only Modbus probe of an Ambibox (settings connection test) |
+| `eeg_optimizer/ambibox_manual` | Start/stop the manual charge or discharge test (the only write path to the wallbox) |
 | `eeg_optimizer/check_prerequisites` | Check required integrations |
 | `eeg_optimizer/detect_sensors` | Auto-detect Huawei sensors |
 | `eeg_optimizer/get_entity_ids` | Resolve the integration's own entity_ids for the panel |
@@ -350,18 +350,34 @@ the event loop is long enough for HA to flag a blocking call.
 mode only) — deliberately not in the wizard: the car is an accessory, not a
 prerequisite for the schedule.
 
-What it does: read the EV charger block and show the plugged-in vehicle
-(charge level, power, session state, target SOC, departure). What it does
-**not** do: control anything. Charging and discharging are step 2, and three
-questions block them, none of which the vendor document answers:
+The vehicle is shown **inside the status card** (`_renderAutoZeile`), not in
+a card of its own — it belongs to the plant's current state. The panel reads
+the *Auto* sensors rather than calling a WebSocket command: the controller
+writes them on every poll and the panel is subscribed, so the display is live
+without any polling of its own.
+
+**Manual test (`ambibox_manual`)** is the only write path. Someone standing at
+the car starts charging or discharging at a chosen power for a chosen time;
+the schedule never touches the wallbox. Three safeguards hang on that path,
+because the device's behaviour is unknown: the setpoint is rewritten every
+`AMBIBOX_KEEPALIVE_S` (unknown watchdog), it expires on its own after at most
+`AMBIBOX_MANUAL_MAX_MINUTES`, and unloading the integration stops it. Entry is
+refused without a plugged-in car, with `Control Mode = 0`, and for discharge
+without ISO 15118-20.
+
+Three questions remain open, none of which the vendor document answers — the
+manual test exists to settle them at the device:
 
 1. **Watchdog** — how long does a `Target Power AC` setpoint stay valid without
-   being rewritten? Unknown, so the keepalive cadence is unknown too.
+   being rewritten? Unknown; 30 s was picked as tight enough for any usual
+   watchdog.
 2. **Sign convention** — the document does not fix it, and evcc's driver (not
    MIT-licensed, do not copy) treats setpoint and measurement in opposite
-   directions. This is why the controller derives the direction from
-   `Battery State` (SLEEP/IDLE/CHARGE/DISCHARGE) and keeps power as a
-   magnitude — the display is correct either way.
+   directions. Two consequences: the controller derives the *displayed*
+   direction from `Battery State` (SLEEP/IDLE/CHARGE/DISCHARGE) and keeps
+   power as a magnitude, and the *setpoint* sign is a setting
+   (`ambibox_charge_sign`, default "negative = charge") instead of a
+   hard-coded guess.
 3. **Coexistence** — sidOS optimises on its own (`ESS State`). What happens
    when we write at the same time is undocumented; the Ohmpilot/Gen24 case
    showed how that ends.

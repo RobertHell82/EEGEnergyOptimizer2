@@ -378,3 +378,27 @@ DEFAULT_AMBIBOX_CONNECTOR = 1
 # mehr Verkehr, denn Ladestand und Ladeleistung ändern sich in Minuten,
 # nicht in Sekunden.
 AMBIBOX_READ_INTERVAL_S = 15
+
+# Manueller Test der Wallbox (Laden/Entladen von Hand starten). Der Fahrplan
+# steuert die Wallbox nicht — dieser Weg existiert, um am Gerät die Fragen zu
+# klären, die das Herstellerdokument offenlässt.
+#
+# Vorzeichen des Leistungssollwerts: nirgends dokumentiert. Die einzige fremde
+# Umsetzung lädt mit negativen Werten; genau das ist hier die Vorgabe, aber
+# umstellbar — zeigt der Test, dass die Box es andersherum meint, kostet das
+# eine Einstellung statt eines neuen Releases.
+CONF_AMBIBOX_CHARGE_SIGN = "ambibox_charge_sign"
+AMBIBOX_SIGN_NEGATIVE = "negative"   # negativer Sollwert = laden
+AMBIBOX_SIGN_POSITIVE = "positive"   # positiver Sollwert = laden
+DEFAULT_AMBIBOX_CHARGE_SIGN = AMBIBOX_SIGN_NEGATIVE
+
+# Der Sollwert wird zyklisch nachgeschrieben, solange der manuelle Test läuft.
+# Wie lange ein Wert ohne Nachschreiben gilt, steht nicht im Dokument — 30 s
+# ist eng genug für jeden üblichen Watchdog (der Ohmpilot etwa fällt nach 50 s
+# ab) und immer noch wenig Verkehr.
+AMBIBOX_KEEPALIVE_S = 30
+# Harte Obergrenze für einen manuellen Lauf. Ein Testknopf darf nichts
+# hinterlassen, das unbeaufsichtigt weiterläuft: Nach Ablauf wird gestoppt,
+# auch wenn niemand mehr hinsieht.
+AMBIBOX_MANUAL_MAX_MINUTES = 60
+DEFAULT_AMBIBOX_MANUAL_MINUTES = 15

@@ -452,3 +452,193 @@ def test_ladestand_ohne_fahrzeug_ist_nicht_verfuegbar():
     mit = AutoLadestandSensor(MagicMock(), _entry(), _sensor_controller(_standardblock()))
     assert mit.available is True
     assert mit.native_value == pytest.approx(62.5)
+
+
+# ---------------------------------------------------------------------------
+# Manueller Lade-/Entladetest
+# ---------------------------------------------------------------------------
+
+
+def _steuer_treiber(regs=None):
+    t = _treiber(regs)
+    t.async_write_target_power = AsyncMock(return_value=True)
+    t.async_wake_up = AsyncMock(return_value=True)
+    t.async_stop_charge = AsyncMock(return_value=True)
+    t.writes = 0
+    return t
+
+
+async def _bereiter_controller(regs=None, config=None):
+    """Controller mit gelesenem Zustand — Voraussetzung jedes Handtests."""
+    controller = AmbiboxController(
+        MagicMock(), config or {}, _steuer_treiber(regs if regs is not None else _standardblock())
+    )
+    await controller.async_lesen()
+    return controller
+
+
+@pytest.mark.parametrize("vorzeichen,richtung,erwartet", [
+    ("negative", "laden", -3000),
+    ("negative", "entladen", 3000),
+    ("positive", "laden", 3000),
+    ("positive", "entladen", -3000),
+])
+async def test_vorzeichen_folgt_der_einstellung(vorzeichen, richtung, erwartet):
+    """Welche Richtung die Wallbox als Laden versteht, ist nicht dokumentiert
+    — deshalb umstellbar, ohne den Treiber anzufassen."""
+    from custom_components.eeg_energy_optimizer.const import CONF_AMBIBOX_CHARGE_SIGN
+
+    controller = await _bereiter_controller(config={CONF_AMBIBOX_CHARGE_SIGN: vorzeichen})
+    assert controller._sollwert_watt(richtung, 3.0) == erwartet
+
+
+async def test_start_schreibt_sollwert_und_merkt_sich_den_lauf():
+    controller = await _bereiter_controller()
+    ok, meldung = await controller.async_manuell_start("laden", 3.0, 15)
+
+    assert ok is True
+    assert "3.0 kW" in meldung or "3,0" in meldung
+    controller._treiber.async_write_target_power.assert_awaited_with(-3000)
+    assert controller.manuell_aktiv is True
+    assert 0 < controller.manuell_restsekunden <= 15 * 60
+
+
+async def test_start_weckt_die_wallbox_vor_dem_sollwert():
+    """Schläft die Box, ginge der erste Sollwert ins Leere."""
+    controller = await _bereiter_controller()
+    await controller.async_manuell_start("laden", 3.0, 5)
+    controller._treiber.async_wake_up.assert_awaited_once()
+
+
+async def test_ohne_fahrzeug_wird_nicht_geschrieben():
+    controller = await _bereiter_controller(
+        _block({mb.OFF_EV_CONNECTED: ("I", 0)})
+    )
+    ok, meldung = await controller.async_manuell_start("laden", 3.0, 15)
+    assert ok is False
+    assert "Kein Fahrzeug" in meldung
+    controller._treiber.async_write_target_power.assert_not_awaited()
+
+
+async def test_nicht_steuerbares_fahrzeug_wird_abgelehnt():
+    controller = await _bereiter_controller(
+        _standardblock({mb.OFF_CONTROL_MODE: ("I", 0)})
+    )
+    ok, meldung = await controller.async_manuell_start("laden", 3.0, 15)
+    assert ok is False
+    assert "nicht steuerbar" in meldung
+    controller._treiber.async_write_target_power.assert_not_awaited()
+
+
+async def test_entladen_braucht_iso_15118_20():
+    """Rückspeisen kann nur, wer das Protokoll dafür spricht — die Meldung
+    nennt das tatsächlich ausgehandelte."""
+    controller = await _bereiter_controller(
+        _standardblock({mb.OFF_CHARGE_PROTOCOL: ("I", 2)})  # DIN 70121
+    )
+    ok, meldung = await controller.async_manuell_start("entladen", 3.0, 15)
+    assert ok is False
+    assert "ISO 15118-20" in meldung and "DIN 70121" in meldung
+    # Laden bleibt mit demselben Protokoll erlaubt.
+    ok2, _ = await controller.async_manuell_start("laden", 3.0, 15)
+    assert ok2 is True
+
+
+async def test_laufzeit_wird_gedeckelt():
+    """Ein Testknopf darf nichts hinterlassen, das stundenlang weiterläuft."""
+    from custom_components.eeg_energy_optimizer.const import AMBIBOX_MANUAL_MAX_MINUTES
+
+    controller = await _bereiter_controller()
+    await controller.async_manuell_start("laden", 3.0, 9999)
+    assert controller.manuell_restsekunden <= AMBIBOX_MANUAL_MAX_MINUTES * 60
+
+
+async def test_keepalive_schreibt_nach():
+    """Wie lange ein Sollwert ohne Wiederholung gilt, ist unbekannt."""
+    controller = await _bereiter_controller()
+    await controller.async_manuell_start("laden", 3.0, 15)
+    controller._treiber.async_write_target_power.reset_mock()
+
+    await controller.async_keepalive()
+
+    controller._treiber.async_write_target_power.assert_awaited_once_with(-3000)
+
+
+async def test_keepalive_ohne_laufenden_test_schreibt_nicht():
+    controller = await _bereiter_controller()
+    await controller.async_keepalive()
+    controller._treiber.async_write_target_power.assert_not_awaited()
+
+
+async def test_keepalive_beendet_nach_ablauf():
+    import time as _time
+
+    controller = await _bereiter_controller()
+    await controller.async_manuell_start("laden", 3.0, 15)
+    controller._manuell_bis = _time.time() - 1  # Zeit künstlich abgelaufen
+
+    await controller.async_keepalive()
+
+    assert controller.manuell_aktiv is False
+    controller._treiber.async_write_target_power.assert_awaited_with(0)
+
+
+async def test_keepalive_beendet_wenn_das_auto_weg_ist():
+    controller = await _bereiter_controller()
+    await controller.async_manuell_start("laden", 3.0, 15)
+    controller._treiber.async_read_block = AsyncMock(
+        return_value=_block({mb.OFF_EV_CONNECTED: ("I", 0)})
+    )
+    await controller.async_lesen()
+
+    await controller.async_keepalive()
+
+    assert controller.manuell_aktiv is False
+
+
+async def test_stopp_schreibt_null_und_beendet_die_ladung():
+    """Welcher der beiden Wege die Box freigibt, ist nicht dokumentiert —
+    deshalb beide."""
+    controller = await _bereiter_controller()
+    await controller.async_manuell_start("laden", 3.0, 15)
+
+    await controller.async_manuell_stopp()
+
+    controller._treiber.async_write_target_power.assert_awaited_with(0)
+    controller._treiber.async_stop_charge.assert_awaited_once()
+    assert controller.manuell_aktiv is False
+
+
+async def test_shutdown_beendet_einen_laufenden_test():
+    """Ein Handtest darf die Integration nicht überleben."""
+    controller = await _bereiter_controller()
+    await controller.async_manuell_start("laden", 3.0, 15)
+
+    await controller.async_shutdown()
+
+    assert controller.manuell_aktiv is False
+    controller._treiber.async_write_target_power.assert_awaited_with(0)
+    controller._treiber.async_close.assert_awaited_once()
+
+
+async def test_gescheitertes_schreiben_startet_keinen_lauf():
+    controller = await _bereiter_controller()
+    controller._treiber.async_write_target_power = AsyncMock(return_value=False)
+    controller._treiber.last_error = "write: Zeitüberschreitung"
+
+    ok, meldung = await controller.async_manuell_start("laden", 3.0, 15)
+
+    assert ok is False
+    assert "Zeitüberschreitung" in meldung
+    assert controller.manuell_aktiv is False
+
+
+async def test_status_zeigt_den_laufenden_test():
+    controller = await _bereiter_controller()
+    await controller.async_manuell_start("entladen", 2.5, 10)
+    st = controller.status()
+    assert st["manuell_aktiv"] is True
+    assert st["manuell_richtung"] == "entladen"
+    assert st["manuell_kw"] == 2.5
+    assert st["manuell_sollwert_w"] == 2500  # negative Konvention: entladen positiv
+    assert st["vorzeichen"] == "negative"
