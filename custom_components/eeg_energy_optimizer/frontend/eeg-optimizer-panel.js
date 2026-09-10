@@ -2839,9 +2839,14 @@ class EegOptimizerPanel extends HTMLElement {
     // „Batterieleistung" / „Fahrplan Batterieleistung" dasselbe Vorzeichen —
     // vorher widersprach die Karte den eigenen Sensoren.
     const slotBat = slots.map(s => (s.battery_p == null ? null : -s.battery_p));
-    // Heizstab: nur zeichnen, wenn der Plan ihm überhaupt etwas zuweist —
-    // ohne Heizstab ist die Spalte 0 und die Serie wäre Rauschen.
+    // Heizstab: die Serie nur zeichnen, wenn der Plan ihm etwas zuweist —
+    // eine flache Nulllinie wäre Rauschen. Legende und Kennzahl aber immer,
+    // sobald ein Heizstab konfiguriert ist: sonst sieht man einem Plan ohne
+    // Überschuss nicht an, ob der Heizstab überhaupt mitgedacht wird.
     const hatHeizstab = slots.some(s => Number(s.heizstab) > 0.01);
+    const heizstabKonfiguriert = !!this._config?.heizstab_enabled;
+    const heizstabPlanKwh = slots.reduce((sum, s) => sum + (Number(s.heizstab) || 0), 0)
+      * (Math.max(1, Number(d.time_res_min) || 15) / 60);
     const histRange = this._schedHistRange || "off";
     const hist = (histRange !== "off" && this._schedHist?.range === histRange)
       ? this._schedHist : null;
@@ -3323,7 +3328,7 @@ class EegOptimizerPanel extends HTMLElement {
       ["#fbc02d", "PV (Prognose)"],
       ["#616161", "Verbrauch (Prognose)"],
       ["#43a047", "Netz geplant"],
-      ...(hatHeizstab ? [["#c62828", "Heizstab geplant"]] : []),
+      ...((hatHeizstab || heizstabKonfiguriert) ? [["#c62828", "Heizstab geplant"]] : []),
       ...(preisImFeld ? [["#d81b60", "Einspeisepreis (Börse)"]] : []),
       ["#1e88e5", "Batterie laden"],
       ["#ef6c00", "Batterie entladen"],
@@ -3417,6 +3422,13 @@ class EegOptimizerPanel extends HTMLElement {
         ${umschalter}
 
         <div style="margin-bottom:6px">${legend}</div>
+        ${heizstabKonfiguriert ? `
+        <div style="display:flex;align-items:center;gap:6px;margin:0 0 8px;font-size:12px;color:var(--secondary-text-color)">
+          <ha-icon icon="mdi:heating-coil" style="--mdc-icon-size:15px;color:#c62828;flex-shrink:0"></ha-icon>
+          ${hatHeizstab
+            ? `Heizstab im Plan: <strong style="color:var(--primary-text-color)">${fmtDe(heizstabPlanKwh, 1)}&nbsp;kWh</strong> Überschuss über der Einspeisegrenze, den weder Batterie noch Netz aufnehmen.`
+            : `Heizstab im Plan: <strong style="color:var(--primary-text-color)">kein Überschuss</strong> — laut Prognose nehmen Batterie und Einspeisung in den nächsten ${planStunden} Stunden alles auf. Gesteuert wird trotzdem nach der Messung: klebt die Einspeisung real an der Grenze, heizt er.`}
+        </div>` : ""}
 
         <div class="sched-chart-card" style="position:relative">
           <div class="sched-scroll">
@@ -6300,6 +6312,11 @@ class EegOptimizerPanel extends HTMLElement {
       titel: "Heizstab steuern — nur Fronius Ohmpilot",
       beschreibung: "Überschuss, den weder Batterie noch Netz aufnehmen, geht in den Heizstab statt abgeregelt zu werden. Gesteuert wird direkt per Modbus TCP — der Ohmpilot muss dafür vom Wechselrichter entkoppelt sein. Ist die Optimierung aus, ist auch der Heizstab aus.",
       params: `
+        ${d.grid_export_limit_enabled ? "" : `
+        <div class="help-text" style="margin-bottom:12px;padding:10px 12px;background:var(--warning-color,#ff9800)22;border-left:3px solid var(--warning-color,#ff9800);border-radius:4px">
+          <ha-icon icon="mdi:alert-outline" style="--mdc-icon-size:16px;vertical-align:middle"></ha-icon>
+          <strong>Keine Einspeisegrenze konfiguriert.</strong> Der Heizstab nimmt nur, was über die Einspeisegrenze hinausgeht — ohne sie gilt die AC-Grenzleistung des Wechselrichters minus 0,5 kW als Grenze, und der Heizstab startet praktisch nie. Unter „Anlage" die Einspeisegrenze einschalten (z. B. 4 kW).
+        </div>`}
         <div class="field-group">
           <label>Adresse des Ohmpilot (IP oder Hostname) *</label>
           <input type="text" data-field="${prefix}heizstab_host" value="${this._escapeHtml(d.heizstab_host || "")}" placeholder="z.B. 192.168.1.58">
