@@ -3432,9 +3432,11 @@ class EegOptimizerPanel extends HTMLElement {
         ${heizstabKonfiguriert ? `
         <div style="display:flex;align-items:center;gap:6px;margin:0 0 8px;font-size:12px;color:var(--secondary-text-color)">
           <ha-icon icon="mdi:heating-coil" style="--mdc-icon-size:15px;color:#c62828;flex-shrink:0"></ha-icon>
-          ${hatHeizstab
-            ? `Heizstab im Plan: <strong style="color:var(--primary-text-color)">${fmtDe(heizstabPlanKwh, 1)}&nbsp;kWh</strong> Überschuss über der Einspeisegrenze, den weder Batterie noch Netz aufnehmen.`
-            : `Heizstab im Plan: <strong style="color:var(--primary-text-color)">kein Überschuss</strong> — laut Prognose nehmen Batterie und Einspeisung in den nächsten ${planStunden} Stunden alles auf. Gesteuert wird trotzdem nach der Messung: klebt die Einspeisung real an der Grenze, heizt er.`}
+          <span>Heizstab im Plan: <strong style="color:var(--primary-text-color)">${hatHeizstab ? `${fmtDe(heizstabPlanKwh, 1)}&nbsp;kWh` : "kein Überschuss"}</strong></span>
+          <ha-icon icon="mdi:information-outline" style="--mdc-icon-size:15px;flex-shrink:0;cursor:help;opacity:0.8"
+                   title="${hatHeizstab
+                     ? `Überschuss über der Einspeisegrenze, den laut Prognose weder Batterie noch Netz aufnehmen — so viel würde der Heizstab in den nächsten ${planStunden} Stunden bekommen.`
+                     : `Laut Prognose nehmen Batterie und Einspeisung in den nächsten ${planStunden} Stunden alles auf. Gesteuert wird trotzdem nach der Messung: Klebt die Einspeisung real an der Grenze, heizt er.`}"></ha-icon>
         </div>` : ""}
 
         <div class="sched-chart-card" style="position:relative">
