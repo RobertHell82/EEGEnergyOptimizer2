@@ -10,6 +10,13 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
+## [2.1.0-heizstab2] - 2026-09-10
+
+### Geändert
+
+- **Der Heizstab ist im Optimierungsplan immer sichtbar, sobald er konfiguriert ist.** Bisher erschien die Serie „Heizstab geplant“ nur, wenn der Plan in den nächsten 48 Stunden tatsächlich Überschuss über der Einspeisegrenze sah — ohne solchen Überschuss zeigte die Karte nichts, und man konnte nicht erkennen, ob der Heizstab überhaupt mitgedacht wird. Jetzt steht unter der Legende eine Kennzahl: die geplante Wärme in kWh, oder „kein Überschuss“ mit dem Hinweis, dass die Steuerung trotzdem nach der Messung heizt, sobald die Einspeisung real an der Grenze klebt.
+- **Warnung im Heizstab-Tab ohne Einspeisegrenze.** Der Heizstab nimmt nur, was über die Einspeisegrenze hinausgeht; ist unter „Anlage“ keine konfiguriert, gilt die AC-Grenzleistung minus 0,5 kW, und er startet praktisch nie. Der Tab sagt das jetzt deutlich.
+
 ## [2.1.0-heizstab1] - 2026-09-10
 
 > Vorabversion auf dem Branch `feature/heizstab` — der Heizstab ist gebaut und getestet, aber noch nicht an einer Anlage im Feld nachgewiesen. Ohne konfigurierten Heizstab verhält sich diese Version wie 2.1.0-dev4.
