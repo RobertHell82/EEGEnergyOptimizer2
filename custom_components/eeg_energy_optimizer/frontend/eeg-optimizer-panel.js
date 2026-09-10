@@ -766,6 +766,10 @@ class EegOptimizerPanel extends HTMLElement {
             // Die Bedarfsquelle tauscht die PeakShare-Auswahl gegen Namens-
             // und Quotenfelder.
             if (realField === "eeg_demand_source") this._render();
+            // Der Wallbox-Typ blendet Adresse, Port, Unit-ID, Ladepunkt und
+            // den Verbindungstest ein. Ohne Render war die Auswahl gesetzt,
+            // aber es gab kein Feld für die IP-Adresse.
+            if (realField === "wallbox_type") this._render();
           }
           return;
         }
@@ -2350,6 +2354,12 @@ class EegOptimizerPanel extends HTMLElement {
     if (!(Number(d.pv_peak_kwp) > 0)) fehlt.push("PV-Spitzenleistung");
     if (d.grid_export_limit_enabled && !(Number(d.grid_export_limit_kw) > 0)) {
       fehlt.push("Höhe der Einspeisegrenze");
+    }
+    // Wallbox: ohne Adresse gibt es nichts zu lesen. Die Prüfung hier statt
+    // erst im Backend, damit die Meldung am Feld steht und nicht als
+    // Speicherfehler zurückkommt.
+    if (d.wallbox_type === "ambibox" && !String(d.ambibox_host || "").trim()) {
+      fehlt.push("Adresse der Ambibox");
     }
     if ((d.schedule_feedin_source || "manual") === "manual"
         && !(Number(d.schedule_feedin_price) > 0)) fehlt.push("Standardvergütung");
