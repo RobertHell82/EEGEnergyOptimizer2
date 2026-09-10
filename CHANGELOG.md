@@ -10,6 +10,12 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
+## [2.1.0-heizstab5] - 2026-09-10
+
+### Hinzugefügt
+
+- **Die Statuskarte meldet jetzt, wenn der Heizstab der Vorgabe nicht folgt.** An einer Anlage lief der Heizstab mit 2,4 kW, während das Panel „Heizstab aus" anzeigte — und es hatte recht: Der Sollwert stand auf 0, wurde alle 30 Sekunden geschrieben und kam auch am Gerät an. Nur überschrieb die Vorgänger-Integration ihn im Sekundentakt wieder. Der Ohmpilot kennt keine Zugriffsrechte: Wer zuletzt schreibt, gewinnt. Sichtbar war der Konflikt nur als Sägezahn in der gemessenen Leistung, im Takt unserer eigenen Schreibvorgänge. Zieht der Heizstab jetzt länger als drei Minuten deutlich mehr, als vorgegeben ist, steht das als Warnung in der Statuskarte, samt Hinweis auf die möglichen Verursacher (alte Automatisierung, zweite Integration, nicht gelöste Kopplung zum Gen24) und darauf, dass in diesem Zustand weder die Maximaltemperatur noch der Schutz vor dem Verheizen von Batteriestrom greift. Der Zustand steht auch als Attribut `fremdsteuerung` am Sensor „Heizstab Sollwert".
+
 ## [2.1.0-heizstab4] - 2026-09-10
 
 ### Hinzugefügt
