@@ -10,7 +10,9 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
-## [Unreleased]
+## [2.1.0-heizstab1] - 2026-09-10
+
+> Vorabversion auf dem Branch `feature/heizstab` — der Heizstab ist gebaut und getestet, aber noch nicht an einer Anlage im Feld nachgewiesen. Ohne konfigurierten Heizstab verhält sich diese Version wie 2.1.0-dev4.
 
 ### Hinzugefügt
 
