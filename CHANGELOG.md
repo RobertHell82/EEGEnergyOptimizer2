@@ -10,6 +10,17 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
+## [2.1.0-heizstab3] - 2026-09-10
+
+### Behoben
+
+- **Eine URL im Feld „Adresse des Ohmpilot“ verhinderte jede Verbindung.** Der Ohmpilot hat ein Webinterface, also liegt es nahe, dessen Adresse einzutragen — an einer Anlage stand `http://192.168.100.58/`, und der Treiber scheiterte bei jedem Versuch mit einer Meldung, die wie ein Netzwerkproblem aussah. Der Heizstab heizte nie, ohne dass es jemand als Konfigurationsfehler erkennen konnte. Jetzt werden Schema, Pfad, Zugangsdaten und Port-Anhang beim Speichern und beim Verbinden abgeschält — bestehende Konfigurationen laufen ohne erneutes Speichern.
+- **Die Karte „Gesetzte Steuerwerte“ zieht mit jedem Steuerungslauf nach** (aus 2.1.0-dev5). Bisher war sie eine Momentaufnahme vom Öffnen des Dashboards und widersprach nach einem Moduswechsel minutenlang der Statuskarte darüber.
+
+### Geändert
+
+- **Die Heizstab-Kennzahl im Optimierungsplan ist kurz, die Erklärung steckt im Info-Symbol.** Unter der Legende steht „Heizstab im Plan: x kWh“ bzw. „kein Überschuss“; warum, sagt der Tooltip.
+
 ## [2.1.0-heizstab2] - 2026-09-10
 
 ### Geändert
