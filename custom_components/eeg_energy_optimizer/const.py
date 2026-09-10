@@ -256,6 +256,11 @@ CONF_HEIZSTAB_MINTEMP_C = "heizstab_mintemp_c"
 # Netzstrom verheizen will, lässt es aus; die Mindesttemperatur wirkt dann
 # nur als Vorrang vor der Einspeisung.
 CONF_HEIZSTAB_NETZBEZUG = "heizstab_netzbezug"
+# Bis zu welcher Temperatur die ANDERE Heizquelle (Fernwärme, Kessel,
+# Wärmepumpe) den Puffer heizt. Wärme bis dorthin ersetzt sie und ist den
+# Wärmewert wert; Wärme darüber hätte es sonst nie gegeben — sie wird als
+# Zusatzwärme getrennt ausgewiesen und nicht bewertet. 0 = keine Unterscheidung.
+CONF_HEIZSTAB_ALT_TEMP_C = "heizstab_alt_temp_c"
 # Vorrang bei ungeplantem Überschuss (Einspeisung klebt an der Grenze):
 # True = zuerst der Heizstab, das Ladelimit der Batterie wird erst angehoben,
 # wenn er gesättigt ist; False = zuerst die Batterie (Guard 1 wie bisher),
@@ -270,6 +275,7 @@ DEFAULT_HEIZSTAB_MAX_KW = 6.0
 DEFAULT_HEIZSTAB_MAXTEMP_C = 80.0
 DEFAULT_HEIZSTAB_MINTEMP_C = 0.0
 DEFAULT_HEIZSTAB_NETZBEZUG = False
+DEFAULT_HEIZSTAB_ALT_TEMP_C = 0.0
 DEFAULT_HEIZSTAB_VORRANG = True
 DEFAULT_HEIZSTAB_WAERMEWERT = 0.0
 
@@ -379,6 +385,7 @@ TELEMETRY_SETTINGS_KEYS = (
     "heizstab_maxtemp_c",
     "heizstab_mintemp_c",
     "heizstab_netzbezug",
+    "heizstab_alt_temp_c",
     "heizstab_vorrang",
     "heizstab_waermewert",
 )

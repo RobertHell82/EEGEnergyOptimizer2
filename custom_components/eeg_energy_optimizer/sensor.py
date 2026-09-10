@@ -1137,6 +1137,8 @@ class HeizstabTemperaturSensor(_HeizstabSensor):
             "maximaltemperatur_c": self._controller.maxtemp_c,
             "mindesttemperatur_c": self._controller.mintemp_c or None,
             "netzbezug_erlaubt": self._controller.netzbezug_erlaubt,
+            "andere_heizquelle_c": self._controller.alt_temp_c or None,
+            "zusatzwaerme": self._controller.zusatzwaerme,
             "max_erreicht": self._controller.max_erreicht,
             "komfort_aktiv": self._controller.komfort_aktiv,
         }
@@ -1205,7 +1207,22 @@ class HeizstabEnergieHeuteSensor(_HeizstabSensor):
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        return {"last_reset": _bilanztag_start().isoformat()}
+        attrs: dict[str, Any] = {"last_reset": _bilanztag_start().isoformat()}
+        schwelle = self._controller.alt_temp_c
+        if schwelle > 0:
+            # Ersatzwärme (bis zur Temperatur der anderen Heizquelle) und
+            # Zusatzwärme (darüber) getrennt — nur mit gesetzter Schwelle.
+            bilanz = self.hass.data.get(DOMAIN, {}).get(self._entry_id, {}).get("bilanz")
+            attrs["andere_heizquelle_c"] = schwelle
+            if bilanz is not None:
+                try:
+                    gesamt = bilanz.heizstab_kwh_heute()
+                    zusatz = min(gesamt, bilanz.heizstab_ueber_kwh_heute())
+                    attrs["ersatzwaerme_kwh"] = round(gesamt - zusatz, 3)
+                    attrs["zusatzwaerme_kwh"] = round(zusatz, 3)
+                except Exception:  # noqa: BLE001 - Anzeige, kein Aktor
+                    pass
+        return attrs
 
 
 # ---------------------------------------------------------------------------

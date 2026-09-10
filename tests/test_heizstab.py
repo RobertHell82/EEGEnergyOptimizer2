@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from custom_components.eeg_energy_optimizer.const import (
+    CONF_HEIZSTAB_ALT_TEMP_C,
     CONF_HEIZSTAB_ENABLED,
     CONF_HEIZSTAB_HOST,
     CONF_HEIZSTAB_MAX_KW,
@@ -395,3 +396,25 @@ def test_komfort_ohne_netz_ignoriert_batterie_vorrang():
     hz = _komfort_ohne_netz()
     soll, _ = hz.regeln(entladung=False, export_kw=2.0, grenze_kw=4.0, vorrang_frei=False)
     assert soll == pytest.approx(HEIZSTAB_STEP_KW)
+
+
+# ---------------------------------------------------------------------------
+# Temperatur der anderen Heizquelle: Zusatzwärme
+# ---------------------------------------------------------------------------
+
+
+def test_zusatzwaerme_ueber_der_schwelle_der_anderen_heizquelle():
+    t = _treiber(power_w=3000, temp=58.0)
+    hz = HeizstabController(MagicMock(), _cfg(**{CONF_HEIZSTAB_ALT_TEMP_C: 55.0}), t)
+    assert hz.alt_temp_c == 55.0
+    assert hz.zusatzwaerme is True
+    t.last_temperature = 52.0
+    assert hz.zusatzwaerme is False
+    assert hz.status()["alt_temp_c"] == 55.0
+
+
+def test_ohne_schwelle_oder_fuehler_keine_zusatzwaerme():
+    assert HeizstabController(MagicMock(), _cfg(), _treiber(temp=70.0)).zusatzwaerme is False
+    hz = HeizstabController(MagicMock(), _cfg(**{CONF_HEIZSTAB_ALT_TEMP_C: 55.0}), _treiber(temp=None))
+    assert hz.zusatzwaerme is False
+    assert hz.status()["alt_temp_c"] == 55.0

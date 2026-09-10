@@ -253,6 +253,7 @@ const WIZARD_DEFAULTS = {
   heizstab_maxtemp_c: 80,
   heizstab_mintemp_c: 0,
   heizstab_netzbezug: false,
+  heizstab_alt_temp_c: 0,
   heizstab_vorrang: true,
   heizstab_waermewert: 0,
   expert_mode: false,
@@ -3573,6 +3574,7 @@ class EegOptimizerPanel extends HTMLElement {
           ${Number(heute.waerme) > 0 ? zeile("Wärme aus dem Heizstab", heute.waerme, "eur") : ""}
           ${zeile("Selbst verbraucht", heute.eigen_kwh, "kWh", sHaus)}
           ${Number(heute.heizstab_kwh) > 0 ? zeile("In den Heizstab", heute.heizstab_kwh, "kWh") : ""}
+          ${Number(heute.heizstab_ueber_kwh) > 0 ? zeile(`davon Zusatzwärme über ${fmtDe(Number(this._config?.heizstab_alt_temp_c || 0), 0)} °C`, heute.heizstab_ueber_kwh, "kWh") : ""}
           ${zeile("Eingespeist", heute.export_kwh, "kWh", sNetz)}
           ${zeile("Aus dem Netz bezogen", heute.bezug_kwh, "kWh", sNetz)}
           ${zeile("Erzeugt", heute.pv_kwh, "kWh", sPv)}
@@ -3687,7 +3689,7 @@ class EegOptimizerPanel extends HTMLElement {
           Der Ladestand am Horizontende ist im Modell fest vorgegeben, und der
           Standardbetrieb muss ihn genauso einhalten — sonst verglichen die
           Pläne ungleiche Endzustände, und der Fahrplan müsste sich anrechnen
-          lassen, dass er die letzte Nacht aus dem Netz deckt.
+          lassen, dass er die letzte Nacht aus dem Netz deckt.${gewinn.heizstab_zusatzwaerme ? " Der Puffer liegt über der Temperatur der anderen Heizquelle — geplante Wärme ist Zusatzwärme und wird nicht bewertet." : ""}
         </p>`;
     }
     const kennzahl = `
@@ -6295,7 +6297,7 @@ class EegOptimizerPanel extends HTMLElement {
       action: prefix ? "toggle-settings-feature" : "toggle-feature",
       feature: "heizstab_enabled",
       icon: "mdi:heating-coil",
-      titel: "Heizstab (Fronius Ohmpilot)",
+      titel: "Heizstab steuern — nur Fronius Ohmpilot",
       beschreibung: "Überschuss, den weder Batterie noch Netz aufnehmen, geht in den Heizstab statt abgeregelt zu werden. Gesteuert wird direkt per Modbus TCP — der Ohmpilot muss dafür vom Wechselrichter entkoppelt sein. Ist die Optimierung aus, ist auch der Heizstab aus.",
       params: `
         <div class="field-group">
@@ -6334,6 +6336,11 @@ class EegOptimizerPanel extends HTMLElement {
             </div>
           </label>
         </div>` : ""}
+        <div class="field-group">
+          <label>Temperatur der anderen Heizquelle (°C)</label>
+          <input type="number" data-field="${prefix}heizstab_alt_temp_c" value="${d.heizstab_alt_temp_c || ""}" min="0" max="95" step="1" placeholder="leer = keine Unterscheidung">
+          <div class="help-text">Bis zu dieser Temperatur heizt deine andere Heizquelle den Puffer, zum Beispiel die Fernwärme bis 55 °C. Wärme bis dorthin ersetzt sie und zählt zum Wärmewert; Wärme darüber hätte es sonst nie gegeben — sie wird als Zusatzwärme getrennt ausgewiesen und nicht bewertet. Leer = alles zählt gleich.</div>
+        </div>
         <div class="field-group">
           <label style="display:flex;align-items:center;gap:12px;cursor:pointer">
             <input type="checkbox" data-field="${prefix}heizstab_vorrang" ${vorrang ? "checked" : ""}>
@@ -6534,6 +6541,10 @@ class EegOptimizerPanel extends HTMLElement {
           <ha-icon icon="mdi:battery-charging-medium" style="--mdc-icon-size:18px"></ha-icon>
           <span>Anlage</span>
         </button>
+        <button class="settings-tab ${activeTab === "heizstab" ? "active" : ""}" data-action="set-settings-tab" data-tab="heizstab" role="tab">
+          <ha-icon icon="mdi:heating-coil" style="--mdc-icon-size:18px"></ha-icon>
+          <span>Heizstab</span>
+        </button>
         <button class="settings-tab ${activeTab === "system" ? "active" : ""}" data-action="set-settings-tab" data-tab="system" role="tab">
           <ha-icon icon="mdi:tune" style="--mdc-icon-size:18px"></ha-icon>
           <span>System</span>
@@ -6566,9 +6577,19 @@ class EegOptimizerPanel extends HTMLElement {
       <div class="card" style="margin-bottom:16px">
         <h3 class="settings-karte-titel" style="margin:0 0 16px">Batterie</h3>
         ${this._batterieOptFields(d, "settings_")}
-      </div>
+      </div>`;
+
+    // --- Tab: Heizstab (nur in den Einstellungen, nicht im Assistenten) ---
+    // Ein Heizstab ist die Ausnahme, nicht die Regel — er bekommt seinen
+    // eigenen Tab, damit „Anlage" für alle anderen schlank bleibt.
+    const heizstabTab = `
       <div class="card" style="margin-bottom:16px">
-        <h3 class="settings-karte-titel" style="margin:0 0 16px">Heizstab</h3>
+        <h3 class="settings-karte-titel" style="margin:0 0 4px">Heizstab (nur Fronius Ohmpilot)</h3>
+        <div class="help-text" style="margin-bottom:16px">
+          Überschuss, den weder Batterie noch Netz aufnehmen, geht in den
+          Heizstab statt abgeregelt zu werden. Unterstützt wird derzeit
+          ausschließlich der Fronius Ohmpilot, direkt per Modbus TCP.
+        </div>
         ${this._heizstabFields(d, "settings_")}
       </div>`;
 
@@ -6604,6 +6625,7 @@ class EegOptimizerPanel extends HTMLElement {
     let tabContent;
     switch (activeTab) {
       case "anlage":  tabContent = anlageTab; break;
+      case "heizstab": tabContent = heizstabTab; break;
       case "system":  tabContent = systemTab; break;
       case "tarife":
       default:        tabContent = tarifeTab; break;

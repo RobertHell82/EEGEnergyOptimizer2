@@ -1,4 +1,4 @@
-# Heizstab (Fronius Ohmpilot)
+# Heizstab (nur Fronius Ohmpilot)
 
 Eine bewusst groß gebaute PV-Anlage erzeugt an guten Tagen mehr, als Batterie, Haus und Einspeisegrenze zusammen aufnehmen. Der Wechselrichter regelt den Rest ab — diese Energie ist verloren. Mit einem Heizstab am Warmwasserspeicher bekommt sie eine Verwendung: Der Optimizer steuert einen **Fronius Ohmpilot** direkt per Modbus TCP und gibt ihm genau den Überschuss, den sonst niemand nimmt.
 
@@ -44,9 +44,17 @@ Meist ist die Batterie schon nach Plan am Laden, wenn die Einspeisung ans Limit 
 
 Der Plan für die Batterie bleibt in beiden Fällen unangetastet. Es geht nur darum, wer den Teil bekommt, den die Prognose nicht kannte.
 
+## Ersatzwärme und Zusatzwärme
+
+Viele Puffer haben eine zweite Heizquelle — Fernwärme, Kessel, Wärmepumpe —, die nur bis zu einer bestimmten Temperatur heizt, etwa 55 °C. Wärme, die der Heizstab **bis dorthin** liefert, ersetzt diese Quelle und ist so viel wert wie deren Energie: der **Wärmewert**. Wärme **darüber** hätte es ohne den Heizstab nie gegeben — sie ersetzt nichts, ist aber trotzdem sinnvoll, weil sie Abregelung vermeidet und der Puffer sie speichert.
+
+Trägst du die **Temperatur der anderen Heizquelle** ein, trennt der Optimizer beides: Der Sensor „Heizstab Energie heute" weist Ersatz- und Zusatzwärme getrennt aus, die Bilanzkarte zeigt „davon Zusatzwärme über 55 °C", und bewertet wird nur die Ersatzwärme. Lässt du das Feld leer, zählt alles gleich.
+
+_Gemessen wird am Fühler des Ohmpilot: Liegt die Temperatur beim Heizen über der Schwelle, ist die Energie dieser halben Minute Zusatzwärme. In der Gewinnkarte gilt: Liegt der Puffer gerade über der Schwelle, zählt alle geplante Wärme als Zusatzwärme._
+
 ## Konfiguration
 
-Alle Felder stehen in den **Einstellungen → Anlage → Heizstab**.
+Alle Felder stehen in den **Einstellungen** im eigenen Tab **Heizstab**. Im Einrichtungsassistenten kommt der Heizstab nicht vor — er ist die Ausnahme, nicht die Regel.
 
 | Feld | Bedeutung |
 |---|---|
@@ -57,6 +65,7 @@ Alle Felder stehen in den **Einstellungen → Anlage → Heizstab**.
 | **Maximaltemperatur (°C)** | Bis zu dieser Temperatur darf der Heizstab heizen; darüber bleibt er aus, weiter geht es 3 K darunter |
 | **Mindesttemperatur (°C)** | Darunter hat der Heizstab Vorrang vor der Einspeisung: Er nimmt allen PV-Überschuss, auch den unterhalb der Einspeisegrenze, bis 5 K darüber — aber weder Netz- noch Batteriestrom. 0 = aus |
 | **Unter der Mindesttemperatur auch aus dem Netz heizen** | Nur sichtbar mit Mindesttemperatur. Eingeschaltet heizt der Heizstab darunter mit voller Leistung, egal woher der Strom kommt, und die Optimierung entlädt derweil nicht ins Netz. Ausgeschaltet (Vorgabe) wird nie Netzstrom verheizt — ohne Sonne bleibt das Wasser dann kalt |
+| **Temperatur der anderen Heizquelle (°C)** | Bis hierher heizt Fernwärme, Kessel oder Wärmepumpe. Wärme darunter ist Ersatzwärme (Wärmewert), Wärme darüber Zusatzwärme (getrennt ausgewiesen, nicht bewertet). Leer = keine Unterscheidung |
 | **Überschuss zuerst in den Heizstab** | Reihenfolge bei ungeplantem Überschuss, siehe oben |
 | **Wärmewert (ct/kWh)** | Was eine Kilowattstunde Wärme ersetzt. Fließt in „Ersparnis durch PV" und in den Optimierungsgewinn ein. 0 = Wärme wird gezählt, aber nicht bewertet |
 

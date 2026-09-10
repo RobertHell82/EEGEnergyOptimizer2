@@ -283,6 +283,10 @@ class ScheduleInputs:
     # Spalte ``discard`` abgeleitet (siehe ``_heizstab_plan_kw``).
     heizstab_max_kw: float = 0.0
     heizstab_waermewert: float = 0.0
+    # Der Puffer liegt JETZT über der Temperatur der anderen Heizquelle: alle
+    # geplante Wärme ist dann Zusatzwärme (Spalte ``heizstab_zusatz``) und
+    # zählt nicht zum Wärmewert — die andere Quelle hätte sie nie geliefert.
+    heizstab_zusatzwaerme: bool = False
 
 
 class _Forecast:
@@ -1386,6 +1390,9 @@ async def async_collect_inputs(
         eeg_bedarf=eeg_bedarf,
         heizstab_max_kw=heizstab_max_kw(config),
         heizstab_waermewert=heizstab_waermewert(config),
+        heizstab_zusatzwaerme=bool(
+            getattr(data.get("heizstab"), "zusatzwaerme", False)
+        ),
     )
     return inputs, None
 
@@ -1446,6 +1453,9 @@ def solve(inputs: ScheduleInputs) -> dict[str, Any]:
         # der Heizstab — bis zu seiner Maximalleistung. Reine Nachbearbeitung,
         # keine Variable im LP (siehe ScheduleInputs.heizstab_max_kw).
         slot["heizstab"] = _heizstab_plan_kw(slot.get("discard"), inputs)
+        # Zusatzwärme: liegt der Puffer jetzt über der Schwelle der anderen
+        # Heizquelle, ersetzt geplante Wärme nichts mehr.
+        slot["heizstab_zusatz"] = slot["heizstab"] if inputs.heizstab_zusatzwaerme else 0.0
         slots.append(slot)
 
     result = {
@@ -1477,6 +1487,9 @@ def solve(inputs: ScheduleInputs) -> dict[str, Any]:
             "horizont_h": round(len(slots) * inputs.time_res_s / 3600.0, 1),
             # Womit der Endbestand bewertet wird — fürs ehrliche Beschriften.
             "endbestand_tarif": round(endbestand_satz(inputs), 5),
+            # Puffer über der Schwelle der anderen Heizquelle: geplante Wärme
+            # ist Zusatzwärme und wurde nicht bewertet.
+            "heizstab_zusatzwaerme": bool(inputs.heizstab_zusatzwaerme),
         }
     except Exception:  # noqa: BLE001 - Vergleich ist Anzeige, kein Aktor
         _LOGGER.exception("Gewinnberechnung fehlgeschlagen — der Fahrplan bleibt gültig")
@@ -1752,6 +1765,9 @@ def simuliere_standardbetrieb(
                 "soc": round(100.0 * inhalt / kapazitaet, 1),
                 "discard": round(abgeregelt, 4),
                 "heizstab": _heizstab_plan_kw(abgeregelt, inputs),
+                "heizstab_zusatz": (
+                    _heizstab_plan_kw(abgeregelt, inputs) if inputs.heizstab_zusatzwaerme else 0.0
+                ),
             }
         )
     return referenz
@@ -1872,11 +1888,15 @@ def bewerte_geldfluesse(
     # Wärme: was der Heizstab aufnimmt, bewertet mit dem konfigurierten
     # Wärmewert (heizstab/). Ohne Wärmewert zählt die Energie, aber kein Geld.
     heizstab_kwh = 0.0
+    # Zusatzwärme (über der Temperatur der anderen Heizquelle): gezählt, aber
+    # nicht bewertet — sie ersetzt nichts.
+    zusatz_kwh = 0.0
     soc_ende: float | None = None
     for slot, basis in zip(slots, basis_je_slot):
         grid = slot.get("grid_p") or 0.0
         bat = slot.get("battery_p") or 0.0
         heizstab_kwh += max(0.0, float(slot.get("heizstab") or 0.0)) * dt_h
+        zusatz_kwh += max(0.0, float(slot.get("heizstab_zusatz") or 0.0)) * dt_h
         if grid > 0:
             export_kwh = grid * dt_h
             export_gesamt_kwh += export_kwh
@@ -1919,7 +1939,10 @@ def bewerte_geldfluesse(
         )
     satz = endbestand_satz(inputs)
     endbestand = rest_kwh * satz
-    waerme = heizstab_kwh * max(0.0, float(getattr(inputs, "heizstab_waermewert", 0.0) or 0.0))
+    zusatz_kwh = min(zusatz_kwh, heizstab_kwh)
+    waerme = (heizstab_kwh - zusatz_kwh) * max(
+        0.0, float(getattr(inputs, "heizstab_waermewert", 0.0) or 0.0)
+    )
 
     return {
         "erloes": round(erloes, 4),
@@ -1934,6 +1957,7 @@ def bewerte_geldfluesse(
         "export_kwh": round(export_gesamt_kwh, 2),
         # Heizstab: aufgenommene Energie und ihr Wert als Wärme.
         "heizstab_kwh": round(heizstab_kwh, 2),
+        "heizstab_zusatz_kwh": round(zusatz_kwh, 2),
         "waerme": round(waerme, 4),
         "summe": round(erloes - bezug - alterung + endbestand + waerme, 4),
     }

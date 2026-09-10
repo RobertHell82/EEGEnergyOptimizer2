@@ -43,6 +43,7 @@ import time
 from typing import Any, Callable
 
 from ..const import (
+    CONF_HEIZSTAB_ALT_TEMP_C,
     CONF_HEIZSTAB_ENABLED,
     CONF_HEIZSTAB_HOST,
     CONF_HEIZSTAB_MAX_KW,
@@ -52,6 +53,7 @@ from ..const import (
     CONF_HEIZSTAB_VORRANG,
     CONF_HEIZSTAB_WAERMEWERT,
     CONF_HEIZSTAB_MAXTEMP_C,
+    DEFAULT_HEIZSTAB_ALT_TEMP_C,
     DEFAULT_HEIZSTAB_ENABLED,
     DEFAULT_HEIZSTAB_MAX_KW,
     DEFAULT_HEIZSTAB_MINTEMP_C,
@@ -198,6 +200,26 @@ class HeizstabController:
             return max(0.0, float(self._config.get(CONF_HEIZSTAB_MINTEMP_C) or DEFAULT_HEIZSTAB_MINTEMP_C))
         except (TypeError, ValueError):
             return 0.0
+
+    @property
+    def alt_temp_c(self) -> float:
+        """Bis wohin die andere Heizquelle den Puffer heizt; 0 = keine Unterscheidung."""
+        try:
+            return max(0.0, float(self._config.get(CONF_HEIZSTAB_ALT_TEMP_C) or DEFAULT_HEIZSTAB_ALT_TEMP_C))
+        except (TypeError, ValueError):
+            return 0.0
+
+    @property
+    def zusatzwaerme(self) -> bool:
+        """Liegt der Puffer über der Temperatur der anderen Heizquelle?
+
+        Dann ist jede weitere Kilowattstunde Zusatzwärme: die andere Quelle
+        hätte sie nie geliefert, sie ersetzt nichts und zählt nicht zum
+        Wärmewert. Ohne Schwelle oder ohne Fühlerwert False.
+        """
+        schwelle = self.alt_temp_c
+        temp = self.temperatur_c
+        return schwelle > 0 and temp is not None and temp > schwelle
 
     @property
     def netzbezug_erlaubt(self) -> bool:
@@ -461,6 +483,8 @@ class HeizstabController:
             "mintemp_c": self.mintemp_c,
             "vorrang_heizstab": self.vorrang_heizstab,
             "netzbezug_erlaubt": self.netzbezug_erlaubt,
+            "alt_temp_c": self.alt_temp_c or None,
+            "zusatzwaerme": self.zusatzwaerme,
             "waermewert": self.waermewert,
             "komfort_aktiv": self.komfort_aktiv,
             "komfort_aus_netz": self.komfort_aus_netz,

@@ -365,8 +365,15 @@ the event loop is long enough for HA to flag a blocking call.
   regulates export to zero, which would eat all EEG feed-in). House load,
   consumption profile, Guard 2 and the balance all subtract the heater
   (`compute_heizstab_kw`; bilanz column `heizstab`, PV saving counts only the
-  PV-fed share as `waerme`). Config keys `heizstab_*` (settings → Anlage →
-  Heizstab); host/port/max/enabled trigger a full reload, the rest hot-reload.
+  PV-fed share as `waerme`). Optional `heizstab_alt_temp_c` = temperature up
+  to which the *other* heat source (district heating, boiler) heats the buffer:
+  heater energy above it is *Zusatzwärme* — recorded separately (bilanz column
+  `heizstab_ueber`, slot key `heizstab_zusatz`, sensor attributes
+  `ersatzwaerme_kwh` / `zusatzwaerme_kwh`) and never valued; while the buffer
+  sits above the threshold, planned heat is all Zusatzwärme
+  (`ScheduleInputs.heizstab_zusatzwaerme`). Config keys `heizstab_*` live in
+  their own settings tab **Heizstab** (not in the wizard, not under Anlage);
+  host/port/max/enabled trigger a full reload, the rest hot-reload.
 - **Consumption Profile**: Hourly averages from recorder, split by 7 individual weekdays (mo–so), rolling window (default 4 weeks), with weekday fallback chain for missing data.
 - **Dual Update Timers**: Slow sensors (profile) every 15min, fast sensors (forecasts, battery, Hausverbrauch) every 1min. Hard-wired since v26 — the former config keys `update_interval_fast_min`/`update_interval_slow_min` are removed by migration.
 
@@ -401,8 +408,8 @@ sensors (assigned once), steps 4–5 are the parameters:
 
 Settings live in three tabs: **Tarife** and **Anlage** are exactly the two
 parameter wizard steps (same field renderers, `settings_` prefix) — **Anlage**
-additionally carries the *Heizstab* card (`_heizstabFields`, settings only, not
-in the wizard); **System**
+(the *Heizstab* card lives in its own fourth tab **Heizstab** —
+`_heizstabFields`, settings only, not in the wizard); **System**
 holds the expert-mode switch, a read-only sensor overview (with the
 restart-wizard button — sensor mappings are wizard-only by design), telemetry
 opt-in, schedule archive, and (expert) balance card + profile lookback. In the

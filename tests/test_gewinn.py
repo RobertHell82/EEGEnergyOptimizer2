@@ -211,7 +211,7 @@ def test_standardbetrieb_hat_die_slotstruktur_des_fahrplans():
         # discard/heizstab: was die Referenz abregeln würde und was davon
         # ein Heizstab nähme — dieselben Spalten wie im Fahrplan, damit
         # bewerte_geldfluesse beide Seiten gleich bewertet.
-        assert set(slot) == {"t", "grid_p", "battery_p", "soc", "discard", "heizstab"}
+        assert set(slot) == {"t", "grid_p", "battery_p", "soc", "discard", "heizstab", "heizstab_zusatz"}
 
 
 def test_standardbetrieb_haelt_die_endauflage_des_fahrplans():
@@ -790,3 +790,34 @@ def test_bewertung_ohne_waermewert_zaehlt_energie_aber_kein_geld():
     geld = sched.bewerte_geldfluesse(slots, inputs)
     assert geld["heizstab_kwh"] == pytest.approx(1.0)
     assert geld["waerme"] == 0.0
+
+
+def test_zusatzwaerme_wird_gezaehlt_aber_nicht_bewertet():
+    """Puffer über der Schwelle der anderen Heizquelle: Wärme zählt als kWh,
+    aber nicht zum Wärmewert."""
+    inputs = _inputs(heizstab_max_kw=6.0, heizstab_waermewert=0.08, heizstab_zusatzwaerme=True)
+    slots = [_slot(MITTAG, 0, heizstab=4.0, heizstab_zusatz=4.0)]
+    geld = sched.bewerte_geldfluesse(slots, inputs)
+    assert geld["heizstab_kwh"] == pytest.approx(1.0)
+    assert geld["heizstab_zusatz_kwh"] == pytest.approx(1.0)
+    assert geld["waerme"] == 0.0
+
+
+def test_gemischte_waerme_bewertet_nur_den_ersatzanteil():
+    inputs = _inputs(heizstab_max_kw=6.0, heizstab_waermewert=0.10)
+    slots = [
+        _slot(MITTAG, 0, heizstab=4.0, heizstab_zusatz=0.0),   # 1 kWh Ersatzwärme
+        _slot(MITTAG, 15, heizstab=4.0, heizstab_zusatz=4.0),  # 1 kWh Zusatzwärme
+    ]
+    geld = sched.bewerte_geldfluesse(slots, inputs)
+    assert geld["heizstab_kwh"] == pytest.approx(2.0)
+    assert geld["heizstab_zusatz_kwh"] == pytest.approx(1.0)
+    assert geld["waerme"] == pytest.approx(0.10)
+
+
+def test_standardbetrieb_markiert_zusatzwaerme_wie_der_fahrplan():
+    inputs = _inputs(soc_pct=100.0, feedin_limit_kw=4.0, ac_limit_kw=15.0,
+                     heizstab_max_kw=6.0, heizstab_zusatzwaerme=True)
+    ref = sched.simuliere_standardbetrieb([_slot(MITTAG, 0, PV=12.0, consumption=0.5)], inputs)
+    assert ref[0]["heizstab"] > 0
+    assert ref[0]["heizstab_zusatz"] == pytest.approx(ref[0]["heizstab"])

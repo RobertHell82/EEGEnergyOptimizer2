@@ -1,7 +1,7 @@
 <!-- GENERATED FILE - DO NOT EDIT.
      Quelle: docs/guides/heizstab.md
      Neu generieren mit: python scripts/build_guides.py -->
-<h2 class="guide-title">Heizstab (Fronius Ohmpilot)</h2>
+<h2 class="guide-title">Heizstab (nur Fronius Ohmpilot)</h2>
 <p>Eine bewusst groß gebaute PV-Anlage erzeugt an guten Tagen mehr, als Batterie, Haus und Einspeisegrenze zusammen aufnehmen. Der Wechselrichter regelt den Rest ab — diese Energie ist verloren. Mit einem Heizstab am Warmwasserspeicher bekommt sie eine Verwendung: Der Optimizer steuert einen <strong>Fronius Ohmpilot</strong> direkt per Modbus TCP und gibt ihm genau den Überschuss, den sonst niemand nimmt.</p>
 <h3>Warum nicht das Energiemanagement des Wechselrichters?</h3>
 <p>Der Gen24 kann den Ohmpilot selbst regeln — aber er regelt die <strong>Einspeisung auf null</strong>. Für eine Anlage in einer Energiegemeinschaft ist das falsch: Die Einspeisung bis zur Grenze soll ins Netz, dort ist sie Geld wert. Nur was <strong>über</strong> die Grenze hinausgeht, gehört in den Heizstab. Deshalb steuert der Optimizer den Ohmpilot selbst, und deshalb muss der Ohmpilot vom Gen24 entkoppelt sein.</p>
@@ -53,8 +53,12 @@
 <li><strong>Ausgeschaltet</strong>: Erst die Batterie — das Ladelimit wird angehoben, bis sie am Maximum lädt oder voll ist. Dann bekommt der Heizstab den Rest.</li>
 </ul>
 <p>Der Plan für die Batterie bleibt in beiden Fällen unangetastet. Es geht nur darum, wer den Teil bekommt, den die Prognose nicht kannte.</p>
+<h3>Ersatzwärme und Zusatzwärme</h3>
+<p>Viele Puffer haben eine zweite Heizquelle — Fernwärme, Kessel, Wärmepumpe —, die nur bis zu einer bestimmten Temperatur heizt, etwa 55 °C. Wärme, die der Heizstab <strong>bis dorthin</strong> liefert, ersetzt diese Quelle und ist so viel wert wie deren Energie: der <strong>Wärmewert</strong>. Wärme <strong>darüber</strong> hätte es ohne den Heizstab nie gegeben — sie ersetzt nichts, ist aber trotzdem sinnvoll, weil sie Abregelung vermeidet und der Puffer sie speichert.</p>
+<p>Trägst du die <strong>Temperatur der anderen Heizquelle</strong> ein, trennt der Optimizer beides: Der Sensor „Heizstab Energie heute" weist Ersatz- und Zusatzwärme getrennt aus, die Bilanzkarte zeigt „davon Zusatzwärme über 55 °C", und bewertet wird nur die Ersatzwärme. Lässt du das Feld leer, zählt alles gleich.</p>
+<p><em>Gemessen wird am Fühler des Ohmpilot: Liegt die Temperatur beim Heizen über der Schwelle, ist die Energie dieser halben Minute Zusatzwärme. In der Gewinnkarte gilt: Liegt der Puffer gerade über der Schwelle, zählt alle geplante Wärme als Zusatzwärme.</em></p>
 <h3>Konfiguration</h3>
-<p>Alle Felder stehen in den <strong>Einstellungen → Anlage → Heizstab</strong>.</p>
+<p>Alle Felder stehen in den <strong>Einstellungen</strong> im eigenen Tab <strong>Heizstab</strong>. Im Einrichtungsassistenten kommt der Heizstab nicht vor — er ist die Ausnahme, nicht die Regel.</p>
 <table>
 <thead>
 <tr>
@@ -90,6 +94,10 @@
 <tr>
 <td><strong>Unter der Mindesttemperatur auch aus dem Netz heizen</strong></td>
 <td>Nur sichtbar mit Mindesttemperatur. Eingeschaltet heizt der Heizstab darunter mit voller Leistung, egal woher der Strom kommt, und die Optimierung entlädt derweil nicht ins Netz. Ausgeschaltet (Vorgabe) wird nie Netzstrom verheizt — ohne Sonne bleibt das Wasser dann kalt</td>
+</tr>
+<tr>
+<td><strong>Temperatur der anderen Heizquelle (°C)</strong></td>
+<td>Bis hierher heizt Fernwärme, Kessel oder Wärmepumpe. Wärme darunter ist Ersatzwärme (Wärmewert), Wärme darüber Zusatzwärme (getrennt ausgewiesen, nicht bewertet). Leer = keine Unterscheidung</td>
 </tr>
 <tr>
 <td><strong>Überschuss zuerst in den Heizstab</strong></td>
