@@ -378,7 +378,9 @@ Dashboard notes: during the executor's startup grace period (status
 "Startphase — …") the status card shows only that hint — no setpoints,
 reasons, warnings, or job line. The "Gesetzte Steuerwerte" transparency view
 is its own always-expanded card below the Optimierungsplan card (expert mode
-only, hidden during the startup phase).
+only, hidden during the startup phase); it reloads with every guard cycle,
+keyed on the status sensor's `letzte_aktualisierung`, so it never contradicts
+the status card above for longer than one cycle.
 
 Config entry version: 27 (migrations in `__init__.py`)
 
