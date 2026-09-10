@@ -432,6 +432,10 @@ class EegOptimizerPanel extends HTMLElement {
     this._scheduleLoaded = false;
     // Transparenz-Ansicht: welche Stellgröße gerade auf welchem Wert steht.
     this._controlState = null;
+    // Zeitstempel des Guard-Laufs, zu dem die Steuerwerte zuletzt geladen
+    // wurden — ändert er sich, zieht die Karte nach (siehe _ensureControlState).
+    this._controlStateStamp = null;
+    this._controlStateBusy = false;
     this._scheduleBusy = false;
     // Ist-Verlauf im Optimierungsplan: "off" | "12h" | "yesterday".
     // Standard ist der Plan allein — der Recorder wird erst auf Wunsch
@@ -2503,7 +2507,8 @@ class EegOptimizerPanel extends HTMLElement {
   }
 
   async _loadControlState() {
-    if (!this._hass) return;
+    if (!this._hass || this._controlStateBusy) return;
+    this._controlStateBusy = true;
     try {
       this._controlState = await this._hass.callWS({
         type: "eeg_optimizer/get_control_state",
@@ -2511,6 +2516,8 @@ class EegOptimizerPanel extends HTMLElement {
     } catch (e) {
       console.error("Steuerwerte konnten nicht geladen werden:", e);
       this._controlState = { error: e.message || String(e), rows: [] };
+    } finally {
+      this._controlStateBusy = false;
     }
     this._render();
   }
@@ -7138,12 +7145,28 @@ class EegOptimizerPanel extends HTMLElement {
     return String(decisionState?.attributes?.status || "").startsWith("Startphase");
   }
 
-  // Erstes Laden der Steuerwerte anstoßen — genau einmal, weitere Stände
-  // holt der Aktualisieren-Knopf (refresh-control-state).
-  _ensureControlState() {
-    if (this._controlStateRequested || !this._hass) return;
-    this._controlStateRequested = true;
-    this._loadControlState();
+  // Steuerwerte laden und mit jedem Guard-Lauf nachziehen. Bis 2.1.0-dev4
+  // wurde genau einmal geladen, weitere Stände holte nur der Knopf: Die
+  // Karte war eine Momentaufnahme und widersprach nach einem Moduswechsel
+  // minutenlang der Statuskarte darüber (dort stand schon „Laden begrenzt",
+  // hier noch der Standardwert aus dem Anzeige-Modus). Auslöser fürs
+  // Nachziehen ist der Zeitstempel des letzten Guard-Laufs im
+  // Fahrplan-Status-Sensor — den bekommt das Panel ohnehin alle 30 s; ein
+  // WebSocket-Aufruf je Lauf, und nur solange die Karte sichtbar ist
+  // (Expertenmodus). Der Knopf (refresh-control-state) bleibt für sofort.
+  _ensureControlState(decisionState) {
+    if (!this._hass) return;
+    const stamp = decisionState?.attributes?.letzte_aktualisierung || null;
+    if (!this._controlStateRequested) {
+      this._controlStateRequested = true;
+      this._controlStateStamp = stamp;
+      this._loadControlState();
+      return;
+    }
+    if (stamp && stamp !== this._controlStateStamp && !this._controlStateBusy) {
+      this._controlStateStamp = stamp;
+      this._loadControlState();
+    }
   }
 
   _renderControlStateKarte(decisionState) {
@@ -7154,7 +7177,7 @@ class EegOptimizerPanel extends HTMLElement {
     // Fehlersuche gedacht, nicht für den Alltag. In der Startphase leer:
     // es wurde noch nichts geschrieben, und die Entitäten laden evtl. noch.
     if (this._istStartphase(decisionState)) return "";
-    this._ensureControlState();
+    this._ensureControlState(decisionState);
     const head = `
       <div class="card">
         <h3 style="margin:0">
