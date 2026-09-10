@@ -10,6 +10,13 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
+## [2.1.0-ambibox2] - 2026-09-10
+
+### Behoben
+
+- **Die Wallbox ließ sich nicht einrichten.** Nach der Auswahl „Ambibox" erschien kein Feld für die IP-Adresse — das Panel zeichnete die Karte nach dem Umschalten nicht neu, und ohne Adresse, Port, Unit-ID und Ladepunkt war die Anbindung gar nicht zu konfigurieren.
+- **Fehlende Adresse wird jetzt am Formular gemeldet.** Bisher kam die Meldung erst beim Speichern aus dem Backend; jetzt steht die Lücke wie bei den anderen Pflichtfeldern in der Liste über dem Speichern-Knopf.
+
 ## [2.1.0-ambibox] - 2026-09-10
 
 ### Hinzugefügt
