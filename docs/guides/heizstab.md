@@ -14,7 +14,9 @@ Der Gen24 kann den Ohmpilot selbst regeln — aber er regelt die **Einspeisung a
 - Ein **Netzleistungs-Sensor**, der Einspeisung und Bezug misst
 
 > [!CAUTION]
-> **Zwei Steuerungen auf einem Gerät gehen nicht.** Bleibt der Ohmpilot mit dem Gen24 gekoppelt, schreiben beide auf dasselbe Register: Der Gen24 heizt jede Einspeisung weg, der Optimizer setzt sie zurück, und am Ende gewinnt keiner. Erst entkoppeln, dann einschalten.
+> **Zwei Steuerungen auf einem Gerät gehen nicht.** Der Ohmpilot kennt keine Zugriffsrechte — wer zuletzt auf das Register schreibt, gewinnt. Bleibt er mit dem Gen24 gekoppelt, heizt der Gen24 jede Einspeisung weg und der Optimizer setzt sie zurück; am Ende gewinnt keiner. Dasselbe gilt für **jede andere Steuerung**: eine alte Automatisierung, ein Node-RED-Flow, eine zweite Integration. Erst alles andere abschalten, dann einschalten.
+>
+> Achte darauf, dass wirklich der **schreibende** Teil aus ist. An einer Anlage stand der Modus der Vorgänger-Integration auf „Aus", ihr Keepalive schrieb den letzten Sollwert aber weiter alle paar Sekunden ins Register — der Heizstab lief mit 2,4 kW, während der Optimizer „Heizstab aus" anzeigte und alle 30 Sekunden 0 W schrieb. Sichtbar war das nur als Sägezahn in der gemessenen Leistung. Genau diesen Fall meldet die Statuskarte inzwischen von selbst (siehe unten).
 
 ## So funktioniert es
 
@@ -73,6 +75,9 @@ Alle Felder stehen in den **Einstellungen** im eigenen Tab **Heizstab**. Im Einr
 
 > [!NOTE]
 > **Optimierung aus heißt Heizstab aus.** Es gibt keinen Notbetrieb, der den Ohmpilot ohne Optimierung weiterregelt. Wer den Ohmpilot ohne Optimizer betreiben will, koppelt ihn wieder an den Gen24.
+
+> [!NOTE]
+> **Wenn das Gerät der Vorgabe nicht folgt, sagt es die Statuskarte.** Zieht der Heizstab länger als drei Minuten deutlich mehr, als vorgegeben ist, erscheint eine Warnung: Dann schreibt jemand anderes auf denselben Ohmpilot. Solange das so ist, greift weder die Maximaltemperatur noch der Schutz davor, Batteriestrom zu verheizen — der Optimizer setzt seinen Sollwert zwar weiter alle 30 Sekunden, wird aber überschrieben.
 
 > [!NOTE]
 > **Der Hausverbrauch ist ohne den Heizstab.** Sensor „Hausverbrauch", Verbrauchsprofil und Entlade-Nachführung rechnen den Heizstab heraus — er ist eine gesteuerte Senke, kein Verbrauch, den das Profil lernen soll. Sein Anteil steht in den eigenen Sensoren „Heizstab Leistung", „Heizstab Sollwert", „Heizstab Temperatur" und „Heizstab Energie heute".

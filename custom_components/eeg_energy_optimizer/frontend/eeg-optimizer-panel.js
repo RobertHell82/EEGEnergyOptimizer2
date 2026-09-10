@@ -7129,6 +7129,22 @@ class EegOptimizerPanel extends HTMLElement {
       warnings += warnRow("mdi:heating-coil", "#ff9800",
         "Heizstab nicht erreichbar \u2014 der Ohmpilot antwortet nicht auf Modbus, es wird nicht geheizt.");
     }
+    // Der Ohmpilot kennt keine Zugriffsrechte: Wer zuletzt auf das Register
+    // schreibt, gewinnt. Ohne diese Zeile behauptet die Karte „Heizstab aus",
+    // waehrend das Geraet heizt \u2014 gesehen an einer Anlage, auf der die
+    // Vorgaenger-Integration weiterlief.
+    if (a.heizstab_fremdsteuerung) {
+      const gemessen = a.heizstab_leistung_kw != null
+        ? `${fmtDe(a.heizstab_leistung_kw, 2)} kW gemessen gegen ${fmtDe(a.heizstab_sollwert_kw, 2)} kW vorgegeben \u2014 `
+        : "";
+      warnings += warnRow("mdi:account-multiple-outline", "var(--error-color, #f44336)",
+        `Der Heizstab folgt der Vorgabe nicht (${gemessen}seit Minuten). `
+        + "Sehr wahrscheinlich schreibt eine zweite Steuerung auf denselben "
+        + "Ohmpilot \u2014 eine alte Automatisierung, eine zweite Integration "
+        + "oder die noch nicht geloeste Kopplung zum Gen24. Solange das so "
+        + "ist, greift weder die Maximaltemperatur noch der Schutz vor dem "
+        + "Verheizen von Batteriestrom.");
+    }
     if (a.heizstab_komfort_netz) {
       warnings += warnRow("mdi:thermometer-alert", "var(--info-color, #2196f3)",
         "Heizstab unter der Mindesttemperatur \u2014 heizt mit voller Leistung, auch aus dem Netz; solange das dauert, wird nicht ins Netz entladen.");

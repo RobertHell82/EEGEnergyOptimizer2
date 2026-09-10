@@ -21,6 +21,7 @@ from custom_components.eeg_energy_optimizer.const import (
     CONF_HEIZSTAB_WAERMEWERT,
     CONF_HEIZSTAB_MAXTEMP_C,
     HEIZSTAB_KOMFORT_EXPORT_ZIEL_KW,
+    HEIZSTAB_KONFLIKT_MINUTEN,
     HEIZSTAB_STEP_KW,
 )
 from custom_components.eeg_energy_optimizer.heizstab.controller import (
@@ -447,3 +448,96 @@ def test_create_heizstab_nimmt_auch_eine_url():
     hz = create_heizstab(MagicMock(), _cfg(**{CONF_HEIZSTAB_HOST: "http://192.168.100.58/"}))
     assert hz is not None
     assert hz.status()["host"] == "192.168.100.58"
+
+
+# ---------------------------------------------------------------------------
+# Fremdsteuerung: Das Gerät folgt dem Sollwert nicht
+#
+# Der Ohmpilot kennt keine Zugriffsrechte — wer zuletzt auf das Register
+# schreibt, gewinnt. An der Anlage Grünbach lief die Vorgänger-Integration
+# weiter und überschrieb unsere 0 im Sekundentakt; sichtbar war das nur als
+# Sägezahn in der Ist-Leistung, während die Karte „Heizstab aus" behauptete.
+# ---------------------------------------------------------------------------
+
+
+async def test_fremdsteuerung_erst_nach_der_karenzzeit(monkeypatch):
+    """Sollwert 0, Gerät zieht 2,4 kW — gemeldet wird erst nach Minuten."""
+    from custom_components.eeg_energy_optimizer.heizstab import controller as mod
+
+    jetzt = [1000.0]
+    monkeypatch.setattr(mod.time, "time", lambda: jetzt[0])
+    t = _treiber(power_w=2400, temp=60.0)
+    hz = HeizstabController(MagicMock(), _cfg(), t)
+    hz.sollwert_kw = 0.0
+
+    await hz.async_lesen()
+    assert hz.fremdsteuerung is False       # Karenz laeuft erst an
+
+    jetzt[0] += HEIZSTAB_KONFLIKT_MINUTEN * 60 - 1
+    await hz.async_lesen()
+    assert hz.fremdsteuerung is False
+
+    jetzt[0] += 2
+    await hz.async_lesen()
+    assert hz.fremdsteuerung is True
+    assert hz.status()["fremdsteuerung"] is True
+
+
+async def test_kein_verdacht_wenn_das_geraet_folgt(monkeypatch):
+    from custom_components.eeg_energy_optimizer.heizstab import controller as mod
+
+    jetzt = [1000.0]
+    monkeypatch.setattr(mod.time, "time", lambda: jetzt[0])
+    t = _treiber(power_w=2400, temp=60.0)
+    hz = HeizstabController(MagicMock(), _cfg(), t)
+    hz.sollwert_kw = 2.5                     # Ist knapp darunter — passt
+    jetzt[0] += HEIZSTAB_KONFLIKT_MINUTEN * 60 + 10
+    await hz.async_lesen()
+    assert hz.fremdsteuerung is False
+
+
+async def test_regelrauschen_bleibt_in_der_toleranz(monkeypatch):
+    """Ein paar Watt über dem Sollwert sind Regelabweichung, kein Konflikt."""
+    from custom_components.eeg_energy_optimizer.heizstab import controller as mod
+
+    jetzt = [1000.0]
+    monkeypatch.setattr(mod.time, "time", lambda: jetzt[0])
+    t = _treiber(power_w=2600, temp=60.0)    # 2,6 kW bei Sollwert 2,5
+    hz = HeizstabController(MagicMock(), _cfg(), t)
+    hz.sollwert_kw = 2.5
+    await hz.async_lesen()
+    jetzt[0] += HEIZSTAB_KONFLIKT_MINUTEN * 60 + 10
+    await hz.async_lesen()
+    assert hz.fremdsteuerung is False
+
+
+async def test_neuer_sollwert_setzt_die_beobachtung_zurueck(monkeypatch):
+    """Nach dem Herunterregeln darf das Geraet erst einmal nachziehen."""
+    from custom_components.eeg_energy_optimizer.heizstab import controller as mod
+
+    jetzt = [1000.0]
+    monkeypatch.setattr(mod.time, "time", lambda: jetzt[0])
+    t = _treiber(power_w=5000, temp=60.0)
+    hz = HeizstabController(MagicMock(), _cfg(), t)
+    hz.sollwert_kw = 0.0
+    await hz.async_lesen()
+    jetzt[0] += HEIZSTAB_KONFLIKT_MINUTEN * 60 + 10
+    await hz.async_lesen()
+    assert hz.fremdsteuerung is True
+
+    await hz.async_set_sollwert(5.0, "Ueberschuss")   # Sollwert hoch: passt wieder
+    assert hz.fremdsteuerung is False
+
+
+async def test_ohne_messwert_kein_verdacht(monkeypatch):
+    """Antwortet der Ohmpilot nicht, meldet `verfuegbar` das — nicht diese Regel."""
+    from custom_components.eeg_energy_optimizer.heizstab import controller as mod
+
+    jetzt = [1000.0]
+    monkeypatch.setattr(mod.time, "time", lambda: jetzt[0])
+    t = _treiber(power_w=None, temp=None, connected=False)
+    hz = HeizstabController(MagicMock(), _cfg(), t)
+    hz.sollwert_kw = 0.0
+    jetzt[0] += HEIZSTAB_KONFLIKT_MINUTEN * 60 + 10
+    await hz.async_lesen()
+    assert hz.fremdsteuerung is False

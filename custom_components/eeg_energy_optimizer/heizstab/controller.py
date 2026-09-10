@@ -65,6 +65,8 @@ from ..const import (
     GUARD_EXPORT_RELEASE_KW,
     GUARD_EXPORT_STICKY_BAND_KW,
     HEIZSTAB_KOMFORT_EXPORT_ZIEL_KW,
+    HEIZSTAB_KONFLIKT_MINUTEN,
+    HEIZSTAB_KONFLIKT_TOLERANZ_KW,
     HEIZSTAB_MINTEMP_HYSTERESE_K,
     HEIZSTAB_SATT_TOLERANZ_KW,
     HEIZSTAB_STEP_KW,
@@ -195,6 +197,8 @@ class HeizstabController:
         self.last_write_ok: bool | None = None
         self.write_failures = 0
         self._letzter_schreibversuch: float | None = None
+        # Seit wann zieht das Gerät mehr, als vorgegeben ist? None = passt.
+        self._konflikt_seit: float | None = None
         # Wer bei neuen Messwerten Bescheid haben will (Sensoren, Push-Modell).
         self._listener: list[Callable[[], None]] = []
 
@@ -427,6 +431,10 @@ class HeizstabController:
         """
         kw = max(0.0, float(kw))
         geaendert = abs(kw - self.sollwert_kw) >= _SOFORT_SCHREIBEN_AB_KW
+        if geaendert:
+            # Neuer Sollwert, neue Beweislage: Das Gerät darf jetzt erst
+            # einmal nachziehen, bevor wieder von Fremdsteuerung die Rede ist.
+            self._konflikt_seit = None
         self.sollwert_kw = kw
         self.grund = grund
         if geaendert:
@@ -448,6 +456,37 @@ class HeizstabController:
             self.write_failures += 1
         return ok
 
+    @property
+    def fremdsteuerung(self) -> bool:
+        """Zieht der Heizstab seit Minuten mehr, als vorgegeben ist?
+
+        Dann schreibt eine zweite Steuerung auf dasselbe Modbus-Register —
+        der Ohmpilot kennt keine Zugriffsrechte, wer zuletzt schreibt,
+        gewinnt. Ohne diese Meldung behauptet die Karte „Heizstab aus",
+        während das Gerät heizt: Der Sollwert stimmt, nur folgt ihm niemand.
+        """
+        if self._konflikt_seit is None:
+            return False
+        return (time.time() - self._konflikt_seit) >= HEIZSTAB_KONFLIKT_MINUTEN * 60
+
+    def _konflikt_pruefen(self) -> None:
+        """Nach jedem Lesen: Ist-Leistung gegen den eigenen Sollwert halten."""
+        ist = self.leistung_kw
+        if ist is None:
+            # Ohne Messwert keine Aussage — der Ausfall wird über
+            # `verfuegbar` gemeldet, nicht hier.
+            self._konflikt_seit = None
+            return
+        if ist <= self.sollwert_kw + HEIZSTAB_KONFLIKT_TOLERANZ_KW:
+            self._konflikt_seit = None
+            return
+        if self._konflikt_seit is None:
+            self._konflikt_seit = time.time()
+            _LOGGER.debug(
+                "Heizstab: %.2f kW gemessen bei Sollwert %.2f kW — beobachte",
+                ist, self.sollwert_kw,
+            )
+
     async def async_lesen(self) -> None:
         """Ist-Leistung und Temperatur aus dem Gerät holen, Sensoren anstoßen."""
         if self._treiber is None:
@@ -456,6 +495,16 @@ class HeizstabController:
             await self._treiber.async_read_sensors()
         except Exception:  # noqa: BLE001
             _LOGGER.exception("Heizstab: Lesen fehlgeschlagen")
+        vorher = self.fremdsteuerung
+        self._konflikt_pruefen()
+        if self.fremdsteuerung and not vorher:
+            _LOGGER.warning(
+                "Heizstab: zieht seit %.0f Minuten mehr als vorgegeben "
+                "(%.2f kW gemessen, %.2f kW vorgegeben) — schreibt eine "
+                "zweite Steuerung auf den Ohmpilot?",
+                HEIZSTAB_KONFLIKT_MINUTEN, self.leistung_kw or 0.0,
+                self.sollwert_kw,
+            )
         for melden in list(self._listener):
             try:
                 melden()
@@ -525,6 +574,7 @@ class HeizstabController:
             "grund": self.grund,
             "last_write_ok": self.last_write_ok,
             "write_failures": self.write_failures,
+            "fremdsteuerung": self.fremdsteuerung,
             "last_error": None if self._treiber is None else getattr(self._treiber, "last_error", None),
         }
 

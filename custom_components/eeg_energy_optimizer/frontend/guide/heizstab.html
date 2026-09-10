@@ -12,7 +12,8 @@
 <li>Eine konfigurierte <strong>Einspeisegrenze</strong> (siehe Anleitung „Einspeisegrenze"). Ohne sie gilt die AC-Grenzleistung des Wechselrichters als Grenze</li>
 <li>Ein <strong>Netzleistungs-Sensor</strong>, der Einspeisung und Bezug misst</li>
 </ul>
-<div class="guide-alert caution"><p><strong>Zwei Steuerungen auf einem Gerät gehen nicht.</strong> Bleibt der Ohmpilot mit dem Gen24 gekoppelt, schreiben beide auf dasselbe Register: Der Gen24 heizt jede Einspeisung weg, der Optimizer setzt sie zurück, und am Ende gewinnt keiner. Erst entkoppeln, dann einschalten.</p></div>
+<div class="guide-alert caution"><p><strong>Zwei Steuerungen auf einem Gerät gehen nicht.</strong> Der Ohmpilot kennt keine Zugriffsrechte — wer zuletzt auf das Register schreibt, gewinnt. Bleibt er mit dem Gen24 gekoppelt, heizt der Gen24 jede Einspeisung weg und der Optimizer setzt sie zurück; am Ende gewinnt keiner. Dasselbe gilt für <strong>jede andere Steuerung</strong>: eine alte Automatisierung, ein Node-RED-Flow, eine zweite Integration. Erst alles andere abschalten, dann einschalten.</p>
+<p>Achte darauf, dass wirklich der <strong>schreibende</strong> Teil aus ist. An einer Anlage stand der Modus der Vorgänger-Integration auf „Aus", ihr Keepalive schrieb den letzten Sollwert aber weiter alle paar Sekunden ins Register — der Heizstab lief mit 2,4 kW, während der Optimizer „Heizstab aus" anzeigte und alle 30 Sekunden 0 W schrieb. Sichtbar war das nur als Sägezahn in der gemessenen Leistung. Genau diesen Fall meldet die Statuskarte inzwischen von selbst (siehe unten).</p></div>
 
 <h3>So funktioniert es</h3>
 <p>Der Heizstab ist eine <strong>zweite Senke</strong> neben der Batterie. Alle 30 Sekunden schaut die Steuerung auf die gemessene Einspeisung:</p>
@@ -111,6 +112,8 @@
 </tbody>
 </table>
 <div class="guide-alert note"><p><strong>Optimierung aus heißt Heizstab aus.</strong> Es gibt keinen Notbetrieb, der den Ohmpilot ohne Optimierung weiterregelt. Wer den Ohmpilot ohne Optimizer betreiben will, koppelt ihn wieder an den Gen24.</p></div>
+
+<div class="guide-alert note"><p><strong>Wenn das Gerät der Vorgabe nicht folgt, sagt es die Statuskarte.</strong> Zieht der Heizstab länger als drei Minuten deutlich mehr, als vorgegeben ist, erscheint eine Warnung: Dann schreibt jemand anderes auf denselben Ohmpilot. Solange das so ist, greift weder die Maximaltemperatur noch der Schutz davor, Batteriestrom zu verheizen — der Optimizer setzt seinen Sollwert zwar weiter alle 30 Sekunden, wird aber überschrieben.</p></div>
 
 <div class="guide-alert note"><p><strong>Der Hausverbrauch ist ohne den Heizstab.</strong> Sensor „Hausverbrauch", Verbrauchsprofil und Entlade-Nachführung rechnen den Heizstab heraus — er ist eine gesteuerte Senke, kein Verbrauch, den das Profil lernen soll. Sein Anteil steht in den eigenen Sensoren „Heizstab Leistung", „Heizstab Sollwert", „Heizstab Temperatur" und „Heizstab Energie heute".</p></div>
 

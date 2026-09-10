@@ -299,6 +299,14 @@ HEIZSTAB_MINTEMP_HYSTERESE_K = 5.0
 HEIZSTAB_KOMFORT_EXPORT_ZIEL_KW = 0.3
 # Ab diesem Abstand zum Maximum gilt der Heizstab als gesättigt.
 HEIZSTAB_SATT_TOLERANZ_KW = 0.05
+# Fremdsteuerung: Zieht der Heizstab dauerhaft mehr, als vorgegeben ist,
+# schreibt jemand anderes auf dasselbe Modbus-Register — an einer Anlage war
+# es die Vorgänger-Integration, deren Keepalive den Sollwert im Sekundentakt
+# überschrieb, während unsere 0 alle 30 s kurz durchschlug. Toleranz gegen
+# Regelrauschen und die Trägheit beim Herunterfahren, Dauer gegen den
+# normalen Rampenvorgang: Der Ohmpilot ist in weit unter einer Minute unten.
+HEIZSTAB_KONFLIKT_TOLERANZ_KW = 0.3
+HEIZSTAB_KONFLIKT_MINUTEN = 3.0
 
 # ------------------------------------------------------------------
 # Phase 8: Telemetry (v1.1)

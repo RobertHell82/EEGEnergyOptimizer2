@@ -801,6 +801,7 @@ class FahrplanStatusSensor(SensorEntity):
                 "heizstab_komfort": bool(heizstab.get("komfort_aktiv")),
                 "heizstab_komfort_netz": bool(heizstab.get("komfort_aus_netz")),
                 "heizstab_verfuegbar": bool(heizstab.get("verfuegbar")),
+                "heizstab_fremdsteuerung": bool(heizstab.get("fremdsteuerung")),
             })
         self.async_write_ha_state()
         return kurz
@@ -1174,6 +1175,9 @@ class HeizstabSollwertSensor(_HeizstabSensor):
             "vorrang_heizstab": st.get("vorrang_heizstab"),
             "gesaettigt": st.get("gesaettigt"),
             "letzter_schreibversuch_ok": st.get("last_write_ok"),
+            # True heißt: Das Gerät folgt dem Sollwert nicht — es zieht seit
+            # Minuten mehr, als vorgegeben ist.
+            "fremdsteuerung": st.get("fremdsteuerung"),
         }
 
 
