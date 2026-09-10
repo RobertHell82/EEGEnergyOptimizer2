@@ -37,6 +37,11 @@ const SENSOR_SUFFIXES = {
   batterieleistung: "batterieleistung",
   fahrplan_batterieleistung: "fahrplan_batterieleistung",
   fahrplan_netzleistung: "fahrplan_netzleistung",
+  // Heizstab (heizstab/) — die Sensoren gibt es nur mit konfiguriertem
+  // Heizstab. Ohne ihn bleibt die geratene entity_id ohne Zustand; das
+  // stört nicht, die Anzeige fragt vorher `heizstab_enabled` ab.
+  heizstab_leistung: "heizstab_leistung",
+  heizstab_temperatur: "heizstab_temperatur",
 };
 const SELECT_SUFFIX = "optimizer";
 
@@ -7446,7 +7451,7 @@ class EegOptimizerPanel extends HTMLElement {
     return `<svg data-cw="bar" viewBox="0 0 ${width} ${height}" style="width:100%;height:auto;">${yLines}${bars}${legend}</svg>`;
   }
 
-  _renderEnergyFlow(pvKw, batKw, gridKw, hausKw, socVal, ids = {}) {
+  _renderEnergyFlow(pvKw, batKw, gridKw, hausKw, socVal, ids = {}, heiz = null) {
     // --- Decompose flows from the four signed values ---
     const pv = Math.max(pvKw, 0);
     const batCharge = Math.max(batKw, 0);          // battery charging (sink)
@@ -7454,10 +7459,21 @@ class EegOptimizerPanel extends HTMLElement {
     const gridExport = Math.max(gridKw, 0);        // feed-in to grid
     const gridImport = Math.max(-gridKw, 0);       // import from grid
     const haus = Math.max(hausKw, 0);
+    // Heizstab: eigene Senke neben dem Haus, kein Teil davon — der Sensor
+    // „Hausverbrauch" rechnet ihn heraus (sensor.py). Ohne eigenen Knoten
+    // fehlte seine Leistung im Bild, und die PV-Aufteilung ginge nicht auf:
+    // PV = Haus + Heizstab + Ladung − Entladung + Einspeisung − Bezug.
+    const heizAn = !!heiz;
+    const heizKw = Math.max(Number(heiz?.kw) || 0, 0);
 
-    // Priority: PV → Haus → Batterie → Netz
+    // Priority: PV → Haus → Heizstab → Batterie → Netz. Der Heizstab steht
+    // vor der Batterie, weil die Steuerung ihn nur aus Überschuss speist
+    // (heizstab/controller.py) — die Reihenfolge „erst die Batterie" aus den
+    // Einstellungen betrifft das Nachfuehren, nicht diese Momentaufnahme.
     const pvToHaus = Math.min(pv, haus);
     let pvLeft = pv - pvToHaus;
+    const pvToHeiz = Math.min(pvLeft, heizKw);
+    pvLeft -= pvToHeiz;
     const pvToBat = Math.min(pvLeft, batCharge);
     pvLeft -= pvToBat;
     const pvToGrid = Math.min(pvLeft, gridExport);
@@ -7465,6 +7481,12 @@ class EegOptimizerPanel extends HTMLElement {
     // Remaining demand on the house side
     const hausFromBat = Math.min(haus - pvToHaus, batDischarge);
     const hausFromGrid = Math.max(haus - pvToHaus - hausFromBat, 0);
+    // Rest des Heizstabs aus dem Netz — das gibt es nur beim Komfortheizen
+    // unter der Mindesttemperatur. Aus der Batterie heizt die Steuerung nie,
+    // deshalb gedeckelt auf den Bezug, der nach dem Haus übrig ist: sonst
+    // zeichnete eine Rundungsdifferenz einen Netzfluss, den es nicht gibt.
+    const heizFromGrid = Math.min(Math.max(heizKw - pvToHeiz, 0),
+                                  Math.max(gridImport - hausFromGrid, 0));
     // Battery filled by something other than PV (rare: from grid)
     const batFromGrid = Math.max(batCharge - pvToBat, 0);
     // Battery discharge beyond house demand feeds the grid (Nacht-Entladung)
@@ -7474,21 +7496,40 @@ class EegOptimizerPanel extends HTMLElement {
     // Narrow (Smartphone): kompaktere viewBox, damit die SVG-Skalierung nahe 1:1
     // bleibt und Schriften lesbar sind (600er-viewBox auf ~340px = ~55% Schriftgröße).
     const narrow = !!this._narrow;
-    const W = narrow ? 360 : 600;
-    const H = narrow ? 390 : 320;
-    const NW = narrow ? 140 : 150;
+    // Mit Heizstab teilen sich Haus und Heizstab die untere Reihe — beide
+    // sind Senken. Am Handy braucht das mehr Zeichenfläche: bliebe die
+    // viewBox bei 360, liefe die Diagonale PV→Haus mitsamt ihrem Label durch
+    // den Batteriekasten. Die 420 kosten rund ein Siebtel Schriftgröße,
+    // schmalere Kästen hätten dagegen „PHOTOVOLTAIK" abgeschnitten.
+    const W = narrow ? (heizAn ? 420 : 360) : 600;
+    const H = narrow ? (heizAn ? 400 : 390) : 320;
+    const NW = narrow ? (heizAn ? 132 : 140) : 150;
     const NH = 64;
-    const positions = narrow ? {
-      pv:    { cx: 180, cy: 50 },
-      bat:   { cx: 78,  cy: 195 },
-      house: { cx: 180, cy: 340 },
-      grid:  { cx: 282, cy: 195 },
-    } : {
-      pv:    { cx: 300, cy: 50 },
-      bat:   { cx: 95,  cy: 160 },
-      house: { cx: 300, cy: 270 },
-      grid:  { cx: 505, cy: 160 },
-    };
+    const positions = narrow
+      ? (heizAn ? {
+          pv:    { cx: 210, cy: 50 },
+          bat:   { cx: 76,  cy: 170 },
+          house: { cx: 116, cy: 340 },
+          grid:  { cx: 344, cy: 170 },
+          heiz:  { cx: 304, cy: 340 },
+        } : {
+          pv:    { cx: 180, cy: 50 },
+          bat:   { cx: 78,  cy: 195 },
+          house: { cx: 180, cy: 340 },
+          grid:  { cx: 282, cy: 195 },
+        })
+      : (heizAn ? {
+          pv:    { cx: 300, cy: 50 },
+          bat:   { cx: 95,  cy: 160 },
+          house: { cx: 205, cy: 270 },
+          grid:  { cx: 505, cy: 160 },
+          heiz:  { cx: 395, cy: 270 },
+        } : {
+          pv:    { cx: 300, cy: 50 },
+          bat:   { cx: 95,  cy: 160 },
+          house: { cx: 300, cy: 270 },
+          grid:  { cx: 505, cy: 160 },
+        });
 
     // MDI-Pfade (24×24) nativ eingebettet — <foreignObject> mit ha-icon wird von
     // iOS Safari in skalierten SVGs falsch positioniert (WebKit-Bug).
@@ -7497,6 +7538,9 @@ class EegOptimizerPanel extends HTMLElement {
       battery: "M16.67,4H15V2H9V4H7.33A1.33,1.33 0 0,0 6,5.33V20.67C6,21.4 6.6,22 7.33,22H16.67A1.33,1.33 0 0,0 18,20.67V5.33C18,4.6 17.4,4 16.67,4Z",
       home: "M10,20V14H14V20H19V12H22L12,3L2,12H5V20H10Z",
       grid: "M8.28,5.45L6.5,4.55L7.76,2H16.23L17.5,4.55L15.72,5.44L15,4H9L8.28,5.45M18.62,8H14.09L13.3,5H10.7L9.91,8H5.38L4.1,10.55L5.89,11.44L6.62,10H17.38L18.1,11.45L19.89,10.56L18.62,8M17.77,22H15.7L15.46,21.1L12,15.9L8.53,21.1L8.3,22H6.23L9.12,11H11.19L10.83,12.35L12,14.1L13.16,12.35L12.81,11H14.88L17.77,22M11.4,15L10.5,13.65L9.32,18.13L11.4,15M14.68,18.12L13.5,13.64L12.6,15L14.68,18.12Z",
+      // mdi:heating-coil — dasselbe Symbol wie an den Sensoren und im
+      // Einstellungs-Tab, damit der Heizstab überall gleich aussieht.
+      heizstab: "M19 17C20.21 17 22 16.2 22 14S20.21 11 19 11H17V9H19C21.2 9 22 7.21 22 6C22 3.8 20.21 3 19 3H17V2H16V3H8V2H7V3H2V5H7V7H5C3.79 7 2 7.8 2 10S3.79 13 5 13H7V15H5C3.79 15 2 15.8 2 18S3.79 21 5 21H7V22H8V21H16V22H17V21H22V19H17V17H19M19 13C19.45 13 20 13.19 20 14S19.45 15 19 15H17V13H19M16 11H8V9H16V11M19 5C19.45 5 20 5.2 20 6C20 6.45 19.81 7 19 7H17V5H19M8 5H16V7H8V5M5 11C4.55 11 4 10.81 4 10S4.55 9 5 9H7V11H5M8 13H16V15H8V13M5 19C4.55 19 4 18.81 4 18S4.55 17 5 17H7V19H5M16 19H8V17H16V19Z",
     };
 
     // Trim line to box edge so arrow doesn't hide under the rect
@@ -7528,6 +7572,13 @@ class EegOptimizerPanel extends HTMLElement {
       { from: positions.bat,   to: positions.grid,  value: batToGrid,     color: "#4CAF50", skipInactive: true },
       { from: positions.grid,  to: positions.house, value: hausFromGrid,  color: "#F44336" },
       { from: positions.grid,  to: positions.bat,   value: batFromGrid,   color: "#F44336" },
+      // Heizstab: aus PV der Überschuss, aus dem Netz nur beim
+      // Komfortheizen. Das Label sitzt näher am Heizstab, damit es nicht
+      // in der Kreuzung mit Netz→Haus landet.
+      ...(heizAn ? [
+        { from: positions.pv,   to: positions.heiz, value: pvToHeiz,     color: "#FFC107", labelT: 0.65 },
+        { from: positions.grid, to: positions.heiz, value: heizFromGrid, color: "#F44336" },
+      ] : []),
     ];
 
     let activeLines = "";
@@ -7609,6 +7660,17 @@ class EegOptimizerPanel extends HTMLElement {
     }
     const gridNode = node(positions.grid, ICON_PATHS.grid, "Netz", gridMain, gridSub, gridAccent, gridExport > 0.02 || gridImport > 0.02, ids.gridEntity);
 
+    // Heizstab — Leistung groß, Wassertemperatur klein darunter (wie die
+    // Batterie Ladestand und Leistung zeigt). Antwortet der Ohmpilot nicht,
+    // steht ein Strich statt einer 0: nichts zu wissen ist nicht dasselbe
+    // wie zu wissen, dass er aus ist.
+    const heizNode = heizAn
+      ? node(positions.heiz, ICON_PATHS.heizstab, "Heizstab",
+             heiz.kw == null ? "\u2014" : `${fmtDe(heizKw, 2)} kW`,
+             heiz.tempC == null ? "" : `${fmtDe(heiz.tempC, 0)} °C`,
+             "#c62828", heizKw > 0.02, ids.heizEntity)
+      : "";
+
     return `<svg class="energy-flow-svg${narrow ? " narrow" : ""}" viewBox="0 0 ${W} ${H}">
       ${inactiveLines}
       ${activeLines}
@@ -7617,6 +7679,7 @@ class EegOptimizerPanel extends HTMLElement {
       ${batNode}
       ${houseNode}
       ${gridNode}
+      ${heizNode}
     </svg>`;
   }
 
@@ -8156,6 +8219,17 @@ class EegOptimizerPanel extends HTMLElement {
     const batKw = this._readFloat("sensor.eeg_energy_optimizer_batterieleistung") || 0;
     let gridKw = this._readFloat("sensor.eeg_energy_optimizer_netzleistung") || 0;
     const hausKw = this._readFloat("sensor.eeg_energy_optimizer_hausverbrauch") || 0;
+    // Heizstab: eigene Größe neben dem Hausverbrauch, der ihn herausrechnet.
+    // Die entity_id kommt aus der Registry, weil HA sie aus dem Anzeigenamen
+    // bildet; null (statt 0) heißt „Ohmpilot antwortet nicht".
+    const heizAktiv = !!this._config?.heizstab_enabled;
+    const heizEntity = this._entityIds?.heizstab_leistung
+      || "sensor.eeg_energy_optimizer_heizstab_leistung";
+    const heizKw = heizAktiv ? this._readFloat(heizEntity) : null;
+    const heizTempC = heizAktiv
+      ? this._readFloat(this._entityIds?.heizstab_temperatur
+        || "sensor.eeg_energy_optimizer_heizstab_temperatur")
+      : null;
     const batLabel = batKw >= 0 ? "Ladung" : "Entladung";
     const batColor = "val-orange";
     const gridLabel = gridKw >= 0 ? "Einspeisung" : "Bezug";
@@ -8203,13 +8277,16 @@ class EegOptimizerPanel extends HTMLElement {
           </div>
           ${this._renderOverrideBanner()}
           ${this._statusViewVariant === "flow"
-            ? this._renderEnergyFlow(pvKw, batKw, gridKw, hausKw, socVal, {pvEntity, batEntity, gridEntity, hausEntity, socEntity})
+            ? this._renderEnergyFlow(pvKw, batKw, gridKw, hausKw, socVal,
+                {pvEntity, batEntity, gridEntity, hausEntity, socEntity, heizEntity},
+                heizAktiv ? { kw: heizKw, tempC: heizTempC } : null)
             : `<div class="header-grid">
                 <div class="hlv${pvEntity ? " hlv-clickable" : ""}" ${pvEntity ? `data-action="show-entity" data-entity="${pvEntity}"` : ""}><span class="hlv-label">PV</span><span class="hlv-val val-green">${fmtDe(pvKw, 2)} kW</span></div>
                 <div class="hlv${batEntity ? " hlv-clickable" : ""}" ${batEntity ? `data-action="show-entity" data-entity="${batEntity}"` : ""}><span class="hlv-label">Batterie</span><span class="hlv-val ${batColor}">${fmtDe(Math.abs(batKw), 2)} kW <small>(${batLabel})</small></span></div>
                 <div class="hlv${socEntity ? " hlv-clickable" : ""}" ${socEntity ? `data-action="show-entity" data-entity="${socEntity}"` : ""}><span class="hlv-label">SOC</span><span class="hlv-val ${socColor}">${socText}%</span></div>
                 <div class="hlv${gridEntity ? " hlv-clickable" : ""}" ${gridEntity ? `data-action="show-entity" data-entity="${gridEntity}"` : ""}><span class="hlv-label">Netz</span><span class="hlv-val ${gridColor}">${fmtDe(Math.abs(gridKw), 2)} kW <small>(${gridLabel})</small></span></div>
                 <div class="hlv hlv-clickable" data-action="show-entity" data-entity="${hausEntity}"><span class="hlv-label">Haus</span><span class="hlv-val val-blue">${fmtDe(hausKw, 2)} kW</span></div>
+                ${heizAktiv ? `<div class="hlv hlv-clickable" data-action="show-entity" data-entity="${heizEntity}"><span class="hlv-label">Heizstab</span><span class="hlv-val ${heizKw == null ? "" : "val-heiz"}">${heizKw == null ? "\u2014" : `${fmtDe(heizKw, 2)} kW`}${heizTempC == null ? "" : ` <small>(${fmtDe(heizTempC, 0)} °C)</small>`}</span></div>` : ""}
               </div>`}
           <div style="margin-top:12px">
             <span class="status-indicator ${zustandBadgeClass}" style="display:inline-block">${zustandSymbol}${zustand}</span>
@@ -8819,6 +8896,9 @@ class EegOptimizerPanel extends HTMLElement {
         .val-orange { color: #ff9800; }
         .val-red { color: #f44336; }
         .val-blue { color: #2196f3; }
+        /* Heizstab wie im Optimierungsplan. Eigene Klasse, weil val-red in
+           dieser Karte den Netzbezug meint — der Heizstab ist keine Warnung. */
+        .val-heiz { color: #c62828; }
         .header-card-top { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; flex-wrap: wrap; }
         .header-mode-toggle { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
         .override-btns { display: inline-flex; gap: 6px; flex-shrink: 0; }

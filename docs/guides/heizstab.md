@@ -35,6 +35,8 @@ Was der Heizstab **nie** tut:
 
 Die geplante Heizstab-Leistung steht auch im **Optimierungsplan** (rote gestrichelte Linie): Der Plan weiß je Viertelstunde, was er abregeln müsste — genau das würde der Heizstab nehmen. Gesteuert wird trotzdem nach der Messung, nicht nach der Prognose.
 
+Was der Heizstab **gerade** zieht, steht oben in der Statuskarte: in der Werteliste als eigene Kachel „Heizstab" mit Leistung und Wassertemperatur, im Energieflussdiagramm als eigener Kasten neben dem Haus — samt der Linie, über die er seine Energie bekommt (gelb aus der PV, rot aus dem Netz beim Komfortheizen). Ein Gedankenstrich statt einer Zahl heißt: Der Ohmpilot antwortet nicht.
+
 ## Reihenfolge: Heizstab oder Batterie zuerst?
 
 Meist ist die Batterie schon nach Plan am Laden, wenn die Einspeisung ans Limit kommt. Für den **ungeplanten** Überschuss — mehr Sonne als vorhergesagt — entscheidet die Einstellung **„Überschuss zuerst in den Heizstab"**:
