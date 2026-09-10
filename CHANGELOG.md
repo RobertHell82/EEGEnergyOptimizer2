@@ -10,6 +10,12 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
+## [2.1.0-dev5] - 2026-09-10
+
+### Behoben
+
+- **Die Karte „Gesetzte Steuerwerte“ zieht jetzt mit jedem Steuerungslauf nach.** Bisher wurde sie genau einmal beim Öffnen des Dashboards geladen und danach nur über den Knopf „Aktualisieren“ — eine Momentaufnahme. Nach dem Umschalten von „Aus“ auf „Ein“ stand in der Statuskarte binnen 30 Sekunden „Laden begrenzt“, in der Steuerwerte-Karte darunter aber minutenlang noch der Standardwert aus dem Anzeige-Modus. Jetzt lädt die Karte bei jedem Guard-Lauf neu, solange sie sichtbar ist; der Knopf bleibt für sofort.
+
 ## [2.1.0-dev4] - 2026-09-09
 
 ### Behoben
