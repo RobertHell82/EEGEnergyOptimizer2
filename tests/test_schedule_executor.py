@@ -1021,7 +1021,7 @@ from custom_components.eeg_energy_optimizer.const import (  # noqa: E402
     CONF_HEIZSTAB_MINTEMP_C,
     CONF_HEIZSTAB_NETZBEZUG,
     CONF_HEIZSTAB_VORRANG,
-    CONF_HEIZSTAB_ZIELTEMP_C,
+    CONF_HEIZSTAB_MAXTEMP_C,
     HEIZSTAB_STEP_KW,
 )
 from custom_components.eeg_energy_optimizer.heizstab.controller import (  # noqa: E402
@@ -1047,7 +1047,7 @@ def _cfg_heizstab(vorrang=True, mintemp=0.0, netzbezug=False):
         **CFG_LIMIT,
         CONF_HEIZSTAB_ENABLED: True,
         CONF_HEIZSTAB_MAX_KW: 6.0,
-        CONF_HEIZSTAB_ZIELTEMP_C: 80.0,
+        CONF_HEIZSTAB_MAXTEMP_C: 80.0,
         CONF_HEIZSTAB_MINTEMP_C: mintemp,
         CONF_HEIZSTAB_NETZBEZUG: netzbezug,
         CONF_HEIZSTAB_VORRANG: vorrang,
@@ -1124,7 +1124,7 @@ async def test_heizstab_gesaettigt_gibt_guard1_frei(mock_hass, mock_inverter):
     assert hz.sollwert_kw == pytest.approx(6.0)
 
 
-async def test_heizstab_zieltemperatur_gibt_guard1_frei(mock_hass, mock_inverter):
+async def test_heizstab_maximaltemperatur_gibt_guard1_frei(mock_hass, mock_inverter):
     cfg = _cfg_heizstab(vorrang=True)
     ex, hz, _ = _make_executor_mit_heizstab(mock_hass, mock_inverter, cfg, temp=81.0)
     mock_inverter.async_get_charge_limit_kw = AsyncMock(return_value=2.0)
@@ -1133,7 +1133,7 @@ async def test_heizstab_zieltemperatur_gibt_guard1_frei(mock_hass, mock_inverter
         await ex.async_guard_cycle(_state(_slot(0, battery_p=-2.0)), MODE_EIN, now=NOW)
     mock_inverter.async_set_charge_limit.assert_awaited_once_with(2.5)
     assert hz.sollwert_kw == 0.0
-    assert "Zieltemperatur" in hz.grund
+    assert "Maximaltemperatur" in hz.grund
 
 
 async def test_batterie_vorrang_heizstab_wartet_bis_ladelimit_am_maximum(mock_hass, mock_inverter):

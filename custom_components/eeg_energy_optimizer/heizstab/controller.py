@@ -15,7 +15,7 @@ Die Regel je Guard-Lauf (30 s), siehe ``naechster_sollwert``:
   „auch aus dem Netz heizen" erlaubt ist, läuft er mit voller Leistung —
   dann unterdrückt der Executor derweil jede erzwungene Entladung, sonst
   landete die Batterie im Boiler.
-* Zieltemperatur erreicht → 0, frei erst wieder 3 K darunter.
+* Maximaltemperatur erreicht → 0 (bis hierher darf geheizt werden), frei erst wieder 3 K darunter.
 * Einspeisung klebt an der Grenze → ein Schritt (0,5 kW) hinauf. Die wahre
   Höhe des Überschusses ist dann unsichtbar, der Wechselrichter regelt schon
   ab — deshalb tasten statt springen.
@@ -51,7 +51,7 @@ from ..const import (
     CONF_HEIZSTAB_PORT,
     CONF_HEIZSTAB_VORRANG,
     CONF_HEIZSTAB_WAERMEWERT,
-    CONF_HEIZSTAB_ZIELTEMP_C,
+    CONF_HEIZSTAB_MAXTEMP_C,
     DEFAULT_HEIZSTAB_ENABLED,
     DEFAULT_HEIZSTAB_MAX_KW,
     DEFAULT_HEIZSTAB_MINTEMP_C,
@@ -59,7 +59,7 @@ from ..const import (
     DEFAULT_HEIZSTAB_PORT,
     DEFAULT_HEIZSTAB_VORRANG,
     DEFAULT_HEIZSTAB_WAERMEWERT,
-    DEFAULT_HEIZSTAB_ZIELTEMP_C,
+    DEFAULT_HEIZSTAB_MAXTEMP_C,
     GUARD_EXPORT_RELEASE_KW,
     GUARD_EXPORT_STICKY_BAND_KW,
     HEIZSTAB_KOMFORT_EXPORT_ZIEL_KW,
@@ -155,7 +155,7 @@ class HeizstabController:
         self.sollwert_kw = 0.0
         self.grund = "noch kein Lauf"
         # Hysteresen
-        self._ziel_gesperrt = False
+        self._max_gesperrt = False
         self._komfort_aktiv = False
         # Schreibpfad
         self.last_write_ok: bool | None = None
@@ -168,7 +168,7 @@ class HeizstabController:
     # Konfiguration
     # ------------------------------------------------------------------
     def update_config(self, config: dict) -> None:
-        """Hot-Reload: Zieltemperatur, Mindesttemperatur, Vorrang, Wärmewert.
+        """Hot-Reload: Maximaltemperatur, Mindesttemperatur, Vorrang, Wärmewert.
 
         Host, Port und Maximalleistung brauchen einen vollen Reload (der
         Treiber wird dann neu gebaut) — das regelt ``_requires_full_reload``.
@@ -184,12 +184,12 @@ class HeizstabController:
         return heizstab_max_kw(self._config)
 
     @property
-    def zieltemp_c(self) -> float:
+    def maxtemp_c(self) -> float:
         try:
-            wert = float(self._config.get(CONF_HEIZSTAB_ZIELTEMP_C) or 0.0)
+            wert = float(self._config.get(CONF_HEIZSTAB_MAXTEMP_C) or 0.0)
         except (TypeError, ValueError):
             wert = 0.0
-        return wert if wert > 0 else DEFAULT_HEIZSTAB_ZIELTEMP_C
+        return wert if wert > 0 else DEFAULT_HEIZSTAB_MAXTEMP_C
 
     @property
     def mintemp_c(self) -> float:
@@ -268,11 +268,11 @@ class HeizstabController:
             # Messwert wäre Heizen ins Blaue.
             self._komfort_aktiv = False
             return
-        ziel = self.zieltemp_c
-        if temp >= ziel:
-            self._ziel_gesperrt = True
-        elif temp < ziel - HEIZSTAB_TEMP_HYSTERESE_K:
-            self._ziel_gesperrt = False
+        maximum = self.maxtemp_c
+        if temp >= maximum:
+            self._max_gesperrt = True
+        elif temp < maximum - HEIZSTAB_TEMP_HYSTERESE_K:
+            self._max_gesperrt = False
 
         minimum = self.mintemp_c
         if minimum <= 0:
@@ -294,8 +294,8 @@ class HeizstabController:
         return self.komfort_aktiv and self.netzbezug_erlaubt
 
     @property
-    def ziel_erreicht(self) -> bool:
-        return self._ziel_gesperrt
+    def max_erreicht(self) -> bool:
+        return self._max_gesperrt
 
     @property
     def gesaettigt(self) -> bool:
@@ -307,7 +307,7 @@ class HeizstabController:
         """
         if not self.enabled or not self.verfuegbar:
             return True
-        if self._ziel_gesperrt:
+        if self._max_gesperrt:
             return True
         return self.sollwert_kw >= self.max_kw - HEIZSTAB_SATT_TOLERANZ_KW
 
@@ -328,7 +328,7 @@ class HeizstabController:
         Executor unterdrückt dann die Entladung); dann die Entladung ins Netz
         (kein Überschuss — alles, was der Heizstab zöge, käme aus der
         Batterie); dann Komfort ohne Netzbezug (Vorrang vor der Einspeisung,
-        Regel auf Einspeisung ≈ 0); dann die Zieltemperatur; dann die
+        Regel auf Einspeisung ≈ 0); dann die Maximaltemperatur; dann die
         Überschuss-Regel an der Einspeisegrenze. Modus Aus und Startphase
         entscheidet der Executor selbst — dort ist der Sollwert 0, ohne diese
         Funktion.
@@ -349,15 +349,15 @@ class HeizstabController:
         if self.komfort_aktiv:
             # Komfort ohne Netzbezug: die ganze Einspeisung nehmen, aber
             # keinen Netzstrom — geregelt wird auf Einspeisung ≈ 0 statt auf
-            # die Einspeisegrenze. Die Zieltemperatur ist hier ohne Belang,
+            # die Einspeisegrenze. Die Maximaltemperatur ist hier ohne Belang,
             # sie liegt über der Mindesttemperatur.
             soll, grund = naechster_sollwert(
                 self.sollwert_kw, export_kw, HEIZSTAB_KOMFORT_EXPORT_ZIEL_KW,
                 self.max_kw, True,
             )
             return soll, f"Mindesttemperatur unterschritten {temp_text} — Vorrang vor der Einspeisung: {grund}"
-        if self._ziel_gesperrt:
-            return 0.0, f"Zieltemperatur erreicht ({self.zieltemp_c:.0f} °C)"
+        if self._max_gesperrt:
+            return 0.0, f"Maximaltemperatur erreicht ({self.maxtemp_c:.0f} °C)"
         return naechster_sollwert(
             self.sollwert_kw, export_kw, grenze_kw, self.max_kw, vorrang_frei
         )
@@ -457,14 +457,14 @@ class HeizstabController:
             "leistung_kw": None if self.leistung_kw is None else round(self.leistung_kw, 3),
             "temperatur_c": None if temp is None else round(temp, 1),
             "max_kw": self.max_kw,
-            "zieltemp_c": self.zieltemp_c,
+            "maxtemp_c": self.maxtemp_c,
             "mintemp_c": self.mintemp_c,
             "vorrang_heizstab": self.vorrang_heizstab,
             "netzbezug_erlaubt": self.netzbezug_erlaubt,
             "waermewert": self.waermewert,
             "komfort_aktiv": self.komfort_aktiv,
             "komfort_aus_netz": self.komfort_aus_netz,
-            "ziel_erreicht": self.ziel_erreicht,
+            "max_erreicht": self.max_erreicht,
             "gesaettigt": self.gesaettigt,
             "grund": self.grund,
             "last_write_ok": self.last_write_ok,

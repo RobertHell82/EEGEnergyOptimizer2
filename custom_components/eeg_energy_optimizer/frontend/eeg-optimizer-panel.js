@@ -250,7 +250,7 @@ const WIZARD_DEFAULTS = {
   heizstab_host: "",
   heizstab_port: 502,
   heizstab_max_kw: 6,
-  heizstab_zieltemp_c: 80,
+  heizstab_maxtemp_c: 80,
   heizstab_mintemp_c: 0,
   heizstab_netzbezug: false,
   heizstab_vorrang: true,
@@ -2267,7 +2267,7 @@ class EegOptimizerPanel extends HTMLElement {
     if (d.heizstab_enabled) {
       if (!String(d.heizstab_host || "").trim()) fehlt.push("Adresse des Ohmpilot (Heizstab)");
       if (!(Number(d.heizstab_max_kw) > 0)) fehlt.push("Leistung des Heizstabs");
-      if (!(Number(d.heizstab_zieltemp_c) > 0)) fehlt.push("Zieltemperatur des Heizstabs");
+      if (!(Number(d.heizstab_maxtemp_c) > 0)) fehlt.push("Maximaltemperatur des Heizstabs");
     }
     if ((d.schedule_feedin_source || "manual") === "manual"
         && !(Number(d.schedule_feedin_price) > 0)) fehlt.push("Standardvergütung");
@@ -6315,9 +6315,9 @@ class EegOptimizerPanel extends HTMLElement {
           <div class="help-text">Nennleistung des angeschlossenen Heizstabs — 3 kW einphasig, 6 oder 9 kW dreiphasig. Mehr kann der Ohmpilot nicht vorgeben.</div>
         </div>
         <div class="field-group">
-          <label>Zieltemperatur (°C) *</label>
-          <input type="number" data-field="${prefix}heizstab_zieltemp_c" value="${d.heizstab_zieltemp_c ?? 80}" min="30" max="95" step="1">
-          <div class="help-text">Ab dieser Wassertemperatur wird nicht mehr geheizt; weiter geht es 3 K darunter. Der Ohmpilot hat zusätzlich seinen eigenen Übertemperaturschutz.</div>
+          <label>Maximaltemperatur (°C) *</label>
+          <input type="number" data-field="${prefix}heizstab_maxtemp_c" value="${d.heizstab_maxtemp_c ?? 80}" min="30" max="95" step="1">
+          <div class="help-text">Bis zu dieser Wassertemperatur darf der Heizstab heizen; darüber bleibt er aus, weiter geht es 3 K darunter. Der Ohmpilot hat zusätzlich seinen eigenen Übertemperaturschutz.</div>
         </div>
         <div class="field-group">
           <label>Mindesttemperatur (°C)</label>
@@ -6339,7 +6339,7 @@ class EegOptimizerPanel extends HTMLElement {
             <input type="checkbox" data-field="${prefix}heizstab_vorrang" ${vorrang ? "checked" : ""}>
             <div>
               <div style="font-weight:500">Überschuss zuerst in den Heizstab</div>
-              <div class="help-text" style="margin-top:4px">Klebt die Einspeisung an der Grenze, bekommt zuerst der Heizstab den Überschuss; das Ladelimit der Batterie wird erst angehoben, wenn er voll ausgelastet ist oder die Zieltemperatur erreicht hat. Ausgeschaltet gilt die umgekehrte Reihenfolge: erst die Batterie, dann der Heizstab.</div>
+              <div class="help-text" style="margin-top:4px">Klebt die Einspeisung an der Grenze, bekommt zuerst der Heizstab den Überschuss; das Ladelimit der Batterie wird erst angehoben, wenn er voll ausgelastet ist oder die Maximaltemperatur erreicht hat. Ausgeschaltet gilt die umgekehrte Reihenfolge: erst die Batterie, dann der Heizstab.</div>
             </div>
           </label>
         </div>

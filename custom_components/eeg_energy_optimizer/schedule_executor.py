@@ -786,7 +786,7 @@ class ScheduleExecutor:
             # Mit Heizstab-Vorrang wartet Guard 1, solange der Heizstab noch
             # aufnehmen kann: das Kleben am Limit ist dann kein Verlust,
             # sondern sein Signal. Erst ein gesättigter Heizstab (Maximum,
-            # Zieltemperatur, nicht erreichbar) gibt die Batterie frei.
+            # Maximaltemperatur, nicht erreichbar) gibt die Batterie frei.
             if (
                 self._heizstab is not None
                 and self._heizstab.enabled

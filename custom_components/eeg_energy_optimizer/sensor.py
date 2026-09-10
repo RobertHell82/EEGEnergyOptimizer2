@@ -1134,10 +1134,10 @@ class HeizstabTemperaturSensor(_HeizstabSensor):
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         return {
-            "zieltemperatur_c": self._controller.zieltemp_c,
+            "maximaltemperatur_c": self._controller.maxtemp_c,
             "mindesttemperatur_c": self._controller.mintemp_c or None,
             "netzbezug_erlaubt": self._controller.netzbezug_erlaubt,
-            "ziel_erreicht": self._controller.ziel_erreicht,
+            "max_erreicht": self._controller.max_erreicht,
             "komfort_aktiv": self._controller.komfort_aktiv,
         }
 

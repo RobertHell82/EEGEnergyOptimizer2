@@ -39,7 +39,7 @@ Die geplante Heizstab-Leistung steht auch im **Optimierungsplan** (rote gestrich
 
 Meist ist die Batterie schon nach Plan am Laden, wenn die Einspeisung ans Limit kommt. Für den **ungeplanten** Überschuss — mehr Sonne als vorhergesagt — entscheidet die Einstellung **„Überschuss zuerst in den Heizstab"**:
 
-- **Eingeschaltet** (Vorgabe): Der Heizstab nimmt den Überschuss. Erst wenn er mit voller Leistung läuft oder die Zieltemperatur erreicht hat, hebt die Steuerung das Ladelimit der Batterie über den Planwert an.
+- **Eingeschaltet** (Vorgabe): Der Heizstab nimmt den Überschuss. Erst wenn er mit voller Leistung läuft oder die Maximaltemperatur erreicht hat, hebt die Steuerung das Ladelimit der Batterie über den Planwert an.
 - **Ausgeschaltet**: Erst die Batterie — das Ladelimit wird angehoben, bis sie am Maximum lädt oder voll ist. Dann bekommt der Heizstab den Rest.
 
 Der Plan für die Batterie bleibt in beiden Fällen unangetastet. Es geht nur darum, wer den Teil bekommt, den die Prognose nicht kannte.
@@ -54,7 +54,7 @@ Alle Felder stehen in den **Einstellungen → Anlage → Heizstab**.
 | **Adresse des Ohmpilot** | IP-Adresse oder Hostname des Ohmpilot im Netzwerk |
 | **Modbus-Port** | Standard 502 |
 | **Leistung des Heizstabs (kW)** | Nennleistung des angeschlossenen Heizstabs — 3 kW einphasig, 6 oder 9 kW dreiphasig |
-| **Zieltemperatur (°C)** | Ab dieser Temperatur wird nicht mehr geheizt; weiter geht es 3 K darunter |
+| **Maximaltemperatur (°C)** | Bis zu dieser Temperatur darf der Heizstab heizen; darüber bleibt er aus, weiter geht es 3 K darunter |
 | **Mindesttemperatur (°C)** | Darunter hat der Heizstab Vorrang vor der Einspeisung: Er nimmt allen PV-Überschuss, auch den unterhalb der Einspeisegrenze, bis 5 K darüber — aber weder Netz- noch Batteriestrom. 0 = aus |
 | **Unter der Mindesttemperatur auch aus dem Netz heizen** | Nur sichtbar mit Mindesttemperatur. Eingeschaltet heizt der Heizstab darunter mit voller Leistung, egal woher der Strom kommt, und die Optimierung entlädt derweil nicht ins Netz. Ausgeschaltet (Vorgabe) wird nie Netzstrom verheizt — ohne Sonne bleibt das Wasser dann kalt |
 | **Überschuss zuerst in den Heizstab** | Reihenfolge bei ungeplantem Überschuss, siehe oben |

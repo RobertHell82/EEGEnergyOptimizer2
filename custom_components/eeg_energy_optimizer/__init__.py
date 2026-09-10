@@ -2213,7 +2213,7 @@ _RELOAD_CONFIG_KEYS = frozenset({
     CONF_GRID_POWER_EXPORT_SENSOR,
     CONF_GRID_POWER_IMPORT_SENSOR,
     # Heizstab-Anbindung: Treiber wird mit Host/Port/Maximum neu gebaut.
-    # Zieltemperatur, Mindesttemperatur, Vorrang und Wärmewert dagegen
+    # Maximaltemperatur, Mindesttemperatur, Vorrang und Wärmewert dagegen
     # nehmen den Hot-Reload-Pfad (HeizstabController.update_config).
     CONF_HEIZSTAB_ENABLED,
     CONF_HEIZSTAB_HOST,

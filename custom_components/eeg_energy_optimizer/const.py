@@ -245,8 +245,8 @@ CONF_HEIZSTAB_PORT = "heizstab_port"
 # Maximale Leistung des Heizstabs in kW (Ohmpilot: 3 kW einphasig, 6 bzw.
 # 9 kW dreiphasig — der Wert steht auf dem Heizstab, nicht am Ohmpilot).
 CONF_HEIZSTAB_MAX_KW = "heizstab_max_kw"
-# Zieltemperatur: ab hier wird nicht mehr geheizt (Hysterese darunter).
-CONF_HEIZSTAB_ZIELTEMP_C = "heizstab_zieltemp_c"
+# Maximaltemperatur: bis hierher darf der Heizstab heizen (Hysterese darunter).
+CONF_HEIZSTAB_MAXTEMP_C = "heizstab_maxtemp_c"
 # Mindesttemperatur: darunter hat der Heizstab Vorrang vor der Einspeisung —
 # er nimmt allen PV-Überschuss, auch den unterhalb der Einspeisegrenze, aber
 # weder Netz- noch Batteriestrom. 0 = keine Mindesttemperatur.
@@ -267,7 +267,7 @@ CONF_HEIZSTAB_WAERMEWERT = "heizstab_waermewert"
 DEFAULT_HEIZSTAB_ENABLED = False
 DEFAULT_HEIZSTAB_PORT = 502
 DEFAULT_HEIZSTAB_MAX_KW = 6.0
-DEFAULT_HEIZSTAB_ZIELTEMP_C = 80.0
+DEFAULT_HEIZSTAB_MAXTEMP_C = 80.0
 DEFAULT_HEIZSTAB_MINTEMP_C = 0.0
 DEFAULT_HEIZSTAB_NETZBEZUG = False
 DEFAULT_HEIZSTAB_VORRANG = True
@@ -283,7 +283,7 @@ HEIZSTAB_STEP_KW = 0.5
 HEIZSTAB_WRITE_INTERVAL_S = 30
 HEIZSTAB_READ_INTERVAL_S = 10
 HEIZSTAB_TIMESYNC_INTERVAL_H = 6
-# Zieltemperatur: gesperrt ab Ziel, frei erst wieder unter Ziel − Hysterese.
+# Maximaltemperatur: gesperrt ab Maximum, frei erst wieder unter Maximum − Hysterese.
 HEIZSTAB_TEMP_HYSTERESE_K = 3.0
 # Mindesttemperatur: Komfortheizen ab unter Minimum, Ende bei Minimum + Hysterese.
 HEIZSTAB_MINTEMP_HYSTERESE_K = 5.0
@@ -376,7 +376,7 @@ TELEMETRY_SETTINGS_KEYS = (
     # Bewusst OHNE Host und Port.
     "heizstab_enabled",
     "heizstab_max_kw",
-    "heizstab_zieltemp_c",
+    "heizstab_maxtemp_c",
     "heizstab_mintemp_c",
     "heizstab_netzbezug",
     "heizstab_vorrang",

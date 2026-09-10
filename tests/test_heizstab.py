@@ -18,7 +18,7 @@ from custom_components.eeg_energy_optimizer.const import (
     CONF_HEIZSTAB_NETZBEZUG,
     CONF_HEIZSTAB_VORRANG,
     CONF_HEIZSTAB_WAERMEWERT,
-    CONF_HEIZSTAB_ZIELTEMP_C,
+    CONF_HEIZSTAB_MAXTEMP_C,
     HEIZSTAB_KOMFORT_EXPORT_ZIEL_KW,
     HEIZSTAB_STEP_KW,
 )
@@ -36,7 +36,7 @@ def _cfg(**over):
         CONF_HEIZSTAB_ENABLED: True,
         CONF_HEIZSTAB_HOST: "192.168.1.58",
         CONF_HEIZSTAB_MAX_KW: 6.0,
-        CONF_HEIZSTAB_ZIELTEMP_C: 80.0,
+        CONF_HEIZSTAB_MAXTEMP_C: 80.0,
         CONF_HEIZSTAB_MINTEMP_C: 0.0,
         CONF_HEIZSTAB_VORRANG: True,
         CONF_HEIZSTAB_WAERMEWERT: 0.08,
@@ -153,22 +153,22 @@ def test_create_heizstab_ohne_host_rechnet_aber_schreibt_nicht():
 # ---------------------------------------------------------------------------
 
 
-def test_zieltemperatur_sperrt_mit_hysterese():
+def test_maximaltemperatur_sperrt_mit_hysterese():
     t = _treiber(power_w=0, temp=80.0)
     hz = HeizstabController(MagicMock(), _cfg(), t)
     hz.pruefe_temperaturen()
-    assert hz.ziel_erreicht is True
+    assert hz.max_erreicht is True
     soll, grund = hz.regeln(entladung=False, export_kw=4.0, grenze_kw=4.0, vorrang_frei=True)
-    assert soll == 0.0 and "Zieltemperatur" in grund
+    assert soll == 0.0 and "Maximaltemperatur" in grund
 
     # 78 °C: noch gesperrt (Hysterese 3 K)
     t.last_temperature = 78.0
     hz.pruefe_temperaturen()
-    assert hz.ziel_erreicht is True
+    assert hz.max_erreicht is True
     # 76,5 °C: wieder frei
     t.last_temperature = 76.5
     hz.pruefe_temperaturen()
-    assert hz.ziel_erreicht is False
+    assert hz.max_erreicht is False
     soll, _ = hz.regeln(entladung=False, export_kw=4.0, grenze_kw=4.0, vorrang_frei=True)
     assert soll == pytest.approx(HEIZSTAB_STEP_KW)
 
@@ -227,7 +227,7 @@ def test_entladung_sperrt_den_heizstab():
 # ---------------------------------------------------------------------------
 
 
-def test_gesaettigt_am_maximum_und_bei_zieltemperatur():
+def test_gesaettigt_am_maximum_und_bei_maximaltemperatur():
     t = _treiber(power_w=5900, temp=60.0)
     hz = HeizstabController(MagicMock(), _cfg(), t)
     hz.pruefe_temperaturen()
