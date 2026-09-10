@@ -799,6 +799,7 @@ class FahrplanStatusSensor(SensorEntity):
                 "heizstab_temperatur_c": heizstab.get("temperatur_c"),
                 "heizstab_grund": heizstab.get("grund"),
                 "heizstab_komfort": bool(heizstab.get("komfort_aktiv")),
+                "heizstab_komfort_netz": bool(heizstab.get("komfort_aus_netz")),
                 "heizstab_verfuegbar": bool(heizstab.get("verfuegbar")),
             })
         self.async_write_ha_state()
@@ -1135,6 +1136,7 @@ class HeizstabTemperaturSensor(_HeizstabSensor):
         return {
             "zieltemperatur_c": self._controller.zieltemp_c,
             "mindesttemperatur_c": self._controller.mintemp_c or None,
+            "netzbezug_erlaubt": self._controller.netzbezug_erlaubt,
             "ziel_erreicht": self._controller.ziel_erreicht,
             "komfort_aktiv": self._controller.komfort_aktiv,
         }

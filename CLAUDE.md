@@ -356,8 +356,11 @@ the event loop is long enough for HA to flag a blocking call.
   0.5-kW steps because curtailment hides the true surplus, down by the measured
   gap in one run, 0 on grid import), never during a forced discharge, never in
   mode Aus ("Optimierung aus heißt Heizstab aus" — no fallback regulator).
-  Minimum temperature = comfort guard: full power even from the grid, and the
-  executor turns a planned discharge into a release meanwhile. Requires the
+  Minimum temperature = comfort guard with two levels: by default the heater
+  gets priority over feed-in (regulates on export ≈ 0, takes all PV surplus,
+  never grid or battery power); only with `heizstab_netzbezug` (opt-in) it
+  runs at full power from anywhere and the executor turns a planned discharge
+  into a release meanwhile. Requires the
   Ohmpilot to be **decoupled from the Gen24** (its own energy management
   regulates export to zero, which would eat all EEG feed-in). House load,
   consumption profile, Guard 2 and the balance all subtract the heater

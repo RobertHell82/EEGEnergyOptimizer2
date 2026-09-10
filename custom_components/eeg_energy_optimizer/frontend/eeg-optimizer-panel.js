@@ -252,6 +252,7 @@ const WIZARD_DEFAULTS = {
   heizstab_max_kw: 6,
   heizstab_zieltemp_c: 80,
   heizstab_mintemp_c: 0,
+  heizstab_netzbezug: false,
   heizstab_vorrang: true,
   heizstab_waermewert: 0,
   expert_mode: false,
@@ -6321,8 +6322,18 @@ class EegOptimizerPanel extends HTMLElement {
         <div class="field-group">
           <label>Mindesttemperatur (°C)</label>
           <input type="number" data-field="${prefix}heizstab_mintemp_c" value="${d.heizstab_mintemp_c ?? 0}" min="0" max="90" step="1">
-          <div class="help-text">Darunter heizt der Heizstab mit voller Leistung, auch aus dem Netz, bis 5 K darüber — und die Optimierung entlädt derweil nicht ins Netz. 0 = keine Mindesttemperatur, der Heizstab nimmt nur Überschuss.</div>
+          <div class="help-text">Darunter hat der Heizstab Vorrang vor der Einspeisung: Er nimmt allen PV-Überschuss, auch den unterhalb der Einspeisegrenze, bis 5 K darüber — aber weder Netz- noch Batteriestrom. 0 = keine Mindesttemperatur, der Heizstab nimmt nur, was über die Grenze hinausgeht.</div>
         </div>
+        ${Number(d.heizstab_mintemp_c) > 0 ? `
+        <div class="field-group">
+          <label style="display:flex;align-items:center;gap:12px;cursor:pointer">
+            <input type="checkbox" data-field="${prefix}heizstab_netzbezug" ${d.heizstab_netzbezug ? "checked" : ""}>
+            <div>
+              <div style="font-weight:500">Unter der Mindesttemperatur auch aus dem Netz heizen</div>
+              <div class="help-text" style="margin-top:4px">Eingeschaltet heizt der Heizstab unter der Mindesttemperatur mit voller Leistung, egal woher der Strom kommt — und die Optimierung entlädt derweil nicht ins Netz. Ausgeschaltet (Vorgabe) wird nie Netzstrom verheizt; ohne Sonne bleibt das Wasser dann kalt.</div>
+            </div>
+          </label>
+        </div>` : ""}
         <div class="field-group">
           <label style="display:flex;align-items:center;gap:12px;cursor:pointer">
             <input type="checkbox" data-field="${prefix}heizstab_vorrang" ${vorrang ? "checked" : ""}>
@@ -7065,9 +7076,12 @@ class EegOptimizerPanel extends HTMLElement {
       warnings += warnRow("mdi:heating-coil", "#ff9800",
         "Heizstab nicht erreichbar \u2014 der Ohmpilot antwortet nicht auf Modbus, es wird nicht geheizt.");
     }
-    if (a.heizstab_komfort) {
+    if (a.heizstab_komfort_netz) {
       warnings += warnRow("mdi:thermometer-alert", "var(--info-color, #2196f3)",
         "Heizstab unter der Mindesttemperatur \u2014 heizt mit voller Leistung, auch aus dem Netz; solange das dauert, wird nicht ins Netz entladen.");
+    } else if (a.heizstab_komfort) {
+      warnings += warnRow("mdi:thermometer-alert", "var(--info-color, #2196f3)",
+        "Heizstab unter der Mindesttemperatur \u2014 nimmt allen PV-\u00dcberschuss vor der Einspeisung, aber keinen Netz- oder Batteriestrom.");
     }
 
     const trenner = " " + String.fromCharCode(0x00B7) + " ";

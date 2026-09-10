@@ -1019,6 +1019,7 @@ from custom_components.eeg_energy_optimizer.const import (  # noqa: E402
     CONF_HEIZSTAB_ENABLED,
     CONF_HEIZSTAB_MAX_KW,
     CONF_HEIZSTAB_MINTEMP_C,
+    CONF_HEIZSTAB_NETZBEZUG,
     CONF_HEIZSTAB_VORRANG,
     CONF_HEIZSTAB_ZIELTEMP_C,
     HEIZSTAB_STEP_KW,
@@ -1041,13 +1042,14 @@ def _heizstab(config, power_w=0, temp=50.0):
     return HeizstabController(MagicMock(), config, treiber), treiber
 
 
-def _cfg_heizstab(vorrang=True, mintemp=0.0):
+def _cfg_heizstab(vorrang=True, mintemp=0.0, netzbezug=False):
     return {
         **CFG_LIMIT,
         CONF_HEIZSTAB_ENABLED: True,
         CONF_HEIZSTAB_MAX_KW: 6.0,
         CONF_HEIZSTAB_ZIELTEMP_C: 80.0,
         CONF_HEIZSTAB_MINTEMP_C: mintemp,
+        CONF_HEIZSTAB_NETZBEZUG: netzbezug,
         CONF_HEIZSTAB_VORRANG: vorrang,
     }
 
@@ -1177,10 +1179,11 @@ async def test_entladung_setzt_heizstab_null(mock_hass, mock_inverter):
     treiber.async_set_power.assert_awaited_with(0)
 
 
-async def test_mindesttemperatur_unterdrueckt_entladung(mock_hass, mock_inverter):
-    """Unter der Mindesttemperatur heizt der Heizstab voll — statt der geplanten
-    Entladung ins Netz gibt der Executor frei, sonst landete die Batterie im Boiler."""
-    cfg = _cfg_heizstab(mintemp=40.0)
+async def test_mindesttemperatur_mit_netzbezug_unterdrueckt_entladung(mock_hass, mock_inverter):
+    """Unter der Mindesttemperatur MIT erlaubtem Netzbezug heizt der Heizstab
+    voll — statt der geplanten Entladung ins Netz gibt der Executor frei, sonst
+    landete die Batterie im Boiler."""
+    cfg = _cfg_heizstab(mintemp=40.0, netzbezug=True)
     ex, hz, treiber = _make_executor_mit_heizstab(mock_hass, mock_inverter, cfg, temp=35.0)
     with _messwerte(export=-3.0, haus=0.5, pv=0.0):
         await ex.async_guard_cycle(_state(_slot(0, battery_p=3.0, grid_p=2.5, soc=60)), MODE_EIN, now=NOW)
@@ -1238,3 +1241,32 @@ async def test_ohne_heizstab_bleibt_alles_wie_bisher(mock_hass, mock_inverter):
     with _messwerte(export=4.0, haus=0.5, pv=8.0):
         await ex.async_guard_cycle(_state(_slot(0, battery_p=-2.0)), MODE_EIN, now=NOW)
     mock_inverter.async_set_charge_limit.assert_awaited_once_with(2.5)
+
+
+async def test_mindesttemperatur_ohne_netzbezug_laesst_die_entladung_laufen(mock_hass, mock_inverter):
+    """Vorgabe: kein Netzbezug. Unter der Mindesttemperatur bleibt die geplante
+    Entladung ins Netz bestehen, und der Heizstab steht auf 0 — er darf weder
+    Netz- noch Batteriestrom nehmen."""
+    cfg = _cfg_heizstab(mintemp=40.0)
+    ex, hz, treiber = _make_executor_mit_heizstab(mock_hass, mock_inverter, cfg, temp=35.0)
+    hz.sollwert_kw = 2.0  # lief vorher — muss jetzt auf 0 geschrieben werden
+    with _messwerte(export=2.5, haus=0.5, pv=0.0):
+        await ex.async_guard_cycle(_state(_slot(0, battery_p=3.0, grid_p=2.5, soc=60)), MODE_EIN, now=NOW)
+    mock_inverter.async_set_discharge.assert_awaited_once()
+    assert ex.last_action is not None and ex.last_action.kind == "discharge"
+    assert hz.sollwert_kw == 0.0
+    assert "Entladung" in hz.grund
+    treiber.async_set_power.assert_awaited_with(0)
+
+
+async def test_mindesttemperatur_ohne_netzbezug_nimmt_einspeisung_unter_der_grenze(mock_hass, mock_inverter):
+    """Tagsüber unter der Mindesttemperatur: Einspeisung 1,5 kW (unter der
+    4-kW-Grenze) → der Heizstab legt zu, obwohl die Grenze nicht erreicht ist."""
+    cfg = _cfg_heizstab(mintemp=40.0)
+    ex, hz, _ = _make_executor_mit_heizstab(mock_hass, mock_inverter, cfg, temp=35.0)
+    with _messwerte(export=1.5, haus=0.5, pv=3.0):
+        await ex.async_guard_cycle(_state(_slot(0, battery_p=-1.0)), MODE_EIN, now=NOW)
+    assert hz.sollwert_kw == pytest.approx(HEIZSTAB_STEP_KW)
+    assert "Vorrang vor der Einspeisung" in hz.grund
+    # Das Ladelimit der Batterie folgt weiter dem Plan.
+    mock_inverter.async_set_charge_limit.assert_awaited_once_with(1.0)

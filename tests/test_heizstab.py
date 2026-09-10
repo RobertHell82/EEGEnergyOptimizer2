@@ -15,9 +15,11 @@ from custom_components.eeg_energy_optimizer.const import (
     CONF_HEIZSTAB_HOST,
     CONF_HEIZSTAB_MAX_KW,
     CONF_HEIZSTAB_MINTEMP_C,
+    CONF_HEIZSTAB_NETZBEZUG,
     CONF_HEIZSTAB_VORRANG,
     CONF_HEIZSTAB_WAERMEWERT,
     CONF_HEIZSTAB_ZIELTEMP_C,
+    HEIZSTAB_KOMFORT_EXPORT_ZIEL_KW,
     HEIZSTAB_STEP_KW,
 )
 from custom_components.eeg_energy_optimizer.heizstab.controller import (
@@ -171,15 +173,20 @@ def test_zieltemperatur_sperrt_mit_hysterese():
     assert soll == pytest.approx(HEIZSTAB_STEP_KW)
 
 
-def test_mindesttemperatur_heizt_voll_und_schlaegt_entladung():
+def test_mindesttemperatur_mit_netzbezug_heizt_voll_und_schlaegt_entladung():
     t = _treiber(power_w=0, temp=38.0)
-    hz = HeizstabController(MagicMock(), _cfg(**{CONF_HEIZSTAB_MINTEMP_C: 40.0}), t)
+    hz = HeizstabController(
+        MagicMock(),
+        _cfg(**{CONF_HEIZSTAB_MINTEMP_C: 40.0, CONF_HEIZSTAB_NETZBEZUG: True}),
+        t,
+    )
     hz.pruefe_temperaturen()
     assert hz.komfort_aktiv is True
+    assert hz.komfort_aus_netz is True
     # Auch bei laufender Entladung und ohne Einspeisung: volle Leistung.
     soll, grund = hz.regeln(entladung=True, export_kw=-2.0, grenze_kw=4.0, vorrang_frei=False)
     assert soll == pytest.approx(6.0)
-    assert "Mindesttemperatur" in grund
+    assert "auch aus dem Netz" in grund
 
     # Ende erst 5 K über dem Minimum.
     t.last_temperature = 44.0
@@ -320,4 +327,71 @@ def test_ohne_treiber_rechnet_der_controller_trotzdem():
     assert hz.leistung_kw is None
     assert hz.temperatur_c is None
     soll, _ = hz.regeln(entladung=False, export_kw=4.0, grenze_kw=4.0, vorrang_frei=True)
+    assert soll == pytest.approx(HEIZSTAB_STEP_KW)
+
+
+# ---------------------------------------------------------------------------
+# Mindesttemperatur OHNE Netzbezug (Vorgabe): Vorrang vor der Einspeisung
+# ---------------------------------------------------------------------------
+
+
+def _komfort_ohne_netz(temp=38.0, export=None):
+    t = _treiber(power_w=0, temp=temp)
+    hz = HeizstabController(MagicMock(), _cfg(**{CONF_HEIZSTAB_MINTEMP_C: 40.0}), t)
+    hz.pruefe_temperaturen()
+    return hz
+
+
+def test_netzbezug_ist_standardmaessig_aus():
+    hz = _komfort_ohne_netz()
+    assert hz.netzbezug_erlaubt is False
+    assert hz.komfort_aktiv is True
+    assert hz.komfort_aus_netz is False
+
+
+def test_komfort_ohne_netz_nimmt_die_einspeisung_unter_der_grenze():
+    """Einspeisung 1,5 kW, Grenze 4 kW: normal bliebe der Heizstab aus —
+    unter der Mindesttemperatur regelt er auf Einspeisung ≈ 0 und legt zu."""
+    hz = _komfort_ohne_netz()
+    soll, grund = hz.regeln(entladung=False, export_kw=1.5, grenze_kw=4.0, vorrang_frei=False)
+    assert soll == pytest.approx(HEIZSTAB_STEP_KW)
+    assert "Vorrang vor der Einspeisung" in grund
+
+
+def test_komfort_ohne_netz_nie_aus_dem_netz():
+    """Netzbezug 0,6 kW → Sollwert um die Lücke zurück, bis er 0 erreicht."""
+    hz = _komfort_ohne_netz()
+    hz.sollwert_kw = 3.0
+    soll, _ = hz.regeln(entladung=False, export_kw=-0.6, grenze_kw=4.0, vorrang_frei=False)
+    assert soll == pytest.approx(3.0 - (HEIZSTAB_KOMFORT_EXPORT_ZIEL_KW + 0.6))
+    hz.sollwert_kw = 0.5
+    soll, grund = hz.regeln(entladung=False, export_kw=-0.6, grenze_kw=4.0, vorrang_frei=False)
+    assert soll == 0.0
+    assert "Netzbezug" in grund
+
+
+def test_komfort_ohne_netz_haelt_in_der_nullnaehe():
+    """Einspeisung 0,1 kW: totes Band — kein Nachfassen, kein Netzbezug."""
+    hz = _komfort_ohne_netz()
+    hz.sollwert_kw = 2.0
+    soll, _ = hz.regeln(entladung=False, export_kw=0.1, grenze_kw=4.0, vorrang_frei=False)
+    assert soll == pytest.approx(2.0)
+
+
+def test_komfort_ohne_netz_nie_aus_der_batterie():
+    """Bei einer Entladung ins Netz bleibt der Heizstab aus — auch unter der
+    Mindesttemperatur, denn jede Kilowattstunde käme aus der Batterie."""
+    hz = _komfort_ohne_netz()
+    hz.sollwert_kw = 2.0
+    soll, grund = hz.regeln(entladung=True, export_kw=3.0, grenze_kw=4.0, vorrang_frei=False)
+    assert soll == 0.0
+    assert "Entladung" in grund
+
+
+def test_komfort_ohne_netz_ignoriert_batterie_vorrang():
+    """Der Vorrang-Schalter regelt den Überschuss ÜBER der Grenze; unter der
+    Mindesttemperatur hat der Heizstab Vorrang vor der Einspeisung, egal wie
+    der Schalter steht."""
+    hz = _komfort_ohne_netz()
+    soll, _ = hz.regeln(entladung=False, export_kw=2.0, grenze_kw=4.0, vorrang_frei=False)
     assert soll == pytest.approx(HEIZSTAB_STEP_KW)

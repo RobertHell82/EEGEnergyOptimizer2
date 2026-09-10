@@ -9,9 +9,12 @@ zöge ein fest geschriebener Sollwert Netzstrom.
 Die Regel je Guard-Lauf (30 s), siehe ``naechster_sollwert``:
 
 * Nicht erlaubt (Optimierung aus, Startphase, Entladung, kein Messwert) → 0.
-* Unter der Mindesttemperatur → volle Leistung, auch aus dem Netz. Komfort
-  geht vor Optimierung; der Executor unterdrückt derweil jede erzwungene
-  Entladung, sonst landete die Batterie im Boiler.
+* Unter der Mindesttemperatur → Vorrang vor der Einspeisung: der Heizstab
+  nimmt allen PV-Überschuss, auch den unterhalb der Einspeisegrenze (Regel
+  auf „Einspeisung ≈ 0"), aber weder Netz- noch Batteriestrom. Nur wenn
+  „auch aus dem Netz heizen" erlaubt ist, läuft er mit voller Leistung —
+  dann unterdrückt der Executor derweil jede erzwungene Entladung, sonst
+  landete die Batterie im Boiler.
 * Zieltemperatur erreicht → 0, frei erst wieder 3 K darunter.
 * Einspeisung klebt an der Grenze → ein Schritt (0,5 kW) hinauf. Die wahre
   Höhe des Überschusses ist dann unsichtbar, der Wechselrichter regelt schon
@@ -44,6 +47,7 @@ from ..const import (
     CONF_HEIZSTAB_HOST,
     CONF_HEIZSTAB_MAX_KW,
     CONF_HEIZSTAB_MINTEMP_C,
+    CONF_HEIZSTAB_NETZBEZUG,
     CONF_HEIZSTAB_PORT,
     CONF_HEIZSTAB_VORRANG,
     CONF_HEIZSTAB_WAERMEWERT,
@@ -51,12 +55,14 @@ from ..const import (
     DEFAULT_HEIZSTAB_ENABLED,
     DEFAULT_HEIZSTAB_MAX_KW,
     DEFAULT_HEIZSTAB_MINTEMP_C,
+    DEFAULT_HEIZSTAB_NETZBEZUG,
     DEFAULT_HEIZSTAB_PORT,
     DEFAULT_HEIZSTAB_VORRANG,
     DEFAULT_HEIZSTAB_WAERMEWERT,
     DEFAULT_HEIZSTAB_ZIELTEMP_C,
     GUARD_EXPORT_RELEASE_KW,
     GUARD_EXPORT_STICKY_BAND_KW,
+    HEIZSTAB_KOMFORT_EXPORT_ZIEL_KW,
     HEIZSTAB_MINTEMP_HYSTERESE_K,
     HEIZSTAB_SATT_TOLERANZ_KW,
     HEIZSTAB_STEP_KW,
@@ -194,6 +200,11 @@ class HeizstabController:
             return 0.0
 
     @property
+    def netzbezug_erlaubt(self) -> bool:
+        """Unter der Mindesttemperatur auch aus dem Netz heizen? Opt-in."""
+        return bool(self._config.get(CONF_HEIZSTAB_NETZBEZUG, DEFAULT_HEIZSTAB_NETZBEZUG))
+
+    @property
     def vorrang_heizstab(self) -> bool:
         """True = Überschuss zuerst in den Heizstab, dann in die Batterie."""
         wert = self._config.get(CONF_HEIZSTAB_VORRANG, DEFAULT_HEIZSTAB_VORRANG)
@@ -273,8 +284,14 @@ class HeizstabController:
 
     @property
     def komfort_aktiv(self) -> bool:
-        """Unter der Mindesttemperatur: heizen, egal woher der Strom kommt."""
+        """Unter der Mindesttemperatur (mit Hysterese)."""
         return self.enabled and self._komfort_aktiv
+
+    @property
+    def komfort_aus_netz(self) -> bool:
+        """Unter der Mindesttemperatur UND Netzbezug erlaubt: volle Leistung,
+        egal woher der Strom kommt — der Executor unterdrückt dann Entladungen."""
+        return self.komfort_aktiv and self.netzbezug_erlaubt
 
     @property
     def ziel_erreicht(self) -> bool:
@@ -307,21 +324,38 @@ class HeizstabController:
     ) -> tuple[float, str]:
         """Nächsten Sollwert bestimmen (ohne zu schreiben).
 
-        Reihenfolge: Komfort schlägt alles (der Executor unterdrückt dann die
-        Entladung), dann die Entladung ins Netz (kein Überschuss, alles was
-        der Heizstab zöge, käme aus der Batterie), dann die Zieltemperatur,
-        dann die Überschuss-Regel. Modus Aus und Startphase entscheidet der
-        Executor selbst — dort ist der Sollwert 0, ohne diese Funktion.
+        Reihenfolge: Komfort mit erlaubtem Netzbezug schlägt alles (der
+        Executor unterdrückt dann die Entladung); dann die Entladung ins Netz
+        (kein Überschuss — alles, was der Heizstab zöge, käme aus der
+        Batterie); dann Komfort ohne Netzbezug (Vorrang vor der Einspeisung,
+        Regel auf Einspeisung ≈ 0); dann die Zieltemperatur; dann die
+        Überschuss-Regel an der Einspeisegrenze. Modus Aus und Startphase
+        entscheidet der Executor selbst — dort ist der Sollwert 0, ohne diese
+        Funktion.
         """
         if not self.enabled:
             return 0.0, "Heizstab deaktiviert"
-        if self.komfort_aktiv:
+        temp_text = (
+            f"({self.temperatur_c:.0f} °C < {self.mintemp_c:.0f} °C)"
+            if self.temperatur_c is not None else ""
+        )
+        if self.komfort_aus_netz:
             return self.max_kw, (
-                f"Mindesttemperatur unterschritten ({self.temperatur_c:.0f} °C < "
-                f"{self.mintemp_c:.0f} °C) — Heizstab auf volle Leistung"
+                f"Mindesttemperatur unterschritten {temp_text} — Heizstab auf "
+                "volle Leistung, auch aus dem Netz"
             )
         if entladung:
             return 0.0, "Entladung ins Netz — kein Überschuss für den Heizstab"
+        if self.komfort_aktiv:
+            # Komfort ohne Netzbezug: die ganze Einspeisung nehmen, aber
+            # keinen Netzstrom — geregelt wird auf Einspeisung ≈ 0 statt auf
+            # die Einspeisegrenze. Die Zieltemperatur ist hier ohne Belang,
+            # sie liegt über der Mindesttemperatur.
+            soll, grund = naechster_sollwert(
+                self.sollwert_kw, export_kw, HEIZSTAB_KOMFORT_EXPORT_ZIEL_KW,
+                self.max_kw, True,
+            )
+            return soll, f"Mindesttemperatur unterschritten {temp_text} — Vorrang vor der Einspeisung: {grund}"
         if self._ziel_gesperrt:
             return 0.0, f"Zieltemperatur erreicht ({self.zieltemp_c:.0f} °C)"
         return naechster_sollwert(
@@ -426,8 +460,10 @@ class HeizstabController:
             "zieltemp_c": self.zieltemp_c,
             "mintemp_c": self.mintemp_c,
             "vorrang_heizstab": self.vorrang_heizstab,
+            "netzbezug_erlaubt": self.netzbezug_erlaubt,
             "waermewert": self.waermewert,
             "komfort_aktiv": self.komfort_aktiv,
+            "komfort_aus_netz": self.komfort_aus_netz,
             "ziel_erreicht": self.ziel_erreicht,
             "gesaettigt": self.gesaettigt,
             "grund": self.grund,

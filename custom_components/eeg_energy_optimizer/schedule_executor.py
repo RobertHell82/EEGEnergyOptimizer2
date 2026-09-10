@@ -383,13 +383,15 @@ class ScheduleExecutor:
             action is not None
             and action.kind == "discharge"
             and self._heizstab is not None
-            and self._heizstab.komfort_aktiv
+            and self._heizstab.komfort_aus_netz
         ):
-            # Unter der Mindesttemperatur heizt der Heizstab mit voller
-            # Leistung — eine erzwungene Entladung landete jetzt im Boiler
-            # statt in der Gemeinschaft. Also Freigabe: der Automatikmodus
-            # deckt Haus und Heizstab aus PV und Batterie, den Rest holt
-            # sich der Heizstab aus dem Netz. Das ist der Preis des Komforts.
+            # Unter der Mindesttemperatur MIT erlaubtem Netzbezug heizt der
+            # Heizstab mit voller Leistung — eine erzwungene Entladung landete
+            # jetzt im Boiler statt in der Gemeinschaft. Also Freigabe: der
+            # Automatikmodus deckt Haus und Heizstab aus PV und Batterie, den
+            # Rest holt sich der Heizstab aus dem Netz. Das ist der Preis des
+            # Komforts. Ohne erlaubten Netzbezug bleibt die Entladung — der
+            # Heizstab steht dann auf 0 (siehe HeizstabController.regeln).
             action = PlanAction(
                 "release",
                 slot_t=action.slot_t,

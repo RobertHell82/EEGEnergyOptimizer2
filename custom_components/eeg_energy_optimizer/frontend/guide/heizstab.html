@@ -42,6 +42,7 @@
 <ul>
 <li><strong>Einspeisung wegheizen.</strong> Solange die Einspeisung unter der Grenze liegt, bleibt er aus — die Energie gehört der Gemeinschaft.</li>
 <li><strong>Aus der Batterie heizen.</strong> Entlädt die Optimierung gerade ins Netz, steht der Heizstab auf 0. Eine Einspeisung aus der Batterie ist kein Überschuss.</li>
+<li><strong>Aus dem Netz heizen</strong> — außer du erlaubst es ausdrücklich unter der Mindesttemperatur (siehe unten). Ohne diese Erlaubnis zieht der Heizstab nie Netzstrom.</li>
 <li><strong>Weiterlaufen, wenn niemand steuert.</strong> Der Ohmpilot schaltet nach 50 Sekunden ohne neuen Sollwert selbst ab. Bricht die Verbindung ab oder ist die Optimierung aus, ist auch der Heizstab aus.</li>
 </ul>
 <p>Die geplante Heizstab-Leistung steht auch im <strong>Optimierungsplan</strong> (rote gestrichelte Linie): Der Plan weiß je Viertelstunde, was er abregeln müsste — genau das würde der Heizstab nehmen. Gesteuert wird trotzdem nach der Messung, nicht nach der Prognose.</p>
@@ -84,7 +85,11 @@
 </tr>
 <tr>
 <td><strong>Mindesttemperatur (°C)</strong></td>
-<td>Darunter heizt der Heizstab mit voller Leistung, auch aus dem Netz, bis 5 K darüber. Solange das dauert, wird nicht ins Netz entladen. 0 = aus</td>
+<td>Darunter hat der Heizstab Vorrang vor der Einspeisung: Er nimmt allen PV-Überschuss, auch den unterhalb der Einspeisegrenze, bis 5 K darüber — aber weder Netz- noch Batteriestrom. 0 = aus</td>
+</tr>
+<tr>
+<td><strong>Unter der Mindesttemperatur auch aus dem Netz heizen</strong></td>
+<td>Nur sichtbar mit Mindesttemperatur. Eingeschaltet heizt der Heizstab darunter mit voller Leistung, egal woher der Strom kommt, und die Optimierung entlädt derweil nicht ins Netz. Ausgeschaltet (Vorgabe) wird nie Netzstrom verheizt — ohne Sonne bleibt das Wasser dann kalt</td>
 </tr>
 <tr>
 <td><strong>Überschuss zuerst in den Heizstab</strong></td>

@@ -30,6 +30,7 @@ Was der Heizstab **nie** tut:
 
 - **Einspeisung wegheizen.** Solange die Einspeisung unter der Grenze liegt, bleibt er aus — die Energie gehört der Gemeinschaft.
 - **Aus der Batterie heizen.** Entlädt die Optimierung gerade ins Netz, steht der Heizstab auf 0. Eine Einspeisung aus der Batterie ist kein Überschuss.
+- **Aus dem Netz heizen** — außer du erlaubst es ausdrücklich unter der Mindesttemperatur (siehe unten). Ohne diese Erlaubnis zieht der Heizstab nie Netzstrom.
 - **Weiterlaufen, wenn niemand steuert.** Der Ohmpilot schaltet nach 50 Sekunden ohne neuen Sollwert selbst ab. Bricht die Verbindung ab oder ist die Optimierung aus, ist auch der Heizstab aus.
 
 Die geplante Heizstab-Leistung steht auch im **Optimierungsplan** (rote gestrichelte Linie): Der Plan weiß je Viertelstunde, was er abregeln müsste — genau das würde der Heizstab nehmen. Gesteuert wird trotzdem nach der Messung, nicht nach der Prognose.
@@ -54,7 +55,8 @@ Alle Felder stehen in den **Einstellungen → Anlage → Heizstab**.
 | **Modbus-Port** | Standard 502 |
 | **Leistung des Heizstabs (kW)** | Nennleistung des angeschlossenen Heizstabs — 3 kW einphasig, 6 oder 9 kW dreiphasig |
 | **Zieltemperatur (°C)** | Ab dieser Temperatur wird nicht mehr geheizt; weiter geht es 3 K darunter |
-| **Mindesttemperatur (°C)** | Darunter heizt der Heizstab mit voller Leistung, auch aus dem Netz, bis 5 K darüber. Solange das dauert, wird nicht ins Netz entladen. 0 = aus |
+| **Mindesttemperatur (°C)** | Darunter hat der Heizstab Vorrang vor der Einspeisung: Er nimmt allen PV-Überschuss, auch den unterhalb der Einspeisegrenze, bis 5 K darüber — aber weder Netz- noch Batteriestrom. 0 = aus |
+| **Unter der Mindesttemperatur auch aus dem Netz heizen** | Nur sichtbar mit Mindesttemperatur. Eingeschaltet heizt der Heizstab darunter mit voller Leistung, egal woher der Strom kommt, und die Optimierung entlädt derweil nicht ins Netz. Ausgeschaltet (Vorgabe) wird nie Netzstrom verheizt — ohne Sonne bleibt das Wasser dann kalt |
 | **Überschuss zuerst in den Heizstab** | Reihenfolge bei ungeplantem Überschuss, siehe oben |
 | **Wärmewert (ct/kWh)** | Was eine Kilowattstunde Wärme ersetzt. Fließt in „Ersparnis durch PV" und in den Optimierungsgewinn ein. 0 = Wärme wird gezählt, aber nicht bewertet |
 

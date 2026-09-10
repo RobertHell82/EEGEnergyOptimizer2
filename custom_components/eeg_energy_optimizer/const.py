@@ -247,9 +247,15 @@ CONF_HEIZSTAB_PORT = "heizstab_port"
 CONF_HEIZSTAB_MAX_KW = "heizstab_max_kw"
 # Zieltemperatur: ab hier wird nicht mehr geheizt (Hysterese darunter).
 CONF_HEIZSTAB_ZIELTEMP_C = "heizstab_zieltemp_c"
-# Mindesttemperatur: darunter heizt der Heizstab mit voller Leistung, auch
-# aus dem Netz — Komfort geht vor Optimierung. 0 = keine Mindesttemperatur.
+# Mindesttemperatur: darunter hat der Heizstab Vorrang vor der Einspeisung —
+# er nimmt allen PV-Überschuss, auch den unterhalb der Einspeisegrenze, aber
+# weder Netz- noch Batteriestrom. 0 = keine Mindesttemperatur.
 CONF_HEIZSTAB_MINTEMP_C = "heizstab_mintemp_c"
+# Unter der Mindesttemperatur auch aus dem Netz heizen (volle Leistung, eine
+# geplante Entladung ins Netz wird derweil unterdrückt). Opt-in — wer keinen
+# Netzstrom verheizen will, lässt es aus; die Mindesttemperatur wirkt dann
+# nur als Vorrang vor der Einspeisung.
+CONF_HEIZSTAB_NETZBEZUG = "heizstab_netzbezug"
 # Vorrang bei ungeplantem Überschuss (Einspeisung klebt an der Grenze):
 # True = zuerst der Heizstab, das Ladelimit der Batterie wird erst angehoben,
 # wenn er gesättigt ist; False = zuerst die Batterie (Guard 1 wie bisher),
@@ -263,6 +269,7 @@ DEFAULT_HEIZSTAB_PORT = 502
 DEFAULT_HEIZSTAB_MAX_KW = 6.0
 DEFAULT_HEIZSTAB_ZIELTEMP_C = 80.0
 DEFAULT_HEIZSTAB_MINTEMP_C = 0.0
+DEFAULT_HEIZSTAB_NETZBEZUG = False
 DEFAULT_HEIZSTAB_VORRANG = True
 DEFAULT_HEIZSTAB_WAERMEWERT = 0.0
 
@@ -280,6 +287,10 @@ HEIZSTAB_TIMESYNC_INTERVAL_H = 6
 HEIZSTAB_TEMP_HYSTERESE_K = 3.0
 # Mindesttemperatur: Komfortheizen ab unter Minimum, Ende bei Minimum + Hysterese.
 HEIZSTAB_MINTEMP_HYSTERESE_K = 5.0
+# Komfort ohne Netzbezug: der Heizstab regelt auf „Einspeisung ≈ 0" — mit
+# dieser Marke als Grenze bleibt zwischen 0 und 0,2 kW Einspeisung ein totes
+# Band, und ein dauerhafter kleiner Netzbezug ist ausgeschlossen.
+HEIZSTAB_KOMFORT_EXPORT_ZIEL_KW = 0.3
 # Ab diesem Abstand zum Maximum gilt der Heizstab als gesättigt.
 HEIZSTAB_SATT_TOLERANZ_KW = 0.05
 
@@ -367,6 +378,7 @@ TELEMETRY_SETTINGS_KEYS = (
     "heizstab_max_kw",
     "heizstab_zieltemp_c",
     "heizstab_mintemp_c",
+    "heizstab_netzbezug",
     "heizstab_vorrang",
     "heizstab_waermewert",
 )
