@@ -671,13 +671,18 @@ async def ws_save_config(
     # Heizstab (Ohmpilot per Modbus TCP): bei eingeschaltetem Heizstab muss
     # der Endpunkt stimmen — dieselbe Prüfung wie bei den Modbus-Treibern.
     if new_data.get(CONF_HEIZSTAB_ENABLED):
-        host = new_data.get(CONF_HEIZSTAB_HOST, "")
-        if not isinstance(host, str) or not host.strip() or len(host) > 255:
+        # Aus einer versehentlich eingetragenen URL die reine Adresse machen:
+        # der Ohmpilot hat ein Webinterface, dessen URL liegt nahe — pymodbus
+        # kann damit aber nichts anfangen (siehe normalisiere_host).
+        from .heizstab.controller import normalisiere_host
+
+        host = normalisiere_host(new_data.get(CONF_HEIZSTAB_HOST))
+        if not host or len(host) > 255:
             connection.send_error(
                 msg["id"], "invalid_config", "Ungültiger Heizstab-Host (Ohmpilot)"
             )
             return
-        new_data[CONF_HEIZSTAB_HOST] = host.strip()
+        new_data[CONF_HEIZSTAB_HOST] = host
         try:
             port = int(new_data.get(CONF_HEIZSTAB_PORT) or DEFAULT_HEIZSTAB_PORT)
         except (TypeError, ValueError):

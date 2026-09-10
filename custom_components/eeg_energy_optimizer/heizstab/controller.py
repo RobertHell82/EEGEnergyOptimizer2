@@ -78,6 +78,38 @@ _LOGGER = logging.getLogger(__name__)
 _SOFORT_SCHREIBEN_AB_KW = 0.05
 
 
+def normalisiere_host(roh: Any) -> str:
+    """Aus einer Eingabe die reine Modbus-Adresse machen.
+
+    Der Ohmpilot hat ein Webinterface, also trägt man naheliegend dessen URL
+    ein („http://192.168.100.58/"). pymodbus braucht aber Host oder IP allein
+    — mit der URL scheitert jeder Verbindungsversuch, und die Meldung
+    („Verbindung fehlgeschlagen http://192.168.100.58/:502") liest sich wie
+    ein Netzwerkproblem. Deshalb wird hier geschält statt abgelehnt:
+    Schema, Pfad, Port-Anhang und Leerzeichen fallen weg.
+    """
+    text = str(roh or "").strip()
+    if not text:
+        return ""
+    if "//" in text:
+        text = text.split("//", 1)[1]
+    text = text.split("/", 1)[0].strip()
+    if "@" in text:  # user:pass@host
+        text = text.rsplit("@", 1)[1]
+    # Port abtrennen — aber nicht in einer IPv6-Adresse (die trägt Doppelpunkte
+    # und steht dann in eckigen Klammern).
+    if text.startswith("["):
+        text = text.split("]", 1)[0].lstrip("[")
+    elif text.count(":") == 1:
+        text = text.split(":", 1)[0]
+    return text
+
+
+def heizstab_host(config: dict) -> str:
+    """Konfigurierte Adresse des Ohmpilot, normalisiert."""
+    return normalisiere_host(config.get(CONF_HEIZSTAB_HOST))
+
+
 def heizstab_enabled(config: dict) -> bool:
     return bool(config.get(CONF_HEIZSTAB_ENABLED, DEFAULT_HEIZSTAB_ENABLED))
 
@@ -473,7 +505,7 @@ class HeizstabController:
         return {
             "enabled": self.enabled,
             "verfuegbar": self.verfuegbar,
-            "host": self._config.get(CONF_HEIZSTAB_HOST),
+            "host": heizstab_host(self._config),
             "port": self._config.get(CONF_HEIZSTAB_PORT, DEFAULT_HEIZSTAB_PORT),
             "sollwert_kw": round(self.sollwert_kw, 3),
             "leistung_kw": None if self.leistung_kw is None else round(self.leistung_kw, 3),
@@ -505,7 +537,7 @@ def create_heizstab(hass: Any, config: dict) -> HeizstabController | None:
     """
     if not heizstab_enabled(config):
         return None
-    host = str(config.get(CONF_HEIZSTAB_HOST) or "").strip()
+    host = heizstab_host(config)
     if not host:
         _LOGGER.warning("Heizstab aktiviert, aber kein Host konfiguriert — es wird nicht gesteuert")
         return HeizstabController(hass, config, None)

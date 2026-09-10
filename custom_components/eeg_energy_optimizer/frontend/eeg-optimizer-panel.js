@@ -6329,7 +6329,7 @@ class EegOptimizerPanel extends HTMLElement {
         <div class="field-group">
           <label>Adresse des Ohmpilot (IP oder Hostname) *</label>
           <input type="text" data-field="${prefix}heizstab_host" value="${this._escapeHtml(d.heizstab_host || "")}" placeholder="z.B. 192.168.1.58">
-          <div class="help-text">Der Ohmpilot hat einen eigenen Modbus-TCP-Server. Die Kopplung zum Gen24 im Wechselrichter lösen — sonst schreiben zwei Steuerungen auf dasselbe Register, und der Gen24 regelt die Einspeisung auf null.
+          <div class="help-text">Nur die Adresse, keine URL — also <code>192.168.1.58</code> statt <code>http://192.168.1.58/</code> (eine URL wird beim Speichern automatisch gekürzt). Der Ohmpilot hat einen eigenen Modbus-TCP-Server. Die Kopplung zum Gen24 im Wechselrichter lösen — sonst schreiben zwei Steuerungen auf dasselbe Register, und der Gen24 regelt die Einspeisung auf null.
             <button class="btn-link btn-tap" data-action="show-dialog" data-dialog="heizstab">Anleitung: Heizstab</button>
           </div>
         </div>

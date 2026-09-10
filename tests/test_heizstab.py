@@ -418,3 +418,32 @@ def test_ohne_schwelle_oder_fuehler_keine_zusatzwaerme():
     hz = HeizstabController(MagicMock(), _cfg(**{CONF_HEIZSTAB_ALT_TEMP_C: 55.0}), _treiber(temp=None))
     assert hz.zusatzwaerme is False
     assert hz.status()["alt_temp_c"] == 55.0
+
+
+# ---------------------------------------------------------------------------
+# Host-Normalisierung: eine URL im Feld darf die Verbindung nicht verhindern
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("roh,erwartet", [
+    ("192.168.100.58", "192.168.100.58"),
+    ("  192.168.100.58  ", "192.168.100.58"),
+    ("http://192.168.100.58/", "192.168.100.58"),
+    ("https://ohmpilot.local", "ohmpilot.local"),
+    ("http://192.168.100.58:80/status", "192.168.100.58"),
+    ("192.168.100.58:502", "192.168.100.58"),
+    ("ohmpilot.fritz.box/", "ohmpilot.fritz.box"),
+    ("http://user:pw@192.168.100.58/", "192.168.100.58"),
+    ("[fd00::1]", "fd00::1"),
+    ("", ""),
+    (None, ""),
+])
+def test_host_wird_auf_die_reine_adresse_gekuerzt(roh, erwartet):
+    from custom_components.eeg_energy_optimizer.heizstab.controller import normalisiere_host
+    assert normalisiere_host(roh) == erwartet
+
+
+def test_create_heizstab_nimmt_auch_eine_url():
+    hz = create_heizstab(MagicMock(), _cfg(**{CONF_HEIZSTAB_HOST: "http://192.168.100.58/"}))
+    assert hz is not None
+    assert hz.status()["host"] == "192.168.100.58"
