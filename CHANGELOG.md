@@ -10,6 +10,21 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
+## [2.1.1-dev7] - 2026-09-11
+
+### Behoben
+
+- **Der Heizstab führt den Optimierungsplan jetzt aus.** Seit 2.1.1-dev2 rechnet das Modell die Wärme mit ihrem Wärmewert und plant deshalb Heizen statt Einspeisen, sobald die Wärme mehr bringt — die Steuerung hat davon aber nie erfahren. Sie regelte weiter allein gegen die Einspeisegrenze: Nur was der Wechselrichter ohnehin abgeregelt hätte, ging in den Puffer. An einer Anlage mit 18,5 ct Wärmewert und 8,2 ct Einspeisung plante der Fahrplan 11,4 kWh Wärme für den nächsten Tag, während der Heizstab nachmittags bei voller Batterie und 2 kW Einspeisung ausblieb. Jetzt ist die geplante Leistung die Vorgabe: Geregelt wird auf „Einspeisung ≈ 0", gedeckelt auf den Planwert. Die Prognose sagt, wie viel erlaubt ist, die Messung, wie viel da ist — liefert die PV weniger als vorhergesagt, fällt der Sollwert von selbst zurück, statt Netzstrom zu verheizen. Ein veralteter Plan zählt nicht (dieselbe Frischeprüfung wie beim Wechselrichter), und ohne geplante Wärme greift weiter die Regel an der Einspeisegrenze für Überschuss, den keine Prognose kannte.
+
+### Geändert
+
+- **Der Optimierungsgewinn zählt nur noch die nächsten 24 Stunden.** Gerechnet und gezeichnet wird weiterhin der ganze Horizont — der Plan braucht die zweite Nacht, um heute richtig zu entscheiden. Der ausgewiesene Betrag stand aber für 48 Stunden, und je weiter hinten ein Slot liegt, desto mehr ist sein Geldwert Prognose statt Plan. Der Vergleichsbetrieb für die Bewertung wird eigens gerechnet und auf den Plan-Ladestand am 24-Stunden-Schnitt festgelegt: Nur mit gleichem Endstand kürzt sich der Randeffekt heraus, den das Festlegen des Endstands gerade beseitigen soll.
+- **Wärme im Puffer zählt immer zum Wärmewert.** Die „Temperatur der anderen Heizquelle" ist entfallen und mit ihr die Trennung in Ersatz- und Zusatzwärme. Sie hat sich gegen den Plan gestellt: Das Optimierungsmodell bewertete geplante Wärme mit dem vollen Wärmewert und heizte deshalb, während dieselbe Kilowattstunde in der Geld-Anzeige mit null Euro verbucht wurde, sobald der Puffer über der Schwelle lag. Jetzt gilt eine Regel für beide Seiten. Die Obergrenze ist allein die Maximaltemperatur. Der alte Konfigurationsschlüssel bleibt liegen und wird nur nicht mehr gelesen.
+
+### Entfernt
+
+- **Die Zeile „davon durch die Optimierung" in der Karte „Was deine PV bringt".** Die Karte zeigt jetzt nur noch gemessene Beträge; der Optimierungsvorteil war dort eine Rechnung gegen einen simulierten Betrieb und las sich neben drei gemessenen Zahlen wie eine vierte. Vorausgeschaut wird weiterhin in der Karte „Optimierungsgewinn", und die Sensoren „Ersparnis durch Optimierung" gibt es unverändert.
+
 ## [2.1.1-dev5] - 2026-09-11
 
 ### Entfernt
