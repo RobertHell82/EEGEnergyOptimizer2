@@ -10,6 +10,12 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
+## [2.1.1-dev8] - 2026-09-11
+
+### Hinzugefügt
+
+- **Zweiter Bezugspreis für die Nacht, mit eigenem Zeitfenster.** Bisher rechnete der Fahrplan rund um die Uhr mit einem einzigen Bezugspreis. Wer nachts weniger zahlt — durch einen Doppeltarif beim Netzentgelt (in Österreich DTAP/DNAP, 06–22 und 22–06 Uhr laut Systemnutzungsentgelte-Verordnung) oder einen Energievertrag mit Nachtsatz —, trägt den zweiten Preis jetzt ein; das Fenster ist frei einstellbar und unabhängig vom Nachtfenster der Einspeisung, weil Netz- und Energievertrag selten dieselben Stunden teilen. Der Preis wirkt überall gleich: Das Optimierungsmodell bekommt ihn als Zeitreihe statt als einzelnen Wert, die Gewinnrechnung bewertet jeden Slot mit dem Preis seiner Stunde, und die Tagesbilanz friert ihn zum Zeitpunkt der Messung ein. Ein leeres Feld heißt weiterhin „ein Preis rund um die Uhr" — ausdrücklich auch eine eingetragene Null, denn sonst lüde das Modell die Batterie jede Nacht gratis aus dem Netz.
+
 ## [2.1.1-dev7] - 2026-09-11
 
 ### Behoben
