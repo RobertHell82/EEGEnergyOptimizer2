@@ -10,6 +10,13 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
+## [2.1.1-dev12] - 2026-09-11
+
+### Hinzugefügt
+
+- **SMA Smart Energy / Sunny Boy Storage wird jetzt vom Fahrplan gesteuert (Beta).** Wie Kostal zwei Versionen zuvor: Der Treiber konnte längst schreiben (Ladeblockierung, Netz-Sollwert und Stopp sind am Gerät verifiziert), es fehlte die Schnittstelle zum Fahrplan-Executor. Das wirksame Ladelimit kommt aus dem zuletzt geschriebenen CmpBMS-Block — bewusst nicht aus dem Register, denn ohne aktiven Block läuft das interne Management, und was dann in 40795 steht, sagt nichts über eine Begrenzung aus. Die Steuerwerte-Ansicht zeigt Betriebsart, beide Leistungsgrenzen und den Netz-Sollwert mit Richtung. Damit stehen Fronius, Huawei, Kostal, Sigenergy, SMA und SolaX gleichrangig nebeneinander; nur SolarEdge bleibt im Anzeigemodus.
+- **Die Steuerung unterscheidet jetzt Batterie- und Netz-Sollwert.** Fronius, Huawei und Kostal bekommen gesagt, mit wie viel die Batterie entladen soll — davon deckt das Gerät zuerst das Haus. Der SMA bekommt gesagt, wie viel ins Netz gehen soll, und legt die Hauslast selbst obendrauf. Hätte die Entlade-Nachführung ihm wie bisher „Plan + Hauslast" geschickt, wäre die Hauslast doppelt gezählt worden. Ein neues Treiber-Merkmal (`discharge_is_grid_setpoint`) sagt dem Executor, welche Art er vor sich hat; beim Netz-Sollwert gibt er die geplante Einspeisung vor und senkt sie um das Fehlende, wenn die Batterie für Haus plus Einspeisung nicht reicht. Ob überhaupt entladen werden muss, entscheidet in beiden Fällen der Bedarf der Batterie — deckt die PV den Plan, wird auch kein Netz-Sollwert erzwungen, der den Anschlusspunkt auf genau diesen Export zwänge.
+
 ## [2.1.1-dev11] - 2026-09-11
 
 ### Behoben
