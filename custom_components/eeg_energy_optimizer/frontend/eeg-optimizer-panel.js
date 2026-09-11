@@ -109,7 +109,7 @@ const INVERTER_LABELS = {
 
 // Vom Fahrplan gesteuerte Wechselrichter — alle anderen rechnen und zeigen
 // an ("nur Anzeige").
-const SCHEDULE_CONTROL_INVERTERS = ["fronius_gen24", "huawei_sun2000", "kostal_plenticore", "sigenergy_sigenstor", "solax_gen4"];
+const SCHEDULE_CONTROL_INVERTERS = ["fronius_gen24", "huawei_sun2000", "kostal_plenticore", "sigenergy_sigenstor", "sma_smart_energy", "solax_gen4"];
 
 // Summe der Aufteilungsschluessel — es zaehlt nur, was auch eine gewaehlte
 // Gemeinschaft hat. Der Prozentsatz bleibt im Formular stehen, wenn der
@@ -5086,13 +5086,13 @@ class EegOptimizerPanel extends HTMLElement {
         logo: `<span style="font-size:32px">SolaX</span>` },
       { key: "sigenergy_sigenstor", label: "Sigenergy SigenStor", subtitle: "SigenStor mit Batteriespeicher · Feldtest", detected: sigenOk, badge: sigenBadge, dialog: "sigenergy",
         logo: `<img src="https://brands.home-assistant.io/_/sigen/logo.png" alt="Sigenergy" style="max-width:120px;max-height:60px;height:auto" onerror="this.outerHTML='<span style=font-size:26px>Sigenergy</span>'">` },
-      { key: "solaredge_storedge", label: "SolarEdge", subtitle: "StorEdge Batteriespeicher · nur Anzeige — Steuerung derzeit nur Fronius, Huawei, Kostal, Sigenergy und SolaX", detected: solaredgeOk, badge: solaredgeBadge, dialog: "solaredge",
+      { key: "solaredge_storedge", label: "SolarEdge", subtitle: "StorEdge Batteriespeicher · nur Anzeige — Steuerung derzeit nur Fronius, Huawei, Kostal, Sigenergy, SMA und SolaX", detected: solaredgeOk, badge: solaredgeBadge, dialog: "solaredge",
         logo: `<img src="https://brands.home-assistant.io/_/solaredge/logo.png" alt="SolarEdge" style="max-width:120px;max-height:60px;height:auto" onerror="this.outerHTML='<span style=font-size:32px>SolarEdge</span>'">` },
       { key: "fronius_gen24", label: "Fronius Gen24", subtitle: "mit BYD Batteriespeicher", detected: froniusOk, badge: froniusBadge, dialog: "fronius",
         logo: `<img src="https://brands.home-assistant.io/fronius/logo.png" alt="Fronius" style="max-width:120px;max-height:60px;height:auto" onerror="this.outerHTML='<span style=font-size:32px>Fronius</span>'">` },
       { key: "kostal_plenticore", label: "Kostal Plenticore", subtitle: "mit Batteriespeicher · Steuerung über Modbus TCP (Beta)", detected: kostalOk, badge: kostalBadge, dialog: "kostal",
         logo: `<img src="https://brands.home-assistant.io/kostal_plenticore/logo.png" alt="Kostal" style="max-width:120px;max-height:60px;height:auto" onerror="this.outerHTML='<span style=font-size:32px>Kostal</span>'">` },
-      { key: "sma_smart_energy", label: "SMA Smart Energy", subtitle: "Tripower/Sunny Boy mit Batteriespeicher · nur Anzeige — Steuerung derzeit nur Fronius, Huawei, Kostal, Sigenergy und SolaX", detected: smaOk, badge: smaBadge, dialog: "sma",
+      { key: "sma_smart_energy", label: "SMA Smart Energy", subtitle: "Tripower/Sunny Boy mit Batteriespeicher · Steuerung über Modbus TCP (Beta)", detected: smaOk, badge: smaBadge, dialog: "sma",
         logo: `<img src="https://brands.home-assistant.io/sma/logo.png" alt="SMA" style="max-width:120px;max-height:60px;height:auto" onerror="this.outerHTML='<span style=font-size:32px>SMA</span>'">` },
     ].filter(inv =>
       istWaehlbarerWr(inv.key) || inv.key === selected
@@ -5807,7 +5807,7 @@ class EegOptimizerPanel extends HTMLElement {
     if (SCHEDULE_CONTROL_INVERTERS.includes(inverterType)) return "";
     return `<div class="help-text" style="margin-bottom:16px;padding:10px 12px;background:var(--info-color,#2196f3)18;border-left:3px solid var(--info-color,#2196f3);border-radius:4px">
            <ha-icon icon="mdi:information-outline" style="--mdc-icon-size:16px;vertical-align:middle"></ha-icon>
-           Für diesen Wechselrichter wird der Optimierungsplan nur berechnet und angezeigt — die Steuerung ist derzeit nur für Fronius, Huawei, Kostal, Sigenergy und SolaX verfügbar.
+           Für diesen Wechselrichter wird der Optimierungsplan nur berechnet und angezeigt — die Steuerung ist derzeit nur für Fronius, Huawei, Kostal, Sigenergy, SMA und SolaX verfügbar.
          </div>`;
   }
 
@@ -6648,7 +6648,7 @@ class EegOptimizerPanel extends HTMLElement {
       <div class="summary-section">
         <h3>Wechselrichter</h3>
         ${row("Typ", INVERTER_LABELS[d.inverter_type] || d.inverter_type)}
-        ${row("Steuerung", gesteuert ? "Aktiv (Ladelimit + Entladung)" : "Nur Anzeige — Steuerung derzeit nur Fronius, Huawei, Kostal, Sigenergy und SolaX")}
+        ${row("Steuerung", gesteuert ? "Aktiv (Ladelimit + Entladung)" : "Nur Anzeige — Steuerung derzeit nur Fronius, Huawei, Kostal, Sigenergy, SMA und SolaX")}
       </div>
 
       <div class="summary-section">
@@ -7345,7 +7345,7 @@ class EegOptimizerPanel extends HTMLElement {
     }
     if (!gesteuert) {
       warnings += warnRow("mdi:information-outline", "var(--info-color, #2196f3)",
-        "Dieser Wechselrichter wird nicht gesteuert \u2014 der Optimierungsplan ist nur Anzeige (Steuerung derzeit nur Fronius, Huawei, Kostal, Sigenergy und SolaX).");
+        "Dieser Wechselrichter wird nicht gesteuert \u2014 der Optimierungsplan ist nur Anzeige (Steuerung derzeit nur Fronius, Huawei, Kostal, Sigenergy, SMA und SolaX).");
     }
     if (a.heizstab_sollwert_kw != null && a.heizstab_verfuegbar === false) {
       warnings += warnRow("mdi:heating-coil", "#ff9800",

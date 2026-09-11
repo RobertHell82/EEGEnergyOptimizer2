@@ -101,6 +101,20 @@ class InverterBase(ABC):
         """
         return None
 
+    @property
+    def discharge_is_grid_setpoint(self) -> bool:
+        """Nimmt async_set_discharge() einen NETZ-Sollwert statt Batterieleistung?
+
+        Fronius, Huawei, Kostal stellen die Batterie: "entlade mit X kW" —
+        davon deckt das Gerät zuerst das Haus, der Rest ist Einspeisung.
+        Guard 2 rechnet deshalb Plan-Einspeisung + gemessene Hauslast − PV.
+        SMA regelt dagegen den Netzanschlusspunkt (GridWSpt): "speise X kW
+        ein", die Hauslast legt der Wechselrichter selbst obendrauf. Dort
+        muss der Executor den Export vorgeben, nicht die Batterieleistung —
+        sonst zählte die Hauslast doppelt. Default False.
+        """
+        return False
+
     async def async_get_control_values(self) -> list[dict]:
         """Stellgrößen, die NICHT an einer HA-Entität hängen.
 

@@ -343,6 +343,58 @@ class TestDisconnect:
         mock_modbus_client.close.assert_called()
 
 
+class TestFahrplanSchnittstelle:
+    """Was der ScheduleExecutor vom Treiber verlangt (base.InverterBase)."""
+
+    def test_treiber_wird_vom_fahrplan_gesteuert(self, inverter):
+        assert inverter.supports_schedule_control is True
+
+    def test_entladung_ist_ein_netz_sollwert(self, inverter):
+        """GridWSpt regelt den Netzanschlusspunkt — der Executor gibt den
+        Export vor, nicht die Batterieleistung."""
+        assert inverter.discharge_is_grid_setpoint is True
+
+    async def test_ladelimit_ohne_aktiven_block_ist_unbekannt(self, inverter):
+        """Kein Block aktiv = internes Management; was in 40795 steht, sagt
+        nichts über eine Begrenzung aus. Also None, nicht ein Registerwert."""
+        assert await inverter.async_get_charge_limit_kw() is None
+
+    async def test_ladelimit_kommt_aus_dem_aktiven_block(self, inverter):
+        await inverter.async_set_charge_limit(2.5)
+        assert await inverter.async_get_charge_limit_kw() == pytest.approx(2.5)
+        await inverter.async_set_discharge(3.0)
+        # Während der Entladung ist Laden gesperrt: Block trägt ChaMax 0.
+        assert await inverter.async_get_charge_limit_kw() == pytest.approx(0.0)
+        await inverter.async_disconnect()
+
+    def test_hardware_grenzen_sind_unbekannt(self, inverter):
+        assert inverter.get_charge_limit_max_kw() is None
+        assert inverter.get_max_discharge_power_kw() is None
+
+    async def test_steuerwerte_zeigen_die_vier_register(self, inverter, mock_modbus_client):
+        mock_modbus_client.read_holding_registers = AsyncMock(
+            return_value=_ok_response(u32_to_registers(OPMOD_DEFAULT))
+        )
+        werte = await inverter.async_get_control_values()
+        assert [w["role"] for w in werte] == ["mode", "charge_limit", "discharge_limit", "forcible"]
+        assert "Voreinstellung" in werte[0]["value"]
+        # 2424 als S32 gelesen ist positiv → Einspeisung.
+        assert "Einspeisung" in werte[3]["label"]
+
+    async def test_negativer_netz_sollwert_heisst_bezug(self, inverter, mock_modbus_client):
+        mock_modbus_client.read_holding_registers = AsyncMock(
+            return_value=_ok_response(s32_to_registers(-1500))
+        )
+        werte = await inverter.async_get_control_values()
+        assert werte[3]["value"] == -1500
+        assert "Bezug" in werte[3]["label"]
+
+    async def test_steuerwerte_ohne_verbindung_sind_leer(self, inverter, mock_modbus_client):
+        mock_modbus_client.connected = False
+        mock_modbus_client.connect = AsyncMock(return_value=False)
+        assert await inverter.async_get_control_values() == []
+
+
 class TestRegisterWriteCounter:
     async def test_counts_two_writes_per_block(self, inverter):
         assert inverter.register_writes == 0

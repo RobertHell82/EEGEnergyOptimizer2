@@ -41,6 +41,23 @@ Die Unit-ID 3 für die Steuerregister ist im Optimizer fest hinterlegt.
 
 _Hinweis: Der Sensor `sensor.*_grid_power` ist bei SMA die AC-Ausgangsleistung des Wechselrichters, **nicht** der Netzanschlusspunkt. Für die Netzleistung verwendet der Optimizer das Sensorpaar `metering_power_supplied` (Einspeisung) und `metering_power_absorbed` (Bezug)._
 
+## Was der Optimizer am Gerät tut
+
+Der Fahrplan stellt den SMA über das **externe Batteriemanagement** (CmpBMS, „6-Parameter-Methode"). Jeder Befehl schreibt den kompletten Block aus Betriebsart und vier Leistungsgrenzen plus Netz-Sollwert — so verlangt es die SMA-Spezifikation, einzelne Register wären wirkungslos.
+
+| Register | Wofür |
+|---|---|
+| **40795** Max. Ladeleistung | Der Fahrplan begrenzt das Laden auf die geplante Leistung. 0 W blockiert das Laden, das Entladen für den Hausverbrauch bleibt möglich |
+| **40801** Netz-Sollwert | Erzwungene Einspeisung: positiver Wert in Watt **am Netzanschlusspunkt** |
+
+**Der Netz-Sollwert ist die Besonderheit gegenüber anderen Wechselrichtern.** Fronius, Huawei und Kostal bekommen gesagt, mit wie viel die *Batterie* entladen soll — davon deckt das Gerät zuerst das Haus, der Rest geht ins Netz. Der SMA bekommt stattdessen gesagt, wie viel *ins Netz* gehen soll, und legt die Hauslast selbst obendrauf. Die Steuerung gibt ihm deshalb direkt die geplante Einspeisung vor. Reicht die Entladeleistung der Batterie für Haus plus Einspeisung nicht, senkt sie den Sollwert um das Fehlende, statt dass das Gerät still weniger liefert.
+
+**Der Watchdog ist das Sicherheitsnetz:** Der Block muss spätestens alle 300 Sekunden erneuert werden, sonst fällt der Wechselrichter in sein internes Batteriemanagement zurück. Der Treiber schreibt alle 60 Sekunden nach. Stürzt Home Assistant mitten in einer Einspeisung ab, endet sie also von selbst.
+
+Einen Ziel-Ladestand kennt die SMA-Schnittstelle nicht; der Optimizer prüft den Ladestand alle 30 Sekunden selbst und beendet die Einspeisung.
+
+> **Beta:** Ladeblockierung, Netz-Sollwert und Stopp sind am Gerät verifiziert (Sunny Tripower 10.0 Smart Energy). Offen ist der Dauerbetrieb über mehrere Tage — insbesondere neben einem Sunny Home Manager 2.0.
+
 ## Häufige Probleme
 
 | Problem | Lösung |

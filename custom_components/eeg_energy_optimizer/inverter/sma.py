@@ -330,6 +330,24 @@ class SMAInverter(InverterBase):
             self._close_client()
             return None
 
+    async def _read_s32(self, address: int) -> int | None:
+        """Read an S32 holding register pair (None on error or SMA-NaN)."""
+        try:
+            result = await self._client.read_holding_registers(
+                address=address, count=2,
+                **_slave_kw(self._client, self._slave_id),
+            )
+            if result.isError():
+                _LOGGER.error("SMA: read error at register %d", address)
+                return None
+            if registers_to_u32(result.registers) == S32_NAN:
+                return None
+            return registers_to_s32(result.registers)
+        except Exception:
+            _LOGGER.exception("SMA: exception reading register %d", address)
+            self._close_client()
+            return None
+
     # ------------------------------------------------------------------
     # Keepalive (watchdog feeding)
     # ------------------------------------------------------------------
@@ -451,6 +469,104 @@ class SMAInverter(InverterBase):
                 "to internal automatic management"
             )
             return True
+
+    # ------------------------------------------------------------------
+    # Fahrplan-Steuerschnittstelle (Schedule-Executor)
+    # ------------------------------------------------------------------
+
+    @property
+    def supports_schedule_control(self) -> bool:
+        """Der Fahrplan-Executor darf den SMA stellen."""
+        return True
+
+    @property
+    def discharge_is_grid_setpoint(self) -> bool:
+        """GridWSpt regelt den Netzanschlusspunkt — der Executor gibt den
+        Export vor, die Hauslast legt der Wechselrichter selbst obendrauf."""
+        return True
+
+    async def async_get_charge_limit_kw(self) -> float | None:
+        """Aktuell wirksames Ladelimit in kW — aus dem aktiven Block.
+
+        Die CmpBMS-Register sind flüchtige Sollwerte ohne eigenes Modus-Bit:
+        Ist kein Block aktiv, läuft das interne Batteriemanagement, und was
+        in 40795 steht, sagt nichts über eine Begrenzung aus — es kann der
+        letzte Wert vor dem Watchdog-Rückfall sein. Deshalb kein Register-
+        lesen, sondern die eigene Wahrheit: der zuletzt geschriebene Block,
+        oder None. Guard 1 fällt bei None auf sein letztes Limit bzw. den
+        Planwert zurück.
+        """
+        if self._active is None:
+            return None
+        return self._active.cha_max_w / 1000.0
+
+    def get_charge_limit_max_kw(self) -> float | None:
+        """Unbekannt — die SMA-Register nennen kein Hardware-Maximum.
+
+        Der Block schreibt DEFAULT_POWER_LIMIT_W als "keine Grenze"; das
+        Gerät deckelt selbst. Guard 1 hebt deshalb ungeclampt an.
+        """
+        return None
+
+    def get_max_discharge_power_kw(self) -> float | None:
+        """Unbekannt — der Executor nimmt die konfigurierte Entladeleistung."""
+        return None
+
+    async def async_get_control_values(self) -> list[dict]:
+        """Stellgrößen für die Transparenz-Ansicht — direkt aus den Registern.
+
+        Der SMA wird nicht über HA-Entitäten gestellt, sondern per Modbus;
+        get_control_entities() bleibt deshalb leer. Fehlschläge liefern eine
+        leere Liste statt zu werfen — die Ansicht ist Diagnose, kein
+        Steuerpfad.
+        """
+        async with self._lock:
+            if not await self._ensure_connected():
+                return []
+            op_mod = await self._read_u32(REG_CMPBMS_OPMOD)
+            cha_max = await self._read_u32(REG_BAT_CHA_MAX_W)
+            dsch_max = await self._read_u32(REG_BAT_DSCH_MAX_W)
+            grid_spt = await self._read_s32(REG_GRID_W_SPT)
+
+        modus = {
+            OPMOD_DEFAULT: "Voreinstellung (Limits + Netz-Sollwert gelten)",
+            OPMOD_CHARGE: "Laden erzwungen",
+            OPMOD_DISCHARGE: "Entladen erzwungen",
+            OPMOD_OFF: "Aus",
+            OPMOD_AUTO: "Automatik",
+        }.get(op_mod, None if op_mod is None else f"OpMod {op_mod}")
+        richtung = ""
+        if grid_spt is not None:
+            if grid_spt > 0:
+                richtung = " (Einspeisung)"
+            elif grid_spt < 0:
+                richtung = " (Bezug)"
+        return [
+            {
+                "label": f"Betriebsart CmpBMS (Register {REG_CMPBMS_OPMOD})",
+                "value": modus,
+                "unit": None,
+                "role": "mode",
+            },
+            {
+                "label": f"Max. Ladeleistung (Register {REG_BAT_CHA_MAX_W})",
+                "value": cha_max,
+                "unit": "W",
+                "role": "charge_limit",
+            },
+            {
+                "label": f"Max. Entladeleistung (Register {REG_BAT_DSCH_MAX_W})",
+                "value": dsch_max,
+                "unit": "W",
+                "role": "discharge_limit",
+            },
+            {
+                "label": f"Netz-Sollwert (Register {REG_GRID_W_SPT}){richtung}",
+                "value": grid_spt,
+                "unit": "W",
+                "role": "forcible",
+            },
+        ]
 
     @property
     def is_available(self) -> bool:

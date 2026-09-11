@@ -462,6 +462,54 @@ async def test_entladung_ist_plan_einspeisung_plus_gemessene_hauslast(mock_hass,
     assert "Entladung" in ex.last_status
 
 
+async def test_netz_sollwert_treiber_bekommt_den_plan_export(mock_hass, mock_inverter):
+    """SMA: der Wechselrichter legt die Hauslast selbst obendrauf — der
+    Executor gibt die geplante Einspeisung vor, nicht Plan + Hauslast."""
+    mock_inverter.discharge_is_grid_setpoint = True
+    ex = _make_executor(mock_hass, mock_inverter)
+
+    with _messwerte(haus=0.8):
+        await ex.async_guard_cycle(
+            _state(_slot(0, battery_p=2.6, grid_p=2.0, soc=43.0)), MODE_EIN, now=NOW
+        )
+
+    mock_inverter.async_set_discharge.assert_called_once_with(
+        pytest.approx(2.0), target_soc=43.0
+    )
+    assert "Netz-Sollwert" in ex.last_status
+
+
+async def test_netz_sollwert_sinkt_wenn_die_batterie_nicht_reicht(mock_hass, mock_inverter):
+    """Plan 2,0 kW + Hauslast 0,8 kW = 2,8 kW Bedarf, Batterie kann 2,0 →
+    0,8 kW fehlen, der Export sinkt auf 1,2 kW statt still zu kurz zu kommen."""
+    mock_inverter.discharge_is_grid_setpoint = True
+    mock_inverter.get_max_discharge_power_kw = MagicMock(return_value=2.0)
+    ex = _make_executor(mock_hass, mock_inverter)
+
+    with _messwerte(haus=0.8):
+        await ex.async_guard_cycle(
+            _state(_slot(0, battery_p=2.6, grid_p=2.0, soc=43.0)), MODE_EIN, now=NOW
+        )
+
+    mock_inverter.async_set_discharge.assert_called_once_with(
+        pytest.approx(1.2), target_soc=43.0
+    )
+
+
+async def test_netz_sollwert_pv_deckt_den_plan_keine_entladung(mock_hass, mock_inverter):
+    """Auch beim Netz-Sollwert gilt: Deckt die PV den Plan, wird nicht
+    erzwungen — der Bedarf der Batterie entscheidet, nicht der Sollwert."""
+    mock_inverter.discharge_is_grid_setpoint = True
+    ex = _make_executor(mock_hass, mock_inverter)
+
+    with _messwerte(haus=0.5, pv=3.0):
+        await ex.async_guard_cycle(
+            _state(_slot(0, battery_p=2.5, grid_p=2.0, soc=43.0)), MODE_EIN, now=NOW
+        )
+
+    mock_inverter.async_set_discharge.assert_not_called()
+
+
 async def test_entladung_zieht_laufende_pv_ab(mock_hass, mock_inverter):
     """Liefert die PV noch 0,5 kW, muss die Batterie nur den Rest geben —
     sonst käme mehr am Netzanschluss an als geplant."""

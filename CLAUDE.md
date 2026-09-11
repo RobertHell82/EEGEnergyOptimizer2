@@ -58,7 +58,10 @@ schedule_executor.py: ScheduleExecutor (execution, 30 s)
         Failsafe — no fresh plan for 15 min → release the inverter
         Deadbands — 0.2 kW / 1 % SOC, so we don't write on LP noise
   → writes only via InverterBase, only in mode "Ein", only for drivers with
-    supports_schedule_control=True (Fronius, Huawei, Kostal, Sigenergy, SolaX)
+    supports_schedule_control=True (Fronius, Huawei, Kostal, Sigenergy, SMA, SolaX).
+    Guard 2 asks `discharge_is_grid_setpoint`: SMA takes a GRID setpoint
+    (inverter adds house load itself) → executor hands over the planned
+    export; all others take battery power → plan export + house load − PV
   → _heizstab_schritt() after every run — the heater (heizstab/) is a second
     sink with two modes: (1) the running slot plans heat → regulate on
     "export ≈ 0", capped at the planned kW (the forecast says how much is
@@ -100,7 +103,7 @@ schedule_executor.py: ScheduleExecutor (execution, 30 s)
 | `inverter/_distribution.py` | Shared proportional discharge distribution (SolarEdge + Huawei multi-battery) |
 | `inverter/fronius.py` | Fronius Gen24 implementation via direct Modbus TCP (SunSpec Model 124, device-read scale factors, RvrtTms watchdog + keepalive task) |
 | `inverter/kostal.py` | Kostal Plenticore implementation via direct Modbus TCP (proprietary registers 1034/1038, watchdog keepalive task) |
-| `inverter/sma.py` | SMA Smart Energy / Sunny Boy Storage implementation via direct Modbus TCP (CmpBMS 6-parameter method, complete-block writes, watchdog keepalive task) |
+| `inverter/sma.py` | SMA Smart Energy / Sunny Boy Storage implementation via direct Modbus TCP (CmpBMS 6-parameter method, complete-block writes, watchdog keepalive task; `discharge_is_grid_setpoint=True`, charge limit read from the active block) |
 | `inverter/solax.py` | SolaX Gen4+ implementation via solax_modbus Mode 1 |
 | `inverter/solaredge.py` | SolarEdge StorEdge implementation via solaredge-modbus-multi |
 | `inverter/__init__.py` | Factory function `create_inverter()` |
@@ -259,7 +262,7 @@ Implementations:
   ├── HuaweiInverter — via HA huawei_solar services
   ├── FroniusInverter — via direct Modbus TCP (SunSpec Model 124, pymodbus; scale factors read from the device; InOutWRte_RvrtTms armed at 300s as the inverter-side failsafe, fed by a 60s keepalive)
   ├── KostalInverter — via direct Modbus TCP (proprietary registers, port 1502, unit 71; cyclic keepalive feeds the inverter watchdog, timeout = failsafe fallback to internal automatic)
-  ├── SMAInverter — via direct Modbus TCP (CmpBMS external battery management, port 502, unit 3; every command writes the complete 6-register block, 60s keepalive, 300s watchdog fallback; discharge = grid-exchange setpoint GridWSpt → house load auto-compensated, house-load entry guard skipped)
+  ├── SMAInverter — via direct Modbus TCP (CmpBMS external battery management, port 502, unit 3; every command writes the complete 6-register block, 60s keepalive, 300s watchdog fallback; discharge = grid-exchange setpoint GridWSpt → house load auto-compensated, so the executor hands over the planned export (`discharge_is_grid_setpoint`))
   ├── SolarEdgeInverter — via HA solaredge_modbus_multi StorEdge
   └── SolaXInverter — via HA solax_modbus Mode 1
 ```

@@ -31,6 +31,8 @@ def mock_inverter():
     # Treiber (Huawei); die Lesewege liefern per Default None wie die
     # Base-Klasse — Tests überschreiben sie bei Bedarf.
     inv.supports_schedule_control = True
+    # Batterie-Sollwert wie Huawei/Fronius/Kostal; SMA-Tests setzen True.
+    inv.discharge_is_grid_setpoint = False
     inv.async_get_charge_limit_kw = AsyncMock(return_value=None)
     inv.get_charge_limit_max_kw = MagicMock(return_value=None)
     inv.get_max_discharge_power_kw = MagicMock(return_value=None)

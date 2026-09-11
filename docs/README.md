@@ -19,7 +19,7 @@ Am besten in dieser Reihenfolge:
 
 ## 🔌 Wechselrichter anbinden
 
-Unterstützt werden derzeit **Fronius Gen24, Huawei SUN2000, Kostal Plenticore, Sigenergy SigenStor und SolaX Gen4+**:
+Unterstützt werden derzeit **Fronius Gen24, Huawei SUN2000, Kostal Plenticore, Sigenergy SigenStor, SMA Smart Energy und SolaX Gen4+**:
 
 | Wechselrichter | Anleitung |
 |---|---|
@@ -28,9 +28,10 @@ Unterstützt werden derzeit **Fronius Gen24, Huawei SUN2000, Kostal Plenticore, 
 | | [Huawei Akkukapazität-Sensor aktivieren](guides/capacity_sensor.md) |
 | **Kostal Plenticore** | [Kostal einrichten](guides/kostal.md) |
 | **Sigenergy SigenStor** | [Sigenergy einrichten](guides/sigenergy.md) |
+| **SMA Smart Energy** | [SMA einrichten](guides/sma.md) |
 | **SolaX Gen4+** | [SolaX Modbus einrichten](guides/solax.md) |
 
-> SMA und SolarEdge werden **derzeit nicht** unterstützt — ihre Treiber sind enthalten, aber stillgelegt. Welcher Wechselrichter wann dazukommt und was dafür noch fehlt: **[Stand der Unterstützung](wechselrichter-status.md)**.
+> SolarEdge wird **derzeit nicht** unterstützt — der Treiber ist enthalten, aber stillgelegt. Welcher Wechselrichter wann dazukommt und was dafür noch fehlt: **[Stand der Unterstützung](wechselrichter-status.md)**.
 
 ## ☀️ PV-Prognose einrichten
 

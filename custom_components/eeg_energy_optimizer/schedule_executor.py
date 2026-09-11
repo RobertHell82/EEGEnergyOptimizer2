@@ -905,21 +905,39 @@ class ScheduleExecutor:
             )
         pv = compute_pv_now_kw(self._hass, self._config) or 0.0
 
-        power = (action.power_kw + haus - pv) / GUARD_DISCHARGE_EFFICIENCY
+        # Was die Batterie liefern muss, damit die geplante Einspeisung
+        # zustande kommt — unabhängig davon, wie der Treiber es entgegennimmt.
+        bedarf = (action.power_kw + haus - pv) / GUARD_DISCHARGE_EFFICIENCY
         cap = self._inverter.get_max_discharge_power_kw()
         if cap is None:
             cap = float(
                 self._config.get(CONF_DISCHARGE_POWER_KW, DEFAULT_DISCHARGE_POWER_KW)
                 or 0.0
             ) or None
-        if cap is not None:
-            power = min(power, cap)
-        power = max(power, 0.0)
-
-        if power < _MIN_DISCHARGE_KW:
+        if bedarf < _MIN_DISCHARGE_KW:
             # PV deckt die geplante Einspeisung — keine erzwungene Entladung.
+            # Gilt für beide Treiberarten: Ein Netz-Sollwert bei gedecktem
+            # Plan hieße, den Netzanschlusspunkt auf genau diesen Export zu
+            # zwingen und PV-Überschuss darüber wegzuregeln.
             await self._apply_release("Entladung nicht nötig (PV deckt den Plan)")
             return
+
+        netz_sollwert = bool(
+            getattr(self._inverter, "discharge_is_grid_setpoint", False)
+        )
+        if netz_sollwert:
+            # Der Wechselrichter regelt den Netzanschlusspunkt selbst und
+            # legt die Hauslast obendrauf — wir geben den Export vor. Reicht
+            # die Batterie dafür nicht (cap), sinkt der Export um das
+            # Fehlende, statt dass das Gerät still weniger liefert.
+            power = action.power_kw
+            if cap is not None and bedarf > cap:
+                power -= (bedarf - cap) * GUARD_DISCHARGE_EFFICIENCY
+        else:
+            power = bedarf
+            if cap is not None:
+                power = min(power, cap)
+        power = max(power, 0.0)
 
         ziel_soc = action.target_soc
         kind_change = self._active_kind != "discharge"
@@ -947,11 +965,18 @@ class ScheduleExecutor:
             self._written_discharge_kw = power
             self._written_target_soc = ziel_soc
             soc_text = f" auf Ziel-SOC {ziel_soc:.0f} %" if ziel_soc is not None else ""
-            self.last_status = (
-                f"Entladung {power:.2f} kW{soc_text} "
-                f"(Plan {action.power_kw:.2f} kW Einspeisung + Hauslast {haus:.2f} kW "
-                f"[{haus_quelle}] − PV {pv:.2f} kW)"
-            )
+            if netz_sollwert:
+                self.last_status = (
+                    f"Einspeisung {power:.2f} kW als Netz-Sollwert{soc_text} "
+                    f"(Plan {action.power_kw:.2f} kW; Hauslast {haus:.2f} kW "
+                    f"[{haus_quelle}] gleicht der Wechselrichter selbst aus)"
+                )
+            else:
+                self.last_status = (
+                    f"Entladung {power:.2f} kW{soc_text} "
+                    f"(Plan {action.power_kw:.2f} kW Einspeisung + Hauslast {haus:.2f} kW "
+                    f"[{haus_quelle}] − PV {pv:.2f} kW)"
+                )
         else:
             self.write_failures += 1
             self._notify_failure("discharge")

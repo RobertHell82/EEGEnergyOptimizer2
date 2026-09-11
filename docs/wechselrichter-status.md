@@ -6,9 +6,10 @@ führen.
 
 > [!IMPORTANT]
 > **Unterstützt werden derzeit Fronius Gen24, Huawei SUN2000, Kostal
-> Plenticore, Sigenergy SigenStor und SolaX Gen4+.** Nur diese fünf steuert
-> der Fahrplan, und nur sie stehen im Einrichtungsassistenten zur Auswahl.
-> Fronius, Kostal, Sigenergy und SolaX sind im Feldtest — siehe unten.
+> Plenticore, Sigenergy SigenStor, SMA Smart Energy und SolaX Gen4+.** Nur
+> diese sechs steuert der Fahrplan, und nur sie stehen im
+> Einrichtungsassistenten zur Auswahl. Fronius, Kostal, Sigenergy, SMA und
+> SolaX sind im Feldtest — siehe unten.
 
 ## Übersicht
 
@@ -18,7 +19,7 @@ führen.
 | **Huawei SUN2000** | vorhanden | **ja** | **ja** |
 | **Kostal Plenticore** | vorhanden | **ja** (Beta) | **ja** |
 | **Sigenergy SigenStor** | vorhanden | **ja** (Feldtest) | **ja** |
-| SMA Smart Energy | vorhanden | nein | nein |
+| **SMA Smart Energy** | vorhanden | **ja** (Beta) | **ja** |
 | SolarEdge StorEdge | vorhanden | nein | nein |
 | **SolaX Gen4+** | vorhanden | **ja** (Feldtest) | **ja** |
 
@@ -32,10 +33,10 @@ jeweiligen Typs nachgewiesen ist.
 Die 2.0 hat die Steuerung vollständig ersetzt: Statt Zuständen und Zeitfenstern
 setzt ein Executor alle 30 Sekunden einen 48-Stunden-Fahrplan durch — mit
 Ladelimit-Nachführung, Entlade-Nachführung, Not-Aus und Failsafe. Dieser Weg
-ist für Huawei nachgewiesen, für Fronius, Kostal, Sigenergy und SolaX im
-Feldtest. Für SMA und SolarEdge stammt die Steuerverifikation aus der
-1.x-Reihe und galt der alten Zustandslogik; sie überträgt sich nicht
-automatisch auf die minütliche Nachführung.
+ist für Huawei nachgewiesen, für Fronius, Kostal, Sigenergy, SMA und SolaX
+im Feldtest. Für SolarEdge stammt die Steuerverifikation aus der 1.x-Reihe
+und galt der alten Zustandslogik; sie überträgt sich nicht automatisch auf
+die minütliche Nachführung.
 
 Ein Treiber, der nur anzeigt, aber nicht steuert, ist für den Anwender
 irreführend — deshalb steht er gar nicht erst zur Auswahl.
@@ -162,8 +163,13 @@ CmpBMS-Register), Sensordaten über die native
 SMA-Webinterface — kein Grid-Guard-Code nötig. Watchdog wie bei Kostal, die
 Steuerregister sind flüchtige Sollwerte. Bei vorhandenem Sunny Home Manager
 2.0 muss dessen prognosebasiertes Laden deaktiviert werden.
-Offen: Feldtest der Fahrplan-Nachführung, Koexistenz mit dem SHM 2.0 im
-Dauerbetrieb.
+**Fahrplan-Steuerung seit 2.1.1-dev12 (Beta):** Ladeblockierung, Netz-
+Sollwert und Stopp sind am Gerät verifiziert (1.x-Reihe, STP10.0-3SE-40).
+Besonderheit: Die Entladung ist ein **Netz-Sollwert** (GridWSpt) — der
+Wechselrichter legt die Hauslast selbst obendrauf, deshalb gibt die
+Steuerung hier die geplante Einspeisung vor statt der Batterieleistung
+(`discharge_is_grid_setpoint`). Offen: Feldtest der Fahrplan-Nachführung
+über mehrere Tage, Koexistenz mit dem SHM 2.0 im Dauerbetrieb.
 Guide: [sma.md](guides/sma.md)
 
 ### SolarEdge StorEdge
