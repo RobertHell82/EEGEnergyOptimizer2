@@ -10,6 +10,12 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
+## [2.1.1-dev4] - 2026-09-11
+
+### Geändert
+
+- **Ohne Heizstab-Vorrang teilen sich Batterie und Heizstab den Überschuss, statt nacheinander dranzukommen.** Bisher hieß „Überschuss zuerst in den Heizstab: aus" strikt „erst die Batterie, dann der Heizstab" — der Heizstab wartete, bis das Ladelimit am Hardware-Maximum stand. Jetzt regeln beide gleichzeitig hoch, und der Anteil des Heizstabs hängt vom Ladestand ab: Unter 20 % bekommt die Batterie alles, ab 50 % ist es die Hälfte, dazwischen gleitend. Das alte Verhalten steckt darin — bei fast leerer Batterie ist der Anteil des Heizstabs null —, aber es kippt nicht mehr abrupt. Unter der Mindesttemperatur hat der Heizstab davon unabhängig Vorrang und volle Leistung.
+
 ## [2.1.1-dev3] - 2026-09-11
 
 ### Geändert

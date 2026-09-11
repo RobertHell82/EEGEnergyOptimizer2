@@ -1136,24 +1136,74 @@ async def test_heizstab_maximaltemperatur_gibt_guard1_frei(mock_hass, mock_inver
     assert "Maximaltemperatur" in hz.grund
 
 
-async def test_batterie_vorrang_heizstab_wartet_bis_ladelimit_am_maximum(mock_hass, mock_inverter):
-    """Batterie zuerst: Guard 1 hebt an, der Heizstab hält — bis das Ladelimit
-    am Hardware-Maximum steht, dann rückt er nach."""
+async def test_ohne_vorrang_teilen_sich_beide_den_ueberschuss(mock_hass, mock_inverter):
+    """Ohne Heizstab-Vorrang wartet er nicht mehr auf eine gesättigte Batterie.
+
+    Beide regeln gleichzeitig hoch: Guard 1 hebt das Ladelimit an, der
+    Heizstab bekommt gleichzeitig seinen Anteil. Bei einem Ladestand über
+    HEIZSTAB_TEILUNG_SOC_VOLL_PCT ist das die Hälfte seiner Leistung.
+    """
     cfg = _cfg_heizstab(vorrang=False)
     ex, hz, _ = _make_executor_mit_heizstab(mock_hass, mock_inverter, cfg)
+    ex._batterie_soc_pct = lambda: 80.0
     mock_inverter.async_get_charge_limit_kw = AsyncMock(return_value=4.0)
     mock_inverter.get_charge_limit_max_kw = MagicMock(return_value=5.0)
     with _messwerte(export=4.0, haus=0.5, pv=8.0):
-        # Lauf 1: 4,0 → 4,5 kW, Batterie noch nicht am Maximum → Heizstab hält.
         await ex.async_guard_cycle(_state(_slot(0, battery_p=-2.0)), MODE_EIN, now=NOW)
+        # Die Batterie wird angehoben …
         assert mock_inverter.async_set_charge_limit.await_args.args[0] == pytest.approx(4.5)
-        assert hz.sollwert_kw == 0.0
-        assert "Batterie hat Vorrang" in hz.grund
-        # Lauf 2: das Gerät meldet 4,5 → Guard 1 clampt bei 5,0 = Maximum.
-        mock_inverter.async_get_charge_limit_kw = AsyncMock(return_value=4.5)
-        await ex.async_guard_cycle(_state(_slot(0, battery_p=-2.0)), MODE_EIN, now=NOW)
-        assert ex._ladelimit_am_maximum is True
+        # … und der Heizstab rückt im selben Lauf nach, statt zu warten.
         assert hz.sollwert_kw == pytest.approx(HEIZSTAB_STEP_KW)
+    # Sein Deckel ist die Hälfte der Nennleistung.
+    assert ex._heizstab_deckel_kw() == pytest.approx(hz.max_kw * 0.5)
+
+
+async def test_fast_leere_batterie_bekommt_alles(mock_hass, mock_inverter):
+    """Unter HEIZSTAB_TEILUNG_SOC_LEER_PCT ist der Anteil des Heizstabs null.
+
+    Das ist das alte „Batterie zuerst" — es steckt jetzt in der Aufteilung,
+    statt ein eigener Modus zu sein. Der Grund sagt es auch so.
+    """
+    cfg = _cfg_heizstab(vorrang=False)
+    ex, hz, _ = _make_executor_mit_heizstab(mock_hass, mock_inverter, cfg)
+    ex._batterie_soc_pct = lambda: 12.0
+    mock_inverter.async_get_charge_limit_kw = AsyncMock(return_value=4.0)
+    mock_inverter.get_charge_limit_max_kw = MagicMock(return_value=5.0)
+    with _messwerte(export=4.0, haus=0.5, pv=8.0):
+        await ex.async_guard_cycle(_state(_slot(0, battery_p=-2.0)), MODE_EIN, now=NOW)
+    assert ex._heizstab_deckel_kw() == pytest.approx(0.0)
+    assert hz.sollwert_kw == 0.0
+    assert "fast leer" in hz.grund
+
+
+async def test_anteil_waechst_mit_dem_ladestand(mock_hass, mock_inverter):
+    """Zwischen leer und halbvoll steigt der Anteil des Heizstabs linear."""
+    cfg = _cfg_heizstab(vorrang=False)
+    ex, hz, _ = _make_executor_mit_heizstab(mock_hass, mock_inverter, cfg)
+    werte = {}
+    for soc in (20.0, 35.0, 50.0, 90.0):
+        ex._batterie_soc_pct = lambda s=soc: s
+        werte[soc] = ex._heizstab_deckel_kw()
+    assert werte[20.0] == pytest.approx(0.0)
+    assert werte[35.0] == pytest.approx(hz.max_kw * 0.25)
+    assert werte[50.0] == pytest.approx(hz.max_kw * 0.5)
+    assert werte[90.0] == pytest.approx(hz.max_kw * 0.5), "über der Hälfte nicht mehr"
+
+
+async def test_mit_vorrang_kein_deckel(mock_hass, mock_inverter):
+    """Wer den Heizstab-Vorrang einschaltet, will ihn ungeteilt."""
+    cfg = _cfg_heizstab(vorrang=True)
+    ex, _, _ = _make_executor_mit_heizstab(mock_hass, mock_inverter, cfg)
+    ex._batterie_soc_pct = lambda: 10.0
+    assert ex._heizstab_deckel_kw() is None
+
+
+async def test_unbekannter_ladestand_hebt_den_deckel_auf(mock_hass, mock_inverter):
+    """Ohne Ladestand nicht raten — sonst verfiele der Überschuss."""
+    cfg = _cfg_heizstab(vorrang=False)
+    ex, _, _ = _make_executor_mit_heizstab(mock_hass, mock_inverter, cfg)
+    ex._batterie_soc_pct = lambda: None
+    assert ex._heizstab_deckel_kw() is None
 
 
 async def test_batterie_voll_gibt_heizstab_frei_auch_bei_batterie_vorrang(mock_hass, mock_inverter):

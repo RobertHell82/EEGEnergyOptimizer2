@@ -6587,7 +6587,7 @@ class EegOptimizerPanel extends HTMLElement {
             <input type="checkbox" data-field="${prefix}heizstab_vorrang" ${vorrang ? "checked" : ""}>
             <div>
               <div style="font-weight:500">Überschuss zuerst in den Heizstab</div>
-              <div class="help-text" style="margin-top:4px">Klebt die Einspeisung an der Grenze, bekommt zuerst der Heizstab den Überschuss; das Ladelimit der Batterie wird erst angehoben, wenn er voll ausgelastet ist oder die Maximaltemperatur erreicht hat. Ausgeschaltet gilt die umgekehrte Reihenfolge: erst die Batterie, dann der Heizstab.</div>
+              <div class="help-text" style="margin-top:4px">Klebt die Einspeisung an der Grenze, bekommt zuerst der Heizstab den Überschuss; das Ladelimit der Batterie wird erst angehoben, wenn er voll ausgelastet ist oder die Maximaltemperatur erreicht hat. Ausgeschaltet teilen sich beide den Überschuss, gewichtet nach Ladestand: Unter 20 % bekommt die Batterie alles — ihre Energie trägt durch die Nacht, die Wärme nicht —, ab 50 % ist es die Hälfte, dazwischen gleitend. Unter der Mindesttemperatur hat der Heizstab davon unabhängig Vorrang.</div>
             </div>
           </label>
         </div>

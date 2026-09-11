@@ -324,6 +324,17 @@ HEIZSTAB_SATT_TOLERANZ_KW = 0.05
 HEIZSTAB_KONFLIKT_TOLERANZ_KW = 0.3
 HEIZSTAB_KONFLIKT_MINUTEN = 3.0
 
+# Aufteilung des Überschusses ohne Heizstab-Vorrang. Nicht „erst die Batterie,
+# dann der Heizstab", sondern beide gleichzeitig — mit einem Anteil, der vom
+# Ladestand abhängt: Eine fast leere Batterie hat Vorrang, denn ihre Energie
+# trägt durch die Nacht, die Wärme nicht. Ab HEIZSTAB_TEILUNG_SOC_VOLL_PCT
+# teilen sich beide den Überschuss hälftig.
+# Unterhalb der Mindesttemperatur gilt nichts davon: Dann hat der Heizstab
+# Vorrang, mit voller Leistung (siehe HeizstabController.komfort_aktiv).
+HEIZSTAB_TEILUNG_SOC_LEER_PCT = 20.0
+HEIZSTAB_TEILUNG_SOC_VOLL_PCT = 50.0
+HEIZSTAB_TEILUNG_MAX_ANTEIL = 0.5
+
 # ------------------------------------------------------------------
 # Phase 8: Telemetry (v1.1)
 # ------------------------------------------------------------------

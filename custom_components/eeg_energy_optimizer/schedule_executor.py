@@ -59,6 +59,12 @@ from .const import (
     SCHEDULE_FAILSAFE_MINUTES,
     STARTUP_GRACE_SECONDS,
 )
+from .const import (
+    CONF_BATTERY_SOC_SENSOR,
+    HEIZSTAB_TEILUNG_MAX_ANTEIL,
+    HEIZSTAB_TEILUNG_SOC_LEER_PCT,
+    HEIZSTAB_TEILUNG_SOC_VOLL_PCT,
+)
 from .power_readings import (
     compute_grid_export_kw,
     compute_house_load_kw,
@@ -624,12 +630,60 @@ class ScheduleExecutor:
         return self._ladelimit_am_maximum
 
     def _heizstab_vorrang_frei(self) -> bool:
-        """Darf der Heizstab jetzt Überschuss aufnehmen (Reihenfolge)?"""
+        """Darf der Heizstab jetzt Überschuss aufnehmen (Reihenfolge)?
+
+        Mit Vorrang immer. Ohne Vorrang seit 2.1.1-dev4 ebenfalls — er
+        bekommt dann aber nur seinen Anteil (``_heizstab_deckel_kw``), statt
+        auf eine gesättigte Batterie zu warten. Das alte „erst die Batterie,
+        dann der Heizstab" ist darin enthalten: Bei fast leerer Batterie ist
+        sein Anteil null.
+        """
         if self._heizstab is None:
             return False
-        if self._heizstab.vorrang_heizstab:
-            return True
-        return self._batterie_gesaettigt()
+        return True
+
+    def _batterie_soc_pct(self) -> float | None:
+        """Ladestand für die Aufteilung; None, wenn nicht lesbar."""
+        entity = self._config.get(CONF_BATTERY_SOC_SENSOR)
+        if not entity:
+            return None
+        try:
+            state = self._hass.states.get(entity)
+        except Exception:  # noqa: BLE001
+            return None
+        if state is None:
+            return None
+        try:
+            return float(state.state)
+        except (TypeError, ValueError):
+            return None
+
+    def _heizstab_deckel_kw(self) -> float | None:
+        """Anteil des Heizstabs am Überschuss — None heißt „kein Deckel".
+
+        Mit Heizstab-Vorrang gibt es keinen Deckel, er nimmt alles. Ohne
+        Vorrang teilen sich beide den Überschuss, gewichtet nach Ladestand:
+        Unter ``HEIZSTAB_TEILUNG_SOC_LEER_PCT`` bekommt die Batterie alles —
+        ihre Energie trägt durch die Nacht, die Wärme nicht. Ab
+        ``HEIZSTAB_TEILUNG_SOC_VOLL_PCT`` ist es die Hälfte, dazwischen
+        linear. Ist die Batterie gesättigt oder der Ladestand unbekannt,
+        entfällt der Deckel — der Überschuss soll nicht verfallen.
+        """
+        hz = self._heizstab
+        if hz is None or not hz.enabled or hz.vorrang_heizstab:
+            return None
+        if self._batterie_gesaettigt():
+            return None
+        soc = self._batterie_soc_pct()
+        if soc is None:
+            return None
+        spanne = HEIZSTAB_TEILUNG_SOC_VOLL_PCT - HEIZSTAB_TEILUNG_SOC_LEER_PCT
+        if spanne <= 0:
+            anteil = HEIZSTAB_TEILUNG_MAX_ANTEIL
+        else:
+            anteil = (soc - HEIZSTAB_TEILUNG_SOC_LEER_PCT) / spanne
+            anteil = max(0.0, min(1.0, anteil)) * HEIZSTAB_TEILUNG_MAX_ANTEIL
+        return round(hz.max_kw * anteil, 3)
 
     def _heizstab_gesaettigt(self) -> bool:
         """Muss Guard 1 auf den Heizstab warten? Nein, wenn er gesättigt ist."""
@@ -667,6 +721,7 @@ class ScheduleExecutor:
                 export_kw=export,
                 grenze_kw=self._heizstab_grenze_kw(),
                 vorrang_frei=self._heizstab_vorrang_frei(),
+                deckel_kw=self._heizstab_deckel_kw(),
             )
             await hz.async_set_sollwert(soll, grund)
         except Exception:  # noqa: BLE001 — der Heizstab darf den Takt nie kippen

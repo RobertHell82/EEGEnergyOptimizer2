@@ -450,8 +450,16 @@ class HeizstabController:
         export_kw: float | None,
         grenze_kw: float,
         vorrang_frei: bool,
+        deckel_kw: float | None = None,
     ) -> tuple[float, str]:
         """Nächsten Sollwert bestimmen (ohne zu schreiben).
+
+        ``deckel_kw`` begrenzt den Sollwert für diesen Lauf auf den Anteil
+        am Überschuss, der dem Heizstab zusteht (siehe
+        ``ScheduleExecutor._heizstab_deckel_kw``). Er gilt nur im normalen
+        Überschussbetrieb: Unter der Mindesttemperatur hat der Heizstab
+        Vorrang und bekommt die volle Leistung — sonst wäre die Mindest-
+        temperatur keine.
 
         Reihenfolge: Komfort mit erlaubtem Netzbezug schlägt alles (der
         Executor unterdrückt dann die Entladung); dann die Entladung ins Netz
@@ -491,9 +499,17 @@ class HeizstabController:
             return soll, f"Mindesttemperatur unterschritten {temp_text} — Vorrang vor der Einspeisung: {grund}"
         if self._max_gesperrt:
             return 0.0, f"Maximaltemperatur erreicht ({self.maxtemp_c:.0f} °C)"
-        return naechster_sollwert(
-            self.sollwert_kw, export_kw, grenze_kw, self.max_kw, vorrang_frei
+        max_kw = self.max_kw
+        zusatz = ""
+        if deckel_kw is not None and deckel_kw < max_kw:
+            max_kw = max(0.0, deckel_kw)
+            zusatz = f" (Anteil am Überschuss: {max_kw:.1f} kW)"
+            if max_kw <= 0:
+                return 0.0, "Batterie hat Vorrang — sie ist fast leer"
+        soll, grund = naechster_sollwert(
+            self.sollwert_kw, export_kw, grenze_kw, max_kw, vorrang_frei
         )
+        return soll, grund + zusatz
 
     # ------------------------------------------------------------------
     # Schreiben / Lesen (Treiber)
