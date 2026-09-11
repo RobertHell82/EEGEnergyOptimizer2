@@ -45,6 +45,31 @@
 <li><strong>Entwicklerwerkzeuge → Zustände</strong>: Suche nach <code>battery_soc</code> / <code>ladezustand</code> und <code>home_power</code> — die Werte müssen plausibel sein</li>
 <li>Kehre hierher zurück — die Sensoren werden automatisch erkannt</li>
 </ol>
+<h3>Was der Optimizer am Gerät tut</h3>
+<p>Der Fahrplan stellt den Plenticore über zwei Register, beide flüchtig (RAM) — zyklisches Schreiben nutzt den Speicher also nicht ab:</p>
+<table>
+<thead>
+<tr>
+<th>Register</th>
+<th>Wofür</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>1038</strong> Max. Ladeleistung</td>
+<td>Der Fahrplan begrenzt das Laden auf die geplante Leistung. 0 W blockiert das Laden vollständig, das Entladen für den Hausverbrauch bleibt möglich</td>
+</tr>
+<tr>
+<td><strong>1034</strong> Batterie-Sollwert</td>
+<td>Erzwungene Entladung ins Netz — positiver Wert, in Watt</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Der Watchdog ist das Sicherheitsnetz:</strong> Der Plenticore erwartet, dass der Sollwert zyklisch erneuert wird (empfohlene Zeitüberschreitung 60 Sekunden, Einstellung im Servicemenü). Der Treiber schreibt alle 25 Sekunden nach. Stürzt Home Assistant mitten in einer Entladung ab, fällt der Wechselrichter nach Ablauf der Zeit von selbst in sein internes Batteriemanagement zurück — er entlädt also nicht unbegrenzt weiter.</p>
+<p>Einen Ziel-Ladestand kennt die Kostal-Schnittstelle nicht. Stattdessen prüft der Optimizer den Ladestand alle 30 Sekunden selbst und beendet die Entladung; der Watchdog deckt nur den Absturzfall ab.</p>
+<blockquote>
+<p><strong>Beta:</strong> Ladeblockierung und Entladung sind am Gerät verifiziert. Teil-Ladelimits (der Normalfall im Fahrplan) prüft der Treiber beim ersten Mal selbst nach: Weicht der zurückgelesene Wert stark vom geschriebenen ab, steht eine Warnung im Protokoll — dann meldet sich bitte mit der Firmware-Version.</p>
+</blockquote>
 <h3>Häufige Probleme</h3>
 <table>
 <thead>

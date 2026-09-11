@@ -21,6 +21,7 @@ from custom_components.eeg_energy_optimizer.inverter.kostal import (
     KostalInverter,
     REG_BATTERY_SETPOINT,
     REG_MAX_CHARGE_POWER,
+    REG_MAX_DISCHARGE_POWER,
     float_to_registers,
     registers_to_float,
     registers_to_string,
@@ -329,3 +330,129 @@ class TestKeepalive:
         # Recommended watchdog timeout is 60 s; evcc rewrites at timeout/2.
         # Our interval must stay safely below that even if one write is lost.
         assert KEEPALIVE_INTERVAL <= 30.0
+
+
+class TestFahrplanSchnittstelle:
+    """Was der ScheduleExecutor vom Treiber verlangt (base.InverterBase)."""
+
+    def test_treiber_wird_vom_fahrplan_gesteuert(self, inverter):
+        assert inverter.supports_schedule_control is True
+
+    async def test_ladelimit_kommt_aus_register_1038(self, inverter, mock_modbus_client):
+        mock_modbus_client.read_holding_registers = AsyncMock(
+            return_value=_ok_response(float_to_registers(2500.0))
+        )
+        assert await inverter.async_get_charge_limit_kw() == pytest.approx(2.5)
+
+    async def test_ladelimit_ohne_verbindung_ist_unbekannt(self, inverter, mock_modbus_client):
+        mock_modbus_client.connected = False
+        mock_modbus_client.connect = AsyncMock(return_value=False)
+        assert await inverter.async_get_charge_limit_kw() is None
+
+    async def test_lesefehler_liefert_none_statt_null(self, inverter, mock_modbus_client):
+        """Eine 0 hiesse "Laden gesperrt" — Guard 1 wuerde daraus falsch
+        weiterrechnen. Ohne Messwert muss None kommen."""
+        mock_modbus_client.read_holding_registers = AsyncMock(
+            return_value=_err_response()
+        )
+        assert await inverter.async_get_charge_limit_kw() is None
+
+    async def test_hardware_grenze_wird_aus_ungestoertem_wert_gelernt(
+        self, inverter, mock_modbus_client
+    ):
+        assert inverter.get_charge_limit_max_kw() is None
+        mock_modbus_client.read_holding_registers = AsyncMock(
+            return_value=_ok_response(float_to_registers(9000.0))
+        )
+        await inverter.async_get_charge_limit_kw()
+        assert inverter.get_charge_limit_max_kw() == pytest.approx(9.0)
+
+    async def test_eigenes_limit_gilt_nicht_als_hardware_grenze(
+        self, inverter, mock_modbus_client
+    ):
+        """Sonst haelt der Treiber sein eigenes Limit fuer die Grenze des
+        Geraets, und Guard 1 kaeme nie wieder darueber hinaus."""
+        mock_modbus_client.read_holding_registers = AsyncMock(
+            return_value=_ok_response(float_to_registers(9000.0))
+        )
+        await inverter.async_get_charge_limit_kw()
+        await inverter.async_set_charge_limit(1.5)
+        mock_modbus_client.read_holding_registers = AsyncMock(
+            return_value=_ok_response(float_to_registers(1500.0))
+        )
+        await inverter.async_get_charge_limit_kw()
+        assert inverter.get_charge_limit_max_kw() == pytest.approx(9.0)
+        await inverter.async_disconnect()
+
+    async def test_entladegrenze_kommt_aus_den_steuerwerten(
+        self, inverter, mock_modbus_client
+    ):
+        assert inverter.get_max_discharge_power_kw() is None
+        mock_modbus_client.read_holding_registers = AsyncMock(
+            return_value=_ok_response(float_to_registers(5000.0))
+        )
+        await inverter.async_get_control_values()
+        assert inverter.get_max_discharge_power_kw() == pytest.approx(5.0)
+
+    async def test_steuerwerte_zeigen_die_drei_register(
+        self, inverter, mock_modbus_client
+    ):
+        mock_modbus_client.read_holding_registers = AsyncMock(
+            return_value=_ok_response(float_to_registers(3000.0))
+        )
+        werte = await inverter.async_get_control_values()
+        rollen = [w["role"] for w in werte]
+        assert rollen == ["forcible", "charge_limit", "discharge_limit"]
+        assert all(w["unit"] == "W" for w in werte)
+        # Positiver Sollwert heisst entladen — ohne den Hinweis liest sich
+        # die nackte Zahl falschherum.
+        assert "entladen" in werte[0]["label"]
+
+    async def test_steuerwerte_ohne_verbindung_sind_leer(
+        self, inverter, mock_modbus_client
+    ):
+        mock_modbus_client.connected = False
+        mock_modbus_client.connect = AsyncMock(return_value=False)
+        assert await inverter.async_get_control_values() == []
+
+
+class TestEncodingProbe:
+    """Teil-Limits unterscheiden Float32 von U32 — das wird einmal geprueft."""
+
+    async def test_abweichung_wird_gemeldet(self, inverter, mock_modbus_client, caplog):
+        # Geschrieben 2000 W, zurueck kommt etwas voellig anderes.
+        mock_modbus_client.read_holding_registers = AsyncMock(
+            return_value=_ok_response(float_to_registers(70.0))
+        )
+        with caplog.at_level("WARNING"):
+            await inverter.async_set_charge_limit(2.0)
+        assert "zurueckgelesen" in caplog.text
+        await inverter.async_disconnect()
+
+    async def test_passender_rueckleser_meldet_nichts(
+        self, inverter, mock_modbus_client, caplog
+    ):
+        mock_modbus_client.read_holding_registers = AsyncMock(
+            return_value=_ok_response(float_to_registers(2000.0))
+        )
+        with caplog.at_level("WARNING"):
+            await inverter.async_set_charge_limit(2.0)
+        assert "zurueckgelesen" not in caplog.text
+        await inverter.async_disconnect()
+
+    async def test_blockieren_wird_nicht_geprueft(self, inverter, mock_modbus_client):
+        """Bei 0 W sind beide Kodierungen bitgleich — nichts zu pruefen."""
+        await inverter.async_set_charge_limit(0.0)
+        assert inverter._encoding_geprueft is False
+        await inverter.async_disconnect()
+
+    async def test_probe_laeuft_nur_einmal(self, inverter, mock_modbus_client):
+        mock_modbus_client.read_holding_registers = AsyncMock(
+            return_value=_ok_response(float_to_registers(2000.0))
+        )
+        await inverter.async_set_charge_limit(2.0)
+        vorher = mock_modbus_client.read_holding_registers.await_count
+        await inverter.async_set_charge_limit(3.0)
+        # Nur noch der Snapshot-Read, keine zweite Probe.
+        assert mock_modbus_client.read_holding_registers.await_count <= vorher + 1
+        await inverter.async_disconnect()

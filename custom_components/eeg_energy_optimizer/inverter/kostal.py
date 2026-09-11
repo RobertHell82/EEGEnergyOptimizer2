@@ -156,6 +156,14 @@ class KostalInverter(InverterBase):
         # to internal management, which ignores the stale value; the next
         # mode entry rewrites all relevant registers anyway.
         self._max_charge_pre_block: float | None = None
+        # Hardware-Grenzen aus den Registern, sobald sie ungestoert lesbar
+        # waren (Guard 1 und Guard 2 clampen darauf). None = noch unbekannt,
+        # dann heben die Guards ungeclampt an und das Geraet faengt es ab.
+        self._max_charge_hw: float | None = None
+        self._max_discharge_hw: float | None = None
+        # Einmalige Rueckleseprobe beim ersten Teil-Ladelimit, siehe
+        # _pruefe_encoding().
+        self._encoding_geprueft: bool = False
         # Serializes Modbus operations between the 30-second optimizer
         # cycle, manual WebSocket commands, and the keepalive task. Same
         # rationale as the Fronius driver: the direct Modbus TCP path has
@@ -350,6 +358,7 @@ class KostalInverter(InverterBase):
                 current = await self._read_float(REG_MAX_CHARGE_POWER)
                 if current is not None and current > 0:
                     self._max_charge_pre_block = current
+                    self._max_charge_hw = current
                     _LOGGER.debug(
                         "Kostal: cached pre-block max charge power %.0f W",
                         current,
@@ -358,6 +367,8 @@ class KostalInverter(InverterBase):
             watts = max(power_kw, 0.0) * 1000.0
             if not await self._write_float(REG_MAX_CHARGE_POWER, watts):
                 return False
+            if watts > 0:
+                await self._pruefe_encoding(watts)
 
             self._active = ("charge_limit", watts)
             self._start_keepalive()
@@ -470,6 +481,157 @@ class KostalInverter(InverterBase):
             _LOGGER.exception("Kostal: failed to stop forcible mode")
             self._close_client()
             return False
+
+    async def _pruefe_encoding(self, geschrieben_w: float) -> None:
+        """Einmal pruefen, ob das Geraet das geschriebene Teil-Limit annimmt.
+
+        Fuer den Blockierwert 0 sind Float32 und U32 bitgleich — ein
+        Teil-Limit unterscheidet sie. Die Registerlisten der Community
+        widersprechen sich an dieser Stelle (evcc schreibt Float, eine
+        aeltere Liste dokumentiert U32), und der Fahrplan schreibt staendig
+        Teil-Limits. Deshalb wird der erste solche Wert zurueckgelesen: Passt
+        er nicht, steht es im Log, statt dass die Anlage still mit einem
+        unsinnigen Limit laedt.
+
+        Nur Diagnose — der Schreibvorgang gilt trotzdem als erfolgreich,
+        denn die Abweichung kann auch am Geraet liegen (eigene Deckelung,
+        Rundung auf ganze 100 W).
+        """
+        if self._encoding_geprueft:
+            return
+        self._encoding_geprueft = True
+        gelesen = await self._read_float(REG_MAX_CHARGE_POWER)
+        if gelesen is None:
+            return
+        # Grosszuegig: 10 % oder 100 W Toleranz decken Rundung und eigene
+        # Deckelung ab; ein falsches Encoding liegt um Groessenordnungen daneben.
+        toleranz = max(100.0, geschrieben_w * 0.1)
+        if abs(gelesen - geschrieben_w) > toleranz:
+            _LOGGER.warning(
+                "Kostal: Ladelimit %.0f W geschrieben, aber %.0f W "
+                "zurueckgelesen — moeglicherweise erwartet diese Firmware "
+                "eine andere Kodierung von Register %d, oder das Geraet "
+                "deckelt selbst. Das Blockieren des Ladens (0 W) ist davon "
+                "nicht betroffen.",
+                geschrieben_w, gelesen, REG_MAX_CHARGE_POWER,
+            )
+        else:
+            _LOGGER.debug(
+                "Kostal: Ladelimit verifiziert (%.0f W geschrieben, "
+                "%.0f W gelesen)", geschrieben_w, gelesen,
+            )
+
+    def _merke_hardware_grenze(self, max_charge_w: float | None) -> None:
+        """Ungestoerten 1038-Wert als Hardware-Maximum merken.
+
+        Nur solange wir nicht selbst begrenzen: sonst hielte der Treiber sein
+        eigenes Limit fuer die Grenze des Geraets, und Guard 1 kaeme nie
+        wieder darueber hinaus.
+        """
+        if max_charge_w is None or max_charge_w <= 0:
+            return
+        if self._active is not None and self._active[0] == "charge_limit":
+            return
+        self._max_charge_hw = max_charge_w
+
+    # ------------------------------------------------------------------
+    # Fahrplan-Steuerschnittstelle (Schedule-Executor)
+    # ------------------------------------------------------------------
+
+    @property
+    def supports_schedule_control(self) -> bool:
+        """Der Fahrplan-Executor darf den Plenticore stellen."""
+        return True
+
+    async def async_get_charge_limit_kw(self) -> float | None:
+        """Aktuell wirksames Ladelimit in kW — Register 1038.
+
+        Anders als bei SunSpec gibt es kein Modus-Bit, das die Begrenzung
+        erst scharf schaltet: 1038 wirkt immer. Der gelesene Wert ist damit
+        unmittelbar das, wovon Guard 1 weiterrechnet — waehrend einer
+        Entladung ebenso, dort steht der Sollwert in 1034 und 1038 bleibt
+        die Ladegrenze.
+        """
+        async with self._lock:
+            if not await self._ensure_connected():
+                return None
+            watts = await self._read_float(REG_MAX_CHARGE_POWER)
+            if watts is None:
+                return None
+            self._merke_hardware_grenze(watts)
+            return max(watts, 0.0) / 1000.0
+
+    def get_charge_limit_max_kw(self) -> float | None:
+        """Hardware-Maximum des Ladelimits in kW, aus dem Cache.
+
+        Synchron, also nur aus dem, was ein frueherer Lauf ungestoert
+        gelesen hat. Vor dem ersten Lesen None — Guard 1 hebt dann
+        ungeclampt an, und das Geraet deckelt selbst.
+        """
+        return None if self._max_charge_hw is None else self._max_charge_hw / 1000.0
+
+    def get_max_discharge_power_kw(self) -> float | None:
+        """Maximale Entladeleistung in kW — Register 1040, aus dem Cache.
+
+        Gefuellt von async_get_control_values(); das Register schreiben wir
+        nie, es ist die Grenze, die Guard 2 nicht ueberschreiten darf.
+        """
+        return (
+            None if self._max_discharge_hw is None
+            else self._max_discharge_hw / 1000.0
+        )
+
+    async def async_get_control_values(self) -> list[dict]:
+        """Stellgroessen fuer die Transparenz-Ansicht — direkt aus den Registern.
+
+        Der Plenticore wird nicht ueber HA-Entitaeten gestellt, sondern per
+        Modbus; get_control_entities() bleibt deshalb leer. Fehlschlaege
+        liefern eine leere Liste statt zu werfen — die Ansicht ist Diagnose,
+        kein Steuerpfad.
+        """
+        async with self._lock:
+            if not await self._ensure_connected():
+                return []
+            setpoint = await self._read_float(REG_BATTERY_SETPOINT)
+            max_charge = await self._read_float(REG_MAX_CHARGE_POWER)
+            max_discharge = await self._read_float(REG_MAX_DISCHARGE_POWER)
+
+        self._merke_hardware_grenze(max_charge)
+        if max_discharge is not None and max_discharge > 0:
+            self._max_discharge_hw = max_discharge
+
+        def _w(wert: float | None) -> Any:
+            return None if wert is None else round(wert)
+
+        # Vorzeichen des Sollwerts ist die halbe Information: positiv heisst
+        # entladen, negativ laden — ohne den Hinweis liest sich eine nackte
+        # Zahl falschherum.
+        richtung = ""
+        if setpoint is not None:
+            if setpoint > 1.0:
+                richtung = " (entladen)"
+            elif setpoint < -1.0:
+                richtung = " (laden)"
+        return [
+            {
+                "label": f"Batterie-Sollwert (Register {REG_BATTERY_SETPOINT}){richtung}",
+                "value": _w(setpoint),
+                "unit": "W",
+                "role": "forcible",
+            },
+            {
+                "label": f"Max. Ladeleistung (Register {REG_MAX_CHARGE_POWER})",
+                "value": _w(max_charge),
+                "unit": "W",
+                "role": "charge_limit",
+            },
+            {
+                "label": f"Max. Entladeleistung (Register {REG_MAX_DISCHARGE_POWER})",
+                "value": _w(max_discharge),
+                "unit": "W",
+                "role": "discharge_limit",
+            },
+        ]
 
     @property
     def is_available(self) -> bool:
