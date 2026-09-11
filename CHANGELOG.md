@@ -10,6 +10,52 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
+## [2.1.1-dev1] - 2026-09-11
+
+### Behoben
+
+- **Sigenergy: Das Ladelimit lud die Batterie aus dem Netz.** Um ein Limit zu setzen, schaltete der Treiber in den Modus „Command Charging (PV First)". Der ist aber ein Ladebefehl, kein Limit — „PV First" heißt nur: PV zuerst nehmen, den Rest aus dem Netz. An einer Anlage lief das am 11. September von 06:35 bis 09:15 bei einer PV-Leistung von 0,00 kW: Die Batterie stieg von 8,5 % auf 22 %, 5,35 kWh kamen aus dem Netz, und im Panel stand die ganze Zeit „Laden begrenzt auf 3,8 kW". Aus „höchstens X laden" war „genau X laden, notfalls aus dem Netz" geworden. Das Limit wird jetzt im Eigenverbrauchsmodus gesetzt, in dem kein Netzbezug entstehen kann. Sollte das Register auf älterer Firmware dort nicht greifen, bleibt das Limit wirkungslos und die Anlage lädt mit Überschuss weiter — harmlos, verglichen mit gekauftem Strom.
+
+### Geändert
+
+- **Heizstab und Wallbox sind als BETA gekennzeichnet.** Beide funktionieren, sind aber erst an einzelnen Anlagen erprobt. Das Abzeichen steht an den Überschriften der jeweiligen Einstellungskarten.
+- **Der Heizstab-Tab erscheint nur noch im Expertenmodus.** Ein Heizstab ist die Ausnahme, nicht die Regel — im Einrichtungsassistenten stand er ohnehin nie, jetzt bleibt er auch in den Einstellungen unsichtbar, solange man ihn nicht sucht. Wer den Expertenmodus abschaltet, während er im Heizstab-Tab steht, landet auf „Tarife" statt auf einer Seite ohne Reiter.
+- **Heizstab- und Wallbox-Zweig sind zusammengeführt.** Beide Funktionen stecken ab dieser Version in derselben Ausgabe.
+
+## [2.1.0-ambibox3] - 2026-09-10
+
+### Geändert
+
+- **Das Auto steht jetzt in der Statuskarte, nicht mehr in einer eigenen Karte.** Es gehört zum aktuellen Zustand der Anlage — Ladestand, Richtung, Leistung und Zielladestand stehen dort in einer Zeile unter den Steuerungsangaben, samt schmalem Ladestandsbalken.
+- **Die Anzeige läuft von selbst mit.** Sie liest die Auto-Sensoren statt einmalig einen WebSocket-Befehl; die schreibt der Controller mit jedem Lesevorgang fort (alle 15 s), und das Panel hängt an deren Zustandsmeldungen. Vorher aktualisierte sich die Karte nur im Takt des Steuerungslaufs.
+
+### Hinzugefügt
+
+- **Laden und Entladen von Hand starten** (Statuskarte, nur im Expertenmodus): Leistung und Laufzeit wählen, dann „Laden" oder „Entladen". Der Sollwert wird laufend nachgeschrieben und endet nach der eingestellten Zeit von selbst; „Stoppen" gibt die Wallbox sofort wieder frei. Der Optimierungsplan steuert die Wallbox weiterhin nicht — dieser Weg ist zum Ausprobieren am Gerät gedacht.
+- **Vorzeichen des Leistungssollwerts einstellbar** (Wallbox-Einstellungen). Welche Richtung die Ambibox als Laden versteht, steht in keiner Unterlage; die Vorgabe folgt der einzigen bekannten fremden Umsetzung. Lädt das Auto in die falsche Richtung oder gar nicht, kostet die Korrektur eine Einstellung statt eines neuen Releases.
+
+### Hinweise
+
+- Der Handbetrieb wird abgelehnt, wenn kein Fahrzeug angesteckt ist, die Wallbox das Fahrzeug als nicht steuerbar meldet oder für das Rückspeisen das nötige Protokoll (ISO 15118-20) fehlt — mit einer Meldung, die den Grund nennt. Beim Beenden der Integration wird ein laufender Handbetrieb gestoppt.
+
+## [2.1.0-ambibox2] - 2026-09-10
+
+### Behoben
+
+- **Die Wallbox ließ sich nicht einrichten.** Nach der Auswahl „Ambibox" erschien kein Feld für die IP-Adresse — das Panel zeichnete die Karte nach dem Umschalten nicht neu, und ohne Adresse, Port, Unit-ID und Ladepunkt war die Anbindung gar nicht zu konfigurieren.
+- **Fehlende Adresse wird jetzt am Formular gemeldet.** Bisher kam die Meldung erst beim Speichern aus dem Backend; jetzt steht die Lücke wie bei den anderen Pflichtfeldern in der Liste über dem Speichern-Knopf.
+
+## [2.1.0-ambibox] - 2026-09-10
+
+### Hinzugefügt
+
+- **Das angesteckte Auto wird angezeigt.** Neue Karte „Auto" im Dashboard: Ladestand als Balken samt Energie im Akku, Ladeleistung mit Richtung, Zustand der Ladesitzung, Zielladestand, Zeit bis zur Abfahrt, Ladeprotokoll und Störungen der Wallbox. Sie erscheint nur, wenn eine Wallbox eingerichtet ist, und sagt es deutlich, wenn keine erreichbar ist oder kein Fahrzeug hängt.
+- **Wallbox-Einstellungen (Einstellungen → Anlage, nur im Expertenmodus).** Auswahl des Typs — vorerst nur Ambibox (ambiCHARGE) —, dazu Adresse, Modbus-Port, Unit-ID und Ladepunkt sowie ein Verbindungstest, der einmal liest und zeigt, was dabei herauskommt. Bewusst nicht im Einrichtungsassistenten: Das Auto ist Zubehör, keine Voraussetzung für den Fahrplan.
+- **Vier neue Sensoren mit eingerichteter Wallbox:** Auto Status, Auto Ladestand, Auto Ladeleistung und Auto Energie Ladesitzung. Sie stehen auf „nicht verfügbar", solange die Wallbox nicht antwortet — der zuletzt gelesene Ladestand eines längst weggefahrenen Autos wäre schlimmer als gar kein Wert.
+
+### Hinweise
+
+- **Gelesen wird nur.** Laden und Entladen des Autos steuert die Optimierung noch nicht. Drei Fragen sind dafür offen, die das Herstellerdokument nicht beantwortet: Wie lange ein Leistungssollwert ohne Nachschreiben gilt (Watchdog), mit welchem Vorzeichen geladen wird, und was passiert, wenn die Ambibox gleichzeitig selbst regelt. Die Anzeige umgeht die Vorzeichenfrage, indem sie die Richtung aus dem Batteriezustand der Wallbox nimmt statt aus dem Vorzeichen der Leistung.
 ## [2.1.0-heizstab5] - 2026-09-10
 
 ### Hinzugefügt

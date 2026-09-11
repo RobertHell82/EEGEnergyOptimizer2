@@ -14,9 +14,8 @@ Geschrieben wird per ``switch.turn_on`` / ``select.select_option`` /
 Modbus, kein Keepalive, keine Skalierungsfaktoren. Die drei Absichten des
 Fahrplan-Executors werden so abgebildet:
 
-  Ladelimit X kW  → Modus „Command Charging (PV First)", Ladelimit = X
-                    (0 kW sperrt das Laden; Register 40032 wirkt nur in den
-                    Lademodi 3/4, deshalb der Moduswechsel)
+  Ladelimit X kW  → Ladelimit = X im Modus „Maximum Self Consumption"
+                    (siehe „Warum kein Command Charging" unten)
   Entladung X kW  → Modus „Command Discharging (ESS First)", Entladelimit = X
   Freigabe        → Modus „Maximum Self Consumption", danach Remote EMS AUS —
                     das Gerät läuft wieder in seinem eigenen EMS-Arbeitsmodus.
@@ -36,6 +35,23 @@ Zwei Eigenheiten der Integration bestimmen den Ablauf:
    Fehler. Der Treiber schaltet deshalb zuerst ein und wartet, bis die
    Auswahl verfügbar ist; die Integration stößt nach jedem Schreibvorgang
    sofort einen Refresh an, das dauert typisch unter einer Sekunde.
+
+**Warum kein Command Charging.** Bis 2.1.0-dev6 wurde für ein Ladelimit in
+den Modus „Command Charging (PV First)" geschaltet, weil Register 40032 laut
+Spezifikation V2.7 nur in den Lademodi 3/4 wirkt. Das war ein Fehlschluss:
+Dieser Modus ist ein **Ladebefehl**, kein Limit — „PV First" heißt nur „PV
+zuerst nehmen, den Rest aus dem Netz". Am 11.09.2026 hat eine Anlage damit
+von 06:35 bis 09:15 ihre Batterie von 8,5 % auf 22 % geladen, bei einer
+PV-Leistung von 0,00 kW: 5,35 kWh aus dem Netz, während der Fahrplan „Laden
+begrenzt auf 3,8 kW" anzeigte. Aus „höchstens X" war „genau X, notfalls aus
+dem Netz" geworden.
+
+Deshalb bleibt der Eigenverbrauchsmodus stehen und nur das Limit wird
+geschrieben. Ab Firmware SPC113 greift 40032 laut Anwenderberichten auch
+dort; greift es nicht, ist die Folge ein wirkungsloses Limit — die Anlage
+lädt dann mit Überschuss weiter. Das ist der richtige Ausgang eines Zweifels:
+keine Steuerwirkung ist harmlos, Netzladen kostet Geld. **Am Gerät zu
+verifizieren:** ob das Limit im Eigenverbrauch greift (Firmwarestand prüfen).
 
 **Kein geräteseitiges Failsafe.** Die Sigenergy-Modbus-Spezifikation (V2.7)
 kennt weder Watchdog noch Rückfallzeit — anders als Fronius (``RvrtTms``),
@@ -299,13 +315,19 @@ class SigenergyInverter(InverterBase):
     async def async_set_charge_limit(self, power_kw: float) -> bool:
         """Laden auf ``power_kw`` begrenzen; 0 sperrt das Laden.
 
-        Reihenfolge: erst das Limit, dann der Modus — sonst liefe der
-        Lademodus einen Moment mit einem alten, höheren Limit.
+        Der Modus bleibt „Maximum Self Consumption". Ein Ladebefehl
+        („Command Charging") wäre hier falsch: Er lädt auf den Sollwert und
+        holt sich die Differenz aus dem Netz, wenn die Sonne nicht reicht —
+        siehe „Warum kein Command Charging" im Modulkopf. Ein Limit darf nur
+        begrenzen, nie laden.
+
+        Reihenfolge: erst das Limit, dann der Modus — sonst liefe ein
+        Moduswechsel einen Moment mit einem alten, höheren Limit.
         """
         try:
             await self._ensure_remote_ems()
             await self._set_number("ess_max_charging_limit", max(0.0, float(power_kw)))
-            await self._set_mode(MODE_COMMAND_CHARGING_PV_FIRST)
+            await self._set_mode(MODE_SELF_CONSUMPTION)
             return True
         except Exception:  # noqa: BLE001
             _LOGGER.exception("Sigenergy: Ladelimit konnte nicht gesetzt werden")
@@ -362,13 +384,13 @@ class SigenergyInverter(InverterBase):
         return True
 
     async def async_get_charge_limit_kw(self) -> float | None:
-        """Gesetztes Ladelimit — nur im Lademodus eine Aussage.
+        """Gesetztes Ladelimit — im Eigenverbrauchsmodus eine Aussage.
 
-        Im Eigenverbrauch oder beim Entladen ist Register 40032 wirkungslos;
-        sein Wert wäre dann kein Limit. None lässt den Executor auf den
-        zuletzt geschriebenen Wert bzw. den Planwert zurückfallen.
+        In den Entlademodi ist Register 40032 wirkungslos, sein Wert wäre
+        dann kein Limit. None lässt den Executor auf den zuletzt
+        geschriebenen Wert bzw. den Planwert zurückfallen.
         """
-        if self._state_str(self._resolve_entity("remote_ems_mode")) != MODE_COMMAND_CHARGING_PV_FIRST:
+        if self._state_str(self._resolve_entity("remote_ems_mode")) != MODE_SELF_CONSUMPTION:
             return None
         return self._state_float(self._resolve_entity("ess_max_charging_limit"))
 

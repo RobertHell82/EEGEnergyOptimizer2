@@ -42,8 +42,22 @@ const SENSOR_SUFFIXES = {
   // stört nicht, die Anzeige fragt vorher `heizstab_enabled` ab.
   heizstab_leistung: "heizstab_leistung",
   heizstab_temperatur: "heizstab_temperatur",
+  // Auto an der Wallbox (ambibox/). Die Sensoren gibt es nur mit
+  // eingerichteter Wallbox; ohne sie bleibt die geratene entity_id ohne
+  // Zustand, was nicht stört — die Anzeige fragt vorher `wallbox_type` ab.
+  auto_status: "auto_status",
+  auto_ladestand: "auto_ladestand",
+  auto_ladeleistung: "auto_ladeleistung",
 };
 const SELECT_SUFFIX = "optimizer";
+
+// Abzeichen für Funktionen im Feldtest: sie sind benutzbar, aber noch nicht
+// an genug Anlagen erprobt, um sie wie den Rest zu behandeln. Steht neben
+// der Überschrift, nicht im Fließtext — wer die Karte öffnet, soll es sehen,
+// ohne dass es den Satz zerreißt.
+const BETA_BADGE = `<span style="display:inline-block;margin-left:8px;padding:1px 7px;border-radius:9px;
+  background:var(--warning-color,#ff9800);color:#fff;font-size:11px;font-weight:600;
+  letter-spacing:.04em;vertical-align:middle">BETA</span>`;
 
 // Nur der Startwert, bis _resolveEntityIds die Registry gelesen hat. Der
 // Statussensor steht in beiden Schreibweisen drin — Bestandsinstallationen
@@ -261,6 +275,16 @@ const WIZARD_DEFAULTS = {
   heizstab_alt_temp_c: 0,
   heizstab_vorrang: true,
   heizstab_waermewert: 0,
+  // Wallbox (vorerst nur Ambibox) — reine Anzeige des angesteckten
+  // Fahrzeugs. Nur in den Einstellungen und nur im Expertenmodus.
+  wallbox_type: "",
+  ambibox_host: "",
+  ambibox_port: 502,
+  ambibox_unit_id: 1,
+  ambibox_connector: 1,
+  // Welches Vorzeichen die Wallbox als Laden versteht — nicht
+  // dokumentiert, deshalb einstellbar (siehe const.py).
+  ambibox_charge_sign: "negative",
   expert_mode: false,
 };
 
@@ -437,6 +461,17 @@ class EegOptimizerPanel extends HTMLElement {
     this._scheduleLoaded = false;
     // Transparenz-Ansicht: welche Stellgröße gerade auf welchem Wert steht.
     this._controlState = null;
+    // Ambibox: Ergebnis des Verbindungstests aus den Einstellungen. Der
+    // Fahrzeugzustand kommt nicht von hier, sondern aus den Sensoren —
+    // die schreibt der Controller mit jedem Lesevorgang fort, und das
+    // Panel bekommt sie über die State-Subscription live.
+    this._ambiboxProbing = false;
+    this._ambiboxProbeResult = null;
+    // Handbetrieb: gewählte Leistung, Laufzeit und die letzte Rückmeldung.
+    this._ambiboxManualKw = 3;
+    this._ambiboxManualMin = 15;
+    this._ambiboxManualBusy = false;
+    this._ambiboxManualMeldung = null;
     // Zeitstempel des Guard-Laufs, zu dem die Steuerwerte zuletzt geladen
     // wurden — ändert er sich, zieht die Karte nach (siehe _ensureControlState).
     this._controlStateStamp = null;
@@ -715,6 +750,15 @@ class EegOptimizerPanel extends HTMLElement {
     });
 
     this._shadow.addEventListener("change", (e) => {
+      // Handbetrieb der Wallbox: gehört zu keiner Konfiguration, sondern
+      // nur zum Knopf daneben — deshalb vor der data-field-Auswertung.
+      const manuell = e.target.closest("[data-manual]");
+      if (manuell) {
+        const wert = Number(String(manuell.value).replace(",", "."));
+        if (manuell.dataset.manual === "kw") this._ambiboxManualKw = wert;
+        else if (manuell.dataset.manual === "min") this._ambiboxManualMin = wert;
+        return;
+      }
       // Auswahlfelder über dem Diagramm — kein data-field, sie gehören zu
       // keiner Konfiguration, sondern nur zur Ansicht.
       const chartWahl = e.target.closest("select[data-chart]");
@@ -768,6 +812,10 @@ class EegOptimizerPanel extends HTMLElement {
             // Die Bedarfsquelle tauscht die PeakShare-Auswahl gegen Namens-
             // und Quotenfelder.
             if (realField === "eeg_demand_source") this._render();
+            // Der Wallbox-Typ blendet Adresse, Port, Unit-ID, Ladepunkt und
+            // den Verbindungstest ein. Ohne Render war die Auswahl gesetzt,
+            // aber es gab kein Feld für die IP-Adresse.
+            if (realField === "wallbox_type") this._render();
           }
           return;
         }
@@ -1670,6 +1718,18 @@ class EegOptimizerPanel extends HTMLElement {
       case "refresh-control-state":
         this._loadControlState();
         break;
+      case "ambibox-charge":
+        this._ambiboxManual("charge");
+        break;
+      case "ambibox-discharge":
+        this._ambiboxManual("discharge");
+        break;
+      case "ambibox-stop":
+        this._ambiboxManual("stop");
+        break;
+      case "test-ambibox":
+        this._probeAmbiboxConnection(dataset.prefix || "");
+        break;
       case "toggle-schedule":
         this._scheduleOpen = !this._scheduleOpen;
         this._savePref(this._narrow ? "schedule_open_narrow" : "schedule_open",
@@ -1901,6 +1961,70 @@ class EegOptimizerPanel extends HTMLElement {
       return false;
     } finally {
       this._froniusProbing = false;
+      this._render();
+    }
+  }
+
+  // Verbindungstest aus den Einstellungen: liest einmal den Block und zeigt,
+  // was dabei herauskommt. Schreibt nichts — die Ambibox wird von uns
+  // vorerst nur gelesen.
+  // Laden/Entladen von Hand. Der einzige Weg, auf dem diese Integration
+  // die Wallbox beschreibt — immer von jemandem ausgelöst, der davorsteht.
+  async _ambiboxManual(action) {
+    if (!this._hass || this._ambiboxManualBusy) return;
+    this._ambiboxManualBusy = true;
+    this._ambiboxManualMeldung = null;
+    this._render();
+    try {
+      const res = await this._hass.callWS({
+        type: "eeg_optimizer/ambibox_manual",
+        action,
+        power_kw: Number(this._ambiboxManualKw) || 0,
+        minutes: Number(this._ambiboxManualMin) || 15,
+      });
+      this._ambiboxManualMeldung = res?.success
+        ? { ok: true, text: res.message || "Erledigt." }
+        : { ok: false, text: res?.error || "Fehlgeschlagen." };
+    } catch (e) {
+      this._ambiboxManualMeldung = { ok: false, text: e?.message || String(e) };
+    } finally {
+      this._ambiboxManualBusy = false;
+      this._render();
+    }
+  }
+
+  async _probeAmbiboxConnection(prefix) {
+    const d = prefix ? this._settingsData : this._wizardData;
+    const host = String(d.ambibox_host || "").trim();
+    if (!host) {
+      this._showValidationError("Bitte zuerst die Adresse der Ambibox eintragen.");
+      return false;
+    }
+    this._ambiboxProbing = true;
+    this._ambiboxProbeResult = null;
+    this._render();
+    try {
+      const res = await this._hass.callWS({
+        type: "eeg_optimizer/probe_ambibox",
+        host,
+        port: parseInt(d.ambibox_port, 10) || 502,
+        unit_id: parseInt(d.ambibox_unit_id, 10) || 1,
+        connector: parseInt(d.ambibox_connector, 10) || 1,
+      });
+      this._ambiboxProbeResult = res;
+      if (!res || !res.success) {
+        this._showValidationError(
+          `Ambibox unter ${host} nicht erreichbar — ${res?.error || "unbekannter Fehler"}. Ist Modbus TCP in der Ambibox freigeschaltet?`
+        );
+        return false;
+      }
+      return true;
+    } catch (e) {
+      this._ambiboxProbeResult = { success: false, error: e?.message || String(e) };
+      this._showValidationError(`Verbindungstest fehlgeschlagen: ${e?.message || e}`);
+      return false;
+    } finally {
+      this._ambiboxProbing = false;
       this._render();
     }
   }
@@ -2278,6 +2402,12 @@ class EegOptimizerPanel extends HTMLElement {
       if (!String(d.heizstab_host || "").trim()) fehlt.push("Adresse des Ohmpilot (Heizstab)");
       if (!(Number(d.heizstab_max_kw) > 0)) fehlt.push("Leistung des Heizstabs");
       if (!(Number(d.heizstab_maxtemp_c) > 0)) fehlt.push("Maximaltemperatur des Heizstabs");
+    }
+    // Wallbox: ohne Adresse gibt es nichts zu lesen. Die Prüfung hier statt
+    // erst im Backend, damit die Meldung am Feld steht und nicht als
+    // Speicherfehler zurückkommt.
+    if (d.wallbox_type === "ambibox" && !String(d.ambibox_host || "").trim()) {
+      fehlt.push("Adresse der Ambibox");
     }
     if ((d.schedule_feedin_source || "manual") === "manual"
         && !(Number(d.schedule_feedin_price) > 0)) fehlt.push("Standardvergütung");
@@ -5635,6 +5765,71 @@ class EegOptimizerPanel extends HTMLElement {
       </div>`;
   }
 
+  _wallboxFields(d, prefix) {
+    // Wallbox-Anbindung. Vorerst kennt die Integration nur die Ambibox, der
+    // Typ steht trotzdem als Auswahl da — wie beim Wechselrichter, damit
+    // weitere Fabrikate dazukommen können, ohne die Einstellungen umzubauen.
+    // Gelesen wird nur: angestecktes Fahrzeug anzeigen. Laden und Entladen
+    // steuert die Optimierung (noch) nicht.
+    const typ = d.wallbox_type || "";
+    const res = this._ambiboxProbeResult;
+    const probeBox = !res ? "" : (res.success
+      ? `<div class="help-text" style="margin-top:8px;padding:10px 12px;background:var(--success-color,#4caf50)18;border-left:3px solid var(--success-color,#4caf50);border-radius:4px">
+           <strong>Verbindung steht.</strong><br>
+           ${res.verbunden
+             ? `Fahrzeug angesteckt — ${res.session_text || "Zustand unbekannt"}${res.soc_pct != null ? `, Ladestand ${fmtDe(res.soc_pct, 0)} %` : ""}${res.kapazitaet_kwh ? `, Kapazität ${fmtDe(res.kapazitaet_kwh, 1)} kWh` : ""}.`
+             : "Kein Fahrzeug angesteckt — die Wallbox antwortet trotzdem."}
+           ${res.protokoll ? `<br>Ladeprotokoll: ${this._escapeHtml(res.protokoll)}` : ""}
+           ${res.control_mode_text ? `<br>Steuerbarkeit laut Wallbox: ${this._escapeHtml(res.control_mode_text)}` : ""}
+         </div>`
+      : `<div class="help-text" style="margin-top:8px;padding:10px 12px;background:var(--error-color,#f44336)18;border-left:3px solid var(--error-color,#f44336);border-radius:4px">
+           ${this._escapeHtml(res.error || "Verbindung fehlgeschlagen.")}
+         </div>`);
+
+    return `
+      <div class="field-group">
+        <label>Typ der Wallbox</label>
+        <select data-field="${prefix}wallbox_type">
+          <option value="" ${typ === "" ? "selected" : ""}>Keine</option>
+          <option value="ambibox" ${typ === "ambibox" ? "selected" : ""}>Ambibox (ambiCHARGE)</option>
+        </select>
+        <div class="help-text">Bindet eine Wallbox per Modbus TCP an, um das angesteckte Fahrzeug anzuzeigen — Ladestand, Ladeleistung und Zustand der Ladesitzung. Gesteuert wird die Wallbox dabei nicht: Die Optimierung liest nur mit.</div>
+      </div>
+      ${typ === "ambibox" ? `
+      <div class="field-group">
+        <label>Adresse der Ambibox (IP oder Hostname) *</label>
+        <input type="text" data-field="${prefix}ambibox_host" value="${this._escapeHtml(d.ambibox_host || "")}" placeholder="z.B. 192.168.1.70">
+        <div class="help-text">Nur die Adresse, keine URL — also <code>192.168.1.70</code> statt <code>http://192.168.1.70/</code> (eine URL wird beim Speichern automatisch gekürzt). Modbus TCP muss in der Ambibox freigeschaltet sein.</div>
+      </div>
+      <div class="field-group">
+        <label>Modbus-Port</label>
+        <input type="number" data-field="${prefix}ambibox_port" value="${d.ambibox_port ?? 502}" min="1" max="65535" step="1">
+      </div>
+      <div class="field-group">
+        <label>Modbus-Unit-ID</label>
+        <input type="number" data-field="${prefix}ambibox_unit_id" value="${d.ambibox_unit_id ?? 1}" min="0" max="247" step="1">
+        <div class="help-text">Bleibt üblicherweise auf 1. Nur ändern, wenn die Ambibox hinter einem Gateway hängt, das die Geräte durchnummeriert.</div>
+      </div>
+      <div class="field-group">
+        <label>Ladepunkt</label>
+        <input type="number" data-field="${prefix}ambibox_connector" value="${d.ambibox_connector ?? 1}" min="1" max="10" step="1">
+        <div class="help-text">Die Ambibox führt bis zu zehn Ladepunkte. Bei einer einzelnen Wallbox ist es der erste.</div>
+      </div>
+      <div class="field-group">
+        <label>Vorzeichen des Leistungssollwerts</label>
+        <select data-field="${prefix}ambibox_charge_sign">
+          <option value="negative" ${(d.ambibox_charge_sign || "negative") === "negative" ? "selected" : ""}>Negativ = laden (Vorgabe)</option>
+          <option value="positive" ${d.ambibox_charge_sign === "positive" ? "selected" : ""}>Positiv = laden</option>
+        </select>
+        <div class="help-text">Welche Richtung die Wallbox als Laden versteht, steht in keiner Unterlage. Die Vorgabe folgt der einzigen bekannten fremden Umsetzung. Lädt das Auto beim Handbetrieb in die falsche Richtung oder gar nicht, hier umstellen.</div>
+      </div>
+      <button class="btn-secondary btn-tap" data-action="test-ambibox" data-prefix="${prefix}" ${this._ambiboxProbing ? "disabled" : ""} style="margin-top:4px">
+        <ha-icon icon="mdi:lan-connect" style="--mdc-icon-size:16px;vertical-align:middle"></ha-icon>
+        ${this._ambiboxProbing ? "Teste…" : "Verbindung testen"}
+      </button>
+      ${probeBox}` : ""}`;
+  }
+
   _controlHint(inverterType) {
     // Nur der Sonderfall wird gemeldet. Die Bestaetigung „wird gesteuert" war
     // Rauschen: dass gesteuert wird, ist der Normalfall, und ob gerade
@@ -6323,7 +6518,7 @@ class EegOptimizerPanel extends HTMLElement {
       action: prefix ? "toggle-settings-feature" : "toggle-feature",
       feature: "heizstab_enabled",
       icon: "mdi:heating-coil",
-      titel: "Heizstab steuern — nur Fronius Ohmpilot",
+      titel: `Heizstab steuern — nur Fronius Ohmpilot${BETA_BADGE}`,
       beschreibung: "Überschuss, den weder Batterie noch Netz aufnehmen, geht in den Heizstab statt abgeregelt zu werden. Gesteuert wird direkt per Modbus TCP — der Ohmpilot muss dafür vom Wechselrichter entkoppelt sein. Ist die Optimierung aus, ist auch der Heizstab aus.",
       params: `
         ${d.grid_export_limit_enabled ? "" : `
@@ -6560,7 +6755,10 @@ class EegOptimizerPanel extends HTMLElement {
       batterie: "anlage", einspeisegrenze: "anlage",
       advanced: "system",
     };
-    const activeTab = TAB_ALIAS[this._settingsTab] || this._settingsTab || "tarife";
+    let activeTab = TAB_ALIAS[this._settingsTab] || this._settingsTab || "tarife";
+    // Den Expertenmodus abzuschalten, während man im Heizstab-Tab steht,
+    // ließe sonst einen Inhalt ohne Reiter stehen.
+    if (activeTab === "heizstab" && !isExpert) activeTab = "tarife";
 
     const tabBar = `
       <div class="settings-tabs" role="tablist">
@@ -6572,10 +6770,11 @@ class EegOptimizerPanel extends HTMLElement {
           <ha-icon icon="mdi:battery-charging-medium" style="--mdc-icon-size:18px"></ha-icon>
           <span>Anlage</span>
         </button>
+        ${isExpert ? `
         <button class="settings-tab ${activeTab === "heizstab" ? "active" : ""}" data-action="set-settings-tab" data-tab="heizstab" role="tab">
           <ha-icon icon="mdi:heating-coil" style="--mdc-icon-size:18px"></ha-icon>
           <span>Heizstab</span>
-        </button>
+        </button>` : ""}
         <button class="settings-tab ${activeTab === "system" ? "active" : ""}" data-action="set-settings-tab" data-tab="system" role="tab">
           <ha-icon icon="mdi:tune" style="--mdc-icon-size:18px"></ha-icon>
           <span>System</span>
@@ -6608,14 +6807,23 @@ class EegOptimizerPanel extends HTMLElement {
       <div class="card" style="margin-bottom:16px">
         <h3 class="settings-karte-titel" style="margin:0 0 16px">Batterie</h3>
         ${this._batterieOptFields(d, "settings_")}
-      </div>`;
+      </div>
+      ${isExpert ? `
+      <div class="card" style="margin-bottom:16px">
+        <h3 class="settings-karte-titel" style="margin:0 0 4px">Wallbox${BETA_BADGE}</h3>
+        <div class="help-text" style="margin-bottom:16px">
+          Zeigt das angesteckte Fahrzeug an. Noch ohne Steuerung — Laden und
+          Entladen des Autos folgen in einem späteren Schritt.
+        </div>
+        ${this._wallboxFields(d, "settings_")}
+      </div>` : ""}`;
 
     // --- Tab: Heizstab (nur in den Einstellungen, nicht im Assistenten) ---
     // Ein Heizstab ist die Ausnahme, nicht die Regel — er bekommt seinen
     // eigenen Tab, damit „Anlage" für alle anderen schlank bleibt.
     const heizstabTab = `
       <div class="card" style="margin-bottom:16px">
-        <h3 class="settings-karte-titel" style="margin:0 0 4px">Heizstab (nur Fronius Ohmpilot)</h3>
+        <h3 class="settings-karte-titel" style="margin:0 0 4px">Heizstab (nur Fronius Ohmpilot)${BETA_BADGE}</h3>
         <div class="help-text" style="margin-bottom:16px">
           Überschuss, den weder Batterie noch Netz aufnehmen, geht in den
           Heizstab statt abgeregelt zu werden. Unterstützt wird derzeit
@@ -7190,6 +7398,173 @@ class EegOptimizerPanel extends HTMLElement {
       this._controlStateStamp = stamp;
       this._loadControlState();
     }
+  }
+
+  // Dauer in Klartext — für „Abfahrt in ...". Sekundengenau wäre hier
+  // Scheingenauigkeit: Die Angabe kommt aus einer Planung, nicht aus einer
+  // Messung.
+  _dauerText(sekunden) {
+    const s = Number(sekunden);
+    if (!Number.isFinite(s) || s <= 0) return null;
+    const std = Math.floor(s / 3600);
+    const min = Math.round((s % 3600) / 60);
+    if (std >= 24) return `${Math.round(std / 24)} Tage`;
+    if (std > 0) return min > 0 ? `${std} h ${min} min` : `${std} h`;
+    return `${Math.max(min, 1)} min`;
+  }
+
+  _renderAutoZeile() {
+    // Das angesteckte Fahrzeug als Teil der Statuskarte — es gehört zum
+    // aktuellen Zustand der Anlage, nicht in eine eigene Karte weiter unten.
+    // Quelle sind die Auto-Sensoren: Der Controller schreibt sie mit jedem
+    // Lesevorgang fort (alle 15 s), und das Panel hängt an der
+    // State-Subscription. Damit ist die Anzeige live, ohne eigenen Abruf.
+    if (!this._config?.wallbox_type) return "";
+
+    const statusState = this._readState(this._entityIds?.auto_status);
+    if (!statusState) {
+      return `<div style="font-size:13px;color:var(--secondary-text-color);margin-top:10px">
+        <ha-icon icon="mdi:car-electric" style="--mdc-icon-size:16px;vertical-align:middle"></ha-icon>
+        Wallbox eingerichtet, aber die Auto-Sensoren fehlen noch — nach dem Einrichten einmal neu starten.
+      </div>`;
+    }
+
+    const a = statusState.attributes || {};
+    const zustand = statusState.state || "";
+    const socState = this._readState(this._entityIds?.auto_ladestand);
+    const leistungState = this._readState(this._entityIds?.auto_ladeleistung);
+    const soc = parseFloat(socState?.state);
+    const leistung = parseFloat(leistungState?.state);
+    const rahmen = (inhalt, farbe) => `
+      <div style="display:flex;align-items:center;gap:10px;margin-top:10px;padding:8px 12px;border-radius:6px;
+                  background:var(--secondary-background-color,#f5f5f5);border-left:3px solid ${farbe || "var(--primary-color,#03a9f4)"};font-size:13px">
+        <ha-icon icon="mdi:car-electric" style="--mdc-icon-size:18px;color:${farbe || "var(--primary-color,#03a9f4)"};flex-shrink:0"></ha-icon>
+        <div style="flex:1;min-width:0">${inhalt}</div>
+      </div>`;
+
+    // Die Wallbox antwortet nicht: Das ist eine Aussage über die Anlage und
+    // gehört genauso in die Statuskarte wie ein Fahrzeug.
+    if (zustand === "Ambibox nicht erreichbar" || zustand === "unavailable") {
+      return rahmen(
+        `Wallbox nicht erreichbar${a.host ? ` (${this._escapeHtml(String(a.host))})` : ""}`
+        + (a.letzter_fehler ? `<div style="color:var(--secondary-text-color);font-size:12px">${this._escapeHtml(String(a.letzter_fehler))}</div>` : ""),
+        "var(--warning-color,#ff9800)"
+      );
+    }
+
+    const stoerungen = Array.isArray(a.fehler) && a.fehler.length
+      ? `<div style="color:var(--error-color,#f44336);font-size:12px;margin-top:2px">
+           ${a.fehler.map(f => this._escapeHtml(String(f))).join(", ")}
+         </div>`
+      : "";
+
+    if (!a.verbunden) {
+      return rahmen(
+        `Kein Fahrzeug angesteckt`
+        + (a.neu_anstecken_noetig
+          ? `<div style="color:var(--warning-color,#ff9800);font-size:12px;margin-top:2px">Stecker ziehen und neu anstecken</div>`
+          : "")
+        + stoerungen,
+        "var(--secondary-text-color)"
+      );
+    }
+
+    // Angestecktes Fahrzeug: Ladestand als schmaler Balken, daneben in einer
+    // Zeile das Wesentliche. Die Details, die selten jemand braucht
+    // (Protokoll, Gesundheit, Zyklen), stehen in den Sensor-Attributen.
+    const socBekannt = Number.isFinite(soc);
+    const ziel = Number(a.abfahrt_soc_pct);
+    const zielBekannt = Number.isFinite(ziel) && ziel > 0;
+    const balken = socBekannt ? `
+      <div style="position:relative;height:8px;border-radius:4px;background:var(--divider-color,#e0e0e0);overflow:hidden;margin:6px 0 4px;max-width:320px">
+        <div style="position:absolute;inset:0 auto 0 0;width:${Math.max(0, Math.min(100, soc))}%;background:#7cb342"></div>
+        ${zielBekannt ? `<div style="position:absolute;top:0;bottom:0;left:${Math.max(0, Math.min(100, ziel))}%;width:2px;background:var(--primary-text-color);opacity:.55"></div>` : ""}
+      </div>` : "";
+
+    const richtung = a.richtung === "laden" ? "lädt"
+      : a.richtung === "entladen" ? "speist zurück" : null;
+    const farbe = a.richtung === "laden" ? "#1e88e5"
+      : a.richtung === "entladen" ? "#ef6c00" : "var(--secondary-text-color)";
+
+    const teile = [];
+    if (socBekannt) {
+      teile.push(`<strong>${fmtDe(soc, 0)} %</strong>`
+        + (a.energie_kwh != null ? ` <span style="color:var(--secondary-text-color)">(${fmtDe(a.energie_kwh, 1)} kWh)</span>` : ""));
+    }
+    if (richtung && Number.isFinite(leistung) && Math.abs(leistung) > 0.01) {
+      teile.push(`<span style="color:${farbe}">${richtung} mit ${fmtDe(Math.abs(leistung), 2)} kW</span>`);
+    } else {
+      teile.push(`<span style="color:var(--secondary-text-color)">${this._escapeHtml(zustand)}</span>`);
+    }
+    const abfahrt = this._dauerText(a.abfahrt_in_s);
+    if (zielBekannt && abfahrt) {
+      teile.push(`<span style="color:var(--secondary-text-color)">Ziel ${fmtDe(ziel, 0)} % in ${abfahrt}</span>`);
+    } else if (zielBekannt) {
+      teile.push(`<span style="color:var(--secondary-text-color)">Ziel ${fmtDe(ziel, 0)} %</span>`);
+    }
+
+    return rahmen(
+      `<div>Auto: ${teile.join(" · ")}</div>${balken}${stoerungen}${this._autoHandbetrieb(a)}`,
+      farbe === "var(--secondary-text-color)" ? null : farbe
+    );
+  }
+
+  // Laden und Entladen von Hand. Nur im Expertenmodus: Es ist ein Testweg,
+  // kein Alltagsknopf — der Fahrplan steuert die Wallbox nicht, und was die
+  // Box aus einem Sollwert macht, ist noch nicht abschließend geklärt.
+  _autoHandbetrieb(a) {
+    if (!this._config?.expert_mode) return "";
+    const laeuft = !!a.manuell_aktiv;
+    const busy = this._ambiboxManualBusy;
+    const meldung = this._ambiboxManualMeldung;
+    const meldungBox = meldung
+      ? `<div style="font-size:12px;margin-top:6px;color:${meldung.ok ? "var(--success-color,#4caf50)" : "var(--error-color,#f44336)"}">
+           ${this._escapeHtml(meldung.text)}
+         </div>`
+      : "";
+
+    if (laeuft) {
+      const rest = this._dauerText(a.manuell_restsekunden);
+      const richtung = a.manuell_richtung === "entladen" ? "Entladen" : "Laden";
+      return `
+        <div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--divider-color,#e0e0e0)">
+          <div style="font-size:12px;margin-bottom:6px">
+            <strong>Handbetrieb:</strong> ${richtung} mit ${fmtDe(Number(a.manuell_kw) || 0, 1)} kW${rest ? `, endet in ${rest}` : ""}
+            ${a.manuell_sollwert_w != null ? `<span style="color:var(--secondary-text-color)"> (Sollwert ${a.manuell_sollwert_w} W)</span>` : ""}
+          </div>
+          ${a.manuell_fehler ? `<div style="font-size:12px;color:var(--error-color,#f44336);margin-bottom:6px">${this._escapeHtml(String(a.manuell_fehler))}</div>` : ""}
+          <button class="btn-secondary btn-tap" data-action="ambibox-stop" ${busy ? "disabled" : ""}>
+            <ha-icon icon="mdi:stop" style="--mdc-icon-size:16px;vertical-align:middle"></ha-icon> Stoppen
+          </button>
+          ${meldungBox}
+        </div>`;
+    }
+
+    // Rückspeisen kann nur, wer ISO 15118-20 spricht — der Knopf bleibt
+    // trotzdem sichtbar und sagt beim Klick, warum es nicht geht.
+    return `
+      <div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--divider-color,#e0e0e0)">
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12px">
+          <label style="display:flex;align-items:center;gap:4px">
+            <input type="number" data-manual="kw" value="${this._ambiboxManualKw}" min="0.5" max="22" step="0.5"
+                   style="width:70px;padding:4px 6px"> kW
+          </label>
+          <label style="display:flex;align-items:center;gap:4px">
+            <input type="number" data-manual="min" value="${this._ambiboxManualMin}" min="1" max="60" step="1"
+                   style="width:60px;padding:4px 6px"> min
+          </label>
+          <button class="btn-secondary btn-tap" data-action="ambibox-charge" ${busy ? "disabled" : ""}>
+            <ha-icon icon="mdi:battery-charging" style="--mdc-icon-size:16px;vertical-align:middle"></ha-icon> Laden
+          </button>
+          <button class="btn-secondary btn-tap" data-action="ambibox-discharge" ${busy ? "disabled" : ""}>
+            <ha-icon icon="mdi:home-battery" style="--mdc-icon-size:16px;vertical-align:middle"></ha-icon> Entladen
+          </button>
+        </div>
+        <div class="help-text" style="margin-top:4px">
+          Testbetrieb: Der Sollwert wird nachgeschrieben und endet nach der eingestellten Zeit von selbst. Der Optimierungsplan steuert die Wallbox nicht.
+        </div>
+        ${meldungBox}
+      </div>`;
   }
 
   _renderControlStateKarte(decisionState) {
@@ -8307,6 +8682,7 @@ class EegOptimizerPanel extends HTMLElement {
           <div style="margin-top:12px">
             <span class="status-indicator ${zustandBadgeClass}" style="display:inline-block">${zustandSymbol}${zustand}</span>
             ${this._renderSteuerungZeilen(decisionState)}
+            ${this._renderAutoZeile()}
           </div>
           ${this._istStartphase(decisionState) ? "" : this._renderJobStatusLine(decisionState, profilState)}
         </div>

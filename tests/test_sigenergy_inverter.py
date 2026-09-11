@@ -98,15 +98,31 @@ class TestBasis:
 
 class TestLadelimit:
     async def test_limit_dann_modus(self, inverter, mock_hass):
-        """Reihenfolge: Limit VOR dem Moduswechsel — der Lademodus darf nie
-        einen Moment mit einem alten, höheren Limit laufen."""
+        """Reihenfolge: Limit VOR dem Moduswechsel — es darf nie ein Moment
+        mit einem alten, höheren Limit laufen."""
         assert await inverter.async_set_charge_limit(2.5) is True
 
         calls = _calls(mock_hass)
         # Schalter war an, Auswahl verfügbar → kein turn_on nötig
         assert all(c[1] != "turn_on" for c in calls)
         assert calls[0] == ("number", "set_value", {"entity_id": CHARGE_LIMIT, "value": 2.5})
-        assert calls[1] == ("select", "select_option", {"entity_id": MODE, "option": MODE_COMMAND_CHARGING_PV_FIRST})
+        assert calls[1] == ("select", "select_option", {"entity_id": MODE, "option": MODE_SELF_CONSUMPTION})
+
+    async def test_ladelimit_schaltet_nie_in_einen_ladebefehl(self, inverter, mock_hass):
+        """Die Lehre aus dem Feldbefund vom 11.09.2026.
+
+        „Command Charging (PV First)" ist ein Ladebefehl, kein Limit: Es lädt
+        auf den Sollwert und holt die Differenz aus dem Netz, wenn die Sonne
+        nicht reicht. Eine Anlage lud damit bei 0,00 kW PV ihre Batterie von
+        8,5 % auf 22 % — 5,35 kWh aus dem Netz, während „Laden begrenzt auf
+        3,8 kW" im Panel stand. Ein Limit darf nur begrenzen, nie laden.
+        """
+        for kw in (0.0, 2.5, 3.8):
+            mock_hass.services.async_call.reset_mock()
+            await inverter.async_set_charge_limit(kw)
+            modi = [c[2].get("option") for c in _calls(mock_hass) if c[1] == "select_option"]
+            assert modi == [MODE_SELF_CONSUMPTION], f"{kw} kW -> {modi}"
+            assert not any("Command Charging" in str(m) for m in modi)
 
     async def test_null_sperrt_das_laden(self, inverter, mock_hass):
         assert await inverter.async_set_charge_limit(0.0) is True
@@ -155,7 +171,7 @@ class TestRemoteEmsEinschalten:
         calls = _calls(mock_hass)
         assert calls[0] == ("switch", "turn_on", {"entity_id": SWITCH})
         assert calls[1][1] == "set_value"
-        assert calls[2] == ("select", "select_option", {"entity_id": MODE, "option": MODE_COMMAND_CHARGING_PV_FIRST})
+        assert calls[2] == ("select", "select_option", {"entity_id": MODE, "option": MODE_SELF_CONSUMPTION})
         # Ein Wartezyklus, weil die Auswahl erst nach dem turn_on verfügbar war
         assert schlaf.await_count == 1
 
@@ -241,15 +257,16 @@ class TestVerfuegbarkeit:
 
 
 class TestFahrplanSchnittstelle:
-    async def test_ladelimit_nur_im_lademodus_lesbar(self, mock_hass):
-        """Im Eigenverbrauch ist Register 40032 wirkungslos — sein Wert wäre
-        kein Limit. None lässt den Executor auf den Planwert zurückfallen."""
+    async def test_ladelimit_im_eigenverbrauch_lesbar(self, mock_hass):
+        """Dort setzen wir es, dort gilt es. In den Entlademodi ist Register
+        40032 wirkungslos — sein Wert wäre kein Limit, und None lässt den
+        Executor auf den Planwert zurückfallen."""
         mock_hass.states.async_all.return_value = []
         mock_hass.states.get.side_effect = _states({MODE: MODE_SELF_CONSUMPTION, CHARGE_LIMIT: "5.0"})
-        assert await SigenergyInverter(mock_hass, {}).async_get_charge_limit_kw() is None
-
-        mock_hass.states.get.side_effect = _states({MODE: MODE_COMMAND_CHARGING_PV_FIRST, CHARGE_LIMIT: "5.0"})
         assert await SigenergyInverter(mock_hass, {}).async_get_charge_limit_kw() == 5.0
+
+        mock_hass.states.get.side_effect = _states({MODE: MODE_COMMAND_DISCHARGING_ESS_FIRST, CHARGE_LIMIT: "5.0"})
+        assert await SigenergyInverter(mock_hass, {}).async_get_charge_limit_kw() is None
 
     def test_maxima_aus_den_nennleistungs_sensoren(self, mock_hass):
         mock_hass.states.async_all.return_value = []

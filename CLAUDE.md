@@ -104,9 +104,11 @@ schedule_executor.py: ScheduleExecutor (execution, 30 s)
 | `inverter/__init__.py` | Factory function `create_inverter()` |
 | `select.py` | Mode select entity (Ein/Test), restores state across restarts |
 | `const.py` | All constants, defaults, mode enums, state names |
+| `ambibox/modbus.py` | Ambibox (sidOS) Modbus TCP — bulk read of the EV charger block (104 registers at 4000 + 200 × connector); writes only the manual-test setpoint (holding 3000 + 100 × connector) |
+| `ambibox/controller.py` | Interprets those registers into an `AutoZustand`, polls every 15 s, pushes to sensors/panel; owns the manual charge/discharge test (keepalive, time limit, stop) |
 | `frontend/eeg-optimizer-panel.js` | Dashboard + onboarding panel (plain HTMLElement, Shadow DOM) |
 
-### Sensors (25 always + up to 4 conditional)
+### Sensors (25 always + up to 8 conditional)
 
 | # | Sensor | Update | Description |
 |---|--------|--------|-------------|
@@ -135,10 +137,12 @@ schedule_executor.py: ScheduleExecutor (execution, 30 s)
 
 Conditional, created only when the setup calls for them: *Batterieleistung* /
 *Netzleistung* combined-pair sensors (split-sensor inverters like Fronius),
-*Batterie-Ladestand/-Kapazität kombiniert* (multi-battery drivers), and with a
-configured heater *Heizstab Leistung / Temperatur / Sollwert / Energie heute*
-(push from the controller's 10-s read cycle; `Hausverbrauch` is then net of
-the heater — it is a steered sink, not load the profile should learn).
+*Batterie-Ladestand/-Kapazität kombiniert* (multi-battery drivers), with a
+configured heater the four *Heizstab*-sensors (Leistung / Temperatur /
+Sollwert / Energie heute), and with a configured wallbox the four
+*Auto*-sensors (Status / Ladestand / Ladeleistung / Energie Ladesitzung).
+Both push from their controller's read cycle. With a heater, `Hausverbrauch`
+is net of it — it is a steered sink, not load the profile should learn.
 
 `Fahrplan-Status` keeps the unique_id of the former `Entscheidung` sensor so
 the entity and its history survive — but its attributes changed completely
@@ -183,12 +187,14 @@ three intents. `Fahrplan-Status` shows what actually happened:
 - **API**: Paginated WebSocket endpoint (`get_activity_log` with `offset`/`limit`)
 - **Frontend**: Loads 100 entries initially, "Mehr laden" fetches 100 more per click, live events via subscription
 
-### WebSocket API (28 commands)
+### WebSocket API (29 commands)
 
 | Command | Description |
 |---------|-------------|
 | `eeg_optimizer/get_config` | Read config entry data |
 | `eeg_optimizer/save_config` | Update config entry |
+| `eeg_optimizer/probe_ambibox` | Read-only Modbus probe of an Ambibox (settings connection test) |
+| `eeg_optimizer/ambibox_manual` | Start/stop the manual charge or discharge test (the only write path to the wallbox) |
 | `eeg_optimizer/check_prerequisites` | Check required integrations |
 | `eeg_optimizer/detect_sensors` | Auto-detect Huawei sensors |
 | `eeg_optimizer/get_entity_ids` | Resolve the integration's own entity_ids for the panel |
@@ -376,6 +382,45 @@ the event loop is long enough for HA to flag a blocking call.
   host/port/max/enabled trigger a full reload, the rest hot-reload.
 - **Consumption Profile**: Hourly averages from recorder, split by 7 individual weekdays (mo–so), rolling window (default 4 weeks), with weekday fallback chain for missing data.
 - **Dual Update Timers**: Slow sensors (profile) every 15min, fast sensors (forecasts, battery, Hausverbrauch) every 1min. Hard-wired since v26 — the former config keys `update_interval_fast_min`/`update_interval_slow_min` are removed by migration.
+
+### Wallbox / Ambibox (read-only, step 1)
+
+`wallbox_type` selects the driver the way `inverter_type` does; currently only
+`ambibox`. Configured **exclusively in the settings** (tab "Anlage", expert
+mode only) — deliberately not in the wizard: the car is an accessory, not a
+prerequisite for the schedule.
+
+The vehicle is shown **inside the status card** (`_renderAutoZeile`), not in
+a card of its own — it belongs to the plant's current state. The panel reads
+the *Auto* sensors rather than calling a WebSocket command: the controller
+writes them on every poll and the panel is subscribed, so the display is live
+without any polling of its own.
+
+**Manual test (`ambibox_manual`)** is the only write path. Someone standing at
+the car starts charging or discharging at a chosen power for a chosen time;
+the schedule never touches the wallbox. Three safeguards hang on that path,
+because the device's behaviour is unknown: the setpoint is rewritten every
+`AMBIBOX_KEEPALIVE_S` (unknown watchdog), it expires on its own after at most
+`AMBIBOX_MANUAL_MAX_MINUTES`, and unloading the integration stops it. Entry is
+refused without a plugged-in car, with `Control Mode = 0`, and for discharge
+without ISO 15118-20.
+
+Three questions remain open, none of which the vendor document answers — the
+manual test exists to settle them at the device:
+
+1. **Watchdog** — how long does a `Target Power AC` setpoint stay valid without
+   being rewritten? Unknown; 30 s was picked as tight enough for any usual
+   watchdog.
+2. **Sign convention** — the document does not fix it, and evcc's driver (not
+   MIT-licensed, do not copy) treats setpoint and measurement in opposite
+   directions. Two consequences: the controller derives the *displayed*
+   direction from `Battery State` (SLEEP/IDLE/CHARGE/DISCHARGE) and keeps
+   power as a magnitude, and the *setpoint* sign is a setting
+   (`ambibox_charge_sign`, default "negative = charge") instead of a
+   hard-coded guess.
+3. **Coexistence** — sidOS optimises on its own (`ESS State`). What happens
+   when we write at the same time is undocumented; the Ohmpilot/Gen24 case
+   showed how that ends.
 
 ## Config Flow & Onboarding
 

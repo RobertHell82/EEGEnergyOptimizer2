@@ -396,6 +396,9 @@ TELEMETRY_SETTINGS_KEYS = (
     "heizstab_alt_temp_c",
     "heizstab_vorrang",
     "heizstab_waermewert",
+    # Wallbox als zweiter Speicher — erklaert spaeter, warum ein Plan mit
+    # dem Auto rechnet. Bewusst OHNE Adresse.
+    "wallbox_type",
 )
 # ``discharge_a_start_time`` steht bewusst nicht mehr drin: der Schluessel
 # bleibt in der Konfiguration (Rueckwechsel-Garantie), verschiebt aber nur
@@ -429,3 +432,58 @@ TELEMETRY_SNAPSHOT_INTERVAL_MIN = 30
 # haben. Ein tägliches Profil-Update ist idempotent (COALESCE-UPDATE) und
 # hält die Anlage sichtbar, auch wenn sie monatelang fehlerfrei läuft.
 TELEMETRY_PROFILE_HEARTBEAT_S = 86400
+
+# ---------------------------------------------------------------------------
+# Ambibox (ambibox/) — bidirektionale DC-Wallbox mit eigenem
+# Energiemanagement (sidOS), gelesen über Modbus TCP. Schritt 1 zeigt nur
+# an, welches Fahrzeug angesteckt ist und wie es dasteht; Laden und
+# Entladen folgen in einem zweiten Schritt.
+# ---------------------------------------------------------------------------
+# Typ der Wallbox — wie CONF_INVERTER_TYPE die Auswahl des Treibers, damit
+# weitere Fabrikate dazukommen können, ohne dass jede für sich einen eigenen
+# Ein/Aus-Schalter mitbringt. Leer heißt: keine Wallbox angebunden.
+CONF_WALLBOX_TYPE = "wallbox_type"
+WALLBOX_TYPE_NONE = ""
+WALLBOX_TYPE_AMBIBOX = "ambibox"
+WALLBOX_TYPES = (WALLBOX_TYPE_AMBIBOX,)
+
+CONF_AMBIBOX_HOST = "ambibox_host"
+CONF_AMBIBOX_PORT = "ambibox_port"
+# Modbus-Unit-ID der Ambibox. Das Herstellerdokument nennt keine — 1 ist der
+# Wert, mit dem fremde Umsetzungen arbeiten, und bleibt einstellbar.
+CONF_AMBIBOX_UNIT_ID = "ambibox_unit_id"
+# sidOS führt bis zu zehn Ladepunkte; der erste ist die Regel.
+CONF_AMBIBOX_CONNECTOR = "ambibox_connector"
+DEFAULT_WALLBOX_TYPE = WALLBOX_TYPE_NONE
+DEFAULT_AMBIBOX_PORT = 502
+DEFAULT_AMBIBOX_UNIT_ID = 1
+DEFAULT_AMBIBOX_CONNECTOR = 1
+
+# Lesetakt. Ein Zug über 104 Register je Lauf; enger getaktet gäbe es nur
+# mehr Verkehr, denn Ladestand und Ladeleistung ändern sich in Minuten,
+# nicht in Sekunden.
+AMBIBOX_READ_INTERVAL_S = 15
+
+# Manueller Test der Wallbox (Laden/Entladen von Hand starten). Der Fahrplan
+# steuert die Wallbox nicht — dieser Weg existiert, um am Gerät die Fragen zu
+# klären, die das Herstellerdokument offenlässt.
+#
+# Vorzeichen des Leistungssollwerts: nirgends dokumentiert. Die einzige fremde
+# Umsetzung lädt mit negativen Werten; genau das ist hier die Vorgabe, aber
+# umstellbar — zeigt der Test, dass die Box es andersherum meint, kostet das
+# eine Einstellung statt eines neuen Releases.
+CONF_AMBIBOX_CHARGE_SIGN = "ambibox_charge_sign"
+AMBIBOX_SIGN_NEGATIVE = "negative"   # negativer Sollwert = laden
+AMBIBOX_SIGN_POSITIVE = "positive"   # positiver Sollwert = laden
+DEFAULT_AMBIBOX_CHARGE_SIGN = AMBIBOX_SIGN_NEGATIVE
+
+# Der Sollwert wird zyklisch nachgeschrieben, solange der manuelle Test läuft.
+# Wie lange ein Wert ohne Nachschreiben gilt, steht nicht im Dokument — 30 s
+# ist eng genug für jeden üblichen Watchdog (der Ohmpilot etwa fällt nach 50 s
+# ab) und immer noch wenig Verkehr.
+AMBIBOX_KEEPALIVE_S = 30
+# Harte Obergrenze für einen manuellen Lauf. Ein Testknopf darf nichts
+# hinterlassen, das unbeaufsichtigt weiterläuft: Nach Ablauf wird gestoppt,
+# auch wenn niemand mehr hinsieht.
+AMBIBOX_MANUAL_MAX_MINUTES = 60
+DEFAULT_AMBIBOX_MANUAL_MINUTES = 15
