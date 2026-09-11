@@ -10,6 +10,13 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
+## [2.1.1-dev9] - 2026-09-11
+
+### Hinzugefügt
+
+- **Der Kostal Plenticore wird jetzt vom Fahrplan gesteuert (Beta).** Bisher lief er im Anzeigemodus mit: Der Optimierungsplan wurde gerechnet, aber nie ausgeführt. Der Treiber selbst konnte längst schreiben — es fehlte die Schnittstelle, über die der Fahrplan-Executor einen Wechselrichter stellt. Sie ist jetzt da: Das wirksame Ladelimit kommt aus Register 1038, die Hardware-Grenzen für Lade- und Entladeleistung lernt der Treiber aus ungestörten Lesevorgängen (sein eigenes gesetztes Limit zählt ausdrücklich nicht als Gerätegrenze, sonst käme die Ladelimit-Anhebung nie wieder darüber hinaus), und die Steuerwerte-Ansicht im Panel zeigt die drei Register direkt an. Damit stehen Kostal, Fronius, Huawei, Sigenergy und SolaX gleichrangig nebeneinander.
+- **Selbstprüfung der Register-Kodierung.** Für den Blockierwert 0 W sind Float32 und U32 bitgleich, ein Teil-Ladelimit unterscheidet sie — und genau solche Teil-Limits schreibt der Fahrplan ständig. Der Treiber liest deshalb den ersten geschriebenen Teilwert einmal zurück: Weicht er um mehr als 10 % (mindestens 100 W) ab, steht eine Warnung im Protokoll, statt dass die Anlage still mit einem unsinnigen Limit lädt. Der Schreibvorgang gilt trotzdem als erfolgreich — die Abweichung kann auch eine geräteeigene Deckelung sein.
+
 ## [2.1.1-dev8] - 2026-09-11
 
 ### Hinzugefügt
