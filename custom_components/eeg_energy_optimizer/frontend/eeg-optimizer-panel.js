@@ -6183,8 +6183,8 @@ class EegOptimizerPanel extends HTMLElement {
       <div class="field-group">
         <label>Mindest-Ladestand (%) *</label>
         <input type="number" data-field="${prefix}schedule_min_soc_pct"
-               value="${d.schedule_min_soc_pct ?? 10}" min="0" max="30" step="1">
-        <div class="help-text">Wie viel im Speicher bleiben soll: ${fmtDe(Number(d.schedule_min_soc_pct ?? 10), 0)} % von ${d.battery_capacity_kwh ? fmtDe(Number(d.battery_capacity_kwh), 1) + " kWh" : "der Kapazität"} sind die Sicherheitsreserve, die die Optimierung vorhält. Schont die Zellen und lässt einen Puffer für Lastspitzen — 0 erlaubt die Entladung bis leer. Höchstens 30 %, darüber bliebe zu wenig für eine Nacht.</div>
+               value="${d.schedule_min_soc_pct ?? 10}" min="0" max="50" step="1">
+        <div class="help-text">Wie viel im Speicher bleiben soll: ${fmtDe(Number(d.schedule_min_soc_pct ?? 10), 0)} % von ${d.battery_capacity_kwh ? fmtDe(Number(d.battery_capacity_kwh), 1) + " kWh" : "der Kapazität"} sind die Sicherheitsreserve, die die Optimierung vorhält. Schont die Zellen und lässt einen Puffer für Lastspitzen — 0 erlaubt die Entladung bis leer. Höchstens 50 %; wie viel sinnvoll ist, hängt von der Größe des Speichers ab.</div>
       </div>
       ${maxSocFeld}
 `;

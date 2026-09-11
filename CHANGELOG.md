@@ -10,6 +10,12 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
+## [2.1.1-dev3] - 2026-09-11
+
+### Geändert
+
+- **Der Mindest-Ladestand lässt sich jetzt bis 50 % stellen** (vorher 30 %). Die alte Grenze war mit „darüber bliebe zu wenig für eine Nacht" begründet — das ist aber eine Frage der Anlagengröße und nicht des Prinzips: Wer 40 kWh Speicher hat, trägt jede Nacht auch mit der Hälfte im Speicher. Geblieben ist die Grenze nur, damit Mindest- und Maximum-Ladestand sich nie kreuzen können; zwischen beiden bleiben mindestens 20 Prozentpunkte nutzbarer Bereich.
+
 ## [2.1.1-dev2] - 2026-09-11
 
 ### Hinzugefügt

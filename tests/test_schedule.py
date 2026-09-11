@@ -267,8 +267,10 @@ def test_mindest_ladestand_wird_gelesen_wie_eingetragen():
     assert sched._min_soc_pct({"schedule_min_soc_pct": "15"}) == 15.0
     assert sched._min_soc_pct({"schedule_min_soc_pct": -3}) == 0.0
     # Gekappt bei 30 %: darüber bliebe zu wenig nutzbarer Bereich
-    assert sched._min_soc_pct({"schedule_min_soc_pct": 99}) == 30.0
-    assert sched._min_soc_pct({"schedule_min_soc_pct": 30}) == 30.0
+    assert sched._min_soc_pct({"schedule_min_soc_pct": 99}) == 50.0
+    assert sched._min_soc_pct({"schedule_min_soc_pct": 50}) == 50.0
+    # Boden und Deckel dürfen sich nie kreuzen — das ist der Grund der Grenze.
+    assert sched.MAX_MIN_SOC_PCT < sched.MIN_MAX_SOC_PCT
 
 
 async def test_ohne_pv_prognose_kein_fahrplan():

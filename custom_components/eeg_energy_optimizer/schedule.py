@@ -113,9 +113,12 @@ CONF_SCHEDULE_BATTERY_COST = "schedule_battery_cost"
 # sondern Batterieschonung: eine Tiefentladung kostet Lebensdauer, und der
 # Wechselrichter regelt in den letzten Prozent ohnehin unsauber.
 CONF_SCHEDULE_MIN_SOC_PCT = "schedule_min_soc_pct"
-# Obergrenze: darüber bleibt zu wenig nutzbarer Bereich, um eine Nacht zu
-# tragen — aus Batterieschonung würde Stilllegung.
-MAX_MIN_SOC_PCT = 30
+# Obergrenze der Einstellung. Bis 2.1.1-dev2 lag sie bei 30 % mit der
+# Begründung, darüber bleibe zu wenig, um eine Nacht zu tragen. Das ist eine
+# Frage der Anlagengröße, nicht des Prinzips: Wer 40 kWh hat, trägt jede
+# Nacht auch mit der Hälfte im Speicher. Die Grenze schützt jetzt nur noch
+# davor, dass Boden und Deckel (MIN_MAX_SOC_PCT) sich kreuzen.
+MAX_MIN_SOC_PCT = 50
 
 # Maximum-Ladestand in Prozent: darüber plant der Fahrplan nicht. Gegenstück
 # zum Mindest-Ladestand — manche Zellchemien altern nahe der Vollladung
@@ -124,8 +127,8 @@ MAX_MIN_SOC_PCT = 30
 # ``schedule_max_soc_enabled`` ist entfallen (Migration v27): der Zustand
 # steckt allein im Wert, 100 ist der Aus-Zustand.
 CONF_SCHEDULE_MAX_SOC_PCT = "schedule_max_soc_pct"
-# Untergrenze der Einstellung. Zusammen mit MAX_MIN_SOC_PCT (30) bleiben
-# immer mindestens 40 Prozentpunkte nutzbarer Bereich — Boden und Deckel
+# Untergrenze der Einstellung. Zusammen mit MAX_MIN_SOC_PCT (50) bleiben
+# immer mindestens 20 Prozentpunkte nutzbarer Bereich — Boden und Deckel
 # können sich also nie kreuzen, egal wie beides eingestellt ist.
 MIN_MAX_SOC_PCT = 70
 
@@ -611,9 +614,9 @@ def _min_soc_pct(config: dict) -> float:
     """Mindest-Ladestand in Prozent — 0 heißt „bis leer planen erlaubt".
 
     Eine 0 ist eine Aussage, nur ein fehlender oder unlesbarer Wert nimmt die
-    Vorgabe. Gekappt bei 30 %: darüber wird aus Batterieschonung eine
-    Stilllegung, weil vom nutzbaren Bereich zu wenig bleibt, um eine Nacht
-    zu tragen.
+    Vorgabe. Gekappt bei ``MAX_MIN_SOC_PCT`` — die Grenze hält Boden und
+    Deckel auseinander, wie viel Reserve sinnvoll ist, entscheidet die
+    Anlagengröße.
     """
     raw = config.get(CONF_SCHEDULE_MIN_SOC_PCT)
     if raw is None or raw == "":
