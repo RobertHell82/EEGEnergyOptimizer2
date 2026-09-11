@@ -187,6 +187,11 @@ def opt(c, start_time):
 		ziel = ziel + heater_p.sum() * heizstab_waermewert * c.ac_efficiency * p2e
 	model.objective = Objective(ziel, direction='max')
 	status = model.optimize()
+	# Ohne optimale Lösung stehen in den Variablen keine Werte (primal = None),
+	# und die Tabelle unten scheiterte an "None - None" — eine Fehlermeldung, die
+	# nichts erklärt. Der Status sagt, woran es lag (infeasible, unbounded, …).
+	if status != 'optimal':
+		raise RuntimeError(f"Optimierung ohne Lösung — Solver-Status: {status}")
 
 	if log_performance: print('After optimization:', start_time.now())
 

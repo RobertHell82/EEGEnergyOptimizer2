@@ -64,7 +64,6 @@ from ..const import (
     DEFAULT_HEIZSTAB_MINTEMP_C,
     DEFAULT_HEIZSTAB_NETZBEZUG,
     DEFAULT_HEIZSTAB_PORT,
-    DEFAULT_HEIZSTAB_VORRANG,
     DEFAULT_HEIZSTAB_WAERMEWERT,
     DEFAULT_HEIZSTAB_MAXTEMP_C,
     DEFAULT_HEIZSTAB_PUFFER_LITER,
@@ -158,7 +157,7 @@ def heizstab_waermewert(config: dict) -> float:
     if not heizstab_enabled(config):
         return 0.0
     try:
-        return max(0.0, float(config.get(CONF_HEIZSTAB_WAERMEWERT) or 0.0))
+        return max(0.0, float(config.get(CONF_HEIZSTAB_WAERMEWERT) or DEFAULT_HEIZSTAB_WAERMEWERT))
     except (TypeError, ValueError):
         return 0.0
 
@@ -218,7 +217,6 @@ class HeizstabController:
         # Schreibpfad
         self.last_write_ok: bool | None = None
         self.write_failures = 0
-        self._letzter_schreibversuch: float | None = None
         # Seit wann zieht das Gerät mehr, als vorgegeben ist? None = passt.
         self._konflikt_seit: float | None = None
         # Wer bei neuen Messwerten Bescheid haben will (Sensoren, Push-Modell).
@@ -531,7 +529,6 @@ class HeizstabController:
         """Aktuellen Sollwert an den Treiber schreiben (Watchdog-Takt)."""
         if self._treiber is None:
             return False
-        self._letzter_schreibversuch = time.time()
         try:
             ok = bool(await self._treiber.async_set_power(int(round(self.sollwert_kw * 1000))))
         except Exception:  # noqa: BLE001 — der Takt darf nie sterben

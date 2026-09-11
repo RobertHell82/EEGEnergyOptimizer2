@@ -1,13 +1,13 @@
 # EEG Energy Optimizer
 
-> **Prototyp-Zweig.** Dieses Repo enthält den LP-Fahrplan-Optimierer aus [EngagePV/chamo](https://gitlab.com/EngagePV/chamo) — er ist hier der **einzige Aktor**: Er rechnet jede Minute und steuert die Anlage (derzeit Fronius Gen24, Huawei SUN2000, Sigenergy SigenStor und SolaX Gen4+). Die Zustands-Heuristik der produktiven Integration ist entfernt. Details und Installation: [CHAMO.md](CHAMO.md).
+> **Prototyp-Zweig.** Dieses Repo enthält den LP-Fahrplan-Optimierer aus [EngagePV/chamo](https://gitlab.com/EngagePV/chamo) — er ist hier der **einzige Aktor**: Er rechnet jede Minute und steuert die Anlage (derzeit Fronius Gen24, Huawei SUN2000, Kostal Plenticore, Sigenergy SigenStor und SolaX Gen4+). Die Zustands-Heuristik der produktiven Integration ist entfernt. Details und Installation: [CHAMO.md](CHAMO.md).
 
 HACS-kompatible Home Assistant Integration für vorausschauendes Batteriemanagement, optimiert für Energiegemeinschaften (EEG) im DACH-Raum.
 
 ## Funktionen
 
 - **Fahrplan-Optimierung** — rechnet jede Minute aus den Einspeisepreisen den erlösbesten Lade- und Entladeplan über 48 Stunden. Feste Zeitfenster gibt es nicht: Zeigt der Preisverlauf keinen Mehrwert, plant der Fahrplan auch keine Einspeisung
-- **Fahrplan-Steuerung** (Huawei SUN2000) — setzt den Plan alle 30 Sekunden am Wechselrichter durch: Ladelimit und erzwungene Entladung, nachgeführt an den Messwerten, mit Not-Aus und Failsafe
+- **Fahrplan-Steuerung** — setzt den Plan alle 30 Sekunden am Wechselrichter durch: Ladelimit und erzwungene Entladung, nachgeführt an den Messwerten, mit Not-Aus und Failsafe
 - **Einspeisegrenze** — plant um die Exportgrenze des Netzbetreibers herum und hebt das Ladelimit an, wenn die Einspeisung trotzdem an der Grenze klebt
 - **PeakShare-Integration** — die Bedarfsprognose deiner EEG-Community wird zum Auf- bzw. Abschlag auf den Basistarif und geht so direkt in den Fahrplan ein; im Dashboard ist die Bedarfskurve sichtbar
 - **PV-Prognose** — Solcast Solar und Forecast.Solar Unterstützung mit 7-Tage-Ausblick
@@ -46,7 +46,7 @@ Pro Anlage wird einmalig eine zufällige **UUIDv4** + ein **API-Key** erzeugt un
 
 **Huawei SUN2000** (via [Huawei Solar](https://github.com/wlcrs/huawei_solar) Integration) — Single oder Master/Slave (mehrere Wechselrichter + Batterien). Direkte Anbindung an den Wechselrichter/Dongle oder über das EMMA-Energiemanagement (`sensor.emma_*`-Sensoren, Netz-Vorzeichen wird automatisch korrigiert — siehe [Huawei-Guide](docs/guides/huawei.md)).
 
-> **Andere Wechselrichter werden derzeit nicht unterstützt.** Die Treiber für Kostal, SMA und SolarEdge sind vollständig enthalten, aber stillgelegt: Sie stehen nicht zur Auswahl und werden nicht gesteuert. Sie werden Schritt für Schritt wieder freigeschaltet, sobald die Fahrplan-Steuerung an einer echten Anlage des jeweiligen Typs nachgewiesen ist — Stand, offene Punkte und Freischaltweg: **[docs/wechselrichter-status.md](docs/wechselrichter-status.md)**.
+> **Andere Wechselrichter werden derzeit nicht unterstützt.** Die Treiber für SMA und SolarEdge sind vollständig enthalten, aber stillgelegt: Sie stehen nicht zur Auswahl und werden nicht gesteuert. Sie werden Schritt für Schritt wieder freigeschaltet, sobald die Fahrplan-Steuerung an einer echten Anlage des jeweiligen Typs nachgewiesen ist — Stand, offene Punkte und Freischaltweg: **[docs/wechselrichter-status.md](docs/wechselrichter-status.md)**.
 
 ## Installation
 
@@ -121,7 +121,7 @@ Für die Standardvergütung (der Basistarif — Nachtsatz nur bei der Quelle „
 
 ### Steuerung
 
-Alle 30 Sekunden hält die **Steuerung** den zuletzt gerechneten Fahrplan gegen die Messwerte und setzt ihn am Huawei SUN2000 durch. Rechnen und Steuern sind strikt getrennt: Der Optimierer schreibt nie selbst, nur die Steuerung.
+Alle 30 Sekunden hält die **Steuerung** den zuletzt gerechneten Fahrplan gegen die Messwerte und setzt ihn am Wechselrichter durch. Rechnen und Steuern sind strikt getrennt: Der Optimierer schreibt nie selbst, nur die Steuerung.
 
 - **Plant der Slot Laden**, wird das Ladelimit auf die Planleistung gesetzt. Die **Ladelimit-Nachführung** hebt es schrittweise an, wenn die gemessene Einspeisung an der Einspeisegrenze klebt (stille Abregelung), und nimmt es mit Hysterese wieder auf den Planwert zurück.
 - **Plant der Slot Einspeisung aus der Batterie**, wird eine erzwungene Entladung gestartet. Die **Entlade-Nachführung** rechnet die gemessene Hauslast auf die geplante Netzleistung auf, damit die geplante Einspeisung tatsächlich am Netzanschluss ankommt.

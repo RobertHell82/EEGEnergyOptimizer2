@@ -5,10 +5,10 @@ unterstützt wird. README und Doku verweisen hierher, statt eigene Listen zu
 führen.
 
 > [!IMPORTANT]
-> **Unterstützt werden derzeit Fronius Gen24, Huawei SUN2000, Sigenergy
-> SigenStor und SolaX Gen4+.** Nur diese vier steuert der Fahrplan, und nur
-> sie stehen im Einrichtungsassistenten zur Auswahl. Fronius, Sigenergy und
-> SolaX sind neu dazugekommen und im Feldtest — siehe unten.
+> **Unterstützt werden derzeit Fronius Gen24, Huawei SUN2000, Kostal
+> Plenticore, Sigenergy SigenStor und SolaX Gen4+.** Nur diese fünf steuert
+> der Fahrplan, und nur sie stehen im Einrichtungsassistenten zur Auswahl.
+> Fronius, Kostal, Sigenergy und SolaX sind im Feldtest — siehe unten.
 
 ## Übersicht
 
@@ -16,7 +16,7 @@ führen.
 |---|---|---|---|
 | **Fronius Gen24** | vorhanden | **ja** (Feldtest) | **ja** |
 | **Huawei SUN2000** | vorhanden | **ja** | **ja** |
-| Kostal Plenticore | vorhanden | nein | nein |
+| **Kostal Plenticore** | vorhanden | **ja** (Beta) | **ja** |
 | **Sigenergy SigenStor** | vorhanden | **ja** (Feldtest) | **ja** |
 | SMA Smart Energy | vorhanden | nein | nein |
 | SolarEdge StorEdge | vorhanden | nein | nein |
@@ -32,9 +32,10 @@ jeweiligen Typs nachgewiesen ist.
 Die 2.0 hat die Steuerung vollständig ersetzt: Statt Zuständen und Zeitfenstern
 setzt ein Executor alle 30 Sekunden einen 48-Stunden-Fahrplan durch — mit
 Ladelimit-Nachführung, Entlade-Nachführung, Not-Aus und Failsafe. Dieser Weg
-ist bisher nur für Huawei nachgewiesen. Für die anderen Treiber stammt die
-Steuerverifikation aus der 1.x-Reihe und galt der alten Zustandslogik; sie
-überträgt sich nicht automatisch auf die minütliche Nachführung.
+ist für Huawei nachgewiesen, für Fronius, Kostal, Sigenergy und SolaX im
+Feldtest. Für SMA und SolarEdge stammt die Steuerverifikation aus der
+1.x-Reihe und galt der alten Zustandslogik; sie überträgt sich nicht
+automatisch auf die minütliche Nachführung.
 
 Ein Treiber, der nur anzeigt, aber nicht steuert, ist für den Anwender
 irreführend — deshalb steht er gar nicht erst zur Auswahl.
@@ -111,8 +112,11 @@ Protokoll (Modbus TCP)" liegt im Servicemenü und erfordert einen
 **Installateur-Login**. Kostal erwartet zyklische Steuerbefehle (Watchdog):
 Fällt Home Assistant aus, kehrt der Wechselrichter zur internen Automatik
 zurück. Die Steuerregister sind flüchtig (RAM) — kein NVRAM-Verschleiß.
-Offen: Feldtest der Fahrplan-Nachführung; das Encoding der Einspeisebegrenzung
-war zuletzt noch ungeklärt.
+**Fahrplan-Steuerung seit 2.1.1-dev9 (Beta):** Ladeblockierung, Entladung und
+Stopp sind am Gerät verifiziert (1.x-Reihe, 19.08.2026). Die Kodierung von
+Register 1038 für Teil-Ladelimits prüft der Treiber beim ersten Wert selbst
+nach und meldet eine Abweichung im Protokoll. Offen: Feldtest der
+Fahrplan-Nachführung über mehrere Tage.
 Guide: [kostal.md](guides/kostal.md)
 
 ### Sigenergy SigenStor

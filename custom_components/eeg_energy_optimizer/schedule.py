@@ -60,7 +60,6 @@ try:
 
     _now_local = dt_util.now
 except ImportError:  # Testumgebung ohne HA
-    from datetime import timezone
 
     def _now_local() -> datetime:
         return datetime.now(tz=timezone.utc)

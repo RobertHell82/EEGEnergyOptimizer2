@@ -100,12 +100,16 @@
 <td>Nur sichtbar mit Mindesttemperatur. Eingeschaltet heizt der Heizstab darunter mit voller Leistung, egal woher der Strom kommt, und die Optimierung entlädt derweil nicht ins Netz. Ausgeschaltet (Vorgabe) wird nie Netzstrom verheizt — ohne Sonne bleibt das Wasser dann kalt</td>
 </tr>
 <tr>
-<td><strong>Überschuss zuerst in den Heizstab</strong></td>
-<td>Reihenfolge bei ungeplantem Überschuss, siehe oben</td>
+<td><strong>Wärmewert (ct/kWh)</strong></td>
+<td>Was eine Kilowattstunde Wärme ersetzt — der Preis der Energie, mit der du sonst heizen würdest. Gegen diesen Wert wägt der Fahrplan die Einspeisung ab; er fließt in „Ersparnis durch PV" und in den Optimierungsgewinn ein. 0 = Wärme wird gezählt, aber nicht bewertet</td>
 </tr>
 <tr>
-<td><strong>Wärmewert (ct/kWh)</strong></td>
-<td>Was eine Kilowattstunde Wärme ersetzt. Fließt in „Ersparnis durch PV" und in den Optimierungsgewinn ein. 0 = Wärme wird gezählt, aber nicht bewertet</td>
+<td><strong>Puffervolumen (Liter)</strong></td>
+<td>Wie groß der Speicher ist, den der Heizstab erwärmt. Daraus rechnet der Fahrplan, wie viel Wärme noch hineinpasst. Bei Schichtspeichern nur den Teil angeben, der tatsächlich warm wird. Leer = der Heizstab bekommt nur, was ohnehin abgeregelt würde</td>
+</tr>
+<tr>
+<td><strong>Heizstab sperren, solange diese Entität eingeschaltet ist</strong></td>
+<td>Für eine zweite Wärmequelle (Holzvergaser, Kessel, Wärmepumpe): Meldet die Entität „ein", bleibt der Heizstab aus und der Plan rechnet nicht mit ihm. Nicht erreichbar = nicht gesperrt</td>
 </tr>
 </tbody>
 </table>

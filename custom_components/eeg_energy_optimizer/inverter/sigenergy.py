@@ -218,9 +218,6 @@ class SigenergyInverter(InverterBase):
 
     def __init__(self, hass: Any, config: dict) -> None:
         super().__init__(hass, config)
-        # Zuletzt von uns gesetzter Modus — für die Transparenz-Ansicht und
-        # damit die Freigabe weiß, ob überhaupt etwas zurückzunehmen ist.
-        self._active_mode: str | None = None
 
     # ------------------------------------------------------------------
     # Entitäten
@@ -271,7 +268,6 @@ class SigenergyInverter(InverterBase):
             {"entity_id": self._resolve_entity("remote_ems_mode"), "option": option},
             blocking=True,
         )
-        self._active_mode = option
 
     async def _switch(self, on: bool) -> None:
         await self._hass.services.async_call(
@@ -365,7 +361,6 @@ class SigenergyInverter(InverterBase):
                 if self._ist_verfuegbar(self._state_str(self._resolve_entity("remote_ems_mode"))):
                     await self._set_mode(MODE_SELF_CONSUMPTION)
                 await self._switch(False)
-            self._active_mode = None
             return True
         except Exception:  # noqa: BLE001
             _LOGGER.exception("Sigenergy: Freigabe fehlgeschlagen")

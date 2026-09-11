@@ -73,7 +73,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import replace
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timedelta
 from typing import Any
 
 from .const import DOMAIN, MODE_EIN
@@ -756,9 +756,6 @@ class EnergieBilanz:
                 continue
         paare.sort(key=lambda p: p[0])
         return paare
-
-    def _sortierte_slots(self, tag: dict[str, Any]) -> list[dict[str, Any]]:
-        return [slot for _, slot in self._sortierte_paare(tag)]
 
     def _als_slots(
         self, paare: list[tuple[int, dict[str, Any]]], datum: str

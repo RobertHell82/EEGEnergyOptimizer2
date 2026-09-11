@@ -432,26 +432,6 @@ def quoten_aufschlag_reihe(
     return aufschlaege, diagnose
 
 
-def mit_deckel(
-    preise: list[float], bezugspreis: float
-) -> tuple[list[float], int, float]:
-    """Preise unter den Bezugspreis klemmen.
-
-    Rückgabe: (gedeckelte Preise, Anzahl betroffener Zeitpunkte, höchster
-    ungedeckelter Wert). Der Aufrufer soll das protokollieren — greift der
-    Deckel, ist die Konfiguration zu erklären und nicht der Fahrplan.
-    """
-    if not preise or bezugspreis <= 0:
-        return preise, 0, max(preise, default=0.0)
-
-    grenze = bezugspreis - DECKEL_ABSTAND
-    hoechster = max(preise)
-    betroffen = sum(1 for p in preise if p > grenze)
-    if not betroffen:
-        return preise, 0, hoechster
-    return [min(p, grenze) for p in preise], betroffen, hoechster
-
-
 def mit_boden(
     preise: list[float], untergrenzen: list[float] | None = None
 ) -> tuple[list[float], int, float]:

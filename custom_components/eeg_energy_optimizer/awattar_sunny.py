@@ -112,9 +112,6 @@ class Tabelle:
     def leer(self) -> bool:
         return not self.neu and not self.alt
 
-    def fuer(self, vertrag: str) -> dict[int, float]:
-        return self.alt if vertrag == VERTRAG_ALT else self.neu
-
 
 def parse_tabelle(text: str | None, jahr: int) -> Tabelle:
     """CSV eines Jahres-Tabs → Tarife je Monat und Vertragsvariante.

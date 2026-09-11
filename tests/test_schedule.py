@@ -506,6 +506,20 @@ def test_solve_liefert_fahrplan_fuer_das_panel():
     assert abstaende == {900.0}, f"Unerwartete Slot-Abstände: {abstaende}"
 
 
+def test_solver_ohne_loesung_meldet_den_status(monkeypatch):
+    """Ohne optimale Lösung stehen in den Variablen keine Werte (primal =
+    None). Bisher scheiterte die Tabelle an "None - None" — der Runner zeigte
+    also einen TypeError, der nichts erklärt. Jetzt nennt die Meldung den
+    Solver-Status, und der Runner trägt sie als Fehler des Fahrplans."""
+    pytest.importorskip("pandas")
+    pytest.importorskip("highspy")
+    from custom_components.eeg_energy_optimizer.chamo import opt_highs
+
+    monkeypatch.setattr(opt_highs.Model, "optimize", lambda self: "infeasible")
+    with pytest.raises(RuntimeError, match="infeasible"):
+        sched.solve(_inputs_for_solve(horizon_hours=4))
+
+
 def test_haconfig_bietet_das_api_von_config_dummy():
     """Wenn Harald das Config-API erweitert, soll das hier auffallen."""
     pytest.importorskip("pandas")

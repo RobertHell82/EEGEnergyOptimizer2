@@ -63,17 +63,13 @@ class OhmpilotModbus:
         # Gecachte Messwerte (aktualisiert durch async_read_sensors)
         self.last_power_w: int | None = None
         self.last_temperature: float | None = None
-        # Diagnose: letzter Modbus-Fehler (für Sensor-Attribute)
+        # Diagnose: letzter Modbus-Fehler (landet im Status des Controllers)
         self.last_error: str | None = None
-        self.last_error_at: float | None = None
-        self.read_attempts: int = 0
-        self.read_successes: int = 0
 
     def _record_error(self, where: str, exc: Exception | str) -> None:
         """Erfasst einen Modbus-Fehler für Diagnose-Sensor-Attribute."""
         msg = f"{where}: {type(exc).__name__}: {exc}" if isinstance(exc, BaseException) else f"{where}: {exc}"
         self.last_error = msg[:300]
-        self.last_error_at = time.time()
         _LOGGER.warning("Ohmpilot Modbus Fehler [%s]: %s", where, msg)
 
     @property
@@ -190,7 +186,6 @@ class OhmpilotModbus:
 
     async def async_read_power(self) -> int | None:
         """Aktuelle Leistungsaufnahme in Watt lesen."""
-        self.read_attempts += 1
         async with self._lock:
             if not await self._ensure_connected():
                 return None
@@ -200,7 +195,6 @@ class OhmpilotModbus:
                 if result.isError():
                     self._record_error("read_power", str(result))
                     return None
-                self.read_successes += 1
                 # Big-Endian Word-Order (SunSpec): high word zuerst, low word zweiter.
                 # Empirisch verifiziert: 5752 W kommt als [0x0000, 0x1678] zurück.
                 return (result.registers[0] << 16) | result.registers[1]

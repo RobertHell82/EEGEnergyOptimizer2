@@ -682,12 +682,6 @@ class ScheduleExecutor:
             anteil = max(0.0, min(1.0, anteil)) * HEIZSTAB_TEILUNG_MAX_ANTEIL
         return round(hz.max_kw * anteil, 3)
 
-    def _heizstab_gesaettigt(self) -> bool:
-        """Muss Guard 1 auf den Heizstab warten? Nein, wenn er gesättigt ist."""
-        if self._heizstab is None or not self._heizstab.enabled:
-            return True
-        return self._heizstab.gesaettigt
-
     def _heizstab_plan_kw(self, schedule_state: dict | None, now: datetime) -> float:
         """Wärme, die der laufende Fahrplan-Slot vorsieht (kW). 0 = keine.
 

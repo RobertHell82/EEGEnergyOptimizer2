@@ -206,36 +206,6 @@ def test_verguetung_unter_basistarif_wirkt_in_keine_richtung():
 
 
 # ---------------------------------------------------------------------------
-# Deckel
-# ---------------------------------------------------------------------------
-
-
-def test_deckel_greift_erst_am_bezugspreis():
-    preise, betroffen, hoechster = ep.mit_deckel([0.10, 0.20, 0.24], BEZUG)
-
-    assert betroffen == 0
-    assert preise == [0.10, 0.20, 0.24]
-    assert hoechster == pytest.approx(0.24)
-
-
-def test_deckel_klemmt_und_meldet():
-    """Über dem Bezugspreis kauft das LP Strom zum Weiterverkaufen — gemessen.
-    Deshalb wird geklemmt und die Anzahl gemeldet."""
-    preise, betroffen, hoechster = ep.mit_deckel([0.10, 0.30, 0.26], BEZUG)
-
-    grenze = BEZUG - ep.DECKEL_ABSTAND
-    assert betroffen == 2
-    assert hoechster == pytest.approx(0.30)
-    assert preise == [0.10, grenze, grenze]
-    assert max(preise) < BEZUG
-
-
-def test_deckel_ohne_bezugspreis_laesst_alles_stehen():
-    preise, betroffen, _ = ep.mit_deckel([0.10, 0.30], 0)
-    assert betroffen == 0 and preise == [0.10, 0.30]
-
-
-# ---------------------------------------------------------------------------
 # Tag- und Nachtsatz, Basistarif als Reihe
 # ---------------------------------------------------------------------------
 

@@ -58,13 +58,15 @@ schedule_executor.py: ScheduleExecutor (execution, 30 s)
         Failsafe — no fresh plan for 15 min → release the inverter
         Deadbands — 0.2 kW / 1 % SOC, so we don't write on LP noise
   → writes only via InverterBase, only in mode "Ein", only for drivers with
-    supports_schedule_control=True (currently Huawei only)
+    supports_schedule_control=True (Fronius, Huawei, Kostal, Sigenergy, SolaX)
   → _heizstab_schritt() after every run — the heater (heizstab/) is a second
-    sink: export sticks to the limit → +0.5 kW per run, below the limit → down
-    by the measured gap, discharge / mode Aus / startup → 0. Priority vs.
-    Guard 1 from `heizstab_vorrang` (heater first: Guard 1 waits until the
-    heater is saturated; battery first: the heater waits until the charge
-    limit sits at the hardware maximum or the battery is full)
+    sink with two modes: (1) the running slot plans heat → regulate on
+    "export ≈ 0", capped at the planned kW (the forecast says how much is
+    allowed, the measurement how much is there); (2) no planned heat → the
+    surplus rule at the export limit: export sticks to the limit → +0.5 kW
+    per run, below the limit → down by the measured gap. Discharge / mode
+    Aus / startup → 0. Unplanned surplus is shared with the battery by SOC
+    (`_heizstab_deckel_kw`: battery gets all below 20 % SOC, half from 50 %)
 ```
 
 ### Key Files
@@ -79,11 +81,11 @@ schedule_executor.py: ScheduleExecutor (execution, 30 s)
 | `oemag_schaetzung.py` | Estimate of the OeMAG tariff for the *current* month (source `oemag_estimate`): aWATTar day-ahead prices weighted by Austrian solar generation (Energy-Charts), clamped to 60–100 % of the E-Control quarterly price (scraped; fallback derived from clamped months of the OeMAG table), minus balancing cost. Validated 2025-01…2026-08: MAE 0.21 ct |
 | `awattar_sunny.py` | Optional base tariff: aWATTar SUNNY fixed monthly feed-in price (source `awattar_sunny`). No API — reads the yearly tab of aWATTar's published price sheet (Google Sheet, gviz CSV) and falls back to the tariff page; two contract variants (`awattar_sunny_vertrag` = `neu`/`alt`, contracts after/until 25.02.2026) because the sheet carries two SUNNY columns; cached across restarts, hourly retry while the current month is missing |
 | `power_readings.py` | Shared sensor reads — house load (minus heater), PV now, grid export, heater power, battery capacity resolution |
-| `heizstab/controller.py` | Heater as a controllable surplus sink — `HeizstabController` (surplus rule `naechster_sollwert`, maximum/minimum temperature hysteresis, saturation, 30-s watchdog write, 10-s read, 6-h time sync), `create_heizstab()` factory |
+| `heizstab/controller.py` | Heater control — `HeizstabController` (`regeln()`: comfort → discharge → max temperature → plan (`plan_kw`) → surplus rule `naechster_sollwert`; temperature hysteresis, saturation, `puffer_budget_kwh` for the LP, 30-s watchdog write, 10-s read, 6-h time sync, foreign-control detection), `create_heizstab()` factory |
 | `heizstab/ohmpilot_modbus.py` | Fronius Ohmpilot driver via direct Modbus TCP (setpoint 40599 int32 W big-endian, actual power 40800, temperature 40808 in 0.1 °C, unix time 40400; 50-s device watchdog). Taken over from HA_Optimierung_Gruenbach, registers verified on the device there |
 | `schedule_archive.py` | Rolling archive of computed plans (7 days, gzip, ~8 KB each) for after-the-fact debugging |
 | `schedule_archive_view.py` | HTTP view that packs archive + settings + measured history into a downloadable ZIP |
-| `chamo/` | **Upstream, unmodified** — Harald Geyer's LP optimizer (`opt_highs.py`, `timetableopt`) plus a HiGHS adapter |
+| `chamo/` | Harald Geyer's LP optimizer (`opt_highs.py`, `timetableopt`) plus a HiGHS adapter. `opt_highs.py` carries two local additions: the heater as a valued sink (`heater_p`, 2.1.1-dev2) and a solver-status check after `optimize()` — everything else is upstream |
 | `sensor.py` | 25 sensors (+4 conditional): consumption profile, forecasts, power flows, plan values, grid discharge energy, register writes, Fahrplan-Status, money balance |
 | `bilanz.py` | Energy balance in money — records 96 quarter-hours per day (energy, SOC, **frozen** prices and community balances), evaluates them with `bewerte_geldfluesse`, and derives the optimiser advantage against a simulated standard operation over the measured series. The balance day runs 04:00–04:00 (night discharge stays in one day; old midnight-based records are migrated on load). Days where the battery behaved like the reference (power deviation ≤ max(1 kWh, 10 % of throughput)) report advantage 0 with `kein_eingriff`; the raw difference stays in `vorteil_roh` |
 | `override.py` | Time-boxed user override — **Pause** (behave like mode Aus) with two end conditions: expiry time (`stunden`, 0.25–48 h) and/or target SOC (`bis_soc_pct`, 50–100 %; ends when the measured SOC reaches it, 48 h cap as safety net). Persisted via `Store` so a restart mid-pause does not resume control. Evaluated in the guard cycle in `__init__.py` (`async_tick(now, soc_pct)`); exposed as HA services `pause` / `aufheben` (`services.yaml`) |
@@ -351,35 +353,37 @@ the event loop is long enough for HA to flag a blocking call.
   `opt()` resamples to 15 min itself (hourly means deviate ≤ 5 %, no time
   shift). Refreshed every 30 min, because when fetched only at startup the
   timestamps age into the past within a day and the surcharge goes silent.
-- **Heizstab (heater)**: A Fronius Ohmpilot as a second sink for surplus that
-  neither battery nor grid can take. Deliberately **not** an LP variable —
-  Harald's model stays untouched; the plan's `discard` column (DC power the
-  model would throw away) becomes `heizstab = min(discard · η, P_max)` per
-  slot for display and money evaluation (`bewerte_geldfluesse` adds `waerme`
-  = heater kWh × `heizstab_waermewert`; the reference simulation computes its
-  own discard/heater the same way). Steering follows the **measurement**, not
-  the forecast: the executor regulates the heater on "export = limit" (up in
-  0.5-kW steps because curtailment hides the true surplus, down by the measured
-  gap in one run, 0 on grid import), never during a forced discharge, never in
-  mode Aus ("Optimierung aus heißt Heizstab aus" — no fallback regulator).
-  Minimum temperature = comfort guard with two levels: by default the heater
-  gets priority over feed-in (regulates on export ≈ 0, takes all PV surplus,
-  never grid or battery power); only with `heizstab_netzbezug` (opt-in) it
-  runs at full power from anywhere and the executor turns a planned discharge
-  into a release meanwhile. Requires the
-  Ohmpilot to be **decoupled from the Gen24** (its own energy management
-  regulates export to zero, which would eat all EEG feed-in). House load,
+- **Heizstab (heater)**: A Fronius Ohmpilot as a second sink. Since
+  2.1.1-dev2 it is a **valued LP variable** (`heater_p` ≤ `discard_p` in
+  `opt_highs.py`, objective += heat × `heizstab_waermewert`, capped per slot
+  by `heizstab_max_kw` and over the horizon by `heizstab_budget_kwh` from
+  buffer volume × (max temperature − measured temperature)). With heat value
+  > feed-in price the model deliberately curtails feed-in in favour of the
+  buffer; without volume or heat value it falls back to "heater takes what
+  is curtailed anyway" (`_heizstab_plan_kw` from the `discard` column).
+  **Execution follows the plan, bounded by the measurement** (2.1.1-dev7):
+  the executor hands the running slot's `heizstab` kW to `regeln(plan_kw=…)`,
+  which regulates on "export ≈ 0" but never above the planned value — weaker
+  PV than forecast lets the setpoint fall back instead of burning grid power.
+  A stale plan (> 15 min, same check as the inverter part) counts as no plan.
+  Without planned heat the surplus rule at the export limit applies (up in
+  0.5-kW steps because curtailment hides the true surplus, down by the
+  measured gap in one run, 0 on grid import), shared with the battery by SOC.
+  Never during a forced discharge, never in mode Aus ("Optimierung aus heißt
+  Heizstab aus"). Minimum temperature = comfort guard: by default priority
+  over feed-in (export ≈ 0, never grid or battery power); with
+  `heizstab_netzbezug` (opt-in) full power from anywhere while the executor
+  releases a planned discharge. `heizstab_sperr_entity` blocks the heater
+  while a second heat source runs (unreachable entity = not blocked).
+  Requires the Ohmpilot to be **decoupled from the Gen24**. House load,
   consumption profile, Guard 2 and the balance all subtract the heater
-  (`compute_heizstab_kw`; bilanz column `heizstab`, PV saving counts only the
-  PV-fed share as `waerme`). Optional `heizstab_alt_temp_c` = temperature up
-  to which the *other* heat source (district heating, boiler) heats the buffer:
-  heater energy above it is *Zusatzwärme* — recorded separately (bilanz column
-  `heizstab_ueber`, slot key `heizstab_zusatz`, sensor attributes
-  `ersatzwaerme_kwh` / `zusatzwaerme_kwh`) and never valued; while the buffer
-  sits above the threshold, planned heat is all Zusatzwärme
-  (`ScheduleInputs.heizstab_zusatzwaerme`). Config keys `heizstab_*` live in
-  their own settings tab **Heizstab** (not in the wizard, not under Anlage);
-  host/port/max/enabled trigger a full reload, the rest hot-reload.
+  (`compute_heizstab_kw`; bilanz column `heizstab`). **Every PV-fed kWh into
+  the buffer counts at the full heat value** — the former "temperature of the
+  other heat source" (Zusatzwärme) distinction was removed in 2.1.1-dev6
+  because it contradicted the plan. Config keys `heizstab_*` live in their
+  own settings tab **Heizstab**; host/port/max/enabled trigger a full reload,
+  the rest hot-reload. Foreign control (a second writer on the Ohmpilot) is
+  detected after 3 min of "draws more than set" and shown in the status card.
 - **Consumption Profile**: Hourly averages from recorder, split by 7 individual weekdays (mo–so), rolling window (default 4 weeks), with weekday fallback chain for missing data.
 - **Dual Update Timers**: Slow sensors (profile) every 15min, fast sensors (forecasts, battery, Hausverbrauch) every 1min. Hard-wired since v26 — the former config keys `update_interval_fast_min`/`update_interval_slow_min` are removed by migration.
 

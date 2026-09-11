@@ -282,7 +282,6 @@ DEFAULT_HEIZSTAB_MAX_KW = 6.0
 DEFAULT_HEIZSTAB_MAXTEMP_C = 80.0
 DEFAULT_HEIZSTAB_MINTEMP_C = 0.0
 DEFAULT_HEIZSTAB_NETZBEZUG = False
-DEFAULT_HEIZSTAB_VORRANG = True
 DEFAULT_HEIZSTAB_WAERMEWERT = 0.0
 # Entität, die den Heizstab sperrt, solange sie „ein" meldet — gedacht für
 # eine zweite Wärmequelle (Holzvergaser, Kessel), die den Puffer selbst

@@ -138,7 +138,6 @@ const quoteLuecken = (d) => {
     .map(([, name]) => name);
 };
 
-const KOSTAL_UI_ENABLED = true;
 // Auswaehlbar ist genau, was der Fahrplan auch steuern kann (Entscheid
 // 28.08.2026): alles andere waere reine Anzeige. Die uebrigen Karten sind
 // nur AUSGEBLENDET, ihr Code bleibt vollstaendig — ein Eintrag in
@@ -4316,7 +4315,7 @@ class EegOptimizerPanel extends HTMLElement {
       const detected = [
         p.fronius && { key: "fronius_gen24", label: "Fronius" },
         p.huawei_solar && { key: "huawei_sun2000", label: "Huawei" },
-        p.kostal_plenticore && KOSTAL_UI_ENABLED && { key: "kostal_plenticore", label: "Kostal" },
+        p.kostal_plenticore && { key: "kostal_plenticore", label: "Kostal" },
         p.sma && { key: "sma_smart_energy", label: "SMA" },
         p.solaredge_modbus_multi && { key: "solaredge_storedge", label: "SolarEdge" },
         p.sigen && { key: "sigenergy_sigenstor", label: "Sigenergy" },
@@ -5096,8 +5095,6 @@ class EegOptimizerPanel extends HTMLElement {
       { key: "sma_smart_energy", label: "SMA Smart Energy", subtitle: "Tripower/Sunny Boy mit Batteriespeicher · nur Anzeige — Steuerung derzeit nur Fronius, Huawei, Kostal, Sigenergy und SolaX", detected: smaOk, badge: smaBadge, dialog: "sma",
         logo: `<img src="https://brands.home-assistant.io/sma/logo.png" alt="SMA" style="max-width:120px;max-height:60px;height:auto" onerror="this.outerHTML='<span style=font-size:32px>SMA</span>'">` },
     ].filter(inv =>
-      inv.key !== "kostal_plenticore" || KOSTAL_UI_ENABLED || kostalSelected
-    ).filter(inv =>
       istWaehlbarerWr(inv.key) || inv.key === selected
     );
     inverterDefs.sort((a, b) => {
@@ -6559,7 +6556,7 @@ class EegOptimizerPanel extends HTMLElement {
         <div class="field-group">
           <label>Mindesttemperatur (°C)</label>
           <input type="number" data-field="${prefix}heizstab_mintemp_c" value="${d.heizstab_mintemp_c ?? 0}" min="0" max="90" step="1">
-          <div class="help-text">Darunter hat der Heizstab Vorrang vor der Einspeisung: Er nimmt allen PV-Überschuss, auch den unterhalb der Einspeisegrenze, bis 5 K darüber — aber weder Netz- noch Batteriestrom. 0 = keine Mindesttemperatur, der Heizstab nimmt nur, was über die Grenze hinausgeht.</div>
+          <div class="help-text">Darunter hat der Heizstab Vorrang vor der Einspeisung: Er nimmt allen PV-Überschuss, auch den unterhalb der Einspeisegrenze, bis 5 K darüber — aber weder Netz- noch Batteriestrom. 0 = keine Mindesttemperatur; der Heizstab heizt dann nach Plan und nimmt darüber hinaus, was an der Einspeisegrenze abgeregelt würde.</div>
         </div>
         ${Number(d.heizstab_mintemp_c) > 0 ? `
         <div class="field-group">
@@ -6572,7 +6569,7 @@ class EegOptimizerPanel extends HTMLElement {
           </label>
         </div>` : ""}
         <div class="help-text" style="margin:4px 0 12px;padding:10px 12px;background:var(--info-color,#2196f3)14;border-left:3px solid var(--info-color,#2196f3);border-radius:4px">
-          <strong>Aufteilung des Überschusses:</strong> Batterie und Heizstab regeln gemeinsam, gewichtet nach Ladestand — unter 20 % bekommt die Batterie alles (ihre Energie trägt durch die Nacht, die Wärme nicht), ab 50 % ist es die Hälfte, dazwischen gleitend. Unter der Mindesttemperatur hat der Heizstab Vorrang mit voller Leistung.
+          <strong>Aufteilung des Überschusses:</strong> Geplante Wärme kommt aus dem Fahrplan — dort sind Batterie und Heizstab schon gemeinsam geplant. Für den <em>ungeplanten</em> Überschuss regeln beide gemeinsam, gewichtet nach Ladestand — unter 20 % bekommt die Batterie alles (ihre Energie trägt durch die Nacht, die Wärme nicht), ab 50 % ist es die Hälfte, dazwischen gleitend. Unter der Mindesttemperatur hat der Heizstab Vorrang mit voller Leistung.
         </div>
         <div class="field-group">
           <label>Puffervolumen (Liter)</label>

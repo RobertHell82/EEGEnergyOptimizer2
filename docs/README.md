@@ -19,17 +19,18 @@ Am besten in dieser Reihenfolge:
 
 ## 🔌 Wechselrichter anbinden
 
-Unterstützt werden derzeit **Fronius Gen24, Huawei SUN2000, Sigenergy SigenStor und SolaX Gen4+**:
+Unterstützt werden derzeit **Fronius Gen24, Huawei SUN2000, Kostal Plenticore, Sigenergy SigenStor und SolaX Gen4+**:
 
 | Wechselrichter | Anleitung |
 |---|---|
 | **Fronius Gen24** | [Fronius einrichten](guides/fronius.md) |
 | **Huawei SUN2000** | [Huawei Solar Integration einrichten](guides/huawei.md) |
 | | [Huawei Akkukapazität-Sensor aktivieren](guides/capacity_sensor.md) |
+| **Kostal Plenticore** | [Kostal einrichten](guides/kostal.md) |
 | **Sigenergy SigenStor** | [Sigenergy einrichten](guides/sigenergy.md) |
 | **SolaX Gen4+** | [SolaX Modbus einrichten](guides/solax.md) |
 
-> Kostal, SMA und SolarEdge werden **derzeit nicht** unterstützt — ihre Treiber sind enthalten, aber stillgelegt. Welcher Wechselrichter wann dazukommt und was dafür noch fehlt: **[Stand der Unterstützung](wechselrichter-status.md)**.
+> SMA und SolarEdge werden **derzeit nicht** unterstützt — ihre Treiber sind enthalten, aber stillgelegt. Welcher Wechselrichter wann dazukommt und was dafür noch fehlt: **[Stand der Unterstützung](wechselrichter-status.md)**.
 
 ## ☀️ PV-Prognose einrichten
 
@@ -40,9 +41,9 @@ Eine der beiden Prognose-Quellen wird benötigt:
 
 ## 🔥 Heizstab (optional)
 
-Wer mehr erzeugt, als Batterie, Haus und Einspeisegrenze aufnehmen, kann den Rest in einen Heizstab schicken statt ihn abzuregeln:
+Wer einen Warmwasserpuffer hat, kann PV-Strom als Wärme speichern — der Fahrplan wägt ab, ob eine Kilowattstunde als Wärme oder als Einspeisung mehr bringt:
 
-- **[Heizstab (Fronius Ohmpilot) einrichten](guides/heizstab.md)** — direkt per Modbus TCP gesteuert, nur der Überschuss oberhalb der Einspeisegrenze
+- **[Heizstab (Fronius Ohmpilot) einrichten](guides/heizstab.md)** — direkt per Modbus TCP gesteuert, nach Plan und aus ungeplantem Überschuss
 
 > [!TIP]
 > Alle Einrichtungs-Anleitungen sind auch direkt im Einrichtungsassistenten der Integration verfügbar — einfach auf die „Anleitung"-Buttons im Panel klicken.
