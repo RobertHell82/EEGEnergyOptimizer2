@@ -10,6 +10,12 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
+## [2.1.1-dev10] - 2026-09-11
+
+### Hinzugefügt
+
+- **Sommer-Nieder-Arbeitspreis (SNAP) als eigenes Preisfenster.** In Österreich senkt der SNAP seit 1. April 2026 das Netznutzungsentgelt auf der Netzebene 7 um 20 % — vom 1. April bis 30. September täglich zwischen 10 und 16 Uhr (SNE-V 2018 idF Novelle 2026, § 2 Abs. 1 Z 9 und § 5 Abs. 1b). Das neue Feld „Bezugspreis im Sommer mittags" nimmt den Preis auf, der in diesem Fenster gilt; Zeitraum und Uhrzeit stehen in der Verordnung und sind deshalb fest verdrahtet statt einstellbar. Der Preis wirkt wie die übrigen: als Zeitreihe im Optimierungsmodell, slotweise in der Gewinnrechnung und eingefroren in der Tagesbilanz. Überschneidet sich das Fenster mit einem ungewöhnlich gesetzten Nachtfenster, gewinnt die Verordnung. Leeres Feld oder eine 0 heißen weiterhin „gibt es nicht".
+
 ## [2.1.1-dev9] - 2026-09-11
 
 ### Hinzugefügt
