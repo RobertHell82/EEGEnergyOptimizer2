@@ -10,6 +10,22 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
+## [2.1.1-dev11] - 2026-09-11
+
+### Behoben
+
+- **Ein Fahrplan ohne Lösung nennt jetzt den Grund.** Fand der Solver keine optimale Lösung, standen in den Variablen keine Werte, und die Ergebnistabelle scheiterte an „None − None" — im Panel stand ein `TypeError`, der nichts erklärte. Jetzt wird der Solver-Status direkt nach dem Optimieren geprüft und als Fehler ausgewiesen („Optimierung ohne Lösung — Solver-Status: infeasible").
+
+### Entfernt
+
+- **Reste des Vorrang-Schalters aus 2.1.1-dev5:** die Wartemethode für Guard 1 im Executor, die Vorgabe des Schalters und ein Import im Heizstab-Controller. Der Konfigurationsschlüssel selbst bleibt liegen, damit gespeicherte Einstellungen nicht stolpern.
+- **Toter Code ohne Aufrufer:** `mit_deckel` in der Preisfunktion (der Deckel wird seit dem Spotpreis slotweise in `HAConfig.feedin_price` gesetzt), ein Sortierhelfer in der Bilanz, eine Auswahlmethode im aWATTar-Parser, Lesezähler im Ohmpilot-Treiber, die nie jemand las, und ein Sigenergy-Attribut, das nur gesetzt wurde. Dazu drei unbenutzte Importe und ein in `__init__.py` nur zur Typprüfung importierter Name, der in Signaturen stand.
+- **Panel:** das Flag `KOSTAL_UI_ENABLED` — seit 2.1.1-dev9 ohne Funktion, die Auswahl folgt allein `SCHEDULE_CONTROL_INVERTERS`.
+
+### Geändert
+
+- **Doku auf den Stand des Codes gebracht.** `CLAUDE.md`, `README.md`, `docs/README.md` und `docs/wechselrichter-status.md` nannten Kostal noch als stillgelegt, beschrieben den Heizstab als reine Abregelungs-Senke „nach Messung, nicht nach Plan" und kannten den Vorrang-Schalter samt Zusatzwärme-Schwelle noch. Der Heizstab-Guide führte den Schalter in der Konfigurationstabelle, aber weder Puffervolumen noch Sperr-Entität. Die Hilfetexte zur Mindesttemperatur und zur Überschussteilung im Panel erklären jetzt, dass geplante Wärme aus dem Fahrplan kommt.
+
 ## [2.1.1-dev10] - 2026-09-11
 
 ### Hinzugefügt
