@@ -275,6 +275,10 @@ const WIZARD_DEFAULTS = {
   heizstab_alt_temp_c: 0,
   heizstab_vorrang: true,
   heizstab_waermewert: 0,
+  // Volumen des Puffers und eine Entität, die den Heizstab sperrt,
+  // solange eine zweite Wärmequelle den Speicher selbst heizt.
+  heizstab_puffer_liter: "",
+  heizstab_sperr_entity: "",
   // Wallbox (vorerst nur Ambibox) — reine Anzeige des angesteckten
   // Fahrzeugs. Nur in den Einstellungen und nur im Expertenmodus.
   wallbox_type: "",
@@ -6507,6 +6511,17 @@ class EegOptimizerPanel extends HTMLElement {
     </div>`;
   }
 
+  // Entitäten, die als Ein/Aus-Kriterium taugen — für die Auswahlliste
+  // des Sperr-Felds. Reine Bequemlichkeit: Eingetragen werden darf alles,
+  // die Liste schlägt nur das Naheliegende vor.
+  _schalterEntitaeten() {
+    const states = this._hass?.states || {};
+    return Object.keys(states)
+      .filter(e => e.startsWith("switch.") || e.startsWith("binary_sensor.") || e.startsWith("input_boolean."))
+      .sort()
+      .slice(0, 400);
+  }
+
   _heizstabFields(d, prefix) {
     // Heizstab (Fronius Ohmpilot per Modbus TCP) als Senke für Überschuss,
     // den weder Batterie noch Netz aufnehmen. Nur in den Einstellungen —
@@ -6575,6 +6590,19 @@ class EegOptimizerPanel extends HTMLElement {
               <div class="help-text" style="margin-top:4px">Klebt die Einspeisung an der Grenze, bekommt zuerst der Heizstab den Überschuss; das Ladelimit der Batterie wird erst angehoben, wenn er voll ausgelastet ist oder die Maximaltemperatur erreicht hat. Ausgeschaltet gilt die umgekehrte Reihenfolge: erst die Batterie, dann der Heizstab.</div>
             </div>
           </label>
+        </div>
+        <div class="field-group">
+          <label>Puffervolumen (Liter)</label>
+          <input type="number" data-field="${prefix}heizstab_puffer_liter" value="${d.heizstab_puffer_liter || ""}" min="0" max="10000" step="10" placeholder="z.B. 600">
+          <div class="help-text">Wie groß der Speicher ist, den der Heizstab erwärmt. Daraus rechnet der Optimierungsplan, wie viel Wärme noch hineinpasst — und hält abends die Batterie zurück, solange diese Wärme mehr wert ist als die Einspeisung. Bei Schichtspeichern nur den Teil angeben, der tatsächlich warm wird (oft weniger als das Typenschild sagt). Auf ein paar hundert Liter kommt es nicht an. Leer = der Heizstab bekommt wie bisher nur, was ohnehin abgeregelt würde.</div>
+        </div>
+        <div class="field-group">
+          <label>Heizstab sperren, solange diese Entität eingeschaltet ist</label>
+          <input type="text" list="eeg-sperr-entities" data-field="${prefix}heizstab_sperr_entity" value="${this._escapeHtml(d.heizstab_sperr_entity || "")}" placeholder="z.B. switch.holzvergaser">
+          <datalist id="eeg-sperr-entities">
+            ${this._schalterEntitaeten().map(e => `<option value="${this._escapeHtml(e)}"></option>`).join("")}
+          </datalist>
+          <div class="help-text">Für eine zweite Wärmequelle — Holzvergaser, Kessel, Wärmepumpe —, die den Puffer selbst heizt. Solange die Entität „ein" meldet, bleibt der Heizstab aus, und der Plan rechnet nicht mit ihm. Ist sie nicht erreichbar, gilt der Heizstab als frei: Ein ausgefallener Sensor soll ihn nicht unbemerkt stilllegen.</div>
         </div>
         <div class="field-group">
           <label>Wärmewert (ct/kWh)</label>

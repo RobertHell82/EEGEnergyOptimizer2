@@ -53,6 +53,8 @@ from ..const import (
     CONF_HEIZSTAB_VORRANG,
     CONF_HEIZSTAB_WAERMEWERT,
     CONF_HEIZSTAB_MAXTEMP_C,
+    CONF_HEIZSTAB_PUFFER_LITER,
+    CONF_HEIZSTAB_SPERR_ENTITY,
     DEFAULT_HEIZSTAB_ALT_TEMP_C,
     DEFAULT_HEIZSTAB_ENABLED,
     DEFAULT_HEIZSTAB_MAX_KW,
@@ -62,6 +64,7 @@ from ..const import (
     DEFAULT_HEIZSTAB_VORRANG,
     DEFAULT_HEIZSTAB_WAERMEWERT,
     DEFAULT_HEIZSTAB_MAXTEMP_C,
+    DEFAULT_HEIZSTAB_PUFFER_LITER,
     GUARD_EXPORT_RELEASE_KW,
     GUARD_EXPORT_STICKY_BAND_KW,
     HEIZSTAB_KOMFORT_EXPORT_ZIEL_KW,
@@ -71,6 +74,7 @@ from ..const import (
     HEIZSTAB_SATT_TOLERANZ_KW,
     HEIZSTAB_STEP_KW,
     HEIZSTAB_TEMP_HYSTERESE_K,
+    WASSER_WH_PRO_LITER_KELVIN,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -129,6 +133,20 @@ def heizstab_max_kw(config: dict) -> float:
     except (TypeError, ValueError):
         wert = 0.0
     return wert if wert > 0 else DEFAULT_HEIZSTAB_MAX_KW
+
+
+def heizstab_puffer_liter(config: dict) -> float:
+    """Volumen des Puffers in Litern; 0, wenn nicht angegeben."""
+    try:
+        wert = float(config.get(CONF_HEIZSTAB_PUFFER_LITER) or DEFAULT_HEIZSTAB_PUFFER_LITER)
+    except (TypeError, ValueError):
+        return DEFAULT_HEIZSTAB_PUFFER_LITER
+    return max(0.0, wert)
+
+
+def heizstab_sperr_entity(config: dict) -> str:
+    """Entität, die den Heizstab sperrt; leer, wenn keine gesetzt ist."""
+    return str(config.get(CONF_HEIZSTAB_SPERR_ENTITY) or "").strip()
 
 
 def heizstab_waermewert(config: dict) -> float:
@@ -269,6 +287,59 @@ class HeizstabController:
         return DEFAULT_HEIZSTAB_VORRANG if wert is None else bool(wert)
 
     @property
+    def puffer_liter(self) -> float:
+        return heizstab_puffer_liter(self._config)
+
+    @property
+    def gesperrt(self) -> bool:
+        """Heizt eine zweite Wärmequelle den Puffer gerade selbst?
+
+        Ein einziges Kriterium: der Zustand der konfigurierten Entität. Ist
+        keine gesetzt oder ist sie nicht erreichbar, gilt der Heizstab als
+        frei — ein ausgefallener Sensor soll ihn nicht unbemerkt wochenlang
+        stilllegen. Läuft er umgekehrt einmal versehentlich mit, begrenzt
+        ihn die Maximaltemperatur ohnehin.
+        """
+        entity = heizstab_sperr_entity(self._config)
+        if not entity or self._hass is None:
+            return False
+        try:
+            state = self._hass.states.get(entity)
+        except Exception:  # noqa: BLE001 — eine kaputte Abfrage sperrt nicht
+            # Nicht stillschweigend: Sonst wäre die Sperre wirkungslos, ohne
+            # dass es je jemand merkt.
+            _LOGGER.debug("Heizstab: Sperr-Entität %s nicht lesbar", entity, exc_info=True)
+            return False
+        if state is None:
+            return False
+        return str(state.state).strip().lower() in ("on", "true", "1", "heizt", "ein")
+
+    @property
+    def puffer_budget_kwh(self) -> float:
+        """Wärme, die der Puffer bis zur Maximaltemperatur noch aufnimmt.
+
+        Das ist die Schranke, mit der der Fahrplan rechnet: Solange hier
+        etwas übrig ist, konkurriert die Wärme mit der Einspeisung um jede
+        Kilowattstunde — und eine Abendentladung lohnt sich nur, wenn sie
+        mehr bringt als der Wärmewert.
+
+        0 bedeutet „nicht einplanen": kein Volumen angegeben, keine
+        Temperatur messbar, Puffer bereits warm, oder eine zweite Wärmequelle
+        heizt gerade. Der Fahrplan fällt dann auf das bisherige Verhalten
+        zurück (der Heizstab bekommt, was abgeregelt wird).
+        """
+        if not self.enabled or self.gesperrt:
+            return 0.0
+        liter = self.puffer_liter
+        temp = self.temperatur_c
+        if liter <= 0 or temp is None:
+            return 0.0
+        hub_k = self.maxtemp_c - temp
+        if hub_k <= 0:
+            return 0.0
+        return round(liter * hub_k * WASSER_WH_PRO_LITER_KELVIN / 1000.0, 3)
+
+    @property
     def waermewert(self) -> float:
         return heizstab_waermewert(self._config)
 
@@ -393,6 +464,10 @@ class HeizstabController:
         """
         if not self.enabled:
             return 0.0, "Heizstab deaktiviert"
+        # Vor allem anderen, auch vor der Mindesttemperatur: Heizt eine
+        # zweite Quelle den Puffer, hat der Heizstab dort nichts zu suchen.
+        if self.gesperrt:
+            return 0.0, "Gesperrt — andere Wärmequelle heizt den Puffer"
         temp_text = (
             f"({self.temperatur_c:.0f} °C < {self.mintemp_c:.0f} °C)"
             if self.temperatur_c is not None else ""
@@ -567,6 +642,9 @@ class HeizstabController:
             "alt_temp_c": self.alt_temp_c or None,
             "zusatzwaerme": self.zusatzwaerme,
             "waermewert": self.waermewert,
+            "gesperrt": self.gesperrt,
+            "puffer_liter": self.puffer_liter or None,
+            "puffer_budget_kwh": self.puffer_budget_kwh or None,
             "komfort_aktiv": self.komfort_aktiv,
             "komfort_aus_netz": self.komfort_aus_netz,
             "max_erreicht": self.max_erreicht,

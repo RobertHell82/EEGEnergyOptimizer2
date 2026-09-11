@@ -6,6 +6,7 @@ Treiber ist ein Mock — geschrieben wird ausschließlich über
 ``async_set_power``; die Werte des Geräts kommen aus dessen Cache.
 """
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -541,3 +542,108 @@ async def test_ohne_messwert_kein_verdacht(monkeypatch):
     jetzt[0] += HEIZSTAB_KONFLIKT_MINUTEN * 60 + 10
     await hz.async_lesen()
     assert hz.fremdsteuerung is False
+
+
+# ---------------------------------------------------------------------------
+# Pufferbudget und Sperre durch eine zweite Wärmequelle
+# ---------------------------------------------------------------------------
+
+
+def _hass_mit(zustaende: dict):
+    hass = MagicMock()
+    hass.states.get.side_effect = lambda e: (
+        SimpleNamespace(state=zustaende[e]) if e in zustaende else None
+    )
+    return hass
+
+
+def _budget_cfg(**over):
+    cfg = _cfg(
+        heizstab_puffer_liter=600,
+        heizstab_maxtemp_c=80.0,
+    )
+    cfg.update(over)
+    return cfg
+
+
+def test_budget_aus_volumen_und_temperatur():
+    """1,163 Wh je Liter und Kelvin — 600 L von 45 auf 80 °C sind 24,4 kWh."""
+    controller = HeizstabController(MagicMock(), _budget_cfg(), _treiber(temp=45.0))
+    controller._treiber.last_temperature = 45.0
+    assert controller.puffer_budget_kwh == pytest.approx(24.423, abs=0.01)
+
+
+def test_budget_schrumpft_mit_steigender_temperatur():
+    """Der Sommerfall: Je wärmer der Puffer, desto weniger ist der Wärmeweg
+    wert — bis die Abendentladung wieder die bessere Verwendung ist."""
+    werte = {}
+    for temp in (45.0, 70.0, 78.0, 80.0, 85.0):
+        controller = HeizstabController(MagicMock(), _budget_cfg(), _treiber(temp=temp))
+        werte[temp] = controller.puffer_budget_kwh
+    assert werte[45.0] > werte[70.0] > werte[78.0] > 0
+    assert werte[80.0] == 0.0, "Maximaltemperatur erreicht → nichts mehr aufzunehmen"
+    assert werte[85.0] == 0.0, "Über der Maximaltemperatur kein negatives Budget"
+
+
+@pytest.mark.parametrize("fehlend", ["volumen", "temperatur"])
+def test_ohne_angabe_kein_budget(fehlend):
+    """Fehlt Volumen oder Messwert, wird nicht geraten: 0 heißt „nicht
+    einplanen", und der Fahrplan bleibt beim bisherigen Verhalten."""
+    cfg = _budget_cfg()
+    temp = 45.0
+    if fehlend == "volumen":
+        cfg["heizstab_puffer_liter"] = 0
+    else:
+        temp = None
+    controller = HeizstabController(MagicMock(), cfg, _treiber(temp=temp))
+    assert controller.puffer_budget_kwh == 0.0
+
+
+def test_zweite_waermequelle_sperrt_den_heizstab():
+    """Läuft der Holzvergaser, hat der Heizstab am Puffer nichts zu suchen —
+    und zwar vor jeder anderen Regel, auch vor der Mindesttemperatur."""
+    cfg = _budget_cfg(
+        heizstab_sperr_entity="switch.holzvergaser",
+        heizstab_mintemp_c=50.0,   # Komfortheizen wäre sonst fällig
+        heizstab_netzbezug=True,
+    )
+    hass = _hass_mit({"switch.holzvergaser": "on"})
+    controller = HeizstabController(hass, cfg, _treiber(temp=40.0))
+
+    assert controller.gesperrt is True
+    soll, grund = controller.regeln(
+        entladung=False, export_kw=5.0, grenze_kw=4.0, vorrang_frei=True
+    )
+    assert soll == 0.0
+    assert "andere Wärmequelle" in grund
+    # Und der Fahrplan rechnet nicht mit einem Weg, den es gerade nicht gibt.
+    assert controller.puffer_budget_kwh == 0.0
+
+
+def test_ausgeschaltete_waermequelle_gibt_frei():
+    cfg = _budget_cfg(heizstab_sperr_entity="switch.holzvergaser")
+    controller = HeizstabController(
+        _hass_mit({"switch.holzvergaser": "off"}), cfg, _treiber(temp=45.0)
+    )
+    assert controller.gesperrt is False
+    assert controller.puffer_budget_kwh > 0
+
+
+def test_unerreichbare_sperrentitaet_gilt_als_frei():
+    """Ein ausgefallener Sensor darf den Heizstab nicht unbemerkt für Wochen
+    stilllegen. Läuft er versehentlich mit, bremst ihn die Maximaltemperatur."""
+    cfg = _budget_cfg(heizstab_sperr_entity="switch.gibt_es_nicht")
+    controller = HeizstabController(_hass_mit({}), cfg, _treiber(temp=45.0))
+    assert controller.gesperrt is False
+
+    fuer_unavailable = HeizstabController(
+        _hass_mit({"switch.holzvergaser": "unavailable"}),
+        _budget_cfg(heizstab_sperr_entity="switch.holzvergaser"),
+        _treiber(temp=45.0),
+    )
+    assert fuer_unavailable.gesperrt is False
+
+
+def test_ohne_sperrentitaet_keine_sperre():
+    controller = HeizstabController(MagicMock(), _budget_cfg(), _treiber(temp=45.0))
+    assert controller.gesperrt is False

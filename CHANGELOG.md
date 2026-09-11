@@ -10,6 +10,19 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
+## [2.1.1-dev2] - 2026-09-11
+
+### Hinzugefügt
+
+- **Der Optimierungsplan rechnet den Heizstab jetzt mit, statt ihm nur Reste zu lassen.** Bisher war abgeregelte Energie dem Modell nichts wert — der Heizstab bekam hinterher zugeteilt, was ohnehin übrig blieb. Dadurch konnte der Plan abends die Batterie ins Netz entladen, obwohl dieselbe Kilowattstunde am nächsten Tag im Warmwasserpuffer deutlich mehr gebracht hätte. Jetzt steht die Wärme mit ihrem Wärmewert in der Rechnung: Bei 18 ct Wärmewert und 9,7 ct Einspeisung bleibt die Energie im Speicher, weil die Wärme mehr bringt. Ist der Puffer dagegen schon warm, schrumpft der Spielraum gegen null und die Abendentladung findet wieder statt — ohne Schalter, ohne Regel.
+- **Neues Feld „Puffervolumen" (Liter).** Daraus und aus der gemessenen Puffertemperatur ergibt sich, wie viel Wärme noch hineinpasst (1,163 Wh je Liter und Grad). Bei Schichtspeichern nur den Teil angeben, den der Heizstab tatsächlich erwärmt. Leer = der Heizstab bekommt wie bisher nur, was abgeregelt würde.
+- **Neues Feld „Heizstab sperren, solange diese Entität eingeschaltet ist".** Für eine zweite Wärmequelle — Holzvergaser, Kessel, Wärmepumpe —, die den Puffer selbst heizt. Solange sie „ein" meldet, bleibt der Heizstab aus, und der Plan rechnet nicht mit ihm. Die Sperre greift sofort, noch vor der Mindesttemperatur. Ist die Entität nicht erreichbar, gilt der Heizstab als frei: Ein ausgefallener Sensor soll ihn nicht unbemerkt wochenlang stilllegen.
+
+### Hinweise
+
+- **Ohne Heizstab ändert sich nichts.** Das Optimierungsmodell wird nur erweitert, wenn Heizstab-Leistung, Wärmewert und Puffervolumen zusammen gesetzt sind. Fehlt eines davon, ist der Fahrplan Zeile für Zeile derselbe wie vorher — ein Regressionstest hält das fest.
+- Wer keinen Wärmewert angibt, sagt damit „die Wärme ist mir nichts wert": Dann bleibt es beim bisherigen Verhalten, der Heizstab nimmt nur abgeregelten Überschuss.
+
 ## [2.1.1-dev1] - 2026-09-11
 
 ### Behoben

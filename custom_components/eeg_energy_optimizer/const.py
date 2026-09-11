@@ -278,6 +278,22 @@ DEFAULT_HEIZSTAB_NETZBEZUG = False
 DEFAULT_HEIZSTAB_ALT_TEMP_C = 0.0
 DEFAULT_HEIZSTAB_VORRANG = True
 DEFAULT_HEIZSTAB_WAERMEWERT = 0.0
+# Entität, die den Heizstab sperrt, solange sie „ein" meldet — gedacht für
+# eine zweite Wärmequelle (Holzvergaser, Kessel), die den Puffer selbst
+# heizt. Leer = keine Sperre. Bewusst ein einziges Kriterium ohne
+# Temperatur- oder PV-Bedingung: Der Schalter sagt alles.
+CONF_HEIZSTAB_SPERR_ENTITY = "heizstab_sperr_entity"
+# Volumen des Puffers in Litern — die einzige neue Angabe, aus der sich
+# berechnet, wie viel Wärme er noch aufnehmen kann. Gemeint ist der Teil,
+# den der Heizstab tatsächlich erwärmt (bei Schichtspeichern oft weniger
+# als das Typenschild sagt). 0 = unbekannt, dann plant der Fahrplan den
+# Heizstab nicht ein (er bekommt weiterhin, was abgeregelt wird).
+CONF_HEIZSTAB_PUFFER_LITER = "heizstab_puffer_liter"
+DEFAULT_HEIZSTAB_PUFFER_LITER = 0.0
+
+# Spezifische Wärmekapazität von Wasser in Gebrauchseinheiten: 1,163 Wh
+# erwärmen einen Liter um ein Kelvin (4,182 kJ/(kg·K) ÷ 3,6 kJ/Wh).
+WASSER_WH_PRO_LITER_KELVIN = 1.163
 
 # Nachführung: klebt die Einspeisung an der Grenze, ist die wahre Höhe des
 # Überschusses unsichtbar (der Wechselrichter regelt bereits ab) — deshalb
@@ -396,6 +412,9 @@ TELEMETRY_SETTINGS_KEYS = (
     "heizstab_alt_temp_c",
     "heizstab_vorrang",
     "heizstab_waermewert",
+    # Puffergroesse erklaert, warum ein Plan Waerme einplant. Die
+    # Sperr-Entitaet bleibt draussen, sie ist anlagenspezifisch.
+    "heizstab_puffer_liter",
     # Wallbox als zweiter Speicher — erklaert spaeter, warum ein Plan mit
     # dem Auto rechnet. Bewusst OHNE Adresse.
     "wallbox_type",

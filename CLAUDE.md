@@ -422,6 +422,36 @@ manual test exists to settle them at the device:
    when we write at the same time is undocumented; the Ohmpilot/Gen24 case
    showed how that ends.
 
+### Heizstab im Optimierungsmodell (2.1.1-dev2)
+
+Bis dahin war `discard` in der Zielfunktion nichts wert: Das Modell regelte
+ab, wenn es musste, und der Heizstab bekam den Rest nachgelagert zugeteilt
+(`_heizstab_plan_kw`). Damit konnte es abends entladen, obwohl dieselbe
+Kilowattstunde am nächsten Tag im Puffer mehr gebracht hätte.
+
+Jetzt wird `discard_p` in `heater_p` + `spill_p` aufgeteilt, und `heater_p`
+geht mit dem Wärmewert in die Zielfunktion. Zwei Deckel begrenzen ihn:
+`heizstab_max_kw` je Slot (was physikalisch durchpasst) und
+`heizstab_budget_kwh` über den Horizont (was der Puffer noch aufnimmt) — eine
+einzige Summenschranke statt eines zweiten Speichers mit Zeitverlauf. Das
+Budget kommt aus der gemessenen Puffertemperatur
+(`HeizstabController.puffer_budget_kwh`, 1,163 Wh/(L·K)) und wird bei jedem
+Planlauf neu gebildet: Es schrumpft, während der Puffer warm wird, und gibt
+die Abendentladung von selbst wieder frei.
+
+**Alles davon hängt an drei Bedingungen** — Leistung, Wärmewert *und* Budget
+müssen größer null sein. Fehlt eine, wird im LP nichts aufgebaut und das
+Modell ist strukturell identisch zu vorher (Regressionstest
+`test_ohne_heizstab_identisch`). Das ist bewusst so: Ein unbegrenzt bewerteter
+Heizstab würde jede Entladung dauerhaft blockieren.
+
+`heizstab_sperr_entity` sperrt den Heizstab, solange eine zweite Wärmequelle
+(Holzvergaser, Kessel) den Puffer selbst heizt — an zwei Stellen, weil eine
+nicht reicht: sofort im Controller (`regeln()`, noch vor der
+Mindesttemperatur) und im Plan (Budget 0). Eine unerreichbare Entität gilt
+als „frei": Ein ausgefallener Sensor soll den Heizstab nicht unbemerkt
+stilllegen.
+
 ## Config Flow & Onboarding
 
 The config flow is a single-click setup that creates a config entry with `setup_complete=False`. Full configuration happens through the sidebar panel (`/eeg-optimizer`), which provides:

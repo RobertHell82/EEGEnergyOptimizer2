@@ -31,6 +31,8 @@ def opt(c, start_time):
 		    Negative values (over full) is possible, if target SoC < 100%.
 	'battery_ub' : upper limit for 'battery' as per dynamic blackout reserve
 	'discard' : DC power [kW], that has to be discarded.
+	'heater' : DC power [kW] out of 'discard' that goes into the heating rod
+		   (0 unless heating rod power, heat value and buffer budget are set).
 	'ac_price' : value of AC power [Currency/kWh]
 	'bat_price' : value of energy in battery [Currency/kWh]
 	'dc_price' : value of DC power [Currency/kWh]
@@ -109,6 +111,36 @@ def opt(c, start_time):
 
 	dc_p = parameters.dc_production + battery_p_pos - battery_p_neg - discard_p - c.battery_resistance * battery_high1_p - 2 * c.battery_resistance * battery_high2_p
 
+	# --- Heizstab als bewertete Senke -----------------------------------
+	#
+	# Ohne ihn ist 'discard' wertlos: Das Modell regelt ab, wenn es muss,
+	# und der Heizstab bekommt den Rest geschenkt. Mit Wärmewert wird daraus
+	# eine echte Alternative — und damit rechnet sich eine Abendentladung
+	# nur noch, wenn die Einspeisung mehr bringt als die Wärme, die morgen
+	# aus derselben Kilowattstunde würde.
+	#
+	# Drei Bedingungen müssen zusammenkommen, sonst wird nichts gebaut und
+	# das Modell bleibt Zeile für Zeile das von vorher: eine Leistung, ein
+	# Wärmewert und ein Aufnahmebudget des Puffers. Fehlt eines, ist der
+	# Weg nicht bewertbar — und ein unbegrenzt bewerteter Heizstab würde
+	# jede Entladung dauerhaft blockieren.
+	heizstab_max_kw = float(getattr(c, 'heizstab_max_kw', 0.0) or 0.0)
+	heizstab_waermewert = float(getattr(c, 'heizstab_waermewert', 0.0) or 0.0)
+	heizstab_budget_kwh = float(getattr(c, 'heizstab_budget_kwh', 0.0) or 0.0)
+	heizstab_aktiv = (
+		heizstab_max_kw > 0 and heizstab_waermewert > 0 and heizstab_budget_kwh > 0
+	)
+
+	if heizstab_aktiv:
+		# Der Heizstab hängt auf der AC-Seite, 'discard' ist DC — deshalb
+		# die Obergrenze in DC umrechnen. Mehr als abgeregelt wird, kann er
+		# ohnehin nicht bekommen (Nebenbedingung unten).
+		heater_ub_dc = heizstab_max_kw / c.ac_efficiency
+		heater_p = parameters.i.map(lambda i: Variable(
+			'heater_p' + i, lb = 0, ub = min(discard_p_ub[i], heater_ub_dc)))
+	else:
+		heater_p = pd.Series(0.0, index=parameters.i.index)
+
 	battery_p_max_var = Variable('battery_p_max', lb = 0)
 	grid_p_max_var = Variable('grid_p_max', lb = 0)
 	battery_p_max = pd.Series(battery_p_max_var, index=battery_p_neg.index)
@@ -134,11 +166,26 @@ def opt(c, start_time):
 	model.add(ac_constr)
 	model.add(battery_constr)
 	model.add(battery_high_p_constr)
-	model.objective = Objective((grid_p_pos * parameters.feedin_price).sum() -
+	if heizstab_aktiv:
+		# Der Heizstab bekommt höchstens, was abgeregelt wird …
+		model.add((discard_p - heater_p).map(lambda ex: Constraint(ex, lb = 0)))
+		# … und über den Horizont nicht mehr, als der Puffer noch aufnimmt.
+		# Eine einzige Summenschranke statt eines zweiten Speichers mit
+		# Zeitverlauf: Sie wird bei jedem Planlauf aus der gemessenen
+		# Puffertemperatur neu gebildet und ist damit immer aktuell.
+		model.add(Constraint(
+			heater_p.sum() * c.ac_efficiency * p2e, ub = heizstab_budget_kwh,
+			name = 'heizstab_budget'))
+	ziel = ((grid_p_pos * parameters.feedin_price).sum() -
 		(grid_p_neg * parameters.consumption_price).sum() -
 		battery_p_max_var * c.max_battery_cost - grid_p_max_var * c.max_grid_cost -
 		battery_p_pos.sum() * c.battery_cost * c.time_res / 3600 -
-		battery_high2_p.sum() * c.battery_cost * c.time_res / 3600, direction='max')
+		battery_high2_p.sum() * c.battery_cost * c.time_res / 3600)
+	if heizstab_aktiv:
+		# Wärme zum vereinbarten Wert — dieselbe Einheit wie die Preisterme
+		# oben (feedin_price trägt p2e bereits in sich, siehe parameters).
+		ziel = ziel + heater_p.sum() * heizstab_waermewert * c.ac_efficiency * p2e
+	model.objective = Objective(ziel, direction='max')
 	status = model.optimize()
 
 	if log_performance: print('After optimization:', start_time.now())
@@ -151,6 +198,7 @@ def opt(c, start_time):
 		'battery' : extract_values(battery_free),
 		'battery_ub' : battery_free_ub.values,
 		'discard' : extract_values(discard_p),
+		'heater' : extract_values(heater_p) if heizstab_aktiv else 0.0,
 		'ac_price' : ac_constr.map(lambda x: -x.dual) * 3600 / c.time_res,
 		'bat_price' : battery_constr.map(lambda x: x.dual),
 		'dc_price' : discard_p.map(lambda x: -x.dual) * 3600 / c.time_res,

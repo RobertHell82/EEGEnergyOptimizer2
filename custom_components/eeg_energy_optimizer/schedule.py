@@ -287,6 +287,10 @@ class ScheduleInputs:
     # geplante Wärme ist dann Zusatzwärme (Spalte ``heizstab_zusatz``) und
     # zählt nicht zum Wärmewert — die andere Quelle hätte sie nie geliefert.
     heizstab_zusatzwaerme: bool = False
+    # Wärme, die der Puffer noch aufnehmen kann (kWh). Nur mit diesem Wert
+    # wird der Heizstab im LP zur bewerteten Senke — sonst bekommt er wie
+    # bisher nur, was ohnehin abgeregelt würde. 0 = nicht einplanen.
+    heizstab_budget_kwh: float = 0.0
 
 
 class _Forecast:
@@ -423,6 +427,11 @@ class HAConfig:
         self.battery_power_limit = inputs.battery_power_limit_kw
         self.ac_limit = inputs.ac_limit_kw
         self.battery_cost = inputs.battery_cost
+        # Heizstab als bewertete Senke (siehe opt_highs.opt). Alle drei Werte
+        # zusammen entscheiden, ob das LP ihn überhaupt einplant.
+        self.heizstab_max_kw = inputs.heizstab_max_kw
+        self.heizstab_waermewert = inputs.heizstab_waermewert
+        self.heizstab_budget_kwh = inputs.heizstab_budget_kwh
         # Keine getrennte Notstrom-RESERVE (Deckel 0) — die harte Untergrenze
         # macht oben die Kapazität (Mindest-Ladestand). Das Vorschau-FENSTER
         # bleibt aber echt: mit 18 Stunden hält der Fahrplan an trüben Tagen
@@ -1393,6 +1402,12 @@ async def async_collect_inputs(
         heizstab_zusatzwaerme=bool(
             getattr(data.get("heizstab"), "zusatzwaerme", False)
         ),
+        # Aufnahmefähigkeit des Puffers — bei jedem Lauf frisch aus der
+        # gemessenen Temperatur. Sie schrumpft, während der Puffer warm
+        # wird, und gibt damit die Abendentladung von selbst wieder frei.
+        heizstab_budget_kwh=float(
+            getattr(data.get("heizstab"), "puffer_budget_kwh", 0.0) or 0.0
+        ),
     )
     return inputs, None
 
@@ -1449,10 +1464,13 @@ def solve(inputs: ScheduleInputs) -> dict[str, Any]:
             / inputs.battery_capacity_kwh,
             1,
         )
-        # Geplante Heizstab-Leistung: was das Modell abregeln würde, nimmt
-        # der Heizstab — bis zu seiner Maximalleistung. Reine Nachbearbeitung,
-        # keine Variable im LP (siehe ScheduleInputs.heizstab_max_kw).
-        slot["heizstab"] = _heizstab_plan_kw(slot.get("discard"), inputs)
+        # Geplante Heizstab-Leistung. Mit Wärmewert und Pufferbudget hat
+        # das LP sie selbst bestimmt (Spalte ``heater``) — dann gilt dessen
+        # Wert. Ohne beides bleibt es bei der Nachbearbeitung: Was abgeregelt
+        # würde, nimmt der Heizstab bis zu seiner Maximalleistung.
+        slot["heizstab"] = _heizstab_plan_kw(
+            slot.get("discard"), inputs, row.get("heater")
+        )
         # Zusatzwärme: liegt der Puffer jetzt über der Schwelle der anderen
         # Heizquelle, ersetzt geplante Wärme nichts mehr.
         slot["heizstab_zusatz"] = slot["heizstab"] if inputs.heizstab_zusatzwaerme else 0.0
@@ -1502,14 +1520,32 @@ def solve(inputs: ScheduleInputs) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def _heizstab_plan_kw(discard_kw: float | None, inputs: ScheduleInputs) -> float:
-    """Heizstab-Leistung (AC, kW) aus abgeregeltem DC-Überschuss.
+def _heizstab_plan_kw(
+    discard_kw: float | None,
+    inputs: ScheduleInputs,
+    heater_dc_kw: float | None = None,
+) -> float:
+    """Heizstab-Leistung (AC, kW) für einen Slot.
 
-    ``discard`` ist DC-Leistung vor dem Wechselrichter; am Heizstab kommt sie
-    hinter dem Wirkungsgrad an. Gedeckelt auf die Maximalleistung — mehr kann
-    er nicht aufnehmen, der Rest bleibt abgeregelt. Ohne Heizstab 0.
+    Zwei Wege, je nachdem, ob das LP den Heizstab eingeplant hat:
+
+    * ``heater_dc_kw`` gesetzt — das Modell hat selbst entschieden, wie viel
+      Wärme es sich leisten will (Wärmewert gegen Einspeisung, begrenzt durch
+      das Pufferbudget). Dieser Wert gilt.
+    * sonst — Nachbearbeitung wie bisher: Was abgeregelt würde, nimmt der
+      Heizstab bis zu seiner Maximalleistung. Das ist auch der Weg für den
+      Referenz-Fahrplan, der ohne LP auskommt.
+
+    ``discard`` und ``heater`` sind DC-Leistung vor dem Wechselrichter; am
+    Heizstab kommt sie hinter dem Wirkungsgrad an. Ohne Heizstab 0.
     """
-    if inputs.heizstab_max_kw <= 0 or discard_kw is None or discard_kw <= 0:
+    if inputs.heizstab_max_kw <= 0:
+        return 0.0
+    if heater_dc_kw is not None and heater_dc_kw > 0:
+        return round(
+            min(float(heater_dc_kw) * HAConfig.ac_efficiency, inputs.heizstab_max_kw), 4
+        )
+    if discard_kw is None or discard_kw <= 0:
         return 0.0
     return round(min(discard_kw * HAConfig.ac_efficiency, inputs.heizstab_max_kw), 4)
 
