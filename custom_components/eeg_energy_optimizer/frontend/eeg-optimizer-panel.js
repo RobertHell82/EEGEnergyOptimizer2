@@ -273,7 +273,6 @@ const WIZARD_DEFAULTS = {
   heizstab_mintemp_c: 0,
   heizstab_netzbezug: false,
   heizstab_alt_temp_c: 0,
-  heizstab_vorrang: true,
   heizstab_waermewert: 0,
   // Volumen des Puffers und eine Entität, die den Heizstab sperrt,
   // solange eine zweite Wärmequelle den Speicher selbst heizt.
@@ -6527,7 +6526,6 @@ class EegOptimizerPanel extends HTMLElement {
     // den weder Batterie noch Netz aufnehmen. Nur in den Einstellungen —
     // wer keinen hat, sieht eine ausgeschaltete Karte und sonst nichts.
     // Die Regel dahinter steht in heizstab/controller.py.
-    const vorrang = d.heizstab_vorrang !== false;
     return this._featureCard({
       on: !!d.heizstab_enabled,
       action: prefix ? "toggle-settings-feature" : "toggle-feature",
@@ -6582,14 +6580,8 @@ class EegOptimizerPanel extends HTMLElement {
           <input type="number" data-field="${prefix}heizstab_alt_temp_c" value="${d.heizstab_alt_temp_c || ""}" min="0" max="95" step="1" placeholder="leer = keine Unterscheidung">
           <div class="help-text">Bis zu dieser Temperatur heizt deine andere Heizquelle den Puffer, zum Beispiel die Fernwärme bis 55 °C. Wärme bis dorthin ersetzt sie und zählt zum Wärmewert; Wärme darüber hätte es sonst nie gegeben — sie wird als Zusatzwärme getrennt ausgewiesen und nicht bewertet. Leer = alles zählt gleich.</div>
         </div>
-        <div class="field-group">
-          <label style="display:flex;align-items:center;gap:12px;cursor:pointer">
-            <input type="checkbox" data-field="${prefix}heizstab_vorrang" ${vorrang ? "checked" : ""}>
-            <div>
-              <div style="font-weight:500">Überschuss zuerst in den Heizstab</div>
-              <div class="help-text" style="margin-top:4px">Klebt die Einspeisung an der Grenze, bekommt zuerst der Heizstab den Überschuss; das Ladelimit der Batterie wird erst angehoben, wenn er voll ausgelastet ist oder die Maximaltemperatur erreicht hat. Ausgeschaltet teilen sich beide den Überschuss, gewichtet nach Ladestand: Unter 20 % bekommt die Batterie alles — ihre Energie trägt durch die Nacht, die Wärme nicht —, ab 50 % ist es die Hälfte, dazwischen gleitend. Unter der Mindesttemperatur hat der Heizstab davon unabhängig Vorrang.</div>
-            </div>
-          </label>
+        <div class="help-text" style="margin:4px 0 12px;padding:10px 12px;background:var(--info-color,#2196f3)14;border-left:3px solid var(--info-color,#2196f3);border-radius:4px">
+          <strong>Aufteilung des Überschusses:</strong> Batterie und Heizstab regeln gemeinsam, gewichtet nach Ladestand — unter 20 % bekommt die Batterie alles (ihre Energie trägt durch die Nacht, die Wärme nicht), ab 50 % ist es die Hälfte, dazwischen gleitend. Unter der Mindesttemperatur hat der Heizstab Vorrang mit voller Leistung.
         </div>
         <div class="field-group">
           <label>Puffervolumen (Liter)</label>

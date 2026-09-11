@@ -1174,7 +1174,6 @@ class HeizstabSollwertSensor(_HeizstabSensor):
         return {
             "grund": st.get("grund"),
             "max_kw": st.get("max_kw"),
-            "vorrang_heizstab": st.get("vorrang_heizstab"),
             "gesaettigt": st.get("gesaettigt"),
             "letzter_schreibversuch_ok": st.get("last_write_ok"),
             # True heißt: Das Gerät folgt dem Sollwert nicht — es zieht seit

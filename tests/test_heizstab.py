@@ -258,7 +258,6 @@ def test_leistung_und_temperatur_aus_dem_treiber_cache():
     st = hz.status()
     assert st["leistung_kw"] == pytest.approx(2.45)
     assert st["max_kw"] == 6.0
-    assert st["vorrang_heizstab"] is True
 
 
 # ---------------------------------------------------------------------------

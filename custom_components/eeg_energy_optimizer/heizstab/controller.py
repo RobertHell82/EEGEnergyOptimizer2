@@ -50,7 +50,6 @@ from ..const import (
     CONF_HEIZSTAB_MINTEMP_C,
     CONF_HEIZSTAB_NETZBEZUG,
     CONF_HEIZSTAB_PORT,
-    CONF_HEIZSTAB_VORRANG,
     CONF_HEIZSTAB_WAERMEWERT,
     CONF_HEIZSTAB_MAXTEMP_C,
     CONF_HEIZSTAB_PUFFER_LITER,
@@ -279,12 +278,6 @@ class HeizstabController:
     def netzbezug_erlaubt(self) -> bool:
         """Unter der Mindesttemperatur auch aus dem Netz heizen? Opt-in."""
         return bool(self._config.get(CONF_HEIZSTAB_NETZBEZUG, DEFAULT_HEIZSTAB_NETZBEZUG))
-
-    @property
-    def vorrang_heizstab(self) -> bool:
-        """True = Überschuss zuerst in den Heizstab, dann in die Batterie."""
-        wert = self._config.get(CONF_HEIZSTAB_VORRANG, DEFAULT_HEIZSTAB_VORRANG)
-        return DEFAULT_HEIZSTAB_VORRANG if wert is None else bool(wert)
 
     @property
     def puffer_liter(self) -> float:
@@ -653,7 +646,6 @@ class HeizstabController:
             "max_kw": self.max_kw,
             "maxtemp_c": self.maxtemp_c,
             "mintemp_c": self.mintemp_c,
-            "vorrang_heizstab": self.vorrang_heizstab,
             "netzbezug_erlaubt": self.netzbezug_erlaubt,
             "alt_temp_c": self.alt_temp_c or None,
             "zusatzwaerme": self.zusatzwaerme,

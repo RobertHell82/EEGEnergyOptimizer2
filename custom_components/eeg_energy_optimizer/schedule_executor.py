@@ -22,7 +22,7 @@ gemessenen Einspeisung — klebt sie an der Einspeisegrenze, nimmt der
 Heizstab den Überschuss in Schritten auf; bei einer Entladung ins Netz, im
 Modus Aus und in der Startphase steht er auf 0. Wer bei ungeplantem
 Überschuss zuerst an der Reihe ist (Heizstab oder Batterie), sagt die
-Einstellung ``heizstab_vorrang``: Guard 1 wartet auf einen gesättigten
+Aufteilung: Guard 1 wartet auf einen gesättigten
 Heizstab, oder der Heizstab wartet auf eine gesättigte Batterie.
 """
 
@@ -630,17 +630,14 @@ class ScheduleExecutor:
         return self._ladelimit_am_maximum
 
     def _heizstab_vorrang_frei(self) -> bool:
-        """Darf der Heizstab jetzt Überschuss aufnehmen (Reihenfolge)?
+        """Darf der Heizstab jetzt Überschuss aufnehmen?
 
-        Mit Vorrang immer. Ohne Vorrang seit 2.1.1-dev4 ebenfalls — er
-        bekommt dann aber nur seinen Anteil (``_heizstab_deckel_kw``), statt
-        auf eine gesättigte Batterie zu warten. Das alte „erst die Batterie,
-        dann der Heizstab" ist darin enthalten: Bei fast leerer Batterie ist
-        sein Anteil null.
+        Immer, sobald einer da ist — begrenzt wird er nicht über die
+        Reihenfolge, sondern über seinen Anteil (``_heizstab_deckel_kw``).
+        Das alte „erst die Batterie, dann der Heizstab" ist darin enthalten:
+        Bei fast leerer Batterie ist sein Anteil null.
         """
-        if self._heizstab is None:
-            return False
-        return True
+        return self._heizstab is not None
 
     def _batterie_soc_pct(self) -> float | None:
         """Ladestand für die Aufteilung; None, wenn nicht lesbar."""
@@ -661,8 +658,8 @@ class ScheduleExecutor:
     def _heizstab_deckel_kw(self) -> float | None:
         """Anteil des Heizstabs am Überschuss — None heißt „kein Deckel".
 
-        Mit Heizstab-Vorrang gibt es keinen Deckel, er nimmt alles. Ohne
-        Vorrang teilen sich beide den Überschuss, gewichtet nach Ladestand:
+        Batterie und Heizstab teilen sich den Überschuss, gewichtet nach
+        dem Ladestand:
         Unter ``HEIZSTAB_TEILUNG_SOC_LEER_PCT`` bekommt die Batterie alles —
         ihre Energie trägt durch die Nacht, die Wärme nicht. Ab
         ``HEIZSTAB_TEILUNG_SOC_VOLL_PCT`` ist es die Hälfte, dazwischen
@@ -670,7 +667,7 @@ class ScheduleExecutor:
         entfällt der Deckel — der Überschuss soll nicht verfallen.
         """
         hz = self._heizstab
-        if hz is None or not hz.enabled or hz.vorrang_heizstab:
+        if hz is None or not hz.enabled:
             return None
         if self._batterie_gesaettigt():
             return None
@@ -837,19 +834,10 @@ class ScheduleExecutor:
             # Klebt am Limit (oder liegt darüber) → ein Schritt hoch. Deckt
             # alle drei Fälle ab: aktuell > Plan → aktuell + Schritt;
             # aktuell == Plan → + Schritt; Plan > aktuell → Planwert.
-            #
-            # Mit Heizstab-Vorrang wartet Guard 1, solange der Heizstab noch
-            # aufnehmen kann: das Kleben am Limit ist dann kein Verlust,
-            # sondern sein Signal. Erst ein gesättigter Heizstab (Maximum,
-            # Maximaltemperatur, nicht erreichbar) gibt die Batterie frei.
-            if (
-                self._heizstab is not None
-                and self._heizstab.enabled
-                and self._heizstab.vorrang_heizstab
-                and not self._heizstab_gesaettigt()
-            ):
-                self._ladelimit_am_maximum = False
-                return max(plan_kw, basis), "Guard 1 wartet — Heizstab nimmt den Überschuss"
+            # Guard 1 wartet auf nichts mehr: Heizstab und Batterie regeln
+            # im selben Lauf hoch, der Heizstab nur bis zu seinem Anteil
+            # (_heizstab_deckel_kw). Bis 2.1.1-dev4 gab es hier einen
+            # Wartezweig für den Heizstab-Vorrang — der Schalter ist entfallen.
             neu = max(plan_kw, basis + GUARD_CHARGE_STEP_KW)
             max_kw = self._inverter.get_charge_limit_max_kw()
             if max_kw is not None:

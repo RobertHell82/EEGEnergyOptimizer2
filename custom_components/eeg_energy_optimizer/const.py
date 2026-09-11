@@ -265,6 +265,10 @@ CONF_HEIZSTAB_ALT_TEMP_C = "heizstab_alt_temp_c"
 # True = zuerst der Heizstab, das Ladelimit der Batterie wird erst angehoben,
 # wenn er gesättigt ist; False = zuerst die Batterie (Guard 1 wie bisher),
 # der Heizstab bekommt, was sie nicht mehr aufnimmt.
+# Entfallen mit 2.1.1-dev5: Der Überschuss wird immer geteilt, gewichtet
+# nach Ladestand (HEIZSTAB_TEILUNG_*). Der Schlüssel bleibt nur stehen,
+# damit gespeicherte Konfigurationen nicht stolpern — gelesen wird er
+# nicht mehr.
 CONF_HEIZSTAB_VORRANG = "heizstab_vorrang"
 # Was eine Kilowattstunde Wärme wert ist (EUR/kWh) — der Preis der Energie,
 # die sie ersetzt (Gas, Wärmepumpe, Strom). 0 = Wärme bleibt unbewertet.
@@ -421,7 +425,6 @@ TELEMETRY_SETTINGS_KEYS = (
     "heizstab_mintemp_c",
     "heizstab_netzbezug",
     "heizstab_alt_temp_c",
-    "heizstab_vorrang",
     "heizstab_waermewert",
     # Puffergroesse erklaert, warum ein Plan Waerme einplant. Die
     # Sperr-Entitaet bleibt draussen, sie ist anlagenspezifisch.

@@ -10,6 +10,12 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
+## [2.1.1-dev5] - 2026-09-11
+
+### Entfernt
+
+- **Der Schalter „Überschuss zuerst in den Heizstab" ist entfallen.** Die geteilte Aufteilung nach Ladestand gilt jetzt immer: Unter 20 % bekommt die Batterie den ganzen Überschuss, ab 50 % teilen sich beide hälftig, dazwischen gleitend. Unter der Mindesttemperatur hat der Heizstab davon unabhängig Vorrang mit voller Leistung. Damit fällt auch das Warten weg — bisher hielt Guard 1 das Ladelimit der Batterie zurück, solange der Heizstab noch aufnehmen konnte. An seine Stelle tritt die Karte mit der Erklärung, wie geteilt wird. Gespeicherte Konfigurationen stolpern nicht: Der alte Schlüssel bleibt liegen und wird nur nicht mehr gelesen.
+
 ## [2.1.1-dev4] - 2026-09-11
 
 ### Geändert

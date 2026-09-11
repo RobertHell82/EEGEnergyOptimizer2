@@ -1020,7 +1020,6 @@ from custom_components.eeg_energy_optimizer.const import (  # noqa: E402
     CONF_HEIZSTAB_MAX_KW,
     CONF_HEIZSTAB_MINTEMP_C,
     CONF_HEIZSTAB_NETZBEZUG,
-    CONF_HEIZSTAB_VORRANG,
     CONF_HEIZSTAB_MAXTEMP_C,
     HEIZSTAB_STEP_KW,
 )
@@ -1042,7 +1041,7 @@ def _heizstab(config, power_w=0, temp=50.0):
     return HeizstabController(MagicMock(), config, treiber), treiber
 
 
-def _cfg_heizstab(vorrang=True, mintemp=0.0, netzbezug=False):
+def _cfg_heizstab(mintemp=0.0, netzbezug=False):
     return {
         **CFG_LIMIT,
         CONF_HEIZSTAB_ENABLED: True,
@@ -1050,7 +1049,6 @@ def _cfg_heizstab(vorrang=True, mintemp=0.0, netzbezug=False):
         CONF_HEIZSTAB_MAXTEMP_C: 80.0,
         CONF_HEIZSTAB_MINTEMP_C: mintemp,
         CONF_HEIZSTAB_NETZBEZUG: netzbezug,
-        CONF_HEIZSTAB_VORRANG: vorrang,
     }
 
 
@@ -1097,23 +1095,27 @@ async def test_heizstab_nimmt_ueberschuss_am_limit_in_schritten(mock_hass, mock_
     treiber.async_set_power.assert_awaited_with(1000)
 
 
-async def test_heizstab_vorrang_haelt_guard1_zurueck(mock_hass, mock_inverter):
-    """Mit Heizstab-Vorrang bleibt das Ladelimit beim Planwert, solange der
-    Heizstab nicht gesättigt ist — das Kleben am Limit ist SEIN Signal."""
-    cfg = _cfg_heizstab(vorrang=True)
-    ex, hz, _ = _make_executor_mit_heizstab(mock_hass, mock_inverter, cfg)
+async def test_guard1_wartet_nicht_mehr_auf_den_heizstab(mock_hass, mock_inverter):
+    """Der Vorrang-Schalter ist mit 2.1.1-dev5 entfallen.
+
+    Guard 1 hebt das Ladelimit an, sobald die Einspeisung am Limit klebt —
+    unabhängig davon, ob der Heizstab noch aufnehmen könnte. Beide teilen
+    sich den Überschuss über den Anteil, nicht über die Reihenfolge.
+    """
+    ex, hz, _ = _make_executor_mit_heizstab(mock_hass, mock_inverter, _cfg_heizstab())
+    ex._batterie_soc_pct = lambda: 80.0
     mock_inverter.async_get_charge_limit_kw = AsyncMock(return_value=2.0)
     mock_inverter.get_charge_limit_max_kw = MagicMock(return_value=5.0)
     with _messwerte(export=4.0, haus=0.5, pv=8.0):
         await ex.async_guard_cycle(_state(_slot(0, battery_p=-2.0)), MODE_EIN, now=NOW)
-    mock_inverter.async_set_charge_limit.assert_awaited_once_with(2.0)
-    assert "Guard 1 wartet" in ex.last_status
+    assert mock_inverter.async_set_charge_limit.await_args.args[0] == pytest.approx(2.5)
+    assert "Guard 1 wartet" not in ex.last_status
     assert hz.sollwert_kw == pytest.approx(HEIZSTAB_STEP_KW)
 
 
 async def test_heizstab_gesaettigt_gibt_guard1_frei(mock_hass, mock_inverter):
     """Heizstab am Maximum → Guard 1 hebt das Ladelimit wieder an."""
-    cfg = _cfg_heizstab(vorrang=True)
+    cfg = _cfg_heizstab()
     ex, hz, _ = _make_executor_mit_heizstab(mock_hass, mock_inverter, cfg)
     hz.sollwert_kw = 6.0
     mock_inverter.async_get_charge_limit_kw = AsyncMock(return_value=2.0)
@@ -1125,7 +1127,7 @@ async def test_heizstab_gesaettigt_gibt_guard1_frei(mock_hass, mock_inverter):
 
 
 async def test_heizstab_maximaltemperatur_gibt_guard1_frei(mock_hass, mock_inverter):
-    cfg = _cfg_heizstab(vorrang=True)
+    cfg = _cfg_heizstab()
     ex, hz, _ = _make_executor_mit_heizstab(mock_hass, mock_inverter, cfg, temp=81.0)
     mock_inverter.async_get_charge_limit_kw = AsyncMock(return_value=2.0)
     mock_inverter.get_charge_limit_max_kw = MagicMock(return_value=5.0)
@@ -1143,7 +1145,7 @@ async def test_ohne_vorrang_teilen_sich_beide_den_ueberschuss(mock_hass, mock_in
     Heizstab bekommt gleichzeitig seinen Anteil. Bei einem Ladestand über
     HEIZSTAB_TEILUNG_SOC_VOLL_PCT ist das die Hälfte seiner Leistung.
     """
-    cfg = _cfg_heizstab(vorrang=False)
+    cfg = _cfg_heizstab()
     ex, hz, _ = _make_executor_mit_heizstab(mock_hass, mock_inverter, cfg)
     ex._batterie_soc_pct = lambda: 80.0
     mock_inverter.async_get_charge_limit_kw = AsyncMock(return_value=4.0)
@@ -1164,7 +1166,7 @@ async def test_fast_leere_batterie_bekommt_alles(mock_hass, mock_inverter):
     Das ist das alte „Batterie zuerst" — es steckt jetzt in der Aufteilung,
     statt ein eigener Modus zu sein. Der Grund sagt es auch so.
     """
-    cfg = _cfg_heizstab(vorrang=False)
+    cfg = _cfg_heizstab()
     ex, hz, _ = _make_executor_mit_heizstab(mock_hass, mock_inverter, cfg)
     ex._batterie_soc_pct = lambda: 12.0
     mock_inverter.async_get_charge_limit_kw = AsyncMock(return_value=4.0)
@@ -1178,7 +1180,7 @@ async def test_fast_leere_batterie_bekommt_alles(mock_hass, mock_inverter):
 
 async def test_anteil_waechst_mit_dem_ladestand(mock_hass, mock_inverter):
     """Zwischen leer und halbvoll steigt der Anteil des Heizstabs linear."""
-    cfg = _cfg_heizstab(vorrang=False)
+    cfg = _cfg_heizstab()
     ex, hz, _ = _make_executor_mit_heizstab(mock_hass, mock_inverter, cfg)
     werte = {}
     for soc in (20.0, 35.0, 50.0, 90.0):
@@ -1190,24 +1192,16 @@ async def test_anteil_waechst_mit_dem_ladestand(mock_hass, mock_inverter):
     assert werte[90.0] == pytest.approx(hz.max_kw * 0.5), "über der Hälfte nicht mehr"
 
 
-async def test_mit_vorrang_kein_deckel(mock_hass, mock_inverter):
-    """Wer den Heizstab-Vorrang einschaltet, will ihn ungeteilt."""
-    cfg = _cfg_heizstab(vorrang=True)
-    ex, _, _ = _make_executor_mit_heizstab(mock_hass, mock_inverter, cfg)
-    ex._batterie_soc_pct = lambda: 10.0
-    assert ex._heizstab_deckel_kw() is None
-
-
 async def test_unbekannter_ladestand_hebt_den_deckel_auf(mock_hass, mock_inverter):
     """Ohne Ladestand nicht raten — sonst verfiele der Überschuss."""
-    cfg = _cfg_heizstab(vorrang=False)
+    cfg = _cfg_heizstab()
     ex, _, _ = _make_executor_mit_heizstab(mock_hass, mock_inverter, cfg)
     ex._batterie_soc_pct = lambda: None
     assert ex._heizstab_deckel_kw() is None
 
 
 async def test_batterie_voll_gibt_heizstab_frei_auch_bei_batterie_vorrang(mock_hass, mock_inverter):
-    cfg = _cfg_heizstab(vorrang=False)
+    cfg = _cfg_heizstab()
     ex, hz, _ = _make_executor_mit_heizstab(mock_hass, mock_inverter, cfg)
     with _messwerte(export=4.0, haus=0.5, pv=8.0):
         # Batterie voll (soc 99.5) → Absicht release → Batterie gesättigt.
