@@ -41,6 +41,7 @@ from .const import (
     DEFAULT_GRID_EXPORT_LIMIT_KW,
     DOMAIN,
     FORECAST_SOURCE_SOLCAST,
+    GEWINN_HORIZONT_H,
 )
 from .heizstab.controller import heizstab_max_kw, heizstab_waermewert
 from .power_readings import (
@@ -279,17 +280,13 @@ class ScheduleInputs:
     # None = wie das Standard-Fenster.
     eeg_night_start_hour: int | None = None
     eeg_night_end_hour: int | None = None
-    # Heizstab als Senke für abgeregelten Überschuss (heizstab/): maximale
-    # Leistung in kW (0 = kein Heizstab) und der Wert einer Kilowattstunde
-    # Wärme in €/kWh (0 = unbewertet). Beides wirkt NICHT im LP — Haralds
-    # Modell bleibt unverändert; die geplante Heizstab-Leistung wird aus der
-    # Spalte ``discard`` abgeleitet (siehe ``_heizstab_plan_kw``).
+    # Heizstab als bewertete Senke (heizstab/): maximale Leistung in kW
+    # (0 = kein Heizstab) und der Wert einer Kilowattstunde Wärme in €/kWh
+    # (0 = unbewertet). Mit beidem plus Budget wird der Heizstab im LP zur
+    # echten Alternative zur Einspeisung; fehlt eines, bekommt er wie früher
+    # nur die Spalte ``discard`` nachgelagert (siehe ``_heizstab_plan_kw``).
     heizstab_max_kw: float = 0.0
     heizstab_waermewert: float = 0.0
-    # Der Puffer liegt JETZT über der Temperatur der anderen Heizquelle: alle
-    # geplante Wärme ist dann Zusatzwärme (Spalte ``heizstab_zusatz``) und
-    # zählt nicht zum Wärmewert — die andere Quelle hätte sie nie geliefert.
-    heizstab_zusatzwaerme: bool = False
     # Wärme, die der Puffer noch aufnehmen kann (kWh). Nur mit diesem Wert
     # wird der Heizstab im LP zur bewerteten Senke — sonst bekommt er wie
     # bisher nur, was ohnehin abgeregelt würde. 0 = nicht einplanen.
@@ -1402,9 +1399,6 @@ async def async_collect_inputs(
         eeg_bedarf=eeg_bedarf,
         heizstab_max_kw=heizstab_max_kw(config),
         heizstab_waermewert=heizstab_waermewert(config),
-        heizstab_zusatzwaerme=bool(
-            getattr(data.get("heizstab"), "zusatzwaerme", False)
-        ),
         # Aufnahmefähigkeit des Puffers — bei jedem Lauf frisch aus der
         # gemessenen Temperatur. Sie schrumpft, während der Puffer warm
         # wird, und gibt damit die Abendentladung von selbst wieder frei.
@@ -1436,6 +1430,21 @@ _PANEL_COLUMNS = (
     # Spalte blieb das Sensor-Attribut einspeisepreis_ct immer leer.
     "feedin_price",
 )
+
+
+def _gewinn_slotzahl(inputs: ScheduleInputs, vorhanden: int) -> int:
+    """Wie viele Slots in das Bewertungsfenster des Gewinns fallen.
+
+    Mindestens einer, hoechstens alle — ein kurzer Horizont wird nicht
+    kuenstlich verlaengert, ein langer nur bis GEWINN_HORIZONT_H bewertet.
+    """
+    if vorhanden <= 0:
+        return 0
+    res_s = int(getattr(inputs, "time_res_s", 0) or 0)
+    if res_s <= 0:
+        return vorhanden
+    passt = int(round(GEWINN_HORIZONT_H * 3600.0 / res_s))
+    return max(1, min(vorhanden, passt))
 
 
 def solve(inputs: ScheduleInputs) -> dict[str, Any]:
@@ -1474,9 +1483,6 @@ def solve(inputs: ScheduleInputs) -> dict[str, Any]:
         slot["heizstab"] = _heizstab_plan_kw(
             slot.get("discard"), inputs, row.get("heater")
         )
-        # Zusatzwärme: liegt der Puffer jetzt über der Schwelle der anderen
-        # Heizquelle, ersetzt geplante Wärme nichts mehr.
-        slot["heizstab_zusatz"] = slot["heizstab"] if inputs.heizstab_zusatzwaerme else 0.0
         slots.append(slot)
 
     result = {
@@ -1498,19 +1504,30 @@ def solve(inputs: ScheduleInputs) -> dict[str, Any]:
         referenz = simuliere_standardbetrieb(
             slots, inputs, ziel_soc_pct=slots[-1]["soc"] if slots else None
         )
-        mit = bewerte_geldfluesse(slots, inputs)
-        ohne = bewerte_geldfluesse(referenz, inputs)
         result["referenz_slots"] = referenz
+        # Bewertet wird nur das vordere Stueck des Horizonts (siehe
+        # GEWINN_HORIZONT_H); gezeichnet wird weiterhin alles. Die Referenz
+        # dafuer wird eigens gerechnet, mit dem Plan-Ladestand am Schnitt als
+        # Ziel: Nur mit gleichem Endstand kuerzt sich der Randeffekt heraus
+        # (siehe simuliere_standardbetrieb). Ein Schnitt durch die lange
+        # Referenz haette ihn zurueckgeholt — sie steht dort typischerweise
+        # voller da als der Plan.
+        gewinn_slots = slots[:_gewinn_slotzahl(inputs, len(slots))]
+        if gewinn_slots is slots or len(gewinn_slots) == len(slots):
+            gewinn_referenz = referenz
+        else:
+            gewinn_referenz = simuliere_standardbetrieb(
+                gewinn_slots, inputs, ziel_soc_pct=gewinn_slots[-1]["soc"]
+            )
+        mit = bewerte_geldfluesse(gewinn_slots, inputs)
+        ohne = bewerte_geldfluesse(gewinn_referenz, inputs)
         result["gewinn"] = {
             "mit": mit,
             "ohne": ohne,
             "vorteil": round(mit["summe"] - ohne["summe"], 4),
-            "horizont_h": round(len(slots) * inputs.time_res_s / 3600.0, 1),
+            "horizont_h": round(len(gewinn_slots) * inputs.time_res_s / 3600.0, 1),
             # Womit der Endbestand bewertet wird — fürs ehrliche Beschriften.
             "endbestand_tarif": round(endbestand_satz(inputs), 5),
-            # Puffer über der Schwelle der anderen Heizquelle: geplante Wärme
-            # ist Zusatzwärme und wurde nicht bewertet.
-            "heizstab_zusatzwaerme": bool(inputs.heizstab_zusatzwaerme),
         }
     except Exception:  # noqa: BLE001 - Vergleich ist Anzeige, kein Aktor
         _LOGGER.exception("Gewinnberechnung fehlgeschlagen — der Fahrplan bleibt gültig")
@@ -1804,9 +1821,6 @@ def simuliere_standardbetrieb(
                 "soc": round(100.0 * inhalt / kapazitaet, 1),
                 "discard": round(abgeregelt, 4),
                 "heizstab": _heizstab_plan_kw(abgeregelt, inputs),
-                "heizstab_zusatz": (
-                    _heizstab_plan_kw(abgeregelt, inputs) if inputs.heizstab_zusatzwaerme else 0.0
-                ),
             }
         )
     return referenz
@@ -1927,15 +1941,11 @@ def bewerte_geldfluesse(
     # Wärme: was der Heizstab aufnimmt, bewertet mit dem konfigurierten
     # Wärmewert (heizstab/). Ohne Wärmewert zählt die Energie, aber kein Geld.
     heizstab_kwh = 0.0
-    # Zusatzwärme (über der Temperatur der anderen Heizquelle): gezählt, aber
-    # nicht bewertet — sie ersetzt nichts.
-    zusatz_kwh = 0.0
     soc_ende: float | None = None
     for slot, basis in zip(slots, basis_je_slot):
         grid = slot.get("grid_p") or 0.0
         bat = slot.get("battery_p") or 0.0
         heizstab_kwh += max(0.0, float(slot.get("heizstab") or 0.0)) * dt_h
-        zusatz_kwh += max(0.0, float(slot.get("heizstab_zusatz") or 0.0)) * dt_h
         if grid > 0:
             export_kwh = grid * dt_h
             export_gesamt_kwh += export_kwh
@@ -1978,8 +1988,7 @@ def bewerte_geldfluesse(
         )
     satz = endbestand_satz(inputs)
     endbestand = rest_kwh * satz
-    zusatz_kwh = min(zusatz_kwh, heizstab_kwh)
-    waerme = (heizstab_kwh - zusatz_kwh) * max(
+    waerme = heizstab_kwh * max(
         0.0, float(getattr(inputs, "heizstab_waermewert", 0.0) or 0.0)
     )
 
@@ -1996,7 +2005,6 @@ def bewerte_geldfluesse(
         "export_kwh": round(export_gesamt_kwh, 2),
         # Heizstab: aufgenommene Energie und ihr Wert als Wärme.
         "heizstab_kwh": round(heizstab_kwh, 2),
-        "heizstab_zusatz_kwh": round(zusatz_kwh, 2),
         "waerme": round(waerme, 4),
         "summe": round(erloes - bezug - alterung + endbestand + waerme, 4),
     }

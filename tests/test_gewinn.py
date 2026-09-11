@@ -211,7 +211,7 @@ def test_standardbetrieb_hat_die_slotstruktur_des_fahrplans():
         # discard/heizstab: was die Referenz abregeln würde und was davon
         # ein Heizstab nähme — dieselben Spalten wie im Fahrplan, damit
         # bewerte_geldfluesse beide Seiten gleich bewertet.
-        assert set(slot) == {"t", "grid_p", "battery_p", "soc", "discard", "heizstab", "heizstab_zusatz"}
+        assert set(slot) == {"t", "grid_p", "battery_p", "soc", "discard", "heizstab"}
 
 
 def test_standardbetrieb_haelt_die_endauflage_des_fahrplans():
@@ -547,13 +547,56 @@ def test_solve_liefert_referenz_und_gewinn():
     assert gewinn["vorteil"] == pytest.approx(
         gewinn["mit"]["summe"] - gewinn["ohne"]["summe"], abs=1e-3
     )
-    assert gewinn["horizont_h"] == pytest.approx(36.0, abs=0.5)
+    # Der Fahrplan reicht 36 h weit, bewertet wird nur das erste Tagesfenster.
+    assert gewinn["horizont_h"] == pytest.approx(24.0, abs=0.5)
     # Die Referenz hält dieselben Grenzen wie der Plan.
     assert min(s["soc"] for s in ref) >= 10.0 - 0.1
     assert max(s["soc"] for s in ref) <= 100.0
     # ... und denselben Endstand: das LP ist am Horizontende auf einen festen
     # Ladestand festgenagelt, die Referenz bekommt dieselbe Auflage.
     assert ref[-1]["soc"] == pytest.approx(result["slots"][-1]["soc"], abs=0.2)
+
+
+def test_gewinn_fenster_kuerzt_nur_die_bewertung():
+    """24 h bewerten, den ganzen Horizont zeichnen.
+
+    Der gezeichnete Vergleich (``referenz_slots``) laeuft weiter ueber den
+    vollen Fahrplan — nur die Geldsummen im Gewinn zaehlen das erste
+    Tagesfenster. Beide Seiten des Vergleichs zaehlen dieselben Slots.
+    """
+    pytest.importorskip("pandas")
+    pytest.importorskip("highspy")
+
+    inputs = _inputs_for_solve()
+    result = sched.solve(inputs)
+
+    slots = result["slots"]
+    je_stunde = 3600 // inputs.time_res_s
+    assert len(result["referenz_slots"]) == len(slots)
+    assert len(slots) > 24 * je_stunde, "Testfahrplan muss laenger als 24 h sein"
+
+    fenster = sched._gewinn_slotzahl(inputs, len(slots))
+    assert fenster == 24 * je_stunde
+
+    gewinn = result["gewinn"]
+    # Die eingespeiste Energie beider Seiten stammt aus demselben Fenster:
+    # der volle Horizont haette mehr, ein Schnitt in der Mitte weniger.
+    erwartet_mit = sched.bewerte_geldfluesse(slots[:fenster], inputs)
+    assert gewinn["mit"]["export_kwh"] == pytest.approx(
+        erwartet_mit["export_kwh"], abs=1e-3
+    )
+    assert gewinn["mit"]["summe"] == pytest.approx(erwartet_mit["summe"], abs=1e-3)
+
+
+def test_gewinn_fenster_verlaengert_kurze_plaene_nicht():
+    """Ein Horizont unter 24 h wird vollstaendig bewertet, nicht aufgefuellt."""
+    class _Kurz:
+        time_res_s = 900
+
+    assert sched._gewinn_slotzahl(_Kurz(), 40) == 40
+    assert sched._gewinn_slotzahl(_Kurz(), 96) == 96
+    assert sched._gewinn_slotzahl(_Kurz(), 192) == 96
+    assert sched._gewinn_slotzahl(_Kurz(), 0) == 0
 
 
 def test_gewinn_wird_auch_bei_quelle_spot_gerechnet():
@@ -792,32 +835,28 @@ def test_bewertung_ohne_waermewert_zaehlt_energie_aber_kein_geld():
     assert geld["waerme"] == 0.0
 
 
-def test_zusatzwaerme_wird_gezaehlt_aber_nicht_bewertet():
-    """Puffer über der Schwelle der anderen Heizquelle: Wärme zählt als kWh,
-    aber nicht zum Wärmewert."""
-    inputs = _inputs(heizstab_max_kw=6.0, heizstab_waermewert=0.08, heizstab_zusatzwaerme=True)
-    slots = [_slot(MITTAG, 0, heizstab=4.0, heizstab_zusatz=4.0)]
+def test_waerme_zaehlt_voll_egal_wie_warm_der_puffer_ist():
+    """Jede geplante Kilowattstunde in den Puffer zählt zum Wärmewert — die
+    frühere Unterscheidung Ersatz-/Zusatzwärme gibt es nicht mehr."""
+    inputs = _inputs(heizstab_max_kw=6.0, heizstab_waermewert=0.08)
+    slots = [_slot(MITTAG, 0, heizstab=4.0)]
     geld = sched.bewerte_geldfluesse(slots, inputs)
     assert geld["heizstab_kwh"] == pytest.approx(1.0)
-    assert geld["heizstab_zusatz_kwh"] == pytest.approx(1.0)
-    assert geld["waerme"] == 0.0
+    assert "heizstab_zusatz_kwh" not in geld
+    assert geld["waerme"] == pytest.approx(0.08)
 
 
-def test_gemischte_waerme_bewertet_nur_den_ersatzanteil():
+def test_mehrere_slots_waerme_summieren_sich():
     inputs = _inputs(heizstab_max_kw=6.0, heizstab_waermewert=0.10)
-    slots = [
-        _slot(MITTAG, 0, heizstab=4.0, heizstab_zusatz=0.0),   # 1 kWh Ersatzwärme
-        _slot(MITTAG, 15, heizstab=4.0, heizstab_zusatz=4.0),  # 1 kWh Zusatzwärme
-    ]
+    slots = [_slot(MITTAG, 0, heizstab=4.0), _slot(MITTAG, 15, heizstab=4.0)]
     geld = sched.bewerte_geldfluesse(slots, inputs)
     assert geld["heizstab_kwh"] == pytest.approx(2.0)
-    assert geld["heizstab_zusatz_kwh"] == pytest.approx(1.0)
-    assert geld["waerme"] == pytest.approx(0.10)
+    assert geld["waerme"] == pytest.approx(0.20)
 
 
-def test_standardbetrieb_markiert_zusatzwaerme_wie_der_fahrplan():
+def test_standardbetrieb_plant_waerme_ohne_zusatzmarke():
     inputs = _inputs(soc_pct=100.0, feedin_limit_kw=4.0, ac_limit_kw=15.0,
-                     heizstab_max_kw=6.0, heizstab_zusatzwaerme=True)
+                     heizstab_max_kw=6.0)
     ref = sched.simuliere_standardbetrieb([_slot(MITTAG, 0, PV=12.0, consumption=0.5)], inputs)
     assert ref[0]["heizstab"] > 0
-    assert ref[0]["heizstab_zusatz"] == pytest.approx(ref[0]["heizstab"])
+    assert "heizstab_zusatz" not in ref[0]

@@ -37,13 +37,15 @@ CFG_LIMIT = {
 }
 
 
-def _slot(offset_min: int, battery_p=0.0, grid_p=0.0, soc=50.0, consumption=0.6):
+def _slot(offset_min: int, battery_p=0.0, grid_p=0.0, soc=50.0, consumption=0.6,
+          heizstab=0.0):
     return {
         "t": (NOW + timedelta(minutes=offset_min)).isoformat(),
         "battery_p": battery_p,
         "grid_p": grid_p,
         "soc": soc,
         "consumption": consumption,
+        "heizstab": heizstab,
     }
 
 
@@ -1093,6 +1095,55 @@ async def test_heizstab_nimmt_ueberschuss_am_limit_in_schritten(mock_hass, mock_
         await ex.async_guard_cycle(_state(_slot(0, battery_p=-2.0)), MODE_EIN, now=NOW)
         assert hz.sollwert_kw == pytest.approx(2 * HEIZSTAB_STEP_KW)
     treiber.async_set_power.assert_awaited_with(1000)
+
+
+
+
+async def test_heizstab_folgt_dem_fahrplan_unter_der_einspeisegrenze(mock_hass, mock_inverter):
+    """Einspeisung 1,5 kW bei Grenze 4 kW, Slot plant 2 kW Wärme.
+
+    Ohne Plan bliebe der Heizstab aus — die alte Regel kennt nur die
+    Abregelung. Mit Plan tastet er sich hoch, bis die Einspeisung aufgebraucht
+    ist oder die geplante Leistung erreicht.
+    """
+    cfg = _cfg_heizstab()
+    ex, hz, treiber = _make_executor_mit_heizstab(mock_hass, mock_inverter, cfg)
+    with _messwerte(export=1.5, haus=0.5, pv=4.0):
+        await ex.async_guard_cycle(
+            _state(_slot(0, battery_p=-1.0, heizstab=2.0)), MODE_EIN, now=NOW
+        )
+        assert hz.sollwert_kw == pytest.approx(HEIZSTAB_STEP_KW)
+        await ex.async_guard_cycle(
+            _state(_slot(0, battery_p=-1.0, heizstab=2.0)), MODE_EIN, now=NOW
+        )
+        assert hz.sollwert_kw == pytest.approx(2 * HEIZSTAB_STEP_KW)
+    assert "Fahrplan" in hz.grund
+    treiber.async_set_power.assert_awaited_with(1000)
+
+
+async def test_heizstab_plan_nur_aus_einem_frischen_plan(mock_hass, mock_inverter):
+    """Eingefrorener Runner: die Slots reichen noch weit, sind aber alt.
+
+    Dann gilt der Plan nicht mehr — der Heizstab fällt auf die Regel an der
+    Einspeisegrenze zurück und bleibt bei 1,5 kW Einspeisung aus.
+    """
+    cfg = _cfg_heizstab()
+    ex, hz, _ = _make_executor_mit_heizstab(mock_hass, mock_inverter, cfg)
+    alt = _state(_slot(0, battery_p=-1.0, heizstab=2.0), last_run=NOW - timedelta(hours=2))
+    assert ex._heizstab_plan_kw(alt, NOW) == 0.0
+    with _messwerte(export=1.5, haus=0.5, pv=4.0):
+        await ex.async_guard_cycle(alt, MODE_EIN, now=NOW)
+    assert hz.sollwert_kw == 0.0
+
+
+async def test_heizstab_ohne_plan_wie_bisher(mock_hass, mock_inverter):
+    """Slot ohne Wärme: 1,5 kW Einspeisung liegen unter der Grenze → aus."""
+    cfg = _cfg_heizstab()
+    ex, hz, _ = _make_executor_mit_heizstab(mock_hass, mock_inverter, cfg)
+    hz.sollwert_kw = 1.0
+    with _messwerte(export=1.5, haus=0.5, pv=4.0):
+        await ex.async_guard_cycle(_state(_slot(0, battery_p=-1.0)), MODE_EIN, now=NOW)
+    assert hz.sollwert_kw == 0.0
 
 
 async def test_guard1_wartet_nicht_mehr_auf_den_heizstab(mock_hass, mock_inverter):

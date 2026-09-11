@@ -337,7 +337,7 @@ class ScheduleExecutor:
                 schedule_state, mode, now, pause_bis, pause_soc_pct
             )
         finally:
-            await self._heizstab_schritt(mode, now, pause_bis)
+            await self._heizstab_schritt(mode, now, pause_bis, schedule_state)
 
     async def _guard_cycle_wechselrichter(
         self,
@@ -688,8 +688,29 @@ class ScheduleExecutor:
             return True
         return self._heizstab.gesaettigt
 
+    def _heizstab_plan_kw(self, schedule_state: dict | None, now: datetime) -> float:
+        """Wärme, die der laufende Fahrplan-Slot vorsieht (kW). 0 = keine.
+
+        Nur aus einem frischen Plan — ein eingefrorener Runner soll den
+        Heizstab nicht stundenlang nach veralteter Prognose heizen lassen.
+        Dieselbe Frischeprüfung wie beim Wechselrichter-Teil.
+        """
+        if not self._plan_is_fresh(schedule_state, now):
+            return 0.0
+        slot = slot_for((schedule_state or {}).get("slots"), now)
+        if slot is None:
+            return 0.0
+        try:
+            return max(0.0, float(slot.get("heizstab") or 0.0))
+        except (TypeError, ValueError):
+            return 0.0
+
     async def _heizstab_schritt(
-        self, mode: str, now: datetime, pause_bis: datetime | None
+        self,
+        mode: str,
+        now: datetime,
+        pause_bis: datetime | None,
+        schedule_state: dict | None = None,
     ) -> None:
         """Sollwert des Heizstabs für diesen Lauf bestimmen und übergeben.
 
@@ -698,6 +719,10 @@ class ScheduleExecutor:
         Heizstab bei Batterie-Vorrang nachrücken). Mode Aus, Pause und
         Startphase heißen 0 — „wenn die Optimierung aus ist, ist der Heizstab
         aus", auch unter der Mindesttemperatur.
+
+        Sieht der laufende Slot Wärme vor, ist sie die Vorgabe (``plan_kw``);
+        sonst bleibt es bei der Regel an der Einspeisegrenze, die ungeplanten
+        Überschuss auffängt.
         """
         hz = self._heizstab
         if hz is None or not hz.enabled:
@@ -713,12 +738,14 @@ class ScheduleExecutor:
                 self.last_action is not None and self.last_action.kind == "discharge"
             )
             export = compute_grid_export_kw(self._hass, self._config)
+            plan_kw = self._heizstab_plan_kw(schedule_state, now)
             soll, grund = hz.regeln(
                 entladung=entladung,
                 export_kw=export,
                 grenze_kw=self._heizstab_grenze_kw(),
                 vorrang_frei=self._heizstab_vorrang_frei(),
                 deckel_kw=self._heizstab_deckel_kw(),
+                plan_kw=plan_kw,
             )
             await hz.async_set_sollwert(soll, grund)
         except Exception:  # noqa: BLE001 — der Heizstab darf den Takt nie kippen

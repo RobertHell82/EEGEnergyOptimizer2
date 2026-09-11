@@ -233,6 +233,14 @@ SCHEDULE_BATTERY_FULL_SOC_PCT = 99.0
 
 SCHEDULE_FAILSAFE_MINUTES = 15
 
+# Über wie viele Stunden der ausgewiesene Optimierungsgewinn gerechnet wird.
+# Der Fahrplan selbst schaut weiter voraus (er braucht die zweite Nacht, um
+# heute richtig zu entscheiden) — der Gewinn wird aber nur über den Teil
+# ausgewiesen, den die Prognosen tragen: je weiter hinten ein Slot liegt,
+# desto mehr ist sein Geldwert Prognose und nicht Plan. Beide Seiten des
+# Vergleichs werden über dasselbe Fenster bewertet.
+GEWINN_HORIZONT_H = 24.0
+
 # ---------------------------------------------------------------------------
 # Heizstab (heizstab/) — ein Fronius Ohmpilot als steuerbare Senke für
 # PV-Überschuss, den weder Batterie noch Netz aufnehmen. Direkt per Modbus TCP
@@ -256,11 +264,6 @@ CONF_HEIZSTAB_MINTEMP_C = "heizstab_mintemp_c"
 # Netzstrom verheizen will, lässt es aus; die Mindesttemperatur wirkt dann
 # nur als Vorrang vor der Einspeisung.
 CONF_HEIZSTAB_NETZBEZUG = "heizstab_netzbezug"
-# Bis zu welcher Temperatur die ANDERE Heizquelle (Fernwärme, Kessel,
-# Wärmepumpe) den Puffer heizt. Wärme bis dorthin ersetzt sie und ist den
-# Wärmewert wert; Wärme darüber hätte es sonst nie gegeben — sie wird als
-# Zusatzwärme getrennt ausgewiesen und nicht bewertet. 0 = keine Unterscheidung.
-CONF_HEIZSTAB_ALT_TEMP_C = "heizstab_alt_temp_c"
 # Vorrang bei ungeplantem Überschuss (Einspeisung klebt an der Grenze):
 # True = zuerst der Heizstab, das Ladelimit der Batterie wird erst angehoben,
 # wenn er gesättigt ist; False = zuerst die Batterie (Guard 1 wie bisher),
@@ -279,7 +282,6 @@ DEFAULT_HEIZSTAB_MAX_KW = 6.0
 DEFAULT_HEIZSTAB_MAXTEMP_C = 80.0
 DEFAULT_HEIZSTAB_MINTEMP_C = 0.0
 DEFAULT_HEIZSTAB_NETZBEZUG = False
-DEFAULT_HEIZSTAB_ALT_TEMP_C = 0.0
 DEFAULT_HEIZSTAB_VORRANG = True
 DEFAULT_HEIZSTAB_WAERMEWERT = 0.0
 # Entität, die den Heizstab sperrt, solange sie „ein" meldet — gedacht für
@@ -317,6 +319,13 @@ HEIZSTAB_MINTEMP_HYSTERESE_K = 5.0
 # dieser Marke als Grenze bleibt zwischen 0 und 0,2 kW Einspeisung ein totes
 # Band, und ein dauerhafter kleiner Netzbezug ist ausgeschlossen.
 HEIZSTAB_KOMFORT_EXPORT_ZIEL_KW = 0.3
+# Fahrplan-Betrieb: Sieht der laufende Slot Wärme vor, regelt der Heizstab
+# nicht auf die Einspeisegrenze, sondern ebenfalls auf „Einspeisung ≈ 0" —
+# gedeckelt auf die geplante Leistung. Das LP hat die Kilowattstunde der
+# Wärme zugeschlagen, weil sie mehr bringt als die Einspeisung; die Messung
+# entscheidet nur noch, ob sie auch wirklich da ist. Dieselbe Marke wie beim
+# Komfortheizen: darunter bliebe ein dauerhafter kleiner Netzbezug möglich.
+HEIZSTAB_PLAN_EXPORT_ZIEL_KW = 0.3
 # Ab diesem Abstand zum Maximum gilt der Heizstab als gesättigt.
 HEIZSTAB_SATT_TOLERANZ_KW = 0.05
 # Fremdsteuerung: Zieht der Heizstab dauerhaft mehr, als vorgegeben ist,
@@ -424,7 +433,6 @@ TELEMETRY_SETTINGS_KEYS = (
     "heizstab_maxtemp_c",
     "heizstab_mintemp_c",
     "heizstab_netzbezug",
-    "heizstab_alt_temp_c",
     "heizstab_waermewert",
     # Puffergroesse erklaert, warum ein Plan Waerme einplant. Die
     # Sperr-Entitaet bleibt draussen, sie ist anlagenspezifisch.

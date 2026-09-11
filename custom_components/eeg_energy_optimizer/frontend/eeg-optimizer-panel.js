@@ -272,7 +272,6 @@ const WIZARD_DEFAULTS = {
   heizstab_maxtemp_c: 80,
   heizstab_mintemp_c: 0,
   heizstab_netzbezug: false,
-  heizstab_alt_temp_c: 0,
   heizstab_waermewert: 0,
   // Volumen des Puffers und eine Entität, die den Heizstab sperrt,
   // solange eine zweite Wärmequelle den Speicher selbst heizt.
@@ -3623,18 +3622,16 @@ class EegOptimizerPanel extends HTMLElement {
   // Skala zeigen, solange dort kein Verlauf eingeblendet ist.
   // Was die PV gebracht hat — heute, diesen Monat, dieses Jahr.
   //
-  // Der Optimierungs-Vorteil steht bewusst als „davon"-Zeile und NICHT als
-  // eigene Summe daneben: Er ist Teil der PV-Ersparnis, nicht zusaetzlich zu
-  // ihr. Zwei gleichrangige Betraege wuerden zum Zusammenzaehlen einladen,
-  // und das waere doppelt gezaehlt.
-  //
-  // Unterschied zur Karte „Optimierungsgewinn": Die schaut mit Prognosen 48
-  // Stunden VORAUS, diese hier schaut auf Gemessenes ZURUECK.
+  // Bewusst NUR gemessene Betraege: was die Anlage eingebracht hat. Der
+  // Anteil der Optimierung stand hier frueher als „davon"-Zeile, war aber
+  // keine Messung, sondern ein Vergleich mit einem simulierten Betrieb ohne
+  // Vorausschau — neben drei gemessenen Zahlen las er sich wie eine vierte.
+  // Vorausgeschaut wird in der Karte „Optimierungsgewinn"; die Sensoren
+  // „Ersparnis durch Optimierung" gibt es unveraendert weiter.
   _renderBilanzKarte() {
     const b = this._bilanz;
     if (!b || !b.verfuegbar) return "";
     const pv = b.pv_ersparnis || {};
-    const opt = b.opt_vorteil || {};
     const heute = b.heute || {};
     const waehrung = b.waehrung === "EUR" ? "€" : (b.waehrung || "€");
     const eur = (v) =>
@@ -3656,44 +3653,14 @@ class EegOptimizerPanel extends HTMLElement {
       </div>`;
     };
 
-    // Die „davon"-Zeile nur, wenn der Vorteil wirklich gerechnet werden
-    // konnte — eine Null saehe aus wie ein Messergebnis.
-    const vorteilHeute = opt.heute;
-    const optEntity = (ent.opt_vorteil || {}).heute;
-    // Eine rote Zahl ohne Erklaerung ist schlimmer als keine Zahl — die
-    // Begruendung kommt aus den Bestandteilen der Differenz (Backend).
-    // „Kein Eingriff": die Batterie lief wie im Standardbetrieb, der Wert ist
-    // per Definition null — die Erklaerung dazu ist neutral, nicht rot.
-    const keinEingriff = !!heute.kein_eingriff;
-    const begruendung = (keinEingriff || Number(vorteilHeute) < 0) && Array.isArray(heute.vorteil_begruendung)
-      ? heute.vorteil_begruendung : null;
-    const hinweisFarbe = keinEingriff ? "var(--secondary-text-color)" : "#e53935";
-    const hinweisHintergrund = keinEingriff ? "rgba(128,128,128,0.08)" : "rgba(229,57,53,0.06)";
-    const hinweisTitel = keinEingriff ? "Heute kein Eingriff" : "Warum heute negativ?";
     // Ohne abgeschlossenen Tag sind Monat und Jahr rechnerisch dasselbe wie
     // heute. Die drei gleichen Betraege nebeneinander lesen sich wie ein
     // Fehler — also erst zeigen, wenn sie sich unterscheiden koennen.
     const archivVorhanden = !!(b.archiv && (b.archiv.monat || b.archiv.jahr));
-    const davon = vorteilHeute == null ? `
-      <div style="font-size:12px;color:var(--secondary-text-color);text-align:center;margin-top:10px">
-        Der Anteil der Optimierung lässt sich heute noch nicht beziffern — dafür fehlt der Ladestand vom Tagesbeginn.
-      </div>` : `
-      <div style="font-size:13px;color:var(--secondary-text-color);text-align:center;margin-top:10px">
-        <span${optEntity ? ` class="bilanz-zeile-klickbar" data-action="show-entity" data-entity="${optEntity}" title="Verlauf anzeigen" style="border-radius:6px;padding:2px 6px"` : ""}>
-          davon durch die Optimierung
-          <strong style="color:${keinEingriff ? "var(--secondary-text-color)" : Number(vorteilHeute) >= 0 ? "var(--success-color,#0f9d58)" : "#e53935"}">${eur(vorteilHeute)}</strong>${keinEingriff ? " (kein Eingriff)" : ""}
-        </span>
-        ${archivVorhanden ? `<span style="white-space:nowrap">(Monat ${eur(opt.monat)}, Jahr ${eur(opt.jahr)})</span>` : ""}
-      </div>
-      ${begruendung ? `
-      <div style="margin:10px auto 0;max-width:560px;font-size:12px;color:var(--secondary-text-color);line-height:1.55;border-left:3px solid ${hinweisFarbe};padding:6px 10px;background:${hinweisHintergrund};border-radius:4px;text-align:left">
-        <div style="font-weight:600;color:var(--primary-text-color);margin-bottom:4px">${hinweisTitel}</div>
-        ${begruendung.map(t => `<div style="margin:3px 0">${this._escapeHtml(t)}</div>`).join("")}
-      </div>` : ""}
-      ${archivVorhanden ? "" : `
-      <div style="font-size:12px;color:var(--secondary-text-color);text-align:center;margin-top:6px;line-height:1.5">
+    const davon = archivVorhanden ? "" : `
+      <div style="font-size:12px;color:var(--secondary-text-color);text-align:center;margin-top:10px;line-height:1.5">
         Monats- und Jahreswerte wachsen erst mit jedem abgeschlossenen Tag — heute ist der erste.
-      </div>`}`;
+      </div>`;
 
     let details = "";
     if (this._bilanzDetailsOpen) {
@@ -3733,18 +3700,14 @@ class EegOptimizerPanel extends HTMLElement {
           ${Number(heute.waerme) > 0 ? zeile("Wärme aus dem Heizstab", heute.waerme, "eur") : ""}
           ${zeile("Selbst verbraucht", heute.eigen_kwh, "kWh", sHaus)}
           ${Number(heute.heizstab_kwh) > 0 ? zeile("In den Heizstab", heute.heizstab_kwh, "kWh") : ""}
-          ${Number(heute.heizstab_ueber_kwh) > 0 ? zeile(`davon Zusatzwärme über ${fmtDe(Number(this._config?.heizstab_alt_temp_c || 0), 0)} °C`, heute.heizstab_ueber_kwh, "kWh") : ""}
           ${zeile("Eingespeist", heute.export_kwh, "kWh", sNetz)}
           ${zeile("Aus dem Netz bezogen", heute.bezug_kwh, "kWh", sNetz)}
           ${zeile("Erzeugt", heute.pv_kwh, "kWh", sPv)}
         </table>
         ${eegZeile}
         <div style="font-size:12px;color:var(--secondary-text-color);margin-top:8px;line-height:1.5">
-          Der Anteil der Optimierung ist ein Vergleich mit einem simulierten Betrieb ohne Vorausschau,
-          gerechnet über die gemessenen Werte des Tages — keine Messung, sondern eine Rechnung.
           Ein Bilanztag läuft von 04:00 bis 04:00, damit ein Abend samt Nacht-Entladung in einem Tag
-          bleibt; „heute" beginnt deshalb um 04:00. Hat die Batterie sich wie ein Standardgerät
-          verhalten, steht hier „kein Eingriff" und 0,00&nbsp;€ — die Rechnung kennt dann nur Rauschen.
+          bleibt; „heute" beginnt deshalb um 04:00.
         </div>`;
     }
 
@@ -3841,14 +3804,17 @@ class EegOptimizerPanel extends HTMLElement {
           Gemeinschaftssatz gibt es nur für Energie, die die Gemeinschaft
           laut Bedarfsprognose auch aufnimmt — der Rest geht zum Basistarif
           bzw. Börsenpreis an den Restabnehmer.${eegZuteilung}
-          Endbestand: Restenergie über dem Mindest-Ladestand am
-          Horizontende (mit Optimierung ${fmtDe(m.rest_kwh ?? 0, 1)}&nbsp;kWh,
+          Gezählt werden die nächsten ${stunden}&nbsp;h — weiter draußen ist
+          der Geldwert eines Slots mehr Prognose als Plan. Das Diagramm zeigt
+          den ganzen gerechneten Fahrplan.
+          Endbestand: Restenergie über dem Mindest-Ladestand am Ende dieser
+          ${stunden}&nbsp;h (mit Optimierung ${fmtDe(m.rest_kwh ?? 0, 1)}&nbsp;kWh,
           ohne ${fmtDe(o.rest_kwh ?? 0, 1)}&nbsp;kWh), gutgeschrieben mit dem
           Basistarif abzüglich Wandlungsverlust und Alterung${gewinn.endbestand_tarif != null ? ` (${fmtDe(Number(gewinn.endbestand_tarif) * 100, 2)}&nbsp;ct/kWh)` : ""}.
-          Der Ladestand am Horizontende ist im Modell fest vorgegeben, und der
-          Standardbetrieb muss ihn genauso einhalten — sonst verglichen die
-          Pläne ungleiche Endzustände, und der Fahrplan müsste sich anrechnen
-          lassen, dass er die letzte Nacht aus dem Netz deckt.${gewinn.heizstab_zusatzwaerme ? " Der Puffer liegt über der Temperatur der anderen Heizquelle — geplante Wärme ist Zusatzwärme und wird nicht bewertet." : ""}
+          Der Standardbetrieb muss denselben Ladestand erreichen wie der
+          Fahrplan — sonst verglichen die Pläne ungleiche Endzustände, und der
+          Fahrplan müsste sich anrechnen lassen, dass er die Nacht danach aus
+          dem Netz deckt.
         </p>`;
     }
     const kennzahl = `
@@ -6575,11 +6541,6 @@ class EegOptimizerPanel extends HTMLElement {
             </div>
           </label>
         </div>` : ""}
-        <div class="field-group">
-          <label>Temperatur der anderen Heizquelle (°C)</label>
-          <input type="number" data-field="${prefix}heizstab_alt_temp_c" value="${d.heizstab_alt_temp_c || ""}" min="0" max="95" step="1" placeholder="leer = keine Unterscheidung">
-          <div class="help-text">Bis zu dieser Temperatur heizt deine andere Heizquelle den Puffer, zum Beispiel die Fernwärme bis 55 °C. Wärme bis dorthin ersetzt sie und zählt zum Wärmewert; Wärme darüber hätte es sonst nie gegeben — sie wird als Zusatzwärme getrennt ausgewiesen und nicht bewertet. Leer = alles zählt gleich.</div>
-        </div>
         <div class="help-text" style="margin:4px 0 12px;padding:10px 12px;background:var(--info-color,#2196f3)14;border-left:3px solid var(--info-color,#2196f3);border-radius:4px">
           <strong>Aufteilung des Überschusses:</strong> Batterie und Heizstab regeln gemeinsam, gewichtet nach Ladestand — unter 20 % bekommt die Batterie alles (ihre Energie trägt durch die Nacht, die Wärme nicht), ab 50 % ist es die Hälfte, dazwischen gleitend. Unter der Mindesttemperatur hat der Heizstab Vorrang mit voller Leistung.
         </div>
@@ -6600,7 +6561,7 @@ class EegOptimizerPanel extends HTMLElement {
           <label>Wärmewert (ct/kWh)</label>
           <input type="number" data-field="${prefix}heizstab_waermewert" data-unit="ct"
                  value="${ctAus(d.heizstab_waermewert ?? 0)}" min="0" max="100" step="0.1">
-          <div class="help-text">Was eine Kilowattstunde Wärme ersetzt — der Preis der Energie, mit der du sonst heizen würdest (Gas, Wärmepumpe, Strom). Fließt in „Ersparnis durch PV" und in den Optimierungsgewinn ein. 0 = Wärme wird gezählt, aber nicht bewertet.</div>
+          <div class="help-text">Was eine Kilowattstunde Wärme ersetzt — der Preis der Energie, mit der du sonst heizen würdest (Gas, Wärmepumpe, Strom). Jede Kilowattstunde in den Puffer zählt mit diesem Wert — in „Ersparnis durch PV" wie im Optimierungsgewinn. 0 = Wärme wird gezählt, aber nicht bewertet.</div>
         </div>`,
     });
   }

@@ -776,34 +776,22 @@ def test_als_slots_traegt_heizstab_leistung():
     assert slots[0]["consumption"] == pytest.approx(1.0)
 
 
-def test_zusatzwaerme_wird_getrennt_gebucht_und_nicht_bewertet():
-    """Zwei Takte je 60 s mit 3 kW in den Heizstab: einer unter, einer über der
-    Schwelle der anderen Heizquelle. Nur der Ersatzanteil zählt zum Wärmewert."""
+def test_waerme_zaehlt_unabhaengig_von_der_puffertemperatur():
+    """Zwei Takte je 60 s mit 3 kW in den Heizstab. Beide zählen voll zum
+    Wärmewert — wie warm der Puffer dabei ist, spielt keine Rolle mehr."""
     b = _bilanz()
     now = datetime(2026, 8, 27, 12, 5, tzinfo=timezone.utc)
-    b._summiere("32", {"pv": 6.0, "haus": 0.5, "netz": 2.5, "batterie": 0.0,
-                       "heizstab": 3.0, "heizstab_ueber": 0.0, "soc": 90.0}, 60.0, "Ein", None, now)
-    b._summiere("32", {"pv": 6.0, "haus": 0.5, "netz": 2.5, "batterie": 0.0,
-                       "heizstab": 3.0, "heizstab_ueber": 1.0, "soc": 90.0}, 60.0, "Ein", None, now)
+    for _ in range(2):
+        b._summiere("32", {"pv": 6.0, "haus": 0.5, "netz": 2.5, "batterie": 0.0,
+                           "heizstab": 3.0, "soc": 90.0}, 60.0, "Ein", None, now)
     slot = b._heute["slots"]["32"]
     assert slot["heizstab"] == pytest.approx(2 * 3.0 / 60)
-    assert slot["heizstab_ueber"] == pytest.approx(3.0 / 60)
-    assert b.heizstab_ueber_kwh_heute() == pytest.approx(0.05, abs=1e-3)
+    assert "heizstab_ueber" not in slot
 
     inputs = _inputs(heizstab_max_kw=6.0, heizstab_waermewert=0.10)
     slot["kwp"] = 0.26
     slot["basis"] = 0.06
     ergebnis = b.bewerte_tag(b._heute, inputs)
     assert ergebnis["heizstab_kwh"] == pytest.approx(0.1)
-    assert ergebnis["heizstab_ueber_kwh"] == pytest.approx(0.05)
-    assert ergebnis["heizstab_ersatz_kwh"] == pytest.approx(0.05)
-    assert ergebnis["waerme"] == pytest.approx(0.005)
-
-
-def test_ohne_schwelle_keine_zusatzwaerme():
-    b = _bilanz()
-    now = datetime(2026, 8, 27, 12, 5, tzinfo=timezone.utc)
-    b._summiere("32", {"pv": 6.0, "haus": 0.5, "netz": 2.5, "batterie": 0.0,
-                       "heizstab": 3.0, "soc": 90.0}, 60.0, "Ein", None, now)
-    assert b._heute["slots"]["32"]["heizstab_ueber"] == 0.0
-    assert b._heizstab_zusatzwaerme() is False  # kein hass, kein Controller
+    assert "heizstab_ueber_kwh" not in ergebnis
+    assert ergebnis["waerme"] == pytest.approx(0.01)

@@ -16,6 +16,12 @@ Die Regel je Guard-Lauf (30 s), siehe ``naechster_sollwert``:
   dann unterdrückt der Executor derweil jede erzwungene Entladung, sonst
   landete die Batterie im Boiler.
 * Maximaltemperatur erreicht → 0 (bis hierher darf geheizt werden), frei erst wieder 3 K darunter.
+* Der laufende Fahrplan-Slot sieht Wärme vor → Regel auf „Einspeisung ≈ 0",
+  gedeckelt auf die geplante Leistung. Das LP hat die Kilowattstunde dem
+  Puffer zugeschlagen, weil die Wärme mehr bringt als die Einspeisung —
+  ausgeführt wird sie trotzdem nur so weit, wie die Messung sie hergibt.
+  Ist die PV schwächer als prognostiziert, fällt der Sollwert von selbst
+  zurück, statt Netzstrom zu verheizen.
 * Einspeisung klebt an der Grenze → ein Schritt (0,5 kW) hinauf. Die wahre
   Höhe des Überschusses ist dann unsichtbar, der Wechselrichter regelt schon
   ab — deshalb tasten statt springen.
@@ -43,7 +49,6 @@ import time
 from typing import Any, Callable
 
 from ..const import (
-    CONF_HEIZSTAB_ALT_TEMP_C,
     CONF_HEIZSTAB_ENABLED,
     CONF_HEIZSTAB_HOST,
     CONF_HEIZSTAB_MAX_KW,
@@ -54,7 +59,6 @@ from ..const import (
     CONF_HEIZSTAB_MAXTEMP_C,
     CONF_HEIZSTAB_PUFFER_LITER,
     CONF_HEIZSTAB_SPERR_ENTITY,
-    DEFAULT_HEIZSTAB_ALT_TEMP_C,
     DEFAULT_HEIZSTAB_ENABLED,
     DEFAULT_HEIZSTAB_MAX_KW,
     DEFAULT_HEIZSTAB_MINTEMP_C,
@@ -70,6 +74,7 @@ from ..const import (
     HEIZSTAB_KONFLIKT_MINUTEN,
     HEIZSTAB_KONFLIKT_TOLERANZ_KW,
     HEIZSTAB_MINTEMP_HYSTERESE_K,
+    HEIZSTAB_PLAN_EXPORT_ZIEL_KW,
     HEIZSTAB_SATT_TOLERANZ_KW,
     HEIZSTAB_STEP_KW,
     HEIZSTAB_TEMP_HYSTERESE_K,
@@ -255,26 +260,6 @@ class HeizstabController:
             return 0.0
 
     @property
-    def alt_temp_c(self) -> float:
-        """Bis wohin die andere Heizquelle den Puffer heizt; 0 = keine Unterscheidung."""
-        try:
-            return max(0.0, float(self._config.get(CONF_HEIZSTAB_ALT_TEMP_C) or DEFAULT_HEIZSTAB_ALT_TEMP_C))
-        except (TypeError, ValueError):
-            return 0.0
-
-    @property
-    def zusatzwaerme(self) -> bool:
-        """Liegt der Puffer über der Temperatur der anderen Heizquelle?
-
-        Dann ist jede weitere Kilowattstunde Zusatzwärme: die andere Quelle
-        hätte sie nie geliefert, sie ersetzt nichts und zählt nicht zum
-        Wärmewert. Ohne Schwelle oder ohne Fühlerwert False.
-        """
-        schwelle = self.alt_temp_c
-        temp = self.temperatur_c
-        return schwelle > 0 and temp is not None and temp > schwelle
-
-    @property
     def netzbezug_erlaubt(self) -> bool:
         """Unter der Mindesttemperatur auch aus dem Netz heizen? Opt-in."""
         return bool(self._config.get(CONF_HEIZSTAB_NETZBEZUG, DEFAULT_HEIZSTAB_NETZBEZUG))
@@ -444,6 +429,7 @@ class HeizstabController:
         grenze_kw: float,
         vorrang_frei: bool,
         deckel_kw: float | None = None,
+        plan_kw: float = 0.0,
     ) -> tuple[float, str]:
         """Nächsten Sollwert bestimmen (ohne zu schreiben).
 
@@ -454,14 +440,23 @@ class HeizstabController:
         Vorrang und bekommt die volle Leistung — sonst wäre die Mindest-
         temperatur keine.
 
+        ``plan_kw`` ist die Wärme, die der laufende Fahrplan-Slot vorsieht
+        (0 = keine). Sie ersetzt die Einspeisegrenze als Ziel: Geregelt wird
+        auf „Einspeisung ≈ 0", aber nie über die geplante Leistung hinaus.
+        Beides zusammen führt den Plan aus, ohne ihn blind zu schreiben — die
+        Prognose sagt, wie viel erlaubt ist, die Messung, wie viel da ist.
+        Der Anteil aus ``deckel_kw`` gilt hier NICHT: Das LP hat Batterie und
+        Heizstab gemeinsam geplant, die Aufteilung steckt schon im Plan.
+
         Reihenfolge: Komfort mit erlaubtem Netzbezug schlägt alles (der
         Executor unterdrückt dann die Entladung); dann die Entladung ins Netz
         (kein Überschuss — alles, was der Heizstab zöge, käme aus der
         Batterie); dann Komfort ohne Netzbezug (Vorrang vor der Einspeisung,
-        Regel auf Einspeisung ≈ 0); dann die Maximaltemperatur; dann die
-        Überschuss-Regel an der Einspeisegrenze. Modus Aus und Startphase
-        entscheidet der Executor selbst — dort ist der Sollwert 0, ohne diese
-        Funktion.
+        Regel auf Einspeisung ≈ 0); dann die Maximaltemperatur; dann der
+        Fahrplan; zuletzt die Überschuss-Regel an der Einspeisegrenze — sie
+        greift für Überschuss, den keine Prognose kannte. Modus Aus und
+        Startphase entscheidet der Executor selbst — dort ist der Sollwert 0,
+        ohne diese Funktion.
         """
         if not self.enabled:
             return 0.0, "Heizstab deaktiviert"
@@ -492,6 +487,13 @@ class HeizstabController:
             return soll, f"Mindesttemperatur unterschritten {temp_text} — Vorrang vor der Einspeisung: {grund}"
         if self._max_gesperrt:
             return 0.0, f"Maximaltemperatur erreicht ({self.maxtemp_c:.0f} °C)"
+        if plan_kw > 0:
+            ziel_kw = min(float(plan_kw), self.max_kw)
+            soll, grund = naechster_sollwert(
+                self.sollwert_kw, export_kw, HEIZSTAB_PLAN_EXPORT_ZIEL_KW,
+                ziel_kw, True,
+            )
+            return soll, f"Fahrplan: {ziel_kw:.1f} kW Wärme — {grund}"
         max_kw = self.max_kw
         zusatz = ""
         if deckel_kw is not None and deckel_kw < max_kw:
@@ -647,8 +649,6 @@ class HeizstabController:
             "maxtemp_c": self.maxtemp_c,
             "mintemp_c": self.mintemp_c,
             "netzbezug_erlaubt": self.netzbezug_erlaubt,
-            "alt_temp_c": self.alt_temp_c or None,
-            "zusatzwaerme": self.zusatzwaerme,
             "waermewert": self.waermewert,
             "gesperrt": self.gesperrt,
             "puffer_liter": self.puffer_liter or None,

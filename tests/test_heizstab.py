@@ -12,7 +12,6 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from custom_components.eeg_energy_optimizer.const import (
-    CONF_HEIZSTAB_ALT_TEMP_C,
     CONF_HEIZSTAB_ENABLED,
     CONF_HEIZSTAB_HOST,
     CONF_HEIZSTAB_MAX_KW,
@@ -23,6 +22,7 @@ from custom_components.eeg_energy_optimizer.const import (
     CONF_HEIZSTAB_MAXTEMP_C,
     HEIZSTAB_KOMFORT_EXPORT_ZIEL_KW,
     HEIZSTAB_KONFLIKT_MINUTEN,
+    HEIZSTAB_PLAN_EXPORT_ZIEL_KW,
     HEIZSTAB_STEP_KW,
 )
 from custom_components.eeg_energy_optimizer.heizstab.controller import (
@@ -400,25 +400,127 @@ def test_komfort_ohne_netz_ignoriert_batterie_vorrang():
 
 
 # ---------------------------------------------------------------------------
-# Temperatur der anderen Heizquelle: Zusatzwärme
+# Wärme zählt unabhängig von der Puffertemperatur
 # ---------------------------------------------------------------------------
 
 
-def test_zusatzwaerme_ueber_der_schwelle_der_anderen_heizquelle():
-    t = _treiber(power_w=3000, temp=58.0)
-    hz = HeizstabController(MagicMock(), _cfg(**{CONF_HEIZSTAB_ALT_TEMP_C: 55.0}), t)
-    assert hz.alt_temp_c == 55.0
-    assert hz.zusatzwaerme is True
-    t.last_temperature = 52.0
-    assert hz.zusatzwaerme is False
-    assert hz.status()["alt_temp_c"] == 55.0
+def test_status_kennt_keine_zweite_heizquelle_mehr():
+    """Die Unterscheidung Ersatz-/Zusatzwärme ist entfallen — jede
+    Kilowattstunde in den Puffer zählt zum Wärmewert. Der Status darf die
+    alten Schlüssel nicht wieder mitschleppen."""
+    hz = HeizstabController(MagicMock(), _cfg(), _treiber(power_w=3000, temp=78.0))
+    status = hz.status()
+    assert "alt_temp_c" not in status
+    assert "zusatzwaerme" not in status
+    assert status["waermewert"] == hz.waermewert
+    assert not hasattr(hz, "zusatzwaerme")
 
 
-def test_ohne_schwelle_oder_fuehler_keine_zusatzwaerme():
-    assert HeizstabController(MagicMock(), _cfg(), _treiber(temp=70.0)).zusatzwaerme is False
-    hz = HeizstabController(MagicMock(), _cfg(**{CONF_HEIZSTAB_ALT_TEMP_C: 55.0}), _treiber(temp=None))
-    assert hz.zusatzwaerme is False
-    assert hz.status()["alt_temp_c"] == 55.0
+
+
+# ---------------------------------------------------------------------------
+# Fahrplan-Betrieb: die geplante Wärme ist die Vorgabe
+# ---------------------------------------------------------------------------
+
+
+def _geplant(**cfg):
+    """Controller ohne Temperatur-Sonderfall — der Puffer liegt im Mittelfeld."""
+    return HeizstabController(MagicMock(), _cfg(**cfg), _treiber(temp=60.0))
+
+
+def test_plan_heizt_auch_weit_unter_der_einspeisegrenze():
+    """Einspeisung 2 kW bei Grenze 4 kW: ohne Plan bliebe der Heizstab aus.
+
+    Der Slot sieht 3 kW Wärme vor — das LP hat die Kilowattstunde dem Puffer
+    zugeschlagen, weil sie dort mehr bringt. Also wird getastet.
+    """
+    hz = _geplant()
+    soll, grund = hz.regeln(
+        entladung=False, export_kw=2.0, grenze_kw=4.0, vorrang_frei=False, plan_kw=3.0
+    )
+    assert soll == pytest.approx(HEIZSTAB_STEP_KW)
+    assert "Fahrplan" in grund
+
+
+def test_plan_ist_die_obergrenze():
+    """Über die geplante Leistung hinaus wird nicht getastet — sonst nähme der
+    Heizstab auch die Einspeisung, die der Plan bewusst ins Netz schickt."""
+    hz = _geplant()
+    hz.sollwert_kw = 2.0
+    soll, grund = hz.regeln(
+        entladung=False, export_kw=3.0, grenze_kw=4.0, vorrang_frei=False, plan_kw=2.0
+    )
+    assert soll == pytest.approx(2.0)
+    assert "am Maximum" in grund
+
+
+def test_plan_ueber_der_geraeteleistung_wird_gedeckelt():
+    hz = _geplant()
+    hz.sollwert_kw = 5.8
+    soll, _ = hz.regeln(
+        entladung=False, export_kw=3.0, grenze_kw=4.0, vorrang_frei=False, plan_kw=9.0
+    )
+    assert soll == pytest.approx(6.0)
+
+
+def test_plan_weicht_bei_netzbezug_zurueck():
+    """Die Prognose sagt, wie viel erlaubt ist — die Messung, wie viel da ist.
+    Bei Bezug fällt der Sollwert um die volle Lücke, statt Netzstrom zu ziehen."""
+    hz = _geplant()
+    hz.sollwert_kw = 3.0
+    soll, _ = hz.regeln(
+        entladung=False, export_kw=-0.5, grenze_kw=4.0, vorrang_frei=False, plan_kw=3.0
+    )
+    assert soll == pytest.approx(3.0 - (HEIZSTAB_PLAN_EXPORT_ZIEL_KW + 0.5))
+    hz.sollwert_kw = 0.4
+    soll, grund = hz.regeln(
+        entladung=False, export_kw=-0.5, grenze_kw=4.0, vorrang_frei=False, plan_kw=3.0
+    )
+    assert soll == 0.0
+    assert "Netzbezug" in grund
+
+
+def test_plan_ignoriert_den_anteil_an_der_ueberschussteilung():
+    """Die Aufteilung zwischen Batterie und Heizstab steckt schon im Plan —
+    ein zweites Mal gedeckelt würde sie doppelt wirken."""
+    hz = _geplant()
+    hz.sollwert_kw = 1.0
+    soll, _ = hz.regeln(
+        entladung=False, export_kw=3.0, grenze_kw=4.0, vorrang_frei=False,
+        deckel_kw=0.5, plan_kw=3.0,
+    )
+    assert soll == pytest.approx(1.0 + HEIZSTAB_STEP_KW)
+
+
+def test_ohne_plan_gilt_weiter_die_einspeisegrenze():
+    """Ungeplanter Überschuss (PV über Prognose) fängt die alte Regel auf."""
+    hz = _geplant()
+    hz.sollwert_kw = 1.0
+    soll, grund = hz.regeln(
+        entladung=False, export_kw=2.0, grenze_kw=4.0, vorrang_frei=True, plan_kw=0.0
+    )
+    assert soll == 0.0
+    assert "Einspeisung unter der Grenze" in grund
+
+
+def test_maximaltemperatur_schlaegt_den_plan():
+    hz = HeizstabController(MagicMock(), _cfg(), _treiber(temp=81.0))
+    hz.pruefe_temperaturen()
+    soll, grund = hz.regeln(
+        entladung=False, export_kw=3.0, grenze_kw=4.0, vorrang_frei=True, plan_kw=3.0
+    )
+    assert soll == 0.0
+    assert "Maximaltemperatur" in grund
+
+
+def test_entladung_schlaegt_den_plan():
+    hz = _geplant()
+    hz.sollwert_kw = 2.0
+    soll, grund = hz.regeln(
+        entladung=True, export_kw=3.0, grenze_kw=4.0, vorrang_frei=True, plan_kw=3.0
+    )
+    assert soll == 0.0
+    assert "Entladung" in grund
 
 
 # ---------------------------------------------------------------------------

@@ -20,7 +20,11 @@ Der Gen24 kann den Ohmpilot selbst regeln — aber er regelt die **Einspeisung a
 
 ## So funktioniert es
 
-Der Heizstab ist eine **zweite Senke** neben der Batterie. Alle 30 Sekunden schaut die Steuerung auf die gemessene Einspeisung:
+Der Heizstab ist eine **zweite Senke** neben der Batterie. Er hat zwei Betriebsarten, und alle 30 Sekunden entscheidet sich, welche gilt.
+
+**1. Nach Plan.** Sieht die laufende Viertelstunde des Optimierungsplans Wärme vor, ist diese Leistung die Vorgabe. Das Modell hat die Kilowattstunde dem Puffer zugeschlagen, weil der Wärmewert höher liegt als die Einspeisevergütung — dann wird geheizt, auch wenn die Einspeisung weit unter der Grenze bleibt. Ausgeführt wird der Plan aber nur so weit, wie die Messung ihn trägt: Geregelt wird auf **Einspeisung ≈ 0**, nie über die geplante Leistung hinaus. Liefert die PV weniger als vorhergesagt, fällt der Sollwert von selbst zurück, statt Netzstrom zu verheizen.
+
+**2. Nach der Einspeisegrenze.** Plant der Slot keine Wärme — oder ist der Plan veraltet —, gilt die alte Regel für den Überschuss, den keine Prognose kannte:
 
 | Gemessene Einspeisung | Heizstab |
 |---|---|
@@ -30,31 +34,31 @@ Der Heizstab ist eine **zweite Senke** neben der Batterie. Alle 30 Sekunden scha
 
 Was der Heizstab **nie** tut:
 
-- **Einspeisung wegheizen.** Solange die Einspeisung unter der Grenze liegt, bleibt er aus — die Energie gehört der Gemeinschaft.
 - **Aus der Batterie heizen.** Entlädt die Optimierung gerade ins Netz, steht der Heizstab auf 0. Eine Einspeisung aus der Batterie ist kein Überschuss.
 - **Aus dem Netz heizen** — außer du erlaubst es ausdrücklich unter der Mindesttemperatur (siehe unten). Ohne diese Erlaubnis zieht der Heizstab nie Netzstrom.
 - **Weiterlaufen, wenn niemand steuert.** Der Ohmpilot schaltet nach 50 Sekunden ohne neuen Sollwert selbst ab. Bricht die Verbindung ab oder ist die Optimierung aus, ist auch der Heizstab aus.
 
-Die geplante Heizstab-Leistung steht auch im **Optimierungsplan** (rote gestrichelte Linie): Der Plan weiß je Viertelstunde, was er abregeln müsste — genau das würde der Heizstab nehmen. Gesteuert wird trotzdem nach der Messung, nicht nach der Prognose.
+Die geplante Heizstab-Leistung steht im **Optimierungsplan** (rote gestrichelte Linie): So viel Wärme sieht das Modell je Viertelstunde vor. Sie ist die Obergrenze für den laufenden Slot — wie viel davon wirklich fließt, entscheidet die Messung.
 
 Was der Heizstab **gerade** zieht, steht oben in der Statuskarte: in der Werteliste als eigene Kachel „Heizstab" mit Leistung und Wassertemperatur, im Energieflussdiagramm als eigener Kasten neben dem Haus — samt der Linie, über die er seine Energie bekommt (gelb aus der PV, rot aus dem Netz beim Komfortheizen). Ein Gedankenstrich statt einer Zahl heißt: Der Ohmpilot antwortet nicht.
 
 ## Reihenfolge: Heizstab oder Batterie zuerst?
 
-Meist ist die Batterie schon nach Plan am Laden, wenn die Einspeisung ans Limit kommt. Für den **ungeplanten** Überschuss — mehr Sonne als vorhergesagt — entscheidet die Einstellung **„Überschuss zuerst in den Heizstab"**:
+Für die geplante Wärme stellt sich die Frage nicht — das Modell plant Batterie und Heizstab gemeinsam, die Aufteilung steckt schon im Plan.
 
-- **Eingeschaltet** (Vorgabe): Der Heizstab nimmt den Überschuss. Erst wenn er mit voller Leistung läuft oder die Maximaltemperatur erreicht hat, hebt die Steuerung das Ladelimit der Batterie über den Planwert an.
-- **Ausgeschaltet**: Erst die Batterie — das Ladelimit wird angehoben, bis sie am Maximum lädt oder voll ist. Dann bekommt der Heizstab den Rest.
+Beim **ungeplanten** Überschuss — mehr Sonne als vorhergesagt — teilen sich beide, gewichtet nach dem Ladestand der Batterie:
 
-Der Plan für die Batterie bleibt in beiden Fällen unangetastet. Es geht nur darum, wer den Teil bekommt, den die Prognose nicht kannte.
+- **Unter 20 %** bekommt die Batterie alles. Ihre Energie trägt durch die Nacht, die Wärme nicht.
+- **Ab 50 %** ist es die Hälfte für jeden.
+- **Dazwischen** gleitend.
 
-## Ersatzwärme und Zusatzwärme
+Unter der Mindesttemperatur hat der Heizstab davon unabhängig Vorrang und volle Leistung. Der Plan für die Batterie bleibt in jedem Fall unangetastet.
 
-Viele Puffer haben eine zweite Heizquelle — Fernwärme, Kessel, Wärmepumpe —, die nur bis zu einer bestimmten Temperatur heizt, etwa 55 °C. Wärme, die der Heizstab **bis dorthin** liefert, ersetzt diese Quelle und ist so viel wert wie deren Energie: der **Wärmewert**. Wärme **darüber** hätte es ohne den Heizstab nie gegeben — sie ersetzt nichts, ist aber trotzdem sinnvoll, weil sie Abregelung vermeidet und der Puffer sie speichert.
+## Was die Wärme wert ist
 
-Trägst du die **Temperatur der anderen Heizquelle** ein, trennt der Optimizer beides: Der Sensor „Heizstab Energie heute" weist Ersatz- und Zusatzwärme getrennt aus, die Bilanzkarte zeigt „davon Zusatzwärme über 55 °C", und bewertet wird nur die Ersatzwärme. Lässt du das Feld leer, zählt alles gleich.
+Jede Kilowattstunde, die aus PV in den Puffer geht, zählt mit dem **Wärmewert** — unabhängig davon, wie warm der Puffer gerade ist. Das ist die Zahl, gegen die der Optimizer die Einspeisung abwägt: Liegt der Wärmewert darüber, heizt er den Puffer, statt einzuspeisen.
 
-_Gemessen wird am Fühler des Ohmpilot: Liegt die Temperatur beim Heizen über der Schwelle, ist die Energie dieser halben Minute Zusatzwärme. In der Gewinnkarte gilt: Liegt der Puffer gerade über der Schwelle, zählt alle geplante Wärme als Zusatzwärme._
+_Die Obergrenze ist allein die **Maximaltemperatur**: Ist sie erreicht, nimmt der Puffer nichts mehr auf, und die Energie geht wieder ins Netz._
 
 ## Konfiguration
 
@@ -69,7 +73,6 @@ Alle Felder stehen in den **Einstellungen** im eigenen Tab **Heizstab**. Im Einr
 | **Maximaltemperatur (°C)** | Bis zu dieser Temperatur darf der Heizstab heizen; darüber bleibt er aus, weiter geht es 3 K darunter |
 | **Mindesttemperatur (°C)** | Darunter hat der Heizstab Vorrang vor der Einspeisung: Er nimmt allen PV-Überschuss, auch den unterhalb der Einspeisegrenze, bis 5 K darüber — aber weder Netz- noch Batteriestrom. 0 = aus |
 | **Unter der Mindesttemperatur auch aus dem Netz heizen** | Nur sichtbar mit Mindesttemperatur. Eingeschaltet heizt der Heizstab darunter mit voller Leistung, egal woher der Strom kommt, und die Optimierung entlädt derweil nicht ins Netz. Ausgeschaltet (Vorgabe) wird nie Netzstrom verheizt — ohne Sonne bleibt das Wasser dann kalt |
-| **Temperatur der anderen Heizquelle (°C)** | Bis hierher heizt Fernwärme, Kessel oder Wärmepumpe. Wärme darunter ist Ersatzwärme (Wärmewert), Wärme darüber Zusatzwärme (getrennt ausgewiesen, nicht bewertet). Leer = keine Unterscheidung |
 | **Überschuss zuerst in den Heizstab** | Reihenfolge bei ungeplantem Überschuss, siehe oben |
 | **Wärmewert (ct/kWh)** | Was eine Kilowattstunde Wärme ersetzt. Fließt in „Ersparnis durch PV" und in den Optimierungsgewinn ein. 0 = Wärme wird gezählt, aber nicht bewertet |
 
