@@ -118,6 +118,17 @@ CONF_SCHEDULE_CONSUMPTION_NIGHT_START = "schedule_consumption_night_start"
 CONF_SCHEDULE_CONSUMPTION_NIGHT_END = "schedule_consumption_night_end"
 DEFAULT_CONSUMPTION_NIGHT_START = 22
 DEFAULT_CONSUMPTION_NIGHT_END = 6
+# Sommer-Nieder-Arbeitspreis (SNAP): In Österreich seit 1.4.2026 ein um 20 %
+# verringertes Netznutzungsentgelt auf der Netzebene 7, jeweils vom 1. April
+# bis 30. September zwischen 10 und 16 Uhr (SNE-V 2018 idF Novelle 2026,
+# § 2 Abs. 1 Z 9 und § 5 Abs. 1b). Zeitraum und Uhrzeit stehen in der
+# Verordnung und sind deshalb fest verdrahtet — eingegeben wird nur der
+# Preis, der in diesem Fenster gilt.
+CONF_SCHEDULE_CONSUMPTION_PRICE_SNAP = "schedule_consumption_price_snap"
+SNAP_MONAT_VON = 4       # 1. April
+SNAP_MONAT_BIS = 9       # 30. September (einschließlich)
+SNAP_STUNDE_VON = 10
+SNAP_STUNDE_BIS = 16     # 16:00 gehört nicht mehr dazu
 CONF_SCHEDULE_GRID_FEE = "schedule_grid_fee"
 CONF_SCHEDULE_BATTERY_COST = "schedule_battery_cost"
 # Mindest-Ladestand in Prozent, unter den der Fahrplan nicht planen darf.
@@ -267,6 +278,9 @@ class ScheduleInputs:
     consumption_price_night: float | None = None
     consumption_night_start_hour: int = DEFAULT_CONSUMPTION_NIGHT_START
     consumption_night_end_hour: int = DEFAULT_CONSUMPTION_NIGHT_END
+    # Bezugspreis im SNAP-Fenster (Sommer, 10–16 Uhr); None = kein SNAP.
+    # Fenstergrenzen kommen aus der Verordnung, nicht aus der Konfiguration.
+    consumption_price_snap: float | None = None
     forecast_source: str = ""
     # Preisaufschlag je Zeitpunkt aus dem Bedarf der Energiegemeinschaften
     # (€/kWh, siehe eeg_price.py). Leer = keine Gemeinschaft wirkt mit.
@@ -593,7 +607,10 @@ class HAConfig:
         Mit Nachtpreis muss es eine Reihe sein, sonst plant das LP gegen
         einen Preis, den es nachts gar nicht gibt.
         """
-        if self._inputs.consumption_price_night is None:
+        if (
+            self._inputs.consumption_price_night is None
+            and self._inputs.consumption_price_snap is None
+        ):
             return self._inputs.consumption_price
         if self._consumption_price_series is None:
             import pandas as pd
@@ -641,12 +658,33 @@ def _ist_im_nachtfenster(stunde: int, von: int, bis: int) -> bool:
     return stunde >= von or stunde < bis
 
 
+def ist_im_snap_fenster(stamp: datetime) -> bool:
+    """Liegt der Zeitpunkt im Sommer-Mittagsfenster der Verordnung?
+
+    1. April bis 30. September, 10:00 bis 16:00 — beides einschließlich
+    Startgrenze, 16:00 selbst gehört nicht mehr dazu.
+    """
+    return (
+        SNAP_MONAT_VON <= stamp.month <= SNAP_MONAT_BIS
+        and SNAP_STUNDE_VON <= stamp.hour < SNAP_STUNDE_BIS
+    )
+
+
 def bezugspreis_zu(inputs: ScheduleInputs, stamp: datetime) -> float:
     """Bezugspreis, der zu diesem Zeitpunkt gilt (€/kWh).
+
+    Drei mögliche Preise, in dieser Reihenfolge: der günstigere Sommer-
+    Mittagspreis (SNAP), der Nachtpreis, sonst der Tagespreis. SNAP steht
+    vorn, weil sein Fenster aus der Verordnung kommt und sich mit einem
+    üblichen Nachtfenster ohnehin nicht überschneidet — bei einem ungewöhnlich
+    gesetzten Nachtfenster gewinnt die Verordnung.
 
     Ohne zweiten Preis ist es immer derselbe. Ein Fenster, dessen Grenzen
     zusammenfallen, ist kein Fenster — dann gilt ebenfalls der Tagespreis.
     """
+    snap = getattr(inputs, "consumption_price_snap", None)
+    if snap is not None and ist_im_snap_fenster(stamp):
+        return float(snap)
     nacht = getattr(inputs, "consumption_price_night", None)
     if nacht is None:
         return inputs.consumption_price
@@ -1372,6 +1410,18 @@ async def async_collect_inputs(
         bezug_nacht <= 0 or abs(bezug_nacht - bezug) < 1e-9
     ):
         bezug_nacht = None
+    # SNAP: derselbe Umgang mit der Null wie beim Nachtpreis — ein leeres
+    # Panel-Feld kommt als 0 an und heißt „nicht gesetzt", nicht „mittags
+    # gratis".
+    bezug_snap = config.get(CONF_SCHEDULE_CONSUMPTION_PRICE_SNAP)
+    try:
+        bezug_snap = float(bezug_snap) if bezug_snap not in (None, "") else None
+    except (TypeError, ValueError):
+        bezug_snap = None
+    if bezug_snap is not None and (
+        bezug_snap <= 0 or abs(bezug_snap - bezug) < 1e-9
+    ):
+        bezug_snap = None
     bezug_nacht_von = _stunde_aus_zeit(
         config.get(CONF_SCHEDULE_CONSUMPTION_NIGHT_START), DEFAULT_CONSUMPTION_NIGHT_START
     )
@@ -1450,6 +1500,7 @@ async def async_collect_inputs(
         eeg_night_end_hour=eeg_nacht_bis,
         consumption_price=bezug,
         consumption_price_night=bezug_nacht,
+        consumption_price_snap=bezug_snap,
         consumption_night_start_hour=bezug_nacht_von,
         consumption_night_end_hour=bezug_nacht_bis,
         # Wie bei den übrigen Fahrplan-Zahlen zählt auch hier ein leeres Feld

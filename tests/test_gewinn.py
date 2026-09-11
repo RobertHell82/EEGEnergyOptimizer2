@@ -642,6 +642,57 @@ def test_gleiche_grenzen_sind_kein_fenster():
         assert _bezug(stunde, **over) == pytest.approx(0.25)
 
 
+def test_snap_gilt_im_sommer_zwischen_zehn_und_sechzehn():
+    """Zeitraum und Uhrzeit stehen in der Verordnung (1.4.–30.9., 10–16)."""
+    inputs = _inputs(consumption_price=0.25, consumption_price_snap=0.24)
+    juli = datetime(2026, 7, 15, tzinfo=timezone.utc)
+
+    def preis(tag, stunde):
+        return sched.bezugspreis_zu(inputs, tag.replace(hour=stunde))
+
+    assert preis(juli, 10) == pytest.approx(0.24)
+    assert preis(juli, 15) == pytest.approx(0.24)
+    # 16:00 gehört nicht mehr dazu, 09:00 noch nicht.
+    assert preis(juli, 16) == pytest.approx(0.25)
+    assert preis(juli, 9) == pytest.approx(0.25)
+
+
+def test_snap_gilt_nur_im_sommerhalbjahr():
+    inputs = _inputs(consumption_price=0.25, consumption_price_snap=0.24)
+    mittags = {"hour": 12}
+    for monat, erwartet in ((3, 0.25), (4, 0.24), (9, 0.24), (10, 0.25), (1, 0.25)):
+        stamp = datetime(2026, monat, 15, tzinfo=timezone.utc).replace(**mittags)
+        assert sched.bezugspreis_zu(inputs, stamp) == pytest.approx(erwartet), monat
+
+
+def test_snap_schlaegt_den_nachtpreis():
+    """Die Fenster überschneiden sich normalerweise nicht — bei einem
+    ungewöhnlich gesetzten Nachtfenster gewinnt die Verordnung."""
+    inputs = _inputs(
+        consumption_price=0.25, consumption_price_snap=0.24,
+        consumption_price_night=0.18,
+        consumption_night_start_hour=8, consumption_night_end_hour=18,
+    )
+    juli_mittag = datetime(2026, 7, 15, 12, tzinfo=timezone.utc)
+    juli_abend = datetime(2026, 7, 15, 17, tzinfo=timezone.utc)
+    assert sched.bezugspreis_zu(inputs, juli_mittag) == pytest.approx(0.24)
+    assert sched.bezugspreis_zu(inputs, juli_abend) == pytest.approx(0.18)
+
+
+def test_snap_allein_ergibt_eine_preisreihe():
+    """Auch ohne Nachtpreis muss das LP eine Reihe sehen, sonst plant es
+    mittags gegen einen Preis, den es dort nicht gibt."""
+    pytest.importorskip("pandas")
+    juli = datetime(2026, 7, 15, tzinfo=timezone.utc)
+    stamps = [juli.replace(hour=h) for h in (8, 11, 14, 20)]
+    inputs = _inputs(
+        timestamps=stamps, consumption_kw=[0.5] * 4, production_kw=[0.0] * 4,
+        consumption_price=0.25, consumption_price_snap=0.24,
+    )
+    reihe = sched.HAConfig(inputs).consumption_price(stamps[0])
+    assert [round(float(v), 4) for v in list(reihe)] == [0.25, 0.24, 0.24, 0.25]
+
+
 def test_netzbezug_wird_mit_dem_preis_des_slots_bewertet():
     """Ein Slot um 23 Uhr mit 4 kW Bezug: eine Viertelstunde, 1 kWh."""
     inputs = _inputs(consumption_price_night=0.18,

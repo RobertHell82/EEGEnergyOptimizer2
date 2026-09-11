@@ -252,6 +252,7 @@ const WIZARD_DEFAULTS = {
   schedule_night_end: "06:00",
   schedule_consumption_price: 0.26,
   schedule_consumption_price_night: 0,
+  schedule_consumption_price_snap: 0,
   schedule_consumption_night_start: "22:00",
   schedule_consumption_night_end: "06:00",
   // Alterungskosten der Batterie: derselbe Wert wie DEFAULT_BATTERY_COST im
@@ -6076,6 +6077,13 @@ class EegOptimizerPanel extends HTMLElement {
         <div class="help-text">Dein Arbeitspreis inklusive Netz und Abgaben. Solange er klar über der Einspeisevergütung liegt, ist die genaue Höhe unwichtig — erst wenn sich beide annähern, ändert sich das Verhalten grundlegend.</div>
       </div>
       <div class="field-group">
+        <label>Bezugspreis im Sommer mittags (ct/kWh)</label>
+        <input type="number" data-field="${prefix}schedule_consumption_price_snap" data-unit="ct"
+               value="${Number(d.schedule_consumption_price_snap) > 0 ? ctAus(d.schedule_consumption_price_snap) : ""}"
+               min="0" max="200" step="0.1" placeholder="leer = kein Sommer-Rabatt">
+        <div class="help-text">Österreich: Der <strong>Sommer-Nieder-Arbeitspreis (SNAP)</strong> senkt das Netznutzungsentgelt vom 1. April bis 30. September täglich zwischen 10 und 16 Uhr um 20 %. Trag hier deinen Bezugspreis abzüglich dieser Ersparnis ein — die Differenz steht im Preisblatt deines Netzbetreibers (z.&nbsp;B. Netz OÖ 1,26&nbsp;ct, Linz Netz 1,11&nbsp;ct). Zeitraum und Uhrzeit stehen in der Verordnung und sind deshalb fest. Voraussetzung ist die viertelstündliche Messung beim Netzbetreiber; für Mengen, die einer Energiegemeinschaft zugeordnet sind, gilt der Rabatt nicht.</div>
+      </div>
+      <div class="field-group">
         <label>Bezugspreis nachts (ct/kWh)</label>
         <input type="number" data-field="${prefix}schedule_consumption_price_night" data-unit="ct"
                value="${Number(d.schedule_consumption_price_night) > 0 ? ctAus(d.schedule_consumption_price_night) : ""}"
@@ -6714,6 +6722,9 @@ class EegOptimizerPanel extends HTMLElement {
           ? row("Standardvergütung Nacht", `${preis(d.schedule_feedin_price_night, 0)} (${d.schedule_night_start || "20:00"}–${d.schedule_night_end || "06:00"})`)
           : ""}
         ${row("Bezugspreis", preis(d.schedule_consumption_price, 0.247))}
+        ${Number(d.schedule_consumption_price_snap) > 0
+          ? row("Bezugspreis Sommer mittags", `${preis(d.schedule_consumption_price_snap, 0)} (Apr–Sep, 10:00–16:00)`)
+          : ""}
         ${Number(d.schedule_consumption_price_night) > 0
           ? row("Bezugspreis Nacht", `${preis(d.schedule_consumption_price_night, 0)} (${d.schedule_consumption_night_start || "22:00"}–${d.schedule_consumption_night_end || "06:00"})`)
           : ""}
