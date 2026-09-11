@@ -251,6 +251,9 @@ const WIZARD_DEFAULTS = {
   schedule_night_start: "20:00",
   schedule_night_end: "06:00",
   schedule_consumption_price: 0.26,
+  schedule_consumption_price_night: 0,
+  schedule_consumption_night_start: "22:00",
+  schedule_consumption_night_end: "06:00",
   // Alterungskosten der Batterie: derselbe Wert wie DEFAULT_BATTERY_COST im
   // Backend (schedule.py) — im Feld sichtbar statt nur als Platzhalter.
   schedule_battery_cost: 0.01,
@@ -6072,6 +6075,25 @@ class EegOptimizerPanel extends HTMLElement {
                value="${ctAus(d.schedule_consumption_price ?? 0.247)}" min="0" max="200" step="0.1">
         <div class="help-text">Dein Arbeitspreis inklusive Netz und Abgaben. Solange er klar über der Einspeisevergütung liegt, ist die genaue Höhe unwichtig — erst wenn sich beide annähern, ändert sich das Verhalten grundlegend.</div>
       </div>
+      <div class="field-group">
+        <label>Bezugspreis nachts (ct/kWh)</label>
+        <input type="number" data-field="${prefix}schedule_consumption_price_night" data-unit="ct"
+               value="${Number(d.schedule_consumption_price_night) > 0 ? ctAus(d.schedule_consumption_price_night) : ""}"
+               min="0" max="200" step="0.1" placeholder="leer = rund um die Uhr derselbe Preis">
+        <div class="help-text">Nur ausfüllen, wenn du nachts wirklich weniger zahlst — etwa mit einem Doppeltarif beim Netzentgelt (in Österreich 06–22 und 22–06 Uhr) oder einem Energievertrag mit Nachtsatz. Leer heißt: ein Preis rund um die Uhr.</div>
+      </div>
+      ${Number(d.schedule_consumption_price_night) > 0 ? `
+      <div style="display:flex;gap:12px">
+        <div class="field-group" style="flex:1">
+          <label>Bezug nachts von</label>
+          <input type="time" data-field="${prefix}schedule_consumption_night_start" value="${d.schedule_consumption_night_start || "22:00"}">
+        </div>
+        <div class="field-group" style="flex:1">
+          <label>Bezug nachts bis</label>
+          <input type="time" data-field="${prefix}schedule_consumption_night_end" value="${d.schedule_consumption_night_end || "06:00"}">
+        </div>
+      </div>
+      <div class="help-text" style="margin-bottom:16px">Wann der Nachtpreis für den Bezug gilt. Darf über Mitternacht gehen und ist unabhängig vom Nachtfenster der Einspeisung — Netz- und Energievertrag teilen selten dieselben Stunden.</div>` : ""}
       ${alterungskostenSichtbar && d.expert_mode ? `
       <div class="field-group">
         <label>Alterungskosten der Batterie (ct/kWh)</label>
@@ -6692,6 +6714,9 @@ class EegOptimizerPanel extends HTMLElement {
           ? row("Standardvergütung Nacht", `${preis(d.schedule_feedin_price_night, 0)} (${d.schedule_night_start || "20:00"}–${d.schedule_night_end || "06:00"})`)
           : ""}
         ${row("Bezugspreis", preis(d.schedule_consumption_price, 0.247))}
+        ${Number(d.schedule_consumption_price_night) > 0
+          ? row("Bezugspreis Nacht", `${preis(d.schedule_consumption_price_night, 0)} (${d.schedule_consumption_night_start || "22:00"}–${d.schedule_consumption_night_end || "06:00"})`)
+          : ""}
         ${row("Energiegemeinschaft", d.enable_peakshare !== false
           ? `${d.peakshare_community || "BEG"} — ${(d.eeg_demand_source || "peakshare") === "quote" ? "feste Abnahmequote" : "PeakShare-Prognose"}`
           : "Aus")}

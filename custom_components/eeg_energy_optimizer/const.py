@@ -418,6 +418,10 @@ TELEMETRY_SETTINGS_KEYS = (
     "spot_feedin_fee_pct",
     "awattar_sunny_vertrag",
     "schedule_consumption_price",
+    # Zweiter Bezugspreis samt Fenster (leer = ein Preis rund um die Uhr).
+    "schedule_consumption_price_night",
+    "schedule_consumption_night_start",
+    "schedule_consumption_night_end",
     "schedule_grid_fee",
     "schedule_battery_cost",
     "schedule_night_start",

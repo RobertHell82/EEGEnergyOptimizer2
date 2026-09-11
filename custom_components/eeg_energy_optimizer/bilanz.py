@@ -502,11 +502,13 @@ class EnergieBilanz:
         if inputs is None:
             return
         try:
-            from .schedule import _basistarif_je_slot
+            from .schedule import _basistarif_je_slot, bezugspreis_zu
 
             marke = {"t": now_local.isoformat()}
             slot["basis"] = _basistarif_je_slot([marke], inputs)[0]
-            slot["kwp"] = float(inputs.consumption_price)
+            # Auch der Bezugspreis gilt nur für diesen Augenblick: Mit einem
+            # Nachttarif ist er um 23 Uhr ein anderer als um 12.
+            slot["kwp"] = float(bezugspreis_zu(inputs, now_local))
         except Exception:  # noqa: BLE001 - ohne Preise bleibt der Slot roh
             _LOGGER.debug("Bilanz: Preise nicht einfrierbar", exc_info=True)
             return

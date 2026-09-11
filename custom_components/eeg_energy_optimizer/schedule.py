@@ -107,6 +107,17 @@ CONF_SCHEDULE_NIGHT_END = "schedule_night_end"
 CONF_PEAKSHARE_NIGHT_START = "peakshare_night_start"
 CONF_PEAKSHARE_NIGHT_END = "peakshare_night_end"
 CONF_SCHEDULE_CONSUMPTION_PRICE = "schedule_consumption_price"
+# Zweiter Bezugspreis für ein Nachtfenster — leer heißt „ein Preis rund um
+# die Uhr". Gründe gibt es zwei: ein Doppeltarif beim Netzentgelt (in
+# Österreich DTAP/DNAP, 06–22 und 22–06 nach der Systemnutzungsentgelte-
+# Verordnung) und Energieverträge mit eigenem Nachtsatz. Das Fenster ist
+# frei einstellbar, weil beide Verträge eigene Zeiten haben können und die
+# Vorgabe nur der häufigste Fall ist.
+CONF_SCHEDULE_CONSUMPTION_PRICE_NIGHT = "schedule_consumption_price_night"
+CONF_SCHEDULE_CONSUMPTION_NIGHT_START = "schedule_consumption_night_start"
+CONF_SCHEDULE_CONSUMPTION_NIGHT_END = "schedule_consumption_night_end"
+DEFAULT_CONSUMPTION_NIGHT_START = 22
+DEFAULT_CONSUMPTION_NIGHT_END = 6
 CONF_SCHEDULE_GRID_FEE = "schedule_grid_fee"
 CONF_SCHEDULE_BATTERY_COST = "schedule_battery_cost"
 # Mindest-Ladestand in Prozent, unter den der Fahrplan nicht planen darf.
@@ -250,6 +261,12 @@ class ScheduleInputs:
     min_soc_pct: float = 0.0
     # Obergrenze in Prozent; 100 = der Fahrplan darf bis voll planen
     max_soc_pct: float = 100.0
+    # Bezugspreis im Nachtfenster; None = ein Preis rund um die Uhr. Das
+    # Fenster ist ein eigenes, nicht das der Einspeisung: Netz- und
+    # Energievertrag teilen selten dieselben Stunden.
+    consumption_price_night: float | None = None
+    consumption_night_start_hour: int = DEFAULT_CONSUMPTION_NIGHT_START
+    consumption_night_end_hour: int = DEFAULT_CONSUMPTION_NIGHT_END
     forecast_source: str = ""
     # Preisaufschlag je Zeitpunkt aus dem Bedarf der Energiegemeinschaften
     # (€/kWh, siehe eeg_price.py). Leer = keine Gemeinschaft wirkt mit.
@@ -448,6 +465,7 @@ class HAConfig:
 
         self._consumption_series = None
         self._feedin_series = None
+        self._consumption_price_series = None
 
     @property
     def grid_fee(self) -> float:
@@ -569,7 +587,23 @@ class HAConfig:
         return self._feedin_series.loc[start_time:]
 
     def consumption_price(self, start_time):
-        return self._inputs.consumption_price
+        """Skalar ohne Nachtpreis, sonst eine Reihe je Zeitpunkt.
+
+        Pandas nimmt beides — der Skalar wird über alle Slots gestreckt.
+        Mit Nachtpreis muss es eine Reihe sein, sonst plant das LP gegen
+        einen Preis, den es nachts gar nicht gibt.
+        """
+        if self._inputs.consumption_price_night is None:
+            return self._inputs.consumption_price
+        if self._consumption_price_series is None:
+            import pandas as pd
+
+            index = pd.DatetimeIndex(self._inputs.timestamps)
+            self._consumption_price_series = pd.Series(
+                [bezugspreis_zu(self._inputs, stamp) for stamp in index],
+                index=index,
+            )
+        return self._consumption_price_series.loc[start_time:]
 
     # -- Lebenszyklus --------------------------------------------------
 
@@ -605,6 +639,24 @@ def _ist_im_nachtfenster(stunde: int, von: int, bis: int) -> bool:
     if von < bis:
         return von <= stunde < bis
     return stunde >= von or stunde < bis
+
+
+def bezugspreis_zu(inputs: ScheduleInputs, stamp: datetime) -> float:
+    """Bezugspreis, der zu diesem Zeitpunkt gilt (€/kWh).
+
+    Ohne zweiten Preis ist es immer derselbe. Ein Fenster, dessen Grenzen
+    zusammenfallen, ist kein Fenster — dann gilt ebenfalls der Tagespreis.
+    """
+    nacht = getattr(inputs, "consumption_price_night", None)
+    if nacht is None:
+        return inputs.consumption_price
+    if _ist_im_nachtfenster(
+        stamp.hour,
+        getattr(inputs, "consumption_night_start_hour", DEFAULT_CONSUMPTION_NIGHT_START),
+        getattr(inputs, "consumption_night_end_hour", DEFAULT_CONSUMPTION_NIGHT_END),
+    ):
+        return float(nacht)
+    return inputs.consumption_price
 
 
 def _min_soc_pct(config: dict) -> float:
@@ -1305,6 +1357,27 @@ async def async_collect_inputs(
         bezug = float(bezug)
     else:
         bezug = feedin_tag + float(config.get(CONF_SCHEDULE_GRID_FEE, DEFAULT_GRID_FEE))
+    # Zweiter Bezugspreis fürs Nachtfenster. Das Panel speichert ein leeres
+    # Zahlenfeld als 0 — und 0 heißt hier „gibt es nicht", nicht „nachts
+    # gratis": Mit einem Nachtpreis von null lüde das Modell die Batterie
+    # jede Nacht kostenlos aus dem Netz voll. Ein Wert gleich dem Tagespreis
+    # fällt ebenfalls weg, sonst trüge das Modell eine Reihe mit, die nichts
+    # unterscheidet.
+    bezug_nacht = config.get(CONF_SCHEDULE_CONSUMPTION_PRICE_NIGHT)
+    try:
+        bezug_nacht = float(bezug_nacht) if bezug_nacht not in (None, "") else None
+    except (TypeError, ValueError):
+        bezug_nacht = None
+    if bezug_nacht is not None and (
+        bezug_nacht <= 0 or abs(bezug_nacht - bezug) < 1e-9
+    ):
+        bezug_nacht = None
+    bezug_nacht_von = _stunde_aus_zeit(
+        config.get(CONF_SCHEDULE_CONSUMPTION_NIGHT_START), DEFAULT_CONSUMPTION_NIGHT_START
+    )
+    bezug_nacht_bis = _stunde_aus_zeit(
+        config.get(CONF_SCHEDULE_CONSUMPTION_NIGHT_END), DEFAULT_CONSUMPTION_NIGHT_END
+    )
 
     # Bedarfsprognose EINMAL sammeln — für die Preisfunktion (Steuerung) und
     # die Gewinnberechnung. Die beiden Gemeinschaftslisten unterscheiden sich:
@@ -1376,6 +1449,9 @@ async def async_collect_inputs(
         eeg_night_start_hour=eeg_nacht_von,
         eeg_night_end_hour=eeg_nacht_bis,
         consumption_price=bezug,
+        consumption_price_night=bezug_nacht,
+        consumption_night_start_hour=bezug_nacht_von,
+        consumption_night_end_hour=bezug_nacht_bis,
         # Wie bei den übrigen Fahrplan-Zahlen zählt auch hier ein leeres Feld
         # als „nicht gesetzt": das Panel speicherte leere Zahlenfelder als 0,
         # und eine 0 hieße, die Optimierung schont die Batterie überhaupt
@@ -1945,11 +2021,11 @@ def bewerte_geldfluesse(
     for slot, basis in zip(slots, basis_je_slot):
         grid = slot.get("grid_p") or 0.0
         bat = slot.get("battery_p") or 0.0
+        stamp = datetime.fromisoformat(slot["t"])
         heizstab_kwh += max(0.0, float(slot.get("heizstab") or 0.0)) * dt_h
         if grid > 0:
             export_kwh = grid * dt_h
             export_gesamt_kwh += export_kwh
-            stamp = datetime.fromisoformat(slot["t"])
             viertel = int(stamp.timestamp() // 900)
             eeg_nacht = _ist_im_nachtfenster(stamp.hour, eeg_von, eeg_bis)
             unzugeteilt = export_kwh
@@ -1974,7 +2050,7 @@ def bewerte_geldfluesse(
             # beim Sammeln der Inputs bereits als Warnung protokolliert.
             erloes += max(0.0, unzugeteilt) * basis
         else:
-            bezug += -grid * dt_h * inputs.consumption_price
+            bezug += -grid * dt_h * bezugspreis_zu(inputs, stamp)
         if bat > 0:
             alterung += bat * dt_h * inputs.battery_cost
         if slot.get("soc") is not None:

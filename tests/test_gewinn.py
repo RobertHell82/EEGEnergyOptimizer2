@@ -599,6 +599,63 @@ def test_gewinn_fenster_verlaengert_kurze_plaene_nicht():
     assert sched._gewinn_slotzahl(_Kurz(), 0) == 0
 
 
+# ---------------------------------------------------------------------------
+# Zweiter Bezugspreis: Nachtfenster
+# ---------------------------------------------------------------------------
+
+
+def _bezug(stunde: int, **over):
+    """Preis, der zur vollen Stunde gilt (lokale Zeit des Testtages)."""
+    inputs = _inputs(**over)
+    return sched.bezugspreis_zu(inputs, MITTAG.replace(hour=stunde, minute=0))
+
+
+def test_ohne_nachtpreis_gilt_ein_preis_rund_um_die_uhr():
+    for stunde in (0, 5, 12, 23):
+        assert _bezug(stunde) == pytest.approx(0.25)
+
+
+def test_nachtpreis_gilt_im_fenster_ueber_mitternacht():
+    over = dict(consumption_price_night=0.18,
+                consumption_night_start_hour=22, consumption_night_end_hour=6)
+    assert _bezug(23, **over) == pytest.approx(0.18)
+    assert _bezug(2, **over) == pytest.approx(0.18)
+    assert _bezug(5, **over) == pytest.approx(0.18)
+    # Grenzen: 22 gehört dazu, 6 nicht mehr.
+    assert _bezug(22, **over) == pytest.approx(0.18)
+    assert _bezug(6, **over) == pytest.approx(0.25)
+    assert _bezug(12, **over) == pytest.approx(0.25)
+
+
+def test_nachtfenster_ohne_mitternachtssprung():
+    over = dict(consumption_price_night=0.20,
+                consumption_night_start_hour=1, consumption_night_end_hour=5)
+    assert _bezug(0, **over) == pytest.approx(0.25)
+    assert _bezug(3, **over) == pytest.approx(0.20)
+    assert _bezug(5, **over) == pytest.approx(0.25)
+
+
+def test_gleiche_grenzen_sind_kein_fenster():
+    over = dict(consumption_price_night=0.20,
+                consumption_night_start_hour=4, consumption_night_end_hour=4)
+    for stunde in (0, 4, 12, 23):
+        assert _bezug(stunde, **over) == pytest.approx(0.25)
+
+
+def test_netzbezug_wird_mit_dem_preis_des_slots_bewertet():
+    """Ein Slot um 23 Uhr mit 4 kW Bezug: eine Viertelstunde, 1 kWh."""
+    inputs = _inputs(consumption_price_night=0.18,
+                     consumption_night_start_hour=22, consumption_night_end_hour=6)
+    nachts = sched.bewerte_geldfluesse(
+        [_slot(MITTAG.replace(hour=23, minute=0), 0, grid_p=-4.0)], inputs
+    )
+    tags = sched.bewerte_geldfluesse(
+        [_slot(MITTAG.replace(hour=12, minute=0), 0, grid_p=-4.0)], inputs
+    )
+    assert nachts["bezug"] == pytest.approx(0.18)
+    assert tags["bezug"] == pytest.approx(0.25)
+
+
 def test_gewinn_wird_auch_bei_quelle_spot_gerechnet():
     """Spotpreis ohne Gemeinschaft: die Bewertung folgt der Börsenreihe je
     Slot. Bei deutlicher Nacht-Spreizung verschiebt die Optimierung den
@@ -727,6 +784,31 @@ def test_deckel_kappt_echte_boersenpreise_nicht():
 
     werte = [round(float(v), 4) for v in list(reihe)[:4]]
     assert werte == [0.42, 0.35, 0.25, 0.10], f"Börsenpreise gekappt: {werte}"
+
+
+def test_bezugspreis_kommt_als_reihe_ins_modell():
+    """Mit Nachtpreis muss das LP eine Reihe je Slot sehen, keinen Skalar —
+    sonst plant es nachts gegen einen Preis, den es dort nicht gibt."""
+    pytest.importorskip("pandas")
+    stamps = [NOW.replace(hour=h, minute=0) for h in (12, 21, 22, 23)]
+    inputs = _inputs(
+        timestamps=stamps,
+        consumption_kw=[0.5] * 4,
+        production_kw=[0.0] * 4,
+        consumption_price=0.25,
+        consumption_price_night=0.18,
+        consumption_night_start_hour=22,
+        consumption_night_end_hour=6,
+    )
+    reihe = sched.HAConfig(inputs).consumption_price(stamps[0])
+    assert [round(float(v), 4) for v in list(reihe)] == [0.25, 0.25, 0.18, 0.18]
+
+
+def test_ohne_nachtpreis_bleibt_der_skalar():
+    """Ohne zweiten Preis ändert sich für das Modell nichts — es bekommt
+    denselben Skalar wie bisher und streckt ihn selbst über die Slots."""
+    inputs = _inputs(consumption_price=0.25)
+    assert sched.HAConfig(inputs).consumption_price(NOW) == pytest.approx(0.25)
 
 
 def test_bewertung_mit_fester_abnahmequote():
