@@ -53,6 +53,7 @@ from .const import (
     GUARD_EMERGENCY_IMPORT_RUNS,
     GUARD_EXPORT_RELEASE_KW,
     GUARD_EXPORT_STICKY_BAND_KW,
+    HEIZSTAB_EINSCHWING_LAEUFE,
     MODE_AUS,
     MODE_EIN,
     SCHEDULE_BATTERY_FULL_SOC_PCT,
@@ -215,6 +216,9 @@ class ScheduleExecutor:
         # die Batterie gesättigt und der Heizstab darf nachrücken (bei
         # Batterie-Vorrang).
         self._ladelimit_am_maximum = False
+        # Wie der Heizstab: nach einem Anheben einen Takt Nachführung
+        # abwarten, bevor eine Lücke wieder als „zu viel" gilt.
+        self._guard_einschwing_laeufe = 0
         # Wird bei Schreibfehlern mit der Aktion ("charge_limit" / "discharge"
         # / "release") aufgerufen — Telemetrie-Anbindung aus __init__.py.
         self._failure_callback = failure_callback
@@ -680,6 +684,15 @@ class ScheduleExecutor:
         else:
             anteil = (soc - HEIZSTAB_TEILUNG_SOC_LEER_PCT) / spanne
             anteil = max(0.0, min(1.0, anteil)) * HEIZSTAB_TEILUNG_MAX_ANTEIL
+        # Oberhalb der Vollmarke steigt der Anteil weiter bis auf alles: Je
+        # näher die Batterie an 100 %, desto weniger nimmt sie noch auf, und
+        # desto weniger ist ihr zu reservieren.
+        rest_spanne = 100.0 - HEIZSTAB_TEILUNG_SOC_VOLL_PCT
+        if soc > HEIZSTAB_TEILUNG_SOC_VOLL_PCT and rest_spanne > 0:
+            darueber = min(1.0, (soc - HEIZSTAB_TEILUNG_SOC_VOLL_PCT) / rest_spanne)
+            anteil = HEIZSTAB_TEILUNG_MAX_ANTEIL + darueber * (
+                1.0 - HEIZSTAB_TEILUNG_MAX_ANTEIL
+            )
         return round(hz.max_kw * anteil, 3)
 
     def _heizstab_plan_kw(self, schedule_state: dict | None, now: datetime) -> float:
@@ -860,6 +873,7 @@ class ScheduleExecutor:
             # (_heizstab_deckel_kw). Bis 2.1.1-dev4 gab es hier einen
             # Wartezweig für den Heizstab-Vorrang — der Schalter ist entfallen.
             neu = max(plan_kw, basis + GUARD_CHARGE_STEP_KW)
+            self._guard_einschwing_laeufe = HEIZSTAB_EINSCHWING_LAEUFE
             max_kw = self._inverter.get_charge_limit_max_kw()
             if max_kw is not None:
                 neu = min(neu, max_kw)
@@ -868,6 +882,13 @@ class ScheduleExecutor:
                 self._ladelimit_am_maximum = False
             return neu, "Guard 1: Einspeisung am Limit — Ladelimit angehoben"
         self._ladelimit_am_maximum = False
+        if export >= 0 and self._guard_einschwing_laeufe > 0:
+            # Der Wechselrichter führt die PV nach dem letzten Schritt noch
+            # nach. Zusammen mit der Rücknahme des Heizstabs verschwände
+            # sonst mehr Last, als tatsächlich fehlt — genau das hat die
+            # Anlage in Grünbach zwischen 0 und 2 kW pendeln lassen.
+            self._guard_einschwing_laeufe -= 1
+            return basis, "Guard 1: Nachführung abwarten"
         if export < limit_kw - GUARD_EXPORT_RELEASE_KW:
             # Deutlich unter der Grenze → zurück Richtung Fahrplanwert, nie
             # darunter. Je Lauf wird der halbe Abstand abgebaut, mindestens

@@ -25,10 +25,13 @@ Die Regel je Guard-Lauf (30 s), siehe ``naechster_sollwert``:
 * Einspeisung klebt an der Grenze → ein Schritt (0,5 kW) hinauf. Die wahre
   Höhe des Überschusses ist dann unsichtbar, der Wechselrichter regelt schon
   ab — deshalb tasten statt springen.
-* Einspeisung deutlich unter der Grenze → um genau die Lücke hinunter, in
-  einem Lauf. Bei Netzbezug wird die Lücke größer als die Grenze und der
-  Sollwert fällt auf 0. Nach unten ist die Lücke messbar, es gibt nichts zu
-  ertasten.
+* Netzbezug → sofort 0. Gekaufter Strom ist der eine Fall, der wehtut.
+* Einspeisung deutlich unter der Grenze → anteilig hinunter (halbe Lücke),
+  und im Takt direkt nach einem Aufwärtsschritt gar nicht: Der
+  Wechselrichter führt die PV dann noch nach, die Lücke ist keine. Die volle
+  Lücke abzuziehen war falsch, solange Guard 1 dasselbe tut — beide zusammen
+  nahmen mehr weg, als fehlte, und der Heizstab pendelte zwischen 0 und
+  2 kW (Grünbach, 13.09.2026).
 * Dazwischen (totes Band) → halten.
 
 Vorrang gegenüber der Batterie steckt in ``vorrang_frei``: der Executor
@@ -69,11 +72,13 @@ from ..const import (
     DEFAULT_HEIZSTAB_PUFFER_LITER,
     GUARD_EXPORT_RELEASE_KW,
     GUARD_EXPORT_STICKY_BAND_KW,
+    HEIZSTAB_EINSCHWING_LAEUFE,
     HEIZSTAB_KOMFORT_EXPORT_ZIEL_KW,
     HEIZSTAB_KONFLIKT_MINUTEN,
     HEIZSTAB_KONFLIKT_TOLERANZ_KW,
     HEIZSTAB_MINTEMP_HYSTERESE_K,
     HEIZSTAB_PLAN_EXPORT_ZIEL_KW,
+    HEIZSTAB_RUECKNAHME_ANTEIL,
     HEIZSTAB_SATT_TOLERANZ_KW,
     HEIZSTAB_STEP_KW,
     HEIZSTAB_TEMP_HYSTERESE_K,
@@ -168,11 +173,18 @@ def naechster_sollwert(
     grenze_kw: float,
     max_kw: float,
     vorrang_frei: bool,
+    einschwingen: bool = False,
 ) -> tuple[float, str]:
     """Die Überschuss-Regel als reine Funktion (siehe Modul-Docstring).
 
     ``export_kw`` positiv = Einspeisung, negativ = Bezug, None = kein
     Messwert. Liefert den neuen Sollwert in kW und die Begründung.
+
+    ``einschwingen`` sagt, dass der letzte Lauf angehoben hat und der
+    Wechselrichter die PV noch nachführt. Eine Lücke ist dann kein Beweis für
+    einen zu hohen Sollwert, sondern meistens nur Trägheit — sie wird einmal
+    übergangen. Netzbezug bleibt davon unberührt (siehe
+    ``HEIZSTAB_EINSCHWING_LAEUFE``).
     """
     if export_kw is None:
         return 0.0, "kein Netz-Messwert"
@@ -187,9 +199,23 @@ def naechster_sollwert(
         return round(neu, 3), "Einspeisung an der Grenze — Heizstab angehoben"
     if export_kw < grenze_kw - GUARD_EXPORT_RELEASE_KW:
         luecke = grenze_kw - export_kw
-        neu = max(0.0, alt_kw - luecke)
+        if export_kw < 0:
+            # Gekaufter Strom — der eine Fall, der wirklich wehtut: volle
+            # Lücke, sofort, ohne Einschwingfrist. Bei einem Ziel von 0,3 kW
+            # (Komfort, Fahrplan) ist die Lücke klein und der Heizstab weicht
+            # nur zurück; an der Einspeisegrenze wird sie größer als der
+            # Sollwert und er geht ganz aus.
+            neu = max(0.0, alt_kw - luecke)
+        elif einschwingen:
+            return alt_kw, "Einspeisung unter der Grenze — Nachführung abwarten"
+        else:
+            neu = max(0.0, alt_kw - luecke * HEIZSTAB_RUECKNAHME_ANTEIL)
         if neu <= 0.0:
-            grund = "Netzbezug — Heizstab aus" if export_kw < 0 else "Einspeisung unter der Grenze — Heizstab aus"
+            grund = (
+                "Netzbezug — Heizstab aus"
+                if export_kw < 0
+                else "Einspeisung unter der Grenze — Heizstab aus"
+            )
             return 0.0, grund
         return round(neu, 3), "Einspeisung unter der Grenze — Heizstab zurückgenommen"
     return alt_kw, "totes Band — Heizstab bleibt"
@@ -219,6 +245,9 @@ class HeizstabController:
         self.write_failures = 0
         # Seit wann zieht das Gerät mehr, als vorgegeben ist? None = passt.
         self._konflikt_seit: float | None = None
+        # Hat der letzte Lauf angehoben? Dann führt der Wechselrichter die PV
+        # noch nach, und eine Lücke im nächsten Takt ist keine Aussage.
+        self._einschwing_laeufe = 0
         # Wer bei neuen Messwerten Bescheid haben will (Sensoren, Push-Modell).
         self._listener: list[Callable[[], None]] = []
 
@@ -480,7 +509,7 @@ class HeizstabController:
             # sie liegt über der Mindesttemperatur.
             soll, grund = naechster_sollwert(
                 self.sollwert_kw, export_kw, HEIZSTAB_KOMFORT_EXPORT_ZIEL_KW,
-                self.max_kw, True,
+                self.max_kw, True, self._einschwingt,
             )
             return soll, f"Mindesttemperatur unterschritten {temp_text} — Vorrang vor der Einspeisung: {grund}"
         if self._max_gesperrt:
@@ -489,7 +518,7 @@ class HeizstabController:
             ziel_kw = min(float(plan_kw), self.max_kw)
             soll, grund = naechster_sollwert(
                 self.sollwert_kw, export_kw, HEIZSTAB_PLAN_EXPORT_ZIEL_KW,
-                ziel_kw, True,
+                ziel_kw, True, self._einschwingt,
             )
             return soll, f"Fahrplan: {ziel_kw:.1f} kW Wärme — {grund}"
         max_kw = self.max_kw
@@ -500,13 +529,19 @@ class HeizstabController:
             if max_kw <= 0:
                 return 0.0, "Batterie hat Vorrang — sie ist fast leer"
         soll, grund = naechster_sollwert(
-            self.sollwert_kw, export_kw, grenze_kw, max_kw, vorrang_frei
+            self.sollwert_kw, export_kw, grenze_kw, max_kw, vorrang_frei,
+            self._einschwingt,
         )
         return soll, grund + zusatz
 
     # ------------------------------------------------------------------
     # Schreiben / Lesen (Treiber)
     # ------------------------------------------------------------------
+    @property
+    def _einschwingt(self) -> bool:
+        """Läuft die Einschwingfrist nach einem Aufwärtsschritt noch?"""
+        return self._einschwing_laeufe > 0
+
     async def async_set_sollwert(self, kw: float, grund: str) -> None:
         """Sollwert übernehmen; bei relevanter Änderung sofort schreiben.
 
@@ -514,6 +549,13 @@ class HeizstabController:
         aktuellen Wert immer wieder — das ist der Watchdog des Ohmpilot.
         """
         kw = max(0.0, float(kw))
+        # Frist neu setzen, wenn dieser Lauf angehoben hat; sonst abbauen.
+        # Der Wechselrichter bekommt so einen Takt Zeit, die PV nachzuführen,
+        # bevor eine Lücke wieder als „zu viel Heizstab" gilt.
+        if kw > self.sollwert_kw + _SOFORT_SCHREIBEN_AB_KW:
+            self._einschwing_laeufe = HEIZSTAB_EINSCHWING_LAEUFE
+        elif self._einschwing_laeufe > 0:
+            self._einschwing_laeufe -= 1
         geaendert = abs(kw - self.sollwert_kw) >= _SOFORT_SCHREIBEN_AB_KW
         if geaendert:
             # Neuer Sollwert, neue Beweislage: Das Gerät darf jetzt erst

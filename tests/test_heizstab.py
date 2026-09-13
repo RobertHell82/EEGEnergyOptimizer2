@@ -87,11 +87,36 @@ def test_am_limit_ohne_vorrang_halten():
     assert "Batterie hat Vorrang" in grund
 
 
-def test_unter_dem_limit_um_die_luecke_hinunter():
-    """Export 3,2 kW bei Grenze 4 kW: Lücke 0,8 kW, in EINEM Lauf zurück."""
+def test_unter_dem_limit_anteilig_hinunter():
+    """Export 3,2 kW bei Grenze 4 kW: Lücke 0,8 kW → nur die Hälfte zurück.
+
+    Die volle Lücke abzuziehen war falsch, solange Guard 1 im selben Lauf
+    dasselbe tut: Beide zusammen nahmen mehr Last weg, als fehlte, die
+    Einspeisung schoss über die Grenze, und der Heizstab pendelte.
+    """
     neu, grund = naechster_sollwert(3.0, export_kw=3.2, grenze_kw=4.0, max_kw=6.0, vorrang_frei=True)
-    assert neu == pytest.approx(2.2)
+    assert neu == pytest.approx(2.6)
     assert "zurückgenommen" in grund
+
+
+def test_nach_dem_anheben_erst_nachfuehren_lassen():
+    """Direkt nach einem Aufwärtsschritt ist eine Lücke keine Aussage."""
+    neu, grund = naechster_sollwert(
+        3.0, export_kw=3.2, grenze_kw=4.0, max_kw=6.0, vorrang_frei=True,
+        einschwingen=True,
+    )
+    assert neu == pytest.approx(3.0)
+    assert "Nachführung" in grund
+
+
+def test_netzbezug_auch_waehrend_der_einschwingfrist():
+    """Gekaufter Strom wartet auf nichts — volle Lücke, sofort."""
+    neu, grund = naechster_sollwert(
+        3.0, export_kw=-0.4, grenze_kw=4.0, max_kw=6.0, vorrang_frei=True,
+        einschwingen=True,
+    )
+    assert neu == 0.0
+    assert "Netzbezug" in grund
 
 
 def test_netzbezug_sofort_null():

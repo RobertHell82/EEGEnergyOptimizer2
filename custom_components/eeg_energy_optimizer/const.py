@@ -302,9 +302,24 @@ WASSER_WH_PRO_LITER_KELVIN = 1.163
 
 # Nachführung: klebt die Einspeisung an der Grenze, ist die wahre Höhe des
 # Überschusses unsichtbar (der Wechselrichter regelt bereits ab) — deshalb
-# in Schritten nach oben; nach unten ist die Lücke messbar und wird in einem
-# Lauf geschlossen. Dieselben Bänder wie Guard 1 (GUARD_EXPORT_*).
+# in Schritten nach oben. Dieselben Bänder wie Guard 1 (GUARD_EXPORT_*).
 HEIZSTAB_STEP_KW = 0.5
+# Nach unten ist die Lücke zwar messbar, aber sie sagt nicht, WER sie
+# verursacht hat. An einer Anlage mit 4-kW-Einspeisegrenze (Grünbach,
+# 13.09.2026) hat genau diese Annahme den Heizstab lahmgelegt: Guard 1 und
+# der Heizstab sahen dieselbe Lücke und zogen sie JEDER voll ab — bei 822 W
+# Lücke verschwanden 1463 W Last, die Einspeisung schoss auf 4763 W, der
+# Wechselrichter regelte ab, und im nächsten Takt klebte es wieder an der
+# Grenze. Ergebnis: ein Sägezahn 0 → 1,9 → 0 kW, im Mittel 0,97 statt
+# 3,0 kW. Solange noch eingespeist wird, kostet ein zu hoher Sollwert nur
+# Ertrag, kein Geld — deshalb anteilig zurück. Erst bei Netzbezug wird
+# gekauft, dann geht es weiter sofort und ganz hinunter.
+HEIZSTAB_RUECKNAHME_ANTEIL = 0.5
+# Ein Aufwärtsschritt braucht Zeit, bis der Wechselrichter die PV nachgeführt
+# hat (gemessen 10–30 s). Die Messung im Takt danach zeigt deshalb eine
+# Lücke, die keine ist — sie wird einmal übergangen. Bei Netzbezug nicht:
+# der ist echt, egal wie frisch der letzte Schritt war.
+HEIZSTAB_EINSCHWING_LAEUFE = 1
 # Watchdog des Ohmpilot: 50 s ohne Sollwert → Heizstab aus. Geschrieben
 # wird deshalb alle 30 s, unabhängig davon, ob sich der Wert geändert hat.
 HEIZSTAB_WRITE_INTERVAL_S = 30
@@ -346,6 +361,13 @@ HEIZSTAB_KONFLIKT_MINUTEN = 3.0
 HEIZSTAB_TEILUNG_SOC_LEER_PCT = 20.0
 HEIZSTAB_TEILUNG_SOC_VOLL_PCT = 50.0
 HEIZSTAB_TEILUNG_MAX_ANTEIL = 0.5
+# Über HEIZSTAB_TEILUNG_SOC_VOLL_PCT hinaus wächst der Anteil weiter, bis der
+# Heizstab bei vollem Speicher alles bekommt: Was die Batterie nicht mehr
+# aufnehmen kann, ihr trotzdem zu reservieren, verschenkt den Überschuss. In
+# Grünbach stand der Deckel bei 94 % Ladestand immer noch auf 3 von 6 kW,
+# während die Batterie nur mit 0,7 kW lud und die PV abgeregelt wurde. Der
+# Deckel entfiel erst bei „gesättigt" — also am Ladelimit-Maximum, das bei
+# gedrosselter Ladung nie erreicht wird.
 
 # ------------------------------------------------------------------
 # Phase 8: Telemetry (v1.1)

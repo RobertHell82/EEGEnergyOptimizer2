@@ -1241,8 +1241,8 @@ async def test_ohne_vorrang_teilen_sich_beide_den_ueberschuss(mock_hass, mock_in
     """Ohne Heizstab-Vorrang wartet er nicht mehr auf eine gesättigte Batterie.
 
     Beide regeln gleichzeitig hoch: Guard 1 hebt das Ladelimit an, der
-    Heizstab bekommt gleichzeitig seinen Anteil. Bei einem Ladestand über
-    HEIZSTAB_TEILUNG_SOC_VOLL_PCT ist das die Hälfte seiner Leistung.
+    Heizstab bekommt gleichzeitig seinen Anteil — bei 80 % Ladestand vier
+    Fünftel seiner Leistung.
     """
     cfg = _cfg_heizstab()
     ex, hz, _ = _make_executor_mit_heizstab(mock_hass, mock_inverter, cfg)
@@ -1255,8 +1255,8 @@ async def test_ohne_vorrang_teilen_sich_beide_den_ueberschuss(mock_hass, mock_in
         assert mock_inverter.async_set_charge_limit.await_args.args[0] == pytest.approx(4.5)
         # … und der Heizstab rückt im selben Lauf nach, statt zu warten.
         assert hz.sollwert_kw == pytest.approx(HEIZSTAB_STEP_KW)
-    # Sein Deckel ist die Hälfte der Nennleistung.
-    assert ex._heizstab_deckel_kw() == pytest.approx(hz.max_kw * 0.5)
+    # Sein Deckel wächst mit dem Ladestand.
+    assert ex._heizstab_deckel_kw() == pytest.approx(hz.max_kw * 0.8)
 
 
 async def test_fast_leere_batterie_bekommt_alles(mock_hass, mock_inverter):
@@ -1278,17 +1278,25 @@ async def test_fast_leere_batterie_bekommt_alles(mock_hass, mock_inverter):
 
 
 async def test_anteil_waechst_mit_dem_ladestand(mock_hass, mock_inverter):
-    """Zwischen leer und halbvoll steigt der Anteil des Heizstabs linear."""
+    """Der Anteil des Heizstabs steigt mit dem Ladestand — bis auf alles.
+
+    Bis zur halbvollen Batterie auf die Hälfte, darüber weiter bis 100 %:
+    Was die Batterie nicht mehr aufnimmt, ihr trotzdem zu reservieren,
+    verschenkt den Überschuss. In Grünbach stand der Deckel bei 94 %
+    Ladestand noch auf der Hälfte, während die PV abgeregelt wurde.
+    """
     cfg = _cfg_heizstab()
     ex, hz, _ = _make_executor_mit_heizstab(mock_hass, mock_inverter, cfg)
     werte = {}
-    for soc in (20.0, 35.0, 50.0, 90.0):
+    for soc in (20.0, 35.0, 50.0, 75.0, 94.0, 100.0):
         ex._batterie_soc_pct = lambda s=soc: s
         werte[soc] = ex._heizstab_deckel_kw()
     assert werte[20.0] == pytest.approx(0.0)
     assert werte[35.0] == pytest.approx(hz.max_kw * 0.25)
     assert werte[50.0] == pytest.approx(hz.max_kw * 0.5)
-    assert werte[90.0] == pytest.approx(hz.max_kw * 0.5), "über der Hälfte nicht mehr"
+    assert werte[75.0] == pytest.approx(hz.max_kw * 0.75)
+    assert werte[94.0] == pytest.approx(hz.max_kw * 0.94)
+    assert werte[100.0] == pytest.approx(hz.max_kw), "voll: der Heizstab bekommt alles"
 
 
 async def test_unbekannter_ladestand_hebt_den_deckel_auf(mock_hass, mock_inverter):
