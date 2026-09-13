@@ -5259,15 +5259,22 @@ class EegOptimizerPanel extends HTMLElement {
       </p>
       <h3 style="margin-bottom:8px">Was du brauchst</h3>
       <ul style="line-height:1.8;margin-bottom:20px;padding-left:20px">
-        <li>Einen Fronius Gen24, Huawei SUN2000, Sigenergy SigenStor oder SolaX Gen4+ mit Batteriespeicher</li>
+        <li>Einen Wechselrichter mit Batteriespeicher: Fronius Gen24, Huawei SUN2000,
+            Kostal Plenticore (Beta), Sigenergy SigenStor, SMA Smart Energy (Beta)
+            oder SolaX Gen4+</li>
         <li>Eine PV-Prognose-Integration (Solcast Solar oder Forecast.Solar)</li>
       </ul>
       <h3 style="margin-bottom:8px">Getestete Setups</h3>
       <ul style="line-height:1.8;padding-left:20px">
         <li>Fronius Gen24 mit BYD Batteriespeicher</li>
         <li>Huawei SUN2000 mit LUNA2000 Batteriespeicher</li>
+        <li>Sigenergy SigenStor</li>
         <li>SolaX Gen4+ mit Triple Power Batteriespeicher</li>
-      </ul>`;
+      </ul>
+      <p style="line-height:1.6;margin-top:12px;color:var(--secondary-text-color);font-size:13px">
+        Kostal Plenticore und SMA Smart Energy werden gesteuert, sind aber noch im Feldtest.
+        SolarEdge StorEdge wird nur angezeigt, nicht gesteuert.
+      </p>`;
   }
 
   /* ── Schritt: Wechselrichter (Typ + Sensoren) ──── */
