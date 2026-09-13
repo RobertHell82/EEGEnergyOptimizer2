@@ -91,6 +91,30 @@ _OFFSET_STORCTL_MOD = 3
 _OFFSET_MINRSVPCT = 5
 _OFFSET_OUTWRTE = 10
 _OFFSET_INWRTE = 11
+
+# Registernamen für die Fehlerausgabe — welcher Wert abgelehnt wurde, ist
+# bei der Fehlersuche wichtiger als seine Adresse.
+_REGISTERNAMEN = {
+    _OFFSET_MINRSVPCT: "MinRsvPct",
+    _OFFSET_OUTWRTE: "OutWRte",
+    _OFFSET_INWRTE: "InWRte",
+}
+
+
+def _modbus_fehlertext(result: Any) -> str:
+    """Die Modbus-Ausnahme eines Schreibversuchs als lesbarer Text."""
+    code = getattr(result, "exception_code", None)
+    namen = {
+        1: "Illegal Function",
+        2: "Illegal Data Address",
+        3: "Illegal Data Value",
+        4: "Slave Device Failure",
+        6: "Slave Device Busy",
+    }
+    if code is None:
+        return str(result)
+    return f"Modbus-Ausnahme {code} ({namen.get(code, 'unbekannt')})"
+
 _OFFSET_WINTMS = 12
 _OFFSET_RVRTTMS = 13
 
@@ -571,8 +595,20 @@ class FroniusInverter(InverterBase):
                 **_slave_kw(self._client, self._slave_id),
             )
             if result.isError():
+                # Den Namen des Registers und die Modbus-Ausnahme mitschreiben:
+                # „write error at register 40356" allein sagt nicht, ob die
+                # Adresse, der Wert oder das Gerät das Problem ist. Ein
+                # „Illegal Data Value" weist auf einen unzulässigen Wert hin
+                # (etwa ein negatives InWRte), „Illegal Data Address" auf eine
+                # falsche Registeradresse.
                 _LOGGER.error(
-                    "Fronius: write error at register %d (value=%d)", address, value
+                    "Fronius: write error at register %d (%s, value=%d, "
+                    "signed=%d): %s",
+                    address,
+                    _REGISTERNAMEN.get(offset, f"Offset +{offset}"),
+                    value,
+                    value - 0x10000 if value > 0x7FFF else value,
+                    _modbus_fehlertext(result),
                 )
                 return False
             self.register_writes += 1

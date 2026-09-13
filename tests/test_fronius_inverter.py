@@ -1117,3 +1117,32 @@ class TestBackupReserve:
         inverter._active_command = {"kind": "charge_limit", "power_kw": 0}
         inverter._note_idle_minrsvpct(500)
         assert inverter._minrsvpct_idle == 500
+
+
+def test_schreibfehler_nennt_register_und_modbus_ausnahme(caplog):
+    """Ein abgelehnter Schreibversuch muss sagen, WAS abgelehnt wurde.
+
+    In Grünbach standen am 13.09.2026 109 Meldungen „write error at register
+    40356 (value=64664)" im Log — ohne Registernamen, ohne Vorzeichen und
+    ohne die Modbus-Ausnahme war daraus nicht zu erkennen, ob Adresse, Wert
+    oder Gerät das Problem sind.
+    """
+    import logging
+    from custom_components.eeg_energy_optimizer.inverter import fronius as f
+
+    class _Fehler:
+        exception_code = 3
+        def isError(self):
+            return True
+
+    text = f._modbus_fehlertext(_Fehler())
+    assert "3" in text and "Illegal Data Value" in text
+    assert f._REGISTERNAMEN[f._OFFSET_INWRTE] == "InWRte"
+    assert f._REGISTERNAMEN[f._OFFSET_OUTWRTE] == "OutWRte"
+    # Ohne Ausnahmecode bleibt die Rohdarstellung übrig, statt zu scheitern
+    class _Ohne:
+        def isError(self):
+            return True
+        def __str__(self):
+            return "irgendwas"
+    assert f._modbus_fehlertext(_Ohne()) == "irgendwas"
