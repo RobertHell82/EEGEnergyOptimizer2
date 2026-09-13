@@ -10,6 +10,12 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
+## [2.1.1-dev20] - 2026-09-13
+
+### Behoben
+
+- **SolaX: Ein abgesenkter Entladeboden konnte als Gerätegrenze durchgehen.** Dieselbe Konstruktion wie beim Fronius in der Vorversion, mit umgekehrter Wirkung: Für eine erzwungene Entladung senkt der Treiber den Entladeboden des Geräts ab, geschützt war das Zurücklesen bisher allein über ein Flag, das erst nach dem letzten Befehl gesetzt wird. Bricht etwas dazwischen ab, steht der abgesenkte Boden schon im Gerät — und der Fahrplan bekommt ihn als Gerätegrenze zurückgemeldet. Nicht ein Stillstand wäre die Folge, sondern dass der Wechselrichter im Automatikbetrieb tiefer entlädt als eingestellt. Jetzt gilt der gesicherte Vorwert unabhängig vom Flag, und eine gescheiterte Entladung schreibt ihn zurück.
+
 ## [2.1.1-dev19] - 2026-09-13
 
 ### Behoben
