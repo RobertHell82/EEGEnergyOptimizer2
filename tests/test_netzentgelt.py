@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import re
+from datetime import date
 from pathlib import Path
 
 import pytest
@@ -17,6 +18,20 @@ import pytest
 from custom_components.eeg_energy_optimizer import netzentgelt as n
 
 FIXTURE = Path(__file__).parent / "fixtures" / "ris_snev2018_p5_NOR40273644.html"
+FIXTURE_P6 = Path(__file__).parent / "fixtures" / "ris_snev2018_p6_netzverlust.html"
+FIXTURE_EFBV = Path(__file__).parent / "fixtures" / "ris_efbv2026_p2.html"
+FIXTURE_ELABG_P4 = Path(__file__).parent / "fixtures" / "ris_elabgg_p4.html"
+FIXTURE_ELABG_P7 = Path(__file__).parent / "fixtures" / "ris_elabgg_p7.html"
+
+# Die vier Posten von Netz Oberösterreich auf Netzebene 7, Stand 2026,
+# Cent/kWh netto — Grundlage aller Erwartungen hier.
+OOE_NETZNUTZUNG = 6.29
+OOE_VERLUST = 0.528
+ELEKTRIZITAETSABGABE_2026 = 0.1
+FOERDERBEITRAG_2026 = 0.62
+OOE_SUMME_NETTO = (
+    OOE_NETZNUTZUNG + OOE_VERLUST + ELEKTRIZITAETSABGABE_2026 + FOERDERBEITRAG_2026
+)
 
 
 # ---------------------------------------------------------------------------
@@ -35,10 +50,55 @@ def test_echte_ris_tabelle_wird_gelesen():
 
 
 def test_eingebauter_schnappschuss_entspricht_der_verordnung():
-    """Der Rückfall darf nicht von dem abweichen, was das RIS liefert."""
+    """Der Rückfall darf nicht von dem abweichen, was das RIS liefert.
+
+    § 5 bringt Arbeitspreis und SNAP, § 6 das Netzverlustentgelt — der
+    Schnappschuss trägt beides zusammen, also wird auch gegen beide geprüft.
+    """
     tarife = n.parse_tabelle(FIXTURE.read_text(encoding="utf-8"))
-    assert tarife == n.SNAPSHOT.tarife
+    verluste = n.parse_verlust_tabelle(FIXTURE_P6.read_text(encoding="utf-8"))
+    assert {k: (t.ap, t.snap, t.winap) for k, t in tarife.items()} == {
+        k: (t.ap, t.snap, t.winap) for k, t in n.SNAPSHOT.tarife.items()
+    }
+    assert verluste == {k: t.verlust for k, t in n.SNAPSHOT.tarife.items()}
     assert n.SNAPSHOT.aus_snapshot is True
+
+
+def test_netzverlustentgelt_kommt_aus_paragraf_sechs():
+    """§ 6 ist eine Matrix: Zeilen Netzbereich, Spalten Netzebene."""
+    verluste = n.parse_verlust_tabelle(FIXTURE_P6.read_text(encoding="utf-8"))
+    assert len(verluste) == len(n.NETZBEREICHE)
+    assert verluste["oberoesterreich"] == pytest.approx(OOE_VERLUST)
+    assert verluste["wien"] == pytest.approx(0.700)
+    # Burgenland verrechnet auf Netzebene 7 kein Netzverlustentgelt — eine
+    # echte Null, kein fehlender Wert.
+    assert verluste["burgenland"] == pytest.approx(0.0)
+
+
+def test_elektrizitaetsabgabe_nimmt_die_befristung_und_faellt_danach_zurueck():
+    """2026 gilt der gesenkte Satz aus § 7, ab 2027 wieder § 4 Abs. 2."""
+    regel = FIXTURE_ELABG_P4.read_text(encoding="utf-8")
+    uebergang = FIXTURE_ELABG_P7.read_text(encoding="utf-8")
+
+    satz, quelle = n.parse_elektrizitaetsabgabe(regel, uebergang, date(2026, 9, 13))
+    assert satz == pytest.approx(ELEKTRIZITAETSABGABE_2026)
+    assert "§ 7" in quelle
+
+    # Die Befristung endet mit 2026 — ohne Zutun gilt dann der Regelsatz.
+    satz27, quelle27 = n.parse_elektrizitaetsabgabe(regel, uebergang, date(2027, 6, 1))
+    assert satz27 == pytest.approx(1.5)
+    assert "§ 4" in quelle27
+
+    # Ohne Übergangsbestimmungen bleibt es beim Regelsatz.
+    assert n.parse_elektrizitaetsabgabe(regel, None, date(2026, 9, 13))[0] == pytest.approx(1.5)
+
+
+def test_foerderbeitrag_summiert_arbeits_und_verlustanteil():
+    """Je kWh zählen beide Komponenten; die je Zählpunkt bleibt außen vor."""
+    satz, quelle = n.parse_foerderbeitrag(FIXTURE_EFBV.read_text(encoding="utf-8"))
+    # 0,583 (Netznutzung Arbeit) + 0,037 (Netzverlust) auf Netzebene 7
+    assert satz == pytest.approx(FOERDERBEITRAG_2026)
+    assert "Förderbeitragsverordnung" in quelle
 
 
 def _tabelle_2027(zeilen: str) -> str:
@@ -133,22 +193,45 @@ def test_zahlen_lesen(text, erwartet):
 # ---------------------------------------------------------------------------
 
 
-def test_netzgebuehr_aus_dem_netzbereich_ist_brutto():
+def test_netzgebuehr_aus_dem_netzbereich_ist_die_summe_aller_posten():
+    """Netznutzung, Netzverlust, Elektrizitätsabgabe, Förderbeitrag — brutto.
+
+    Bis 2.1.1-dev14 stand hier nur das Netznutzungsentgelt; auf einer Anlage
+    in Oberösterreich fehlten dadurch rund 1,5 ct je Kilowattstunde.
+    """
     g = n.netzgebuehr_fuer({"schedule_netzbereich": "oberoesterreich"})
     assert g is not None
-    assert g.ap == pytest.approx(6.29 * 1.2 / 100)
-    assert g.snap == pytest.approx(5.03 * 1.2 / 100)
+    assert g.ap == pytest.approx(OOE_SUMME_NETTO * 1.2 / 100)
+    # Nur das Netznutzungsentgelt wird vom SNAP gesenkt
+    assert g.snap == pytest.approx(
+        (5.03 + OOE_VERLUST + ELEKTRIZITAETSABGABE_2026 + FOERDERBEITRAG_2026) * 1.2 / 100
+    )
     assert g.winap is None
     assert g.bereich == "oberoesterreich"
     assert g.stand == "2026-04-01"
     assert "eingebaut" in (g.quelle or "")
+    # Die Einzelposten stehen für die Anzeige daneben und ergeben die Summe
+    assert g.netznutzung == pytest.approx(OOE_NETZNUTZUNG * 1.2 / 100)
+    assert g.netzverlust == pytest.approx(OOE_VERLUST * 1.2 / 100)
+    assert g.elektrizitaetsabgabe == pytest.approx(ELEKTRIZITAETSABGABE_2026 * 1.2 / 100)
+    assert g.foerderbeitrag == pytest.approx(FOERDERBEITRAG_2026 * 1.2 / 100)
+    assert g.ap == pytest.approx(
+        g.netznutzung + g.netzverlust + g.elektrizitaetsabgabe + g.foerderbeitrag
+    )
 
 
 def test_netzgebuehr_manuell_rechnet_den_snap_selbst():
+    """Handeingabe = Netznutzungsentgelt; die bundesweiten Abgaben kommen dazu.
+
+    Das Netzverlustentgelt hängt am Netzbereich — ohne ihn ist es nicht
+    bekannt und bleibt draußen, statt geraten zu werden.
+    """
+    abgaben = (ELEKTRIZITAETSABGABE_2026 + FOERDERBEITRAG_2026) * 1.2 / 100
     g = n.netzgebuehr_fuer({"schedule_netzbereich": "manual", "schedule_network_fee": 0.06})
     assert g is not None
-    assert g.ap == pytest.approx(0.06)
-    assert g.snap == pytest.approx(0.048)
+    assert g.ap == pytest.approx(0.06 + abgaben)
+    assert g.snap == pytest.approx(0.048 + abgaben)
+    assert g.netzverlust == 0.0
     assert g.winap is None
     assert g.quelle == "Handeingabe"
     # Handeingabe ohne Wert: keine Netzgebühr
@@ -166,13 +249,16 @@ def test_gelesene_tabelle_schlaegt_den_schnappschuss_bereichsweise():
         stand="2027-01-01", quelle="SNE-T-V § 9 (RIS NOR1)", url=None,
         tarife={"wien": n.Netztarif(5.30, 4.24, 4.24)},
     )
+    # Die erfundene Tabelle kennt kein Netzverlustentgelt; die bundesweiten
+    # Abgaben kommen weiter aus dem Schnappschuss.
+    abgaben = (ELEKTRIZITAETSABGABE_2026 + FOERDERBEITRAG_2026) * 1.2 / 100
     wien = n.netzgebuehr_fuer({"schedule_netzbereich": "wien"}, tabelle)
-    assert wien.ap == pytest.approx(5.30 * 1.2 / 100)
-    assert wien.winap == pytest.approx(4.24 * 1.2 / 100)
+    assert wien.ap == pytest.approx(5.30 * 1.2 / 100 + abgaben)
+    assert wien.winap == pytest.approx(4.24 * 1.2 / 100 + abgaben)
     assert wien.stand == "2027-01-01"
     # Ein Bereich, den die gelesene Tabelle nicht kennt, kommt aus dem Schnappschuss
     linz = n.netzgebuehr_fuer({"schedule_netzbereich": "linz"}, tabelle)
-    assert linz.ap == pytest.approx(5.57 * 1.2 / 100)
+    assert linz.ap == pytest.approx((5.57 + 0.487) * 1.2 / 100 + abgaben)
     assert linz.stand == "2026-04-01"
 
 
@@ -274,17 +360,30 @@ async def test_provider_liest_die_tabelle_aus_dem_ris(monkeypatch):
     assert tabelle.aus_snapshot is False
     assert tabelle.stand == "2026-04-01"
     assert "NOR40273644" in tabelle.quelle and "SNE-V 2018" in tabelle.quelle
-    assert tabelle.tarife == n.SNAPSHOT.tarife
-    # Titelsuche (SNE-T-V) → Gesetzesnummer (SNE-V 2018) → ein HTML
-    assert [u for u, _ in netz.aufrufe] == [n.RIS_API_URL, n.RIS_API_URL, "https://ogd.example/NOR40273644.html"]
+    # Dieselben Sätze wie der Schnappschuss; das Netzverlustentgelt steht
+    # nicht in § 5, der Attrappe fehlt es also und es bleibt beim Rückfall.
+    assert {k: (t.ap, t.snap) for k, t in tabelle.tarife.items()} == {
+        k: (t.ap, t.snap) for k, t in n.SNAPSHOT.tarife.items()
+    }
+    # Titelsuche (SNE-T-V) → Gesetzesnummer (SNE-V 2018) → ein HTML …
+    assert [u for u, _ in netz.aufrufe[:3]] == [
+        n.RIS_API_URL, n.RIS_API_URL, "https://ogd.example/NOR40273644.html",
+    ]
     assert netz.aufrufe[1][1]["Gesetzesnummer"] == "20010107"
     assert netz.aufrufe[1][1]["Fassung.FassungVom"]
+    # … danach die Zusatzposten, jeder mit eigener Suche
+    gesucht = [p for u, p in netz.aufrufe[3:] if u == n.RIS_API_URL and p]
+    assert any(p.get("Titel") == "Elektrizitätsabgabegesetz" for p in gesucht)
+    assert any(
+        p.get("Titel") == "Erneuerbaren-Förderbeitragsverordnung" for p in gesucht
+    )
     status = provider.status()
     assert status["aus_snapshot"] is False and status["fehler"] is None
 
     # Innerhalb der Tagesfrist kein zweiter Abruf
+    vorher = len(netz.aufrufe)
     await provider.async_fetch()
-    assert len(netz.aufrufe) == 3
+    assert len(netz.aufrufe) == vorher
 
 
 async def test_provider_nimmt_die_tarifverordnung_sobald_sie_gilt(monkeypatch):
@@ -332,7 +431,10 @@ async def test_provider_faellt_bei_fehler_auf_den_schnappschuss(monkeypatch):
     tabelle = await provider.async_fetch()
     assert tabelle is n.SNAPSHOT
     assert "503" in provider.status()["fehler"]
-    assert provider.netzgebuehr({"schedule_netzbereich": "graz"}).ap == pytest.approx(5.17 * 1.2 / 100)
+    # Alle vier Posten aus dem Schnappschuss
+    assert provider.netzgebuehr({"schedule_netzbereich": "graz"}).ap == pytest.approx(
+        (5.17 + 0.658 + ELEKTRIZITAETSABGABE_2026 + FOERDERBEITRAG_2026) * 1.2 / 100
+    )
 
 
 async def test_provider_meldet_unlesbare_tabelle(monkeypatch):

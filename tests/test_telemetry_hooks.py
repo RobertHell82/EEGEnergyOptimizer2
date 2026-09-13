@@ -338,9 +338,16 @@ def test_profile_setzt_den_bezugspreis_aus_den_teilen_zusammen():
         hass, entry, identity_registered_at=None
     )["settings"]
 
-    assert settings["schedule_consumption_price"] == pytest.approx(0.25)
+    # Netzgebühr = Handeingabe + die bundesweiten kWh-Abgaben (2026)
+    assert settings["schedule_consumption_price"] == pytest.approx(
+        0.25 + (0.1 + 0.62) * 1.2 / 100
+    )
     assert settings["schedule_energy_price"] == 0.19
-    assert settings["schedule_network_fee"] == 0.06
+    # Gemeldet wird die ganze Netzgebühr, mit der auch gerechnet wird:
+    # Handeingabe plus die bundesweiten kWh-Abgaben.
+    assert settings["schedule_network_fee"] == pytest.approx(
+        0.06 + (0.1 + 0.62) * 1.2 / 100
+    )
     assert settings["schedule_netzbereich"] == "manual"
     assert settings["schedule_snap_enabled"] is True
 
@@ -369,8 +376,12 @@ def test_profile_nimmt_die_netzgebuehr_des_netzbereichs():
         hass, entry, identity_registered_at=None
     )["settings"]
 
-    assert settings["schedule_consumption_price"] == pytest.approx(0.19 + netz_wien, abs=1e-5)
-    assert settings["schedule_network_fee"] == pytest.approx(netz_wien, abs=1e-5)
+    assert settings["schedule_consumption_price"] == pytest.approx(
+        0.19 + netz_wien + (0.700 + 0.1 + 0.62) * 1.2 / 100, abs=1e-5
+    )
+    assert settings["schedule_network_fee"] == pytest.approx(
+        netz_wien + (0.700 + 0.1 + 0.62) * 1.2 / 100, abs=1e-5
+    )
 
 
 # ---------------------------------------------------------------------------

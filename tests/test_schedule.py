@@ -1013,9 +1013,15 @@ async def test_bezugspreis_direkt_oder_aus_grid_fee():
     assert inputs.consumption_price_snap is None
 
 
+# Die bundesweiten kWh-Abgaben (Elektrizitätsabgabe + Erneuerbaren-
+# Förderbeitrag) in €/kWh brutto, Stand 2026 — sie hängen an keinem
+# Netzbereich und stecken seit 2.1.1-dev15 in jeder Netzgebühr.
+ABGABEN_BRUTTO = (0.1 + 0.62) * 1.2 / 100
+
+
 async def test_bezugspreis_aus_arbeitspreis_und_netzgebuehr():
     """Seit v28: Bezugspreis = Arbeitspreis + Netzgebühr; der Haken für die
-    zeitvariablen Sätze senkt allein die Netzgebühr."""
+    zeitvariablen Sätze senkt allein das Netznutzungsentgelt."""
     basis = {
         **BASE_CONFIG,
         "schedule_energy_price": 0.19,
@@ -1024,12 +1030,15 @@ async def test_bezugspreis_aus_arbeitspreis_und_netzgebuehr():
     }
 
     inputs, _ = await _collect(basis)
-    assert inputs.consumption_price == pytest.approx(0.25)
+    assert inputs.consumption_price == pytest.approx(0.25 + ABGABEN_BRUTTO)
     assert inputs.consumption_price_snap is None
 
     inputs, _ = await _collect({**basis, "schedule_snap_enabled": True})
-    assert inputs.consumption_price == pytest.approx(0.25)
-    assert inputs.consumption_price_snap == pytest.approx(0.25 - 0.06 * 0.20)
+    assert inputs.consumption_price == pytest.approx(0.25 + ABGABEN_BRUTTO)
+    # Der SNAP senkt nur das Netznutzungsentgelt, nicht die Abgaben
+    assert inputs.consumption_price_snap == pytest.approx(
+        0.25 - 0.06 * 0.20 + ABGABEN_BRUTTO
+    )
     # Handeingabe kennt keinen WiNAP — er steht nur in der Verordnung.
     assert inputs.consumption_price_winap is None
 
@@ -1044,7 +1053,7 @@ async def test_bezugspreis_aus_arbeitspreis_und_netzgebuehr():
     # Arbeitspreis schlägt den Altschlüssel; ein leerer Arbeitspreis (0)
     # lässt den Altschlüssel gelten.
     inputs, _ = await _collect({**basis, "schedule_consumption_price": 0.30})
-    assert inputs.consumption_price == pytest.approx(0.25)
+    assert inputs.consumption_price == pytest.approx(0.25 + ABGABEN_BRUTTO)
     inputs, _ = await _collect(
         {**BASE_CONFIG, "schedule_energy_price": 0, "schedule_consumption_price": 0.30}
     )
@@ -1064,12 +1073,14 @@ async def test_netzgebuehr_kommt_aus_dem_netzbereich():
     }
 
     inputs, _ = await _collect(basis)
-    assert inputs.consumption_price == pytest.approx(0.19 + netz_oo.ap * 1.2 / 100)
+    assert inputs.consumption_price == pytest.approx(
+        0.19 + (netz_oo.ap + netz_oo.verlust) * 1.2 / 100 + ABGABEN_BRUTTO
+    )
     assert inputs.consumption_price_snap is None
 
     inputs, _ = await _collect({**basis, "schedule_snap_enabled": True})
     assert inputs.consumption_price_snap == pytest.approx(
-        0.19 + netz_oo.snap * 1.2 / 100
+        0.19 + (netz_oo.snap + netz_oo.verlust) * 1.2 / 100 + ABGABEN_BRUTTO
     )
 
 
@@ -1103,9 +1114,16 @@ async def test_winap_wirkt_sobald_die_verordnung_ihn_kennt():
     ):
         inputs, _ = await sched.async_collect_inputs(hass, "entry1")
 
-    assert inputs.consumption_price == pytest.approx(0.19 + 5.30 * 1.2 / 100)
-    assert inputs.consumption_price_snap == pytest.approx(0.19 + 4.24 * 1.2 / 100)
-    assert inputs.consumption_price_winap == pytest.approx(0.19 + 4.24 * 1.2 / 100)
+    # Die Attrappe kennt kein Netzverlustentgelt; die Abgaben kommen dazu.
+    assert inputs.consumption_price == pytest.approx(
+        0.19 + 5.30 * 1.2 / 100 + ABGABEN_BRUTTO
+    )
+    assert inputs.consumption_price_snap == pytest.approx(
+        0.19 + 4.24 * 1.2 / 100 + ABGABEN_BRUTTO
+    )
+    assert inputs.consumption_price_winap == pytest.approx(
+        0.19 + 4.24 * 1.2 / 100 + ABGABEN_BRUTTO
+    )
 
 
 def test_bezugspreis_gesamt_liest_beide_schreibweisen():
@@ -1118,7 +1136,7 @@ def test_bezugspreis_gesamt_liest_beide_schreibweisen():
     )
     assert sched.bezugspreis_gesamt(
         {"schedule_energy_price": 0.19}, netz
-    ) == pytest.approx(0.25)
+    ) == pytest.approx(0.25 + ABGABEN_BRUTTO)
     # Ohne Netzgebühr zählt nur der Arbeitspreis
     assert sched.bezugspreis_gesamt({"schedule_energy_price": 0.19}) == pytest.approx(0.19)
     # Unsinn im Feld ist „nicht gesetzt", nicht ein Absturz

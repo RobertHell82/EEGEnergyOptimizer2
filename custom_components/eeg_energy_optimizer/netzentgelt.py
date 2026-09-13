@@ -33,8 +33,9 @@ from __future__ import annotations
 import json
 import logging
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timezone
+from html import unescape
 from html.parser import HTMLParser
 from typing import Any
 
@@ -102,11 +103,66 @@ NETZBEREICH_LABELS: dict[str, str] = dict(NETZBEREICHE)
 
 @dataclass(frozen=True)
 class Netztarif:
-    """Netznutzungsentgelt eines Bereichs auf Netzebene 7, Cent/kWh netto."""
+    """Netzentgelte eines Bereichs auf Netzebene 7, Cent/kWh netto.
+
+    ``ap`` ist das Netznutzungsentgelt (Arbeitspreis) aus § 5, ``verlust``
+    das Netzverlustentgelt aus § 6 derselben Verordnung. Nur der
+    Arbeitspreis wird von den zeitvariablen Sätzen gesenkt — das
+    Netzverlustentgelt gilt rund um die Uhr.
+    """
 
     ap: float
     snap: float | None = None
     winap: float | None = None
+    verlust: float | None = None
+
+
+@dataclass(frozen=True)
+class Abgaben:
+    """Die bundesweiten kWh-Abgaben, Cent/kWh netto.
+
+    Beide hängen nicht am Netzbereich und stehen in eigenen Rechtsquellen:
+    die Elektrizitätsabgabe im Elektrizitätsabgabegesetz (Regelsatz § 4
+    Abs. 2, befristete Sätze in den Übergangsbestimmungen des § 7), der
+    Erneuerbaren-Förderbeitrag in der jährlich neuen
+    Erneuerbaren-Förderbeitragsverordnung (§ 2). Von SNAP und WiNAP bleiben
+    beide unberührt.
+
+    Nicht enthalten sind die Posten je Zählpunkt statt je Kilowattstunde
+    (Erneuerbaren-Pauschale, Messentgelt, Grundpreis): Für die Frage, was
+    eine gespeicherte Kilowattstunde wert ist, zählen sie nicht mit.
+    """
+
+    elektrizitaet: float = 0.0
+    foerderbeitrag: float = 0.0
+    elektrizitaet_quelle: str | None = None
+    foerderbeitrag_quelle: str | None = None
+
+    @property
+    def summe(self) -> float:
+        return round(self.elektrizitaet + self.foerderbeitrag, 6)
+
+    def als_dict(self) -> dict[str, Any]:
+        return {
+            "elektrizitaet": self.elektrizitaet,
+            "foerderbeitrag": self.foerderbeitrag,
+            "elektrizitaet_quelle": self.elektrizitaet_quelle,
+            "foerderbeitrag_quelle": self.foerderbeitrag_quelle,
+        }
+
+    @classmethod
+    def aus_dict(cls, roh: Any) -> "Abgaben | None":
+        if not isinstance(roh, dict):
+            return None
+        try:
+            return cls(
+                elektrizitaet=float(roh.get("elektrizitaet") or 0.0),
+                foerderbeitrag=float(roh.get("foerderbeitrag") or 0.0),
+                elektrizitaet_quelle=roh.get("elektrizitaet_quelle"),
+                foerderbeitrag_quelle=roh.get("foerderbeitrag_quelle"),
+            )
+        except (TypeError, ValueError):
+            return None
 
 
 @dataclass(frozen=True)
@@ -118,6 +174,8 @@ class Tariftabelle:
     url: str | None
     tarife: dict[str, Netztarif] = field(default_factory=dict)
     aus_snapshot: bool = False
+    abgaben: "Abgaben | None" = None
+    verlust_quelle: str | None = None
 
     def als_dict(self) -> dict[str, Any]:
         return {
@@ -125,8 +183,13 @@ class Tariftabelle:
             "quelle": self.quelle,
             "url": self.url,
             "aus_snapshot": self.aus_snapshot,
+            "verlust_quelle": self.verlust_quelle,
+            "abgaben": None if self.abgaben is None else self.abgaben.als_dict(),
             "tarife": {
-                k: {"ap": t.ap, "snap": t.snap, "winap": t.winap}
+                k: {
+                    "ap": t.ap, "snap": t.snap, "winap": t.winap,
+                    "verlust": t.verlust,
+                }
                 for k, t in self.tarife.items()
             },
         }
@@ -140,6 +203,7 @@ class Tariftabelle:
                     ap=float(t["ap"]),
                     snap=None if t.get("snap") is None else float(t["snap"]),
                     winap=None if t.get("winap") is None else float(t["winap"]),
+                    verlust=None if t.get("verlust") is None else float(t["verlust"]),
                 )
         return cls(
             stand=str(roh.get("stand") or ""),
@@ -147,6 +211,8 @@ class Tariftabelle:
             url=roh.get("url"),
             tarife=tarife,
             aus_snapshot=bool(roh.get("aus_snapshot", False)),
+            abgaben=Abgaben.aus_dict(roh.get("abgaben")),
+            verlust_quelle=roh.get("verlust_quelle"),
         )
 
 
@@ -160,22 +226,35 @@ SNAPSHOT = Tariftabelle(
     quelle="SNE-V 2018 § 5 idF BGBl. II Nr. 305/2025 (RIS NOR40273644), eingebaut",
     url="https://ogd.ris.bka.gv.at/Dokumente/Bundesnormen/NOR40273644/NOR40273644.html",
     tarife={
-        "burgenland": Netztarif(8.46, 6.77),
-        "kaernten": Netztarif(9.67, 7.74),
-        "klagenfurt": Netztarif(6.90, 5.52),
-        "niederoesterreich": Netztarif(8.79, 7.03),
-        "oberoesterreich": Netztarif(6.29, 5.03),
-        "linz": Netztarif(5.57, 4.46),
-        "salzburg": Netztarif(6.59, 5.27),
-        "steiermark": Netztarif(8.82, 7.06),
-        "graz": Netztarif(5.17, 4.14),
-        "tirol": Netztarif(6.81, 5.45),
-        "innsbruck": Netztarif(8.03, 6.42),
-        "vorarlberg": Netztarif(4.96, 3.97),
-        "wien": Netztarif(6.98, 5.58),
-        "kleinwalsertal": Netztarif(17.73, 14.18),
+        # ap, snap, winap, verlust — verlust aus § 6 derselben Fassung
+        "burgenland": Netztarif(8.46, 6.77, None, 0.000),
+        "kaernten": Netztarif(9.67, 7.74, None, 0.368),
+        "klagenfurt": Netztarif(6.90, 5.52, None, 0.578),
+        "niederoesterreich": Netztarif(8.79, 7.03, None, 0.384),
+        "oberoesterreich": Netztarif(6.29, 5.03, None, 0.528),
+        "linz": Netztarif(5.57, 4.46, None, 0.487),
+        "salzburg": Netztarif(6.59, 5.27, None, 0.357),
+        "steiermark": Netztarif(8.82, 7.06, None, 0.336),
+        "graz": Netztarif(5.17, 4.14, None, 0.658),
+        "tirol": Netztarif(6.81, 5.45, None, 0.293),
+        "innsbruck": Netztarif(8.03, 6.42, None, 0.453),
+        "vorarlberg": Netztarif(4.96, 3.97, None, 0.393),
+        "wien": Netztarif(6.98, 5.58, None, 0.700),
+        "kleinwalsertal": Netztarif(17.73, 14.18, None, 0.401),
     },
     aus_snapshot=True,
+    verlust_quelle="SNE-V 2018 § 6 (RIS NOR40273639), eingebaut",
+    # Elektrizitätsabgabe: für 2026 auf 0,1 ct gesenkt (ElAbgG § 7), ab
+    # 1.1.2027 gilt wieder der Regelsatz von 1,5 ct aus § 4 Abs. 2 — der
+    # Abruf holt das von selbst, der Schnappschuss altert an dieser Stelle
+    # also planmäßig. Förderbeitrag: EFBV 2026 § 2, Netzebene 7 ohne
+    # Leistungsmessung (0,583 Arbeit + 0,037 Verlust).
+    abgaben=Abgaben(
+        elektrizitaet=0.1,
+        foerderbeitrag=0.62,
+        elektrizitaet_quelle="ElAbgG § 7, befristet bis 2027-01-01 (eingebaut)",
+        foerderbeitrag_quelle="Erneuerbaren-Förderbeitragsverordnung 2026 § 2 (eingebaut)",
+    ),
 )
 
 
@@ -200,6 +279,23 @@ QUELLEN: tuple[Quelle, ...] = (
     # eintragen (erwartet Dezember 2026), Schnappschuss nachziehen.
     Quelle("SNE-T-V", None, "Systemnutzungsentgelte-Tarifverordnung", None),
     Quelle("SNE-V 2018", "20010107", None, "§ 5"),
+)
+
+# Das Netzverlustentgelt steht in derselben Verordnung, einen Paragraphen
+# weiter — als Matrix Netzbereich × Netzebene statt als Block je Netzebene.
+QUELLE_NETZVERLUST = Quelle("SNE-V 2018", "20010107", None, "§ 6")
+# Die beiden bundesweiten Abgaben, jede in ihrer eigenen Rechtsquelle. Die
+# Förderbeitragsverordnung wird jährlich neu erlassen und trägt die Jahreszahl
+# im Titel; die Titelsuche ohne Jahr findet die am Stichtag geltende Fassung.
+QUELLE_ELEKTRIZITAETSABGABE = Quelle(
+    "Elektrizitätsabgabegesetz", None, "Elektrizitätsabgabegesetz", "§ 4"
+)
+QUELLE_ELEKTRIZITAETSABGABE_UEBERGANG = Quelle(
+    "Elektrizitätsabgabegesetz", None, "Elektrizitätsabgabegesetz", "§ 7"
+)
+QUELLE_FOERDERBEITRAG = Quelle(
+    "Erneuerbaren-Förderbeitragsverordnung", None,
+    "Erneuerbaren-Förderbeitragsverordnung", "§ 2",
 )
 
 
@@ -372,9 +468,193 @@ def parse_tabelle(html: str) -> dict[str, Netztarif]:
 # ---------------------------------------------------------------------------
 
 
+# Netzebene-7-Spalte in der Matrix des § 6: „NE 7", in der Tarifverordnung
+# ab 2027 vielleicht wieder ausgeschrieben.
+_RE_NE7_SPALTE = re.compile(r"^\s*(?:NE|Netzebene)\s*7\s*$", re.IGNORECASE)
+
+
+def parse_verlust_tabelle(html: str) -> dict[str, float]:
+    """Netzverlustentgelt je Netzbereich aus § 6 SNE-V lesen, Cent/kWh netto.
+
+    Anderer Aufbau als § 5: eine Matrix, Zeilen sind die Netzbereiche,
+    Spalten die Netzebenen („NE 1" … „NE 7"). Gesucht wird die NE-7-Spalte;
+    ein Strich („-") heißt, dass der Bereich diese Ebene nicht hat, und wird
+    übergangen.
+
+    Löst ``ValueError`` aus, wenn keine NE-7-Spalte zu finden ist.
+    """
+    leser = _Tabellenleser()
+    leser.feed(html)
+
+    for tabelle in leser.tables:
+        spalte = None
+        for zeile in tabelle:
+            treffer = [i for i, z in enumerate(zeile) if _RE_NE7_SPALTE.match(z)]
+            if treffer:
+                spalte = treffer[-1]
+                break
+        if spalte is None:
+            continue
+        werte: dict[str, float] = {}
+        for zeile in tabelle:
+            if len(zeile) <= spalte:
+                continue
+            # Der Bereichsname steht nicht zwingend in der ersten Zelle — die
+            # Zeilen der Verordnung beginnen mit ihrer Nummer („2.").
+            key = None
+            for zelle in zeile[:spalte]:
+                key = _bereich_schluessel(zelle)
+                if key is not None:
+                    break
+            if key is None:
+                continue
+            zahl = _zahl(zeile[spalte])
+            if zahl is not None:
+                werte[key] = zahl
+        if werte:
+            return werte
+    raise ValueError("keine Tabelle mit einer Netzebene-7-Spalte gefunden")
+
+
+# „Die Abgabe beträgt 0,015 Euro je kWh." (§ 4 Abs. 2 ElAbgG)
+_RE_ABGABE_REGEL = re.compile(
+    r"Die Abgabe beträgt\s+(\d+[,.]\d+)\s*Euro je kWh", re.IGNORECASE
+)
+# Befristete Sätze in § 7: „… 0,001 Euro je kWh für die Lieferung von
+# elektrischer Energie an natürliche Personen …"
+_RE_ABGABE_HAUSHALT = re.compile(
+    r"(\d+[,.]\d+)\s*Euro je kWh für die Lieferung von elektrischer Energie\s+"
+    r"an natürliche Personen",
+    re.IGNORECASE,
+)
+# Zeitraum einer Übergangsbestimmung: „Für Vorgänge nach dem 31. Dezember 2025
+# und vor dem 1. Jänner 2027"
+_MONATE = {
+    "jänner": 1, "januar": 1, "februar": 2, "märz": 3, "april": 4, "mai": 5,
+    "juni": 6, "juli": 7, "august": 8, "september": 9, "oktober": 10,
+    "november": 11, "dezember": 12,
+}
+_RE_ZEITRAUM = re.compile(
+    r"nach dem\s+(\d{1,2})\.\s*([A-Za-zÄÖÜäöü]+)\s*(\d{4})\s+und vor dem\s+"
+    r"(\d{1,2})\.\s*([A-Za-zÄÖÜäöü]+)\s*(\d{4})",
+    re.IGNORECASE,
+)
+
+
+def _datum(tag: str, monat: str, jahr: str) -> date | None:
+    m = _MONATE.get(monat.strip().lower())
+    if m is None:
+        return None
+    try:
+        return date(int(jahr), m, int(tag))
+    except ValueError:
+        return None
+
+
+def parse_elektrizitaetsabgabe(
+    text_regel: str, text_uebergang: str | None, stichtag: date
+) -> tuple[float, str] | None:
+    """Elektrizitätsabgabe für Haushalte am Stichtag, Cent/kWh netto.
+
+    Der Regelsatz steht in § 4 Abs. 2 („Die Abgabe beträgt X Euro je kWh").
+    Befristete Senkungen stehen als Übergangsbestimmung in § 7 und nennen
+    einen Zeitraum — gilt er am Stichtag, hat er Vorrang. 2026 sind das
+    0,001 Euro/kWh für Lieferungen an natürliche Personen statt der
+    regulären 0,015; Anfang 2027 fällt der Satz ohne Zutun zurück.
+
+    ``None``, wenn nicht einmal der Regelsatz lesbar ist.
+    """
+    regel = _RE_ABGABE_REGEL.search(_flachtext(text_regel))
+    satz = _zahl(regel.group(1)) if regel else None
+
+    if text_uebergang:
+        flach = _flachtext(text_uebergang)
+        # Absatzweise, damit Zeitraum und Satz zusammengehören. Die RIS-
+        # Langform wiederholt jeden Absatz ausgeschrieben — das stört nicht,
+        # beide Schreibweisen nennen denselben Satz.
+        for stueck in re.split(r"\((?=\d+\))|Absatz\s+\d+,", flach):
+            treffer = _RE_ABGABE_HAUSHALT.search(stueck)
+            if not treffer:
+                continue
+            zeitraum = _RE_ZEITRAUM.search(stueck)
+            if zeitraum is None:
+                continue
+            von = _datum(*zeitraum.group(1, 2, 3))
+            bis = _datum(*zeitraum.group(4, 5, 6))
+            if von is None or bis is None or not (von < stichtag < bis):
+                continue
+            befristet = _zahl(treffer.group(1))
+            if befristet is not None:
+                return (
+                    round(befristet * 100.0, 6),
+                    f"ElAbgG § 7, befristet bis {bis.isoformat()}",
+                )
+
+    if satz is None:
+        return None
+    return round(satz * 100.0, 6), "ElAbgG § 4 Abs. 2"
+
+
+# „auf der Netzebene 7 (nicht gemessene Leistung) 0,583 Cent/kWh"
+_RE_EFB_NE7 = re.compile(
+    r"Netzebene\s*7\s*\(nicht gemessene Leistung\)\s*(\d+[,.]\d+)\s*Cent/kWh",
+    re.IGNORECASE,
+)
+# „auf der Netzebene 7 0,037 Cent/kWh" — im Absatz zum Netzverlustentgelt
+_RE_EFB_VERLUST_NE7 = re.compile(
+    r"Netzebene\s*7\s+(\d+[,.]\d+)\s*Cent/kWh", re.IGNORECASE
+)
+
+
+def parse_foerderbeitrag(html: str) -> tuple[float, str] | None:
+    """Erneuerbaren-Förderbeitrag je kWh auf Netzebene 7, Cent/kWh netto.
+
+    Die Verordnung teilt ihn auf die Netzentgelt-Komponenten auf: ein Anteil
+    am Netznutzungsentgelt (Arbeit) und einer am Netzverlustentgelt. Für eine
+    Kilowattstunde zählt die Summe der beiden. Der dritte Absatz — der Anteil
+    am Netznutzungsentgelt (Leistung) — bleibt außen vor: Er wird je
+    Zählpunkt und Jahr verrechnet, nicht je Kilowattstunde.
+
+    Haushalte hängen an der Netzebene 7 ohne Leistungsmessung.
+    """
+    flach = _flachtext(html)
+    arbeit = _RE_EFB_NE7.search(flach)
+    if arbeit is None:
+        return None
+    summe = _zahl(arbeit.group(1))
+    if summe is None:
+        return None
+    # Der Verlust-Anteil steht im Absatz „Netzentgeltkomponente
+    # Netzverlustentgelt"; ab dort suchen, damit nicht der Arbeits-Absatz
+    # noch einmal trifft.
+    i = flach.lower().find("netzentgeltkomponente netzverlustentgelt")
+    if i >= 0:
+        verlust = _RE_EFB_VERLUST_NE7.search(flach[i:])
+        if verlust is not None:
+            zahl = _zahl(verlust.group(1))
+            if zahl is not None:
+                summe += zahl
+    return round(summe, 6), "Erneuerbaren-Förderbeitragsverordnung § 2"
+
+
+def _flachtext(html: str) -> str:
+    """HTML zu einer Textzeile — Tags weg, Weißraum vereinheitlicht."""
+    ohne = re.sub(r"(?is)<(style|script|head)[^>]*>.*?</\1>", " ", html)
+    text = re.sub(r"<[^>]+>", " ", ohne)
+    text = unescape(text)
+    return re.sub(r"\s+", " ", text)
+
+
 @dataclass(frozen=True)
 class Netzgebuehr:
-    """Netzgebühr, mit der der Fahrplan rechnet — €/kWh brutto."""
+    """Was neben dem Arbeitspreis des Lieferanten je kWh anfällt, €/kWh brutto.
+
+    ``ap`` ist die Summe aller vier Posten — das ist der Wert, mit dem der
+    Fahrplan rechnet. ``snap`` und ``winap`` sind dieselbe Summe mit dem
+    verbilligten Netznutzungsentgelt; die übrigen drei Posten kennen kein
+    Zeitfenster. Die Einzelposten stehen daneben, damit die Anzeige die
+    Rechnung zeigen kann, statt nur das Ergebnis.
+    """
 
     ap: float
     snap: float | None
@@ -382,6 +662,11 @@ class Netzgebuehr:
     bereich: str          # Schlüssel aus NETZBEREICHE oder NETZBEREICH_MANUELL
     stand: str | None
     quelle: str | None
+    # Einzelposten, €/kWh brutto
+    netznutzung: float = 0.0
+    netzverlust: float = 0.0
+    elektrizitaetsabgabe: float = 0.0
+    foerderbeitrag: float = 0.0
 
 
 def _positiv(wert: Any) -> float | None:
@@ -410,13 +695,29 @@ def netzgebuehr_fuer(
     bekannt ist, ob er schon gilt.
     """
     bereich = str(config.get(CONF_SCHEDULE_NETZBEREICH) or "").strip()
+    abgaben = None
+    if isinstance(tabelle, Tariftabelle) and tabelle.abgaben is not None:
+        abgaben = tabelle.abgaben
+    elif SNAPSHOT.abgaben is not None:
+        abgaben = SNAPSHOT.abgaben
+    elektrizitaet = brutto(abgaben.elektrizitaet) or 0.0 if abgaben else 0.0
+    foerder = brutto(abgaben.foerderbeitrag) or 0.0 if abgaben else 0.0
+    zusatz = elektrizitaet + foerder
+
     if bereich == NETZBEREICH_MANUELL:
         fee = _positiv(config.get(CONF_SCHEDULE_NETWORK_FEE))
         if fee is None:
             return None
+        # Die Handeingabe ist das Netznutzungsentgelt (so steht es am Feld);
+        # das Netzverlustentgelt hängt am Netzbereich und ist ohne ihn nicht
+        # bekannt, die bundesweiten Abgaben dagegen schon.
         return Netzgebuehr(
-            ap=fee, snap=round(fee * (1 - SNAP_RABATT), 6), winap=None,
+            ap=round(fee + zusatz, 6),
+            snap=round(fee * (1 - SNAP_RABATT) + zusatz, 6),
+            winap=None,
             bereich=bereich, stand=None, quelle="Handeingabe",
+            netznutzung=fee, netzverlust=0.0,
+            elektrizitaetsabgabe=elektrizitaet, foerderbeitrag=foerder,
         )
     if bereich not in NETZBEREICH_LABELS:
         return None
@@ -425,13 +726,22 @@ def netzgebuehr_fuer(
     tarif = tabelle.tarife.get(bereich)
     if tarif is None:
         return None
+    verlust = brutto(tarif.verlust) or 0.0
+    fest = verlust + zusatz
+    nutzung = brutto(tarif.ap) or 0.0
+    snap = brutto(tarif.snap)
+    winap = brutto(tarif.winap)
     return Netzgebuehr(
-        ap=brutto(tarif.ap) or 0.0,
-        snap=brutto(tarif.snap),
-        winap=brutto(tarif.winap),
+        ap=round(nutzung + fest, 6),
+        snap=None if snap is None else round(snap + fest, 6),
+        winap=None if winap is None else round(winap + fest, 6),
         bereich=bereich,
         stand=tabelle.stand,
         quelle=tabelle.quelle,
+        netznutzung=nutzung,
+        netzverlust=verlust,
+        elektrizitaetsabgabe=elektrizitaet,
+        foerderbeitrag=foerder,
     )
 
 
@@ -456,11 +766,14 @@ def tabelle_status(
                 "ap_netto": tarif.ap,
                 "snap_netto": tarif.snap,
                 "winap_netto": tarif.winap,
+                "verlust_netto": tarif.verlust,
                 "ap_brutto": brutto(tarif.ap),
                 "snap_brutto": brutto(tarif.snap),
                 "winap_brutto": brutto(tarif.winap),
+                "verlust_brutto": brutto(tarif.verlust),
             }
         )
+    abgaben = tabelle.abgaben or (SNAPSHOT.abgaben if tabelle.abgaben is None else None)
     return {
         "stand": tabelle.stand,
         "quelle": tabelle.quelle,
@@ -470,6 +783,11 @@ def tabelle_status(
         "fehler": fehler,
         "mwst": MWST,
         "bereiche": bereiche,
+        "verlust_quelle": tabelle.verlust_quelle,
+        "elektrizitaetsabgabe_netto": abgaben.elektrizitaet if abgaben else None,
+        "elektrizitaetsabgabe_quelle": abgaben.elektrizitaet_quelle if abgaben else None,
+        "foerderbeitrag_netto": abgaben.foerderbeitrag if abgaben else None,
+        "foerderbeitrag_quelle": abgaben.foerderbeitrag_quelle if abgaben else None,
     }
 
 
@@ -577,6 +895,7 @@ class NetzentgeltProvider:
                 continue
             if tabelle is None:
                 continue
+            tabelle = await self._ergaenze(tabelle, heute)
             self._tabelle, self._geholt, self._fehler = tabelle, jetzt, None
             _LOGGER.debug(
                 "Netzentgelte: %s, Stand %s, %d Bereiche",
@@ -594,13 +913,76 @@ class NetzentgeltProvider:
         )
         return self.tabelle
 
-    async def _hole_quelle(self, quelle: Quelle, heute: date) -> Tariftabelle | None:
-        """Eine Verordnung im RIS aufsuchen und ihre Tabelle lesen.
+    async def _ergaenze(self, tabelle: Tariftabelle, heute: date) -> Tariftabelle:
+        """Netzverlustentgelt und die beiden Abgaben dazuholen.
 
-        None, wenn das RIS für den Stichtag nichts liefert (Verordnung noch
-        nicht oder nicht mehr in Kraft); ValueError, wenn Dokumente da sind,
-        aber keine lesbare Tabelle enthalten.
+        Jeder Posten für sich: Scheitert einer, behält die Tabelle an dieser
+        Stelle den Wert des Schnappschusses — ein fehlender Förderbeitrag
+        soll nicht den Arbeitspreis mitreißen, der gerade frisch gelesen
+        wurde. Was nicht kam, steht als Herkunft „eingebaut" in der Anzeige.
         """
+        tarife = dict(tabelle.tarife)
+        verlust_quelle = SNAPSHOT.verlust_quelle
+        try:
+            dok, html = await self._hole_dokument(QUELLE_NETZVERLUST, heute)
+            verluste = parse_verlust_tabelle(html)
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.debug("Netzverlustentgelt nicht lesbar: %s", err)
+            verluste = {k: t.verlust for k, t in SNAPSHOT.tarife.items()}
+        else:
+            verlust_quelle = f"SNE-V 2018 § 6 (RIS {dok['nor']})"
+        for key, wert in verluste.items():
+            if key in tarife and wert is not None:
+                tarife[key] = replace(tarife[key], verlust=wert)
+
+        abgaben = SNAPSHOT.abgaben or Abgaben()
+        elektrizitaet = (abgaben.elektrizitaet, abgaben.elektrizitaet_quelle)
+        foerder = (abgaben.foerderbeitrag, abgaben.foerderbeitrag_quelle)
+        try:
+            dok4, html4 = await self._hole_dokument(QUELLE_ELEKTRIZITAETSABGABE, heute)
+            try:
+                _, html7 = await self._hole_dokument(
+                    QUELLE_ELEKTRIZITAETSABGABE_UEBERGANG, heute
+                )
+            except Exception:  # noqa: BLE001 — ohne Übergang gilt der Regelsatz
+                html7 = None
+            gelesen = parse_elektrizitaetsabgabe(html4, html7, heute)
+            if gelesen is not None:
+                elektrizitaet = (gelesen[0], f"{gelesen[1]} (RIS {dok4['nor']})")
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.debug("Elektrizitätsabgabe nicht lesbar: %s", err)
+        try:
+            dokf, htmlf = await self._hole_dokument(QUELLE_FOERDERBEITRAG, heute)
+            gelesen = parse_foerderbeitrag(htmlf)
+            if gelesen is not None:
+                foerder = (gelesen[0], f"{gelesen[1]} (RIS {dokf['nor']})")
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.debug("Erneuerbaren-Förderbeitrag nicht lesbar: %s", err)
+
+        return replace(
+            tabelle,
+            tarife=tarife,
+            verlust_quelle=verlust_quelle,
+            abgaben=Abgaben(
+                elektrizitaet=elektrizitaet[0],
+                foerderbeitrag=foerder[0],
+                elektrizitaet_quelle=elektrizitaet[1],
+                foerderbeitrag_quelle=foerder[1],
+            ),
+        )
+
+    async def _hole_dokument(
+        self, quelle: Quelle, heute: date
+    ) -> tuple[dict[str, Any], str]:
+        """Das erste passende RIS-Dokument einer Quelle samt HTML."""
+        for dok in await self._suche_dokumente(quelle, heute):
+            return dok, await self._get_text(dok["html_url"])
+        raise ValueError(f"{quelle.name}: kein Dokument für {quelle.paragraf}")
+
+    async def _suche_dokumente(
+        self, quelle: Quelle, heute: date
+    ) -> list[dict[str, Any]]:
+        """Dokumentliste einer Quelle aus dem RIS, gefiltert auf den Paragraphen."""
         params = {
             "Applikation": "BrKons",
             "Fassung.FassungVom": heute.isoformat(),
@@ -623,11 +1005,21 @@ class NetzentgeltProvider:
                 d for d in dokumente
                 if d["paragraf"].replace(" ", "") == quelle.paragraf.replace(" ", "")
             ]
+        return dokumente[:MAX_DOKUMENTE_JE_QUELLE]
+
+    async def _hole_quelle(self, quelle: Quelle, heute: date) -> Tariftabelle | None:
+        """Eine Verordnung im RIS aufsuchen und ihre Tabelle lesen.
+
+        None, wenn das RIS für den Stichtag nichts liefert (Verordnung noch
+        nicht oder nicht mehr in Kraft); ValueError, wenn Dokumente da sind,
+        aber keine lesbare Tabelle enthalten.
+        """
+        dokumente = await self._suche_dokumente(quelle, heute)
         if not dokumente:
             return None
 
         letzter_fehler: Exception | None = None
-        for dok in dokumente[:MAX_DOKUMENTE_JE_QUELLE]:
+        for dok in dokumente:
             html = await self._get_text(dok["html_url"])
             try:
                 tarife = parse_tabelle(html)
