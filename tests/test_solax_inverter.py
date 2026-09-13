@@ -835,3 +835,44 @@ class TestScheduleControlInterface:
         )
         rollen = {r["role"] for r in inverter.get_control_entities()}
         assert rollen == {"charge_limit", "backup_soc"}
+
+
+class TestEntladebodenNachFehlschlag:
+    """Unser abgesenkter Boden darf nie als Gerätegrenze durchgehen.
+
+    Gegenstück zum Fronius-Fall vom 13.09.2026: Dort sperrte eine
+    hängengebliebene Reserve die Batterie. Hier wäre die Wirkung umgekehrt —
+    ein hängengebliebener Boden lässt den Wechselrichter im Automatikbetrieb
+    tiefer entladen, als der Betreiber eingestellt hat.
+    """
+
+    def test_gesicherter_vorwert_schlaegt_den_gelesenen_boden(self, inverter):
+        """Auch ohne laufende Entladung gilt der gesicherte Vorwert."""
+        inverter._state_store._data = {"selfuse_discharge_min_soc_original": 20.0}
+        inverter._state_store._loaded = True
+        inverter._discharge_active = False          # Entladung kam nie zustande
+
+        assert inverter.get_backup_reserve_soc_pct() == pytest.approx(20.0)
+
+    async def test_fehlgeschlagene_entladung_stellt_den_boden_zurueck(
+        self, inverter, mock_hass
+    ):
+        """Scheitert das Setzen, darf kein abgesenkter Boden stehen bleiben."""
+        inverter._state_store._data = {"selfuse_discharge_min_soc_original": 20.0}
+        inverter._state_store._loaded = True
+
+        zurueckgeschrieben: list[float] = []
+
+        async def _set_number(key, wert):
+            if key == "selfuse_discharge_min_soc":
+                zurueckgeschrieben.append(wert)
+                return
+            raise RuntimeError("Gerät antwortet nicht")
+
+        inverter._set_number = _set_number
+        inverter._senke_entladeboden = AsyncMock()
+
+        ok = await inverter.async_set_discharge(1.5, target_soc=40.0)
+
+        assert ok is False
+        assert 20.0 in zurueckgeschrieben, "Vorwert zurückgeschrieben"

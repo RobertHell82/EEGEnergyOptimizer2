@@ -314,6 +314,14 @@ class SolaXInverter(InverterBase):
             return True
         except Exception:
             _LOGGER.exception("SolaX: Failed to set discharge")
+            # Steht unser abgesenkter Boden schon im Gerät, muss er weg:
+            # Sonst entlädt der Wechselrichter im Automatikbetrieb tiefer,
+            # als der Anlagenbetreiber eingestellt hat.
+            try:
+                await self._restauriere_entladeboden()
+            except Exception:  # noqa: BLE001 — der Fehlerpfad darf nie werfen
+                _LOGGER.debug("SolaX: Entladeboden nach Fehlschlag nicht "
+                              "zurücksetzbar", exc_info=True)
             return False
 
     async def async_stop_forcible(self) -> bool:
@@ -469,10 +477,18 @@ class SolaXInverter(InverterBase):
         meldeten wir dem Fahrplan unseren eigenen abgesenkten Boden als
         Gerätegrenze zurück und er plante mit jeder Entladung tiefer.
         """
+        # Ein gesicherter Vorwert ist der Beweis, dass WIR den Boden verstellt
+        # haben — unabhängig davon, ob die Entladung zustande kam. Am Flag
+        # allein hing es bis 2.1.1-dev20: Es wird erst nach dem letzten
+        # Befehl gesetzt, der abgesenkte Boden steht aber schon vorher im
+        # Gerät. Bricht etwas dazwischen ab, meldeten wir dem Fahrplan unseren
+        # eigenen Boden als Gerätegrenze und er plante mit jeder Entladung
+        # tiefer. Beim Fronius ging dieselbe Konstruktion am 13.09.2026
+        # andersherum schief (angehobene Reserve sperrte die Batterie).
+        gesichert = self._state_store.original_discharge_floor
+        if gesichert is not None:
+            return gesichert
         if self._discharge_active:
-            gesichert = self._state_store.original_discharge_floor
-            if gesichert is not None:
-                return gesichert
             return self._discharge_floor_idle
         aktuell = self._lies_entladeboden()
         if aktuell is not None:
