@@ -169,13 +169,25 @@ def opt(c, start_time):
 	if heizstab_aktiv:
 		# Der Heizstab bekommt höchstens, was abgeregelt wird …
 		model.add((discard_p - heater_p).map(lambda ex: Constraint(ex, lb = 0)))
-		# … und über den Horizont nicht mehr, als der Puffer noch aufnimmt.
-		# Eine einzige Summenschranke statt eines zweiten Speichers mit
-		# Zeitverlauf: Sie wird bei jedem Planlauf aus der gemessenen
-		# Puffertemperatur neu gebildet und ist damit immer aktuell.
-		model.add(Constraint(
-			heater_p.sum() * c.ac_efficiency * p2e, ub = heizstab_budget_kwh,
-			name = 'heizstab_budget'))
+		# … und je Tag nicht mehr, als der Puffer noch aufnimmt. Bewusst JE
+		# TAG und nicht über den ganzen Horizont: Der Puffer ist kein Vorrat,
+		# der einmal gefüllt wird — über Nacht kühlt er aus und wird
+		# leergezapft, am nächsten Tag ist also wieder Platz. Mit einer
+		# einzigen Schranke über 48 Stunden sparte das Modell die Kapazität
+		# für den sonnigsten Tag auf und ließ die Wärme heute liegen, obwohl
+		# sie bis dahin ohnehin verloren geht (Grünbach, 13.09.2026: 18,4 kWh
+		# geplant, davon 0 für heute und alles für übermorgen).
+		#
+		# Für jeden Tag dieselbe Schranke: Sie kommt aus der gemessenen
+		# Puffertemperatur und gilt damit exakt für heute. Für die Folgetage
+		# ist sie eine Annahme — genauer ginge es nur mit einem Verlust- und
+		# Zapfmodell des Puffers, und die Planung wird ohnehin jede Minute
+		# neu gerechnet, sobald die nächste Messung vorliegt.
+		tage = pd.Series(heater_p.index.date, index=heater_p.index)
+		for tag, gruppe in heater_p.groupby(tage):
+			model.add(Constraint(
+				gruppe.sum() * c.ac_efficiency * p2e, ub = heizstab_budget_kwh,
+				name = f'heizstab_budget_{tag}'))
 	ziel = ((grid_p_pos * parameters.feedin_price).sum() -
 		(grid_p_neg * parameters.consumption_price).sum() -
 		battery_p_max_var * c.max_battery_cost - grid_p_max_var * c.max_grid_cost -

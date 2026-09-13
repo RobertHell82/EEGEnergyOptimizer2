@@ -164,16 +164,38 @@ def test_heizstab_bekommt_ueberschuss_und_haelt_die_grenzen():
     # … nie mehr als der Heizstab aufnimmt (AC-seitig) …
     assert (heater * AC_EFF <= 6.0 + 1e-6).all()
     # … und über den Horizont nicht mehr, als der Puffer fasst.
-    assert heater.sum() * AC_EFF * P2E <= 20.0 + 1e-6
+    for tag, kwh in _waerme_je_tag(table).items():
+        assert kwh <= 20.0 + 1e-6, f"{tag}: {kwh:.2f} kWh über dem Tagesbudget"
 
 
-def test_budget_begrenzt_die_gesamtwaerme():
-    """Ein halb voller Puffer nimmt weniger auf — und zwar genau so viel."""
+def _waerme_je_tag(table):
+    """Wärme in kWh, nach Kalendertag getrennt."""
+    heater = np.asarray(table["heater"], dtype=float) * AC_EFF * P2E
+    tage = {}
+    for stempel, wert in zip(table.index, heater):
+        tage[stempel.date()] = tage.get(stempel.date(), 0.0) + float(wert)
+    return tage
+
+
+def test_budget_begrenzt_die_waerme_je_tag():
+    """Ein halb voller Puffer nimmt weniger auf — und zwar an JEDEM Tag.
+
+    Die Schranke gilt bewusst je Kalendertag: Der Puffer kühlt über Nacht
+    aus und wird leergezapft, am nächsten Tag ist wieder Platz. Mit einer
+    einzigen Schranke über den ganzen Horizont sparte das Modell die
+    Kapazität für den sonnigsten Tag auf und ließ die Wärme heute liegen,
+    obwohl sie bis dahin ohnehin verloren geht.
+    """
     knapp = opt_highs.opt(_heizstab(budget_kwh=5.0), START)
-    waerme_kwh = float(np.asarray(knapp["heater"], dtype=float).sum()) * AC_EFF * P2E
-    assert waerme_kwh <= 5.0 + 1e-6
-    assert waerme_kwh == pytest.approx(5.0, abs=0.2), (
-        "Bei diesem Wärmewert lohnt sich das Budget vollständig"
+    je_tag = _waerme_je_tag(knapp)
+    assert je_tag, "der Plan reicht über mindestens einen Tag"
+    for tag, kwh in je_tag.items():
+        assert kwh <= 5.0 + 1e-6, f"{tag}: {kwh:.2f} kWh über dem Tagesbudget"
+    # Am ersten Tag wird das Budget auch wirklich genutzt, statt auf einen
+    # späteren Tag zu warten.
+    erster = min(je_tag)
+    assert je_tag[erster] == pytest.approx(5.0, abs=0.2), (
+        "Bei diesem Wärmewert lohnt sich das Tagesbudget sofort"
     )
 
 
