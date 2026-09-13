@@ -409,20 +409,39 @@ const SNAP_RABATT = 0.2;
 
 // Die Netzsätze dieses Anschlusses in €/kWh brutto: aus der Verordnung zum
 // gewählten Netzbereich, sonst die Handeingabe, sonst gar keine.
+// Muss dieselbe Rechnung sein wie netzgebuehr_fuer() in netzentgelt.py:
+// `ap` ist die SUMME aller kWh-Posten, `snap`/`winap` dieselbe Summe mit
+// verbilligtem Netznutzungsentgelt. Die Einzelposten kommen mit, damit die
+// Aufschlüsselung sie zeigen kann, ohne zweimal zu rechnen.
 const netzsaetze = (d, netze) => {
   const bereich = String(d.schedule_netzbereich || "");
+  // Die bundesweiten kWh-Abgaben hängen an keinem Netzbereich.
+  const elektrizitaet = (Number(netze?.elektrizitaetsabgabe_netto) || 0) * (Number(netze?.mwst) || 1.2) / 100;
+  const foerder = (Number(netze?.foerderbeitrag_netto) || 0) * (Number(netze?.mwst) || 1.2) / 100;
+  const abgaben = elektrizitaet + foerder;
   if (bereich === "manual") {
-    const ap = Number(d.schedule_network_fee) || 0;
-    return ap > 0 ? { ap, snap: ap * (1 - SNAP_RABATT), winap: null, manuell: true } : null;
+    const nutzung = Number(d.schedule_network_fee) || 0;
+    if (!(nutzung > 0)) return null;
+    // Das Netzverlustentgelt hängt am Netzbereich — ohne ihn bleibt es draußen.
+    return {
+      ap: nutzung + abgaben,
+      snap: nutzung * (1 - SNAP_RABATT) + abgaben,
+      winap: null,
+      manuell: true,
+      netznutzung: nutzung, netzverlust: 0, elektrizitaet, foerder,
+    };
   }
   if (!bereich) return null;
   const treffer = (netze?.bereiche || []).find((b) => b.key === bereich);
   if (!treffer || !(treffer.ap_brutto > 0)) return null;
+  const verlust = Number(treffer.verlust_brutto) || 0;
+  const fest = verlust + abgaben;
   return {
-    ap: treffer.ap_brutto,
-    snap: treffer.snap_brutto,
-    winap: treffer.winap_brutto,
+    ap: treffer.ap_brutto + fest,
+    snap: treffer.snap_brutto == null ? null : treffer.snap_brutto + fest,
+    winap: treffer.winap_brutto == null ? null : treffer.winap_brutto + fest,
     manuell: false,
+    netznutzung: treffer.ap_brutto, netzverlust: verlust, elektrizitaet, foerder,
   };
 };
 
@@ -441,64 +460,75 @@ const bezugspreisFenster = (d, netze, welches) => {
 const netzgebuehrDetails = (d, netze) => {
   const netz = netzsaetze(d, netze);
   if (!netz) return "";
+  const mwst = Number(netze?.mwst) || 1.2;
+  const ustSatz = Math.round((mwst - 1) * 100);
   const ct = (v) => `${fmtDe(v * 100, 3)} ct/kWh`;
   const zeile = (label, wert, stark = false) =>
-    `<div style="display:flex;justify-content:space-between;gap:16px;padding:2px 0">
+    `<div style="display:flex;justify-content:space-between;gap:16px;padding:2px 0${stark ? ";border-top:1px solid var(--divider-color);margin-top:4px;padding-top:6px" : ""}">
        <span>${label}</span>
        <span style="font-variant-numeric:tabular-nums${stark ? ";font-weight:600" : ""}">${wert}</span>
      </div>`;
+  // Netto zeigen, wo die Quelle netto spricht — die Verordnungen nennen
+  // durchwegs Nettobeträge, die Mehrwertsteuer kommt einmal am Ende dazu.
+  const netto = netz.ap / mwst;
 
-  let rechnung;
-  if (netz.manuell) {
-    rechnung =
-      zeile("Von Hand eingetragen (brutto)", ct(netz.ap), true) +
-      zeile("SNAP = Netzgebühr − 20 % (Verordnung)", ct(netz.snap)) +
-      `<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--divider-color)">
-         Aus der Verordnung kommt hier nichts: Der Satz stammt aus deinem
-         Preisblatt, der SNAP ist der pauschale Abschlag der Verordnung. Einen
-         WiNAP gibt es bei Handeingabe nicht — ob er für deinen Anschluss
-         schon gilt, ist von hier aus nicht zu sehen.
-       </div>`;
-  } else {
-    const treffer = (netze?.bereiche || []).find((b) => b.key === String(d.schedule_netzbereich || ""));
-    const mwst = Number(netze?.mwst) || 1.2;
-    const ustSatz = Math.round((mwst - 1) * 100);
-    const netto = treffer?.ap_netto;
-    rechnung =
-      (netto != null ? zeile("Arbeitspreis Netzebene 7, netto", ct(netto / 100)) : "") +
-      (netto != null ? zeile(`+ ${ustSatz} % Umsatzsteuer`, ct((netto * (mwst - 1)) / 100)) : "") +
-      zeile("= Netzgebühr brutto", ct(netz.ap), true);
-    if (treffer?.snap_netto != null) {
-      rechnung += zeile(
-        "SNAP (Sommer 10–16 Uhr), netto → brutto",
-        `${fmtDe(treffer.snap_netto, 3)} → ${ct(netz.snap)}`,
-      );
-    }
-    if (treffer?.winap_netto != null) {
-      rechnung += zeile(
-        "WiNAP (ab 2027, Winter 22–4 Uhr), netto → brutto",
-        `${fmtDe(treffer.winap_netto, 3)} → ${ct(netz.winap)}`,
-      );
-    }
+  // Bei Handeingabe steht schon ein Bruttobetrag im Feld — dann durchgehend
+  // brutto zeigen, statt netto und brutto in einer Spalte zu mischen.
+  const wie = netz.manuell ? (v) => ct(v) : (v) => `${ct(v / mwst)} netto`;
+  let rechnung = zeile(
+    netz.manuell ? "Netznutzungsentgelt (Handeingabe)" : "Netznutzungsentgelt, Netzebene 7",
+    wie(netz.netznutzung),
+  );
+  if (!netz.manuell) {
+    rechnung += zeile("Netzverlustentgelt", wie(netz.netzverlust));
+  }
+  rechnung +=
+    zeile("Elektrizitätsabgabe", wie(netz.elektrizitaet)) +
+    zeile("Erneuerbaren-Förderbeitrag", wie(netz.foerder));
+  if (!netz.manuell) {
+    rechnung +=
+      zeile("Summe netto", ct(netto)) +
+      zeile(`+ ${ustSatz} % Umsatzsteuer`, ct(netto * (mwst - 1)));
+  }
+  rechnung += zeile("= Netzgebühr brutto", ct(netz.ap), true);
+  if (netz.snap != null && netz.snap < netz.ap) {
+    rechnung += zeile("im SNAP-Fenster (Sommer 10–16 Uhr)", ct(netz.snap));
+  }
+  if (netz.winap != null && netz.winap < netz.ap) {
+    rechnung += zeile("im WiNAP-Fenster (ab 2027, Winter 22–4 Uhr)", ct(netz.winap));
   }
 
-  // Herkunft: Ein Satz aus der eingebauten Kopie ist nicht falsch, aber er
-  // altert — deshalb sichtbar machen, woher er stammt und wie alt er ist.
-  let herkunft = "";
+  // Herkunft je Posten — ein Satz aus der eingebauten Kopie ist nicht falsch,
+  // aber er altert, und das soll man sehen.
+  const quellen = [];
   if (!netz.manuell) {
     const stand = netze?.stand ? new Date(netze.stand).toLocaleDateString("de-AT") : null;
-    const teile = [];
-    if (netze?.quelle) teile.push(netze.quelle);
-    if (stand) teile.push(`gültig ab ${stand}`);
-    teile.push(netze?.aus_snapshot === false
-      ? "aus dem Rechtsinformationssystem geholt"
-      : "aus der eingebauten Kopie der Verordnung");
-    if (netze?.fehler) teile.push(`Abruf zuletzt fehlgeschlagen: ${netze.fehler}`);
-    herkunft = `<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--divider-color)">${teile.join(" · ")}</div>`;
-    if (netze?.url) {
-      herkunft += `<div style="margin-top:4px"><a href="${netze.url}" target="_blank" rel="noopener">Verordnung im RIS öffnen</a></div>`;
-    }
+    quellen.push(
+      [netze?.quelle, stand ? `gültig ab ${stand}` : null,
+       netze?.aus_snapshot === false ? "aus dem RIS geholt" : "aus der eingebauten Kopie",
+      ].filter(Boolean).join(" · "),
+    );
+    if (netze?.verlust_quelle) quellen.push(netze.verlust_quelle);
   }
+  if (netze?.elektrizitaetsabgabe_quelle) quellen.push(netze.elektrizitaetsabgabe_quelle);
+  if (netze?.foerderbeitrag_quelle) quellen.push(netze.foerderbeitrag_quelle);
+  if (netze?.fehler) quellen.push(`Abruf zuletzt fehlgeschlagen: ${netze.fehler}`);
+
+  let herkunft = quellen.length
+    ? `<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--divider-color)">
+         ${quellen.map((q) => `<div>${q}</div>`).join("")}
+       </div>`
+    : "";
+  if (!netz.manuell && netze?.url) {
+    herkunft += `<div style="margin-top:4px"><a href="${netze.url}" target="_blank" rel="noopener">Verordnung im RIS öffnen</a></div>`;
+  }
+
+  const hinweis = netz.manuell
+    ? `<div style="margin-top:8px">Dein eingetragener Wert gilt als Netznutzungsentgelt. Das
+       Netzverlustentgelt hängt am Netzbereich und bleibt bei Handeingabe außen vor — wähle
+       deinen Netzbereich, dann kommt es aus der Verordnung dazu. Einen WiNAP gibt es hier
+       nicht: ob er für deinen Anschluss schon gilt, ist von hier aus nicht zu sehen.</div>`
+    : "";
 
   return `
     <details style="margin-top:8px">
@@ -508,7 +538,8 @@ const netzgebuehrDetails = (d, netze) => {
       <div class="help-text" style="margin-top:8px;line-height:1.6">
         ${rechnung}
         ${herkunft}
-        <div style="margin-top:8px">Der Fahrplan rechnet mit dem Bruttowert: Er zählt zum Arbeitspreis deines Lieferanten dazu und ergibt den Bezugspreis, gegen den jede gespeicherte Kilowattstunde bewertet wird.</div>
+        ${hinweis}
+        <div style="margin-top:8px">Der Fahrplan rechnet mit dem Bruttowert: Er zählt zum Arbeitspreis deines Lieferanten dazu und ergibt den Bezugspreis, gegen den jede gespeicherte Kilowattstunde bewertet wird. Nur das Netznutzungsentgelt wird von SNAP und WiNAP gesenkt — die übrigen Posten gelten rund um die Uhr. Beträge je Zählpunkt statt je Kilowattstunde (Erneuerbaren-Pauschale, Messentgelt, Grundpreis) zählen hier nicht mit: Sie fallen an, egal wie viel gespeichert wird.</div>
       </div>
     </details>`;
 };
@@ -6327,7 +6358,7 @@ class EegOptimizerPanel extends HTMLElement {
     } else if (satz) {
       const stand = netze?.stand ? new Date(netze.stand).toLocaleDateString("de-AT") : "—";
       const quelle = netze?.aus_snapshot === false ? "aus dem Rechtsinformationssystem" : "aus der eingebauten Kopie der Verordnung";
-      netzHinweis = `<strong>${fmtDe(satz.ap * 100, 2)} ct/kWh</strong> inklusive Mehrwertsteuer — Netzebene 7, Haushalt, gültig ab ${stand}, ${quelle}.`
+      netzHinweis = `<strong>${fmtDe(satz.ap * 100, 2)} ct/kWh</strong> inklusive Mehrwertsteuer — Netznutzung, Netzverlust, Elektrizitätsabgabe und Erneuerbaren-Förderbeitrag zusammen, Netzebene 7, Haushalt, gültig ab ${stand}, ${quelle}.`
         + (satz.snap != null ? ` Im SNAP-Fenster ${fmtDe(satz.snap * 100, 2)} ct` : "")
         + (satz.winap != null ? `, im WiNAP-Fenster ${fmtDe(satz.winap * 100, 2)} ct` : "")
         + (satz.snap != null ? "." : "")
@@ -6340,7 +6371,7 @@ class EegOptimizerPanel extends HTMLElement {
         <label>Arbeitspreis (ct/kWh) *</label>
         <input type="number" data-field="${prefix}schedule_energy_price" data-unit="ct"
                value="${Number(d.schedule_energy_price) > 0 ? ctAus(d.schedule_energy_price) : ""}" min="0" max="200" step="0.1">
-        <div class="help-text">Was dein Lieferant je Kilowattstunde verlangt, inklusive Mehrwertsteuer — der Arbeitspreis auf der Stromrechnung. Wer es genau will, rechnet Netzverlustentgelt und Abgaben (Elektrizitätsabgabe, Erneuerbaren-Förderbeitrag) dazu; die bleiben beim SNAP unverändert. Solange der Bezug klar über der Einspeisevergütung liegt, ist die genaue Höhe unwichtig.</div>
+        <div class="help-text">Was dein Lieferant je Kilowattstunde verlangt, inklusive Mehrwertsteuer — nur der Arbeitspreis auf der Stromrechnung. Netzverlustentgelt, Elektrizitätsabgabe und Erneuerbaren-Förderbeitrag <strong>nicht</strong> dazurechnen: Die kommen aus der Verordnung und stecken schon in der Netzgebühr darunter. Solange der Bezug klar über der Einspeisevergütung liegt, ist die genaue Höhe unwichtig.</div>
       </div>
       <div class="field-group">
         <label>Netzgebühr — Netzbereich</label>
