@@ -1146,3 +1146,60 @@ def test_schreibfehler_nennt_register_und_modbus_ausnahme(caplog):
         def __str__(self):
             return "irgendwas"
     assert f._modbus_fehlertext(_Ohne()) == "irgendwas"
+
+
+class TestReserveNachFehlschlag:
+    """Eine angehobene MinRsvPct darf nie als Geräte-Reserve durchgehen.
+
+    In Grünbach sperrte am 13.09.2026 genau das die Batterie: Der Treiber
+    hatte die Reserve für eine geplante Entladung auf 78,1 % gehoben, die
+    Entladung selbst scheiterte an einem Schreibfehler, und weil dabei kein
+    aktives Kommando gesetzt wurde, merkte der nächste Blockleser die 78,1 %
+    als Ruhewert. Der Fahrplan übernahm sie als harte Untergrenze und ließ
+    die Batterie über Nacht stehen, während das Haus Netzstrom kaufte.
+    """
+
+    def test_angehobene_reserve_wird_nicht_zum_ruhewert(self, inverter):
+        """Solange ein Vorwert gesichert ist, ist das Register nicht der Ruhewert."""
+        inverter._minrsvpct_idle = 1000          # 10 % — echter Gerätewert
+        inverter._minrsvpct_pre_discharge = 1000  # von uns gesichert
+        inverter._active_command = None           # Entladung NICHT aktiv
+
+        inverter._note_idle_minrsvpct(7810)       # 78,1 % aus dem Register
+
+        assert inverter._minrsvpct_idle == 1000, "der Ruhewert bleibt unberührt"
+        assert inverter.get_backup_reserve_soc_pct() == pytest.approx(10.0)
+
+    def test_ohne_vorwert_gilt_das_register(self, inverter):
+        """Ohne unseren Eingriff ist der gelesene Wert die Geräte-Reserve."""
+        inverter._minrsvpct_pre_discharge = None
+        inverter._active_command = None
+
+        inverter._note_idle_minrsvpct(1500)
+
+        assert inverter._minrsvpct_idle == 1500
+        assert inverter.get_backup_reserve_soc_pct() == pytest.approx(15.0)
+
+    async def test_gescheiterte_entladung_nimmt_die_reserve_zurueck(
+        self, inverter, mock_modbus_client
+    ):
+        """Schlägt das Setzen fehl, darf kein angehobener Floor stehen bleiben."""
+        inverter._minrsvpct_pre_discharge = 1000   # Vorwert 10 %
+
+        geschrieben: list[tuple[int, int]] = []
+
+        async def _write(address, value, **kwargs):
+            geschrieben.append((address, value))
+            ergebnis = MagicMock()
+            # Alles außer dem Zurücksetzen der Reserve scheitert
+            ergebnis.isError.return_value = address != 40070 + 5
+            return ergebnis
+
+        mock_modbus_client.write_register = AsyncMock(side_effect=_write)
+
+        ok = await inverter.async_set_discharge(1.2, target_soc=90.0)
+
+        assert ok is False
+        assert (40070 + 5, 1000) in geschrieben, "Vorwert zurückgeschrieben"
+        assert inverter._minrsvpct_pre_discharge is None
+        assert inverter.get_backup_reserve_soc_pct() == pytest.approx(10.0)

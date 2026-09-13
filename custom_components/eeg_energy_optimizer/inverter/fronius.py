@@ -793,7 +793,34 @@ class FroniusInverter(InverterBase):
                 "target_soc": target_soc,
             }
             self._start_keepalive()
-        return ok
+            return True
+        # Fehlgeschlagen — steht von einem früheren Versuch noch unser
+        # angehobener Floor im Gerät, muss er weg. Sonst sperrt eine Reserve
+        # die Batterie, die es ohne unseren Eingriff gar nicht gäbe, und der
+        # Fahrplan plant um sie herum (Grünbach, 13.09.2026).
+        await self._reserve_zuruecknehmen()
+        return False
+
+    async def _reserve_zuruecknehmen(self) -> None:
+        """Angehobene MinRsvPct auf den gesicherten Vorwert zurückschreiben."""
+        vorwert = self._minrsvpct_pre_discharge
+        if vorwert is None:
+            vorwert = self._state_store.original_minrsvpct
+        if vorwert is None:
+            return
+        if await self._write_register(_OFFSET_MINRSVPCT, vorwert):
+            _LOGGER.info(
+                "Fronius: MinRsvPct nach gescheiterter Entladung auf %d "
+                "zurückgesetzt", vorwert,
+            )
+            self._minrsvpct_pre_discharge = None
+            self._minrsvpct_idle = int(vorwert)
+            await self._state_store.async_clear_original_minrsvpct()
+        else:
+            _LOGGER.warning(
+                "Fronius: MinRsvPct=%d konnte nicht zurückgesetzt werden — "
+                "die Batterie bleibt vorerst gesperrt", vorwert,
+            )
 
     async def _write_discharge(
         self, power_kw: float, target_soc: float | None
@@ -999,6 +1026,17 @@ class FroniusInverter(InverterBase):
         command = self._active_command
         if command is not None and command.get("kind") == "discharge":
             return
+        # Auch ohne aktives Kommando: Solange ein Vorwert gesichert ist, steht
+        # im Register UNSER angehobener Floor, nicht die Geräte-Reserve. Genau
+        # das ging in Grünbach schief (13.09.2026): Nach einem gescheiterten
+        # Entladeversuch war `_active_command` nicht gesetzt, die Reserve stand
+        # aber noch auf 78,1 % — der nächste Blockleser merkte sie als Ruhewert,
+        # der Fahrplan übernahm sie als harte Untergrenze und ließ die Batterie
+        # über Nacht stehen, während das Haus Netzstrom kaufte.
+        if self._minrsvpct_pre_discharge is not None:
+            return
+        if self._state_store.original_minrsvpct is not None:
+            return
         self._minrsvpct_idle = int(raw)
 
     def get_backup_reserve_soc_pct(self) -> float | None:
@@ -1015,6 +1053,9 @@ class FroniusInverter(InverterBase):
         einem Neustart — er ändert sich praktisch nie im Betrieb.
         """
         raw = self._minrsvpct_pre_discharge
+        if raw is None:
+            # Nach einem Neustart ist der RAM-Wert weg, der Store hat ihn noch.
+            raw = self._state_store.original_minrsvpct
         if raw is None:
             raw = self._minrsvpct_idle
         if raw is None:
