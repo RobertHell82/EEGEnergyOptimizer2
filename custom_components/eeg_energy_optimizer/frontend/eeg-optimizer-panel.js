@@ -434,6 +434,85 @@ const bezugspreisFenster = (d, netze, welches) => {
   if (!netz || satz == null || !(satz < netz.ap)) return null;
   return (Number(d.schedule_energy_price) || 0) + satz;
 };
+// Woraus sich die Netzgebühr zusammensetzt — aufklappbar unter dem Feld.
+// Die Verordnung nennt Nettobeträge je Netzbereich (Netzebene 7); gerechnet
+// wird mit brutto, weil der Arbeitspreis daneben auch brutto eingetragen ist.
+// Alle Zahlen kommen aus get_netzentgelte, es wird hier nichts geschätzt.
+const netzgebuehrDetails = (d, netze) => {
+  const netz = netzsaetze(d, netze);
+  if (!netz) return "";
+  const ct = (v) => `${fmtDe(v * 100, 3)} ct/kWh`;
+  const zeile = (label, wert, stark = false) =>
+    `<div style="display:flex;justify-content:space-between;gap:16px;padding:2px 0">
+       <span>${label}</span>
+       <span style="font-variant-numeric:tabular-nums${stark ? ";font-weight:600" : ""}">${wert}</span>
+     </div>`;
+
+  let rechnung;
+  if (netz.manuell) {
+    rechnung =
+      zeile("Von Hand eingetragen (brutto)", ct(netz.ap), true) +
+      zeile("SNAP = Netzgebühr − 20 % (Verordnung)", ct(netz.snap)) +
+      `<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--divider-color)">
+         Aus der Verordnung kommt hier nichts: Der Satz stammt aus deinem
+         Preisblatt, der SNAP ist der pauschale Abschlag der Verordnung. Einen
+         WiNAP gibt es bei Handeingabe nicht — ob er für deinen Anschluss
+         schon gilt, ist von hier aus nicht zu sehen.
+       </div>`;
+  } else {
+    const treffer = (netze?.bereiche || []).find((b) => b.key === String(d.schedule_netzbereich || ""));
+    const mwst = Number(netze?.mwst) || 1.2;
+    const ustSatz = Math.round((mwst - 1) * 100);
+    const netto = treffer?.ap_netto;
+    rechnung =
+      (netto != null ? zeile("Arbeitspreis Netzebene 7, netto", ct(netto / 100)) : "") +
+      (netto != null ? zeile(`+ ${ustSatz} % Umsatzsteuer`, ct((netto * (mwst - 1)) / 100)) : "") +
+      zeile("= Netzgebühr brutto", ct(netz.ap), true);
+    if (treffer?.snap_netto != null) {
+      rechnung += zeile(
+        "SNAP (Sommer 10–16 Uhr), netto → brutto",
+        `${fmtDe(treffer.snap_netto, 3)} → ${ct(netz.snap)}`,
+      );
+    }
+    if (treffer?.winap_netto != null) {
+      rechnung += zeile(
+        "WiNAP (ab 2027, Winter 22–4 Uhr), netto → brutto",
+        `${fmtDe(treffer.winap_netto, 3)} → ${ct(netz.winap)}`,
+      );
+    }
+  }
+
+  // Herkunft: Ein Satz aus der eingebauten Kopie ist nicht falsch, aber er
+  // altert — deshalb sichtbar machen, woher er stammt und wie alt er ist.
+  let herkunft = "";
+  if (!netz.manuell) {
+    const stand = netze?.stand ? new Date(netze.stand).toLocaleDateString("de-AT") : null;
+    const teile = [];
+    if (netze?.quelle) teile.push(netze.quelle);
+    if (stand) teile.push(`gültig ab ${stand}`);
+    teile.push(netze?.aus_snapshot === false
+      ? "aus dem Rechtsinformationssystem geholt"
+      : "aus der eingebauten Kopie der Verordnung");
+    if (netze?.fehler) teile.push(`Abruf zuletzt fehlgeschlagen: ${netze.fehler}`);
+    herkunft = `<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--divider-color)">${teile.join(" · ")}</div>`;
+    if (netze?.url) {
+      herkunft += `<div style="margin-top:4px"><a href="${netze.url}" target="_blank" rel="noopener">Verordnung im RIS öffnen</a></div>`;
+    }
+  }
+
+  return `
+    <details style="margin-top:8px">
+      <summary style="cursor:pointer;font-size:13px;color:var(--secondary-text-color);user-select:none">
+        Wie kommt dieser Wert zustande?
+      </summary>
+      <div class="help-text" style="margin-top:8px;line-height:1.6">
+        ${rechnung}
+        ${herkunft}
+        <div style="margin-top:8px">Der Fahrplan rechnet mit dem Bruttowert: Er zählt zum Arbeitspreis deines Lieferanten dazu und ergibt den Bezugspreis, gegen den jede gespeicherte Kilowattstunde bewertet wird.</div>
+      </div>
+    </details>`;
+};
+
 const bezugspreisText = (d, netze) => {
   const energie = Number(d.schedule_energy_price) || 0;
   if (!(energie > 0)) return "Bezugspreis: — (Arbeitspreis fehlt)";
@@ -6272,6 +6351,7 @@ class EegOptimizerPanel extends HTMLElement {
           <option value="manual" ${bereich === "manual" ? "selected" : ""}>Von Hand eintragen</option>
         </select>
         <div class="help-text">${netzHinweis}</div>
+        ${bereich === "manual" ? "" : netzgebuehrDetails(d, netze)}
       </div>
       ${bereich === "manual" ? `
       <div class="field-group">
@@ -6280,6 +6360,7 @@ class EegOptimizerPanel extends HTMLElement {
                value="${Number(d.schedule_network_fee) > 0 ? ctAus(d.schedule_network_fee) : ""}"
                min="0" max="200" step="0.1" placeholder="z. B. 7,55">
         <div class="help-text">Das Netznutzungsentgelt je Kilowattstunde inklusive Mehrwertsteuer — die Zeile „Netznutzung Arbeitspreis" im Preisblatt deines Netzbetreibers (Netzebene 7). Nur dieser Teil wird von den zeitvariablen Sätzen gesenkt.</div>
+        ${netzgebuehrDetails(d, netze)}
       </div>` : ""}
       <div class="field-group">
         <label style="display:flex;align-items:center;gap:12px;cursor:pointer">
