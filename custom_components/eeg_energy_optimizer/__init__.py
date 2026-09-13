@@ -225,6 +225,29 @@ def _build_telemetry_profile(hass, entry, identity_registered_at):
     app_version = _cached_app_version() or None
 
     settings = {k: config.get(k) for k in TELEMETRY_SETTINGS_KEYS if k in config}
+    # Der Bezugspreis steht seit v28 in zwei Teilen in der Konfiguration
+    # (Arbeitspreis + Netzgebühr aus Netzbereich oder Handeingabe). Das
+    # Backend kennt die Zielfunktion als einen Gesamtpreis — der wird hier
+    # zusammengesetzt; die Teile stehen zusätzlich dabei. Steht in
+    # TELEMETRY_SETTINGS_KEYS. hass.data ist in Tests ein MagicMock — dann
+    # gilt der eingebaute Schnappschuss der Netzentgelte.
+    from .netzentgelt import netzgebuehr_fuer
+    from .schedule import bezugspreis_gesamt
+
+    daten = getattr(hass, "data", None)
+    provider = None
+    if isinstance(daten, dict):
+        provider = (
+            daten.get(DOMAIN, {}).get(getattr(entry, "entry_id", None), {}) or {}
+        ).get("netzentgelt")
+    netz = netzgebuehr_fuer(
+        config, provider.tabelle if provider is not None else None
+    )
+    bezug = bezugspreis_gesamt(config, netz)
+    if bezug is not None:
+        settings["schedule_consumption_price"] = round(bezug, 5)
+    if netz is not None:
+        settings["schedule_network_fee"] = round(netz.ap, 5)
     # Steuerungs-Kennung — kein Konfigurationswert, sondern eine Eigenschaft
     # dieses Builds. Die produktive Integration mit der Zustands-Heuristik
     # sendet sie nicht; im Backend bedeutet ihr Fehlen "heuristik". Deshalb
@@ -1204,6 +1227,53 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             new_data["schedule_max_soc_pct"] = 100
         hass.config_entries.async_update_entry(entry, data=new_data, version=27)
 
+    if entry.version < 28:
+        # v28 — der Bezugspreis wird in zwei Teilen eingegeben (Arbeitspreis
+        # der Energie + Netzgebühr) und der SNAP ist ein Haken statt eines
+        # zweiten Preises; der Nachtpreis samt Fenster ist entfallen. Die
+        # Netzgebühr kommt normalerweise aus der Verordnung (Netzbereich,
+        # netzentgelt.py); eine Bestandsanlage kennt ihren Netzbereich aber
+        # nicht — sie landet auf „manual" mit der zurückgerechneten Gebühr,
+        # und der Nutzer wählt den Bereich, wenn er möchte.
+        #
+        # Der Fahrplan soll sich durch das Update nicht ändern: Der alte
+        # Gesamtpreis wird zum Arbeitspreis. War ein SNAP-Preis eingetragen,
+        # steckt darin die Netzgebühr — die Ersparnis war 20 % davon, also
+        # Netzgebühr = Differenz / 0,2 — und der Arbeitspreis ist der Rest.
+        # Gesamt- und SNAP-Preis kommen so exakt wieder heraus. Die alten
+        # Schlüssel werden entfernt, damit kein zweiter Bezugspreis in der
+        # Konfiguration liegt, den niemand mehr pflegt.
+        new_data = {**entry.data}
+
+        def _preis(wert):
+            try:
+                zahl = float(wert) if wert not in (None, "") else None
+            except (TypeError, ValueError):
+                return None
+            return zahl if zahl is not None and zahl > 0 else None
+
+        alt_gesamt = _preis(new_data.pop("schedule_consumption_price", None))
+        alt_snap = _preis(new_data.pop("schedule_consumption_price_snap", None))
+        for obsolete_key in (
+            "schedule_consumption_price_night",
+            "schedule_consumption_night_start",
+            "schedule_consumption_night_end",
+        ):
+            new_data.pop(obsolete_key, None)
+        if "schedule_energy_price" not in new_data and alt_gesamt is not None:
+            if alt_snap is not None and alt_snap < alt_gesamt:
+                netz = min((alt_gesamt - alt_snap) / 0.20, alt_gesamt)
+                new_data["schedule_network_fee"] = round(netz, 5)
+                new_data["schedule_energy_price"] = round(alt_gesamt - netz, 5)
+                new_data["schedule_snap_enabled"] = True
+                new_data["schedule_netzbereich"] = "manual"
+            else:
+                new_data["schedule_energy_price"] = alt_gesamt
+                new_data["schedule_network_fee"] = 0.0
+                new_data["schedule_snap_enabled"] = False
+                new_data["schedule_netzbereich"] = ""
+        hass.config_entries.async_update_entry(entry, data=new_data, version=28)
+
     return True
 
 
@@ -1323,6 +1393,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data[DOMAIN][entry.entry_id]["awattar_sunny"] = awattar_sunny_provider
     if str(config.get("schedule_feedin_source") or "manual").lower() == "awattar_sunny":
         hass.async_create_task(awattar_sunny_provider.async_fetch())
+
+    # Netznutzungsentgelt je Netzbereich aus der Verordnung (netzentgelt.py,
+    # RIS). Wie die Tarif-Anbieter vor dem Ausstieg angelegt, damit der
+    # Assistent die Sätze zum gewählten Netzbereich zeigen kann; der erste
+    # Abruf läuft als Task, bis dahin gilt der eingebaute Schnappschuss.
+    from .netzentgelt import NetzentgeltProvider
+    netzentgelt_provider = NetzentgeltProvider(hass, entry.entry_id)
+    await netzentgelt_provider.async_load()
+    hass.data[DOMAIN][entry.entry_id]["netzentgelt"] = netzentgelt_provider
+    hass.async_create_task(netzentgelt_provider.async_fetch())
 
     # If setup not complete, register panel only — skip platforms and optimizer
     if not setup_complete:
@@ -1980,6 +2060,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 # PeakShare nur mit aktiver Gemeinschaft UND Bedarfsprognose
                 # als Quelle; mit fester Abnahmequote entfällt der Abruf.
                 namen = ["peakshare", "oemag"] if _peakshare_gewuenscht(cfg) else ["oemag"]
+                # Netzentgelte: der Abruf selbst prüft die Tagesfrist, der
+                # halbstündige Takt ist nur der Anlass.
+                namen.append("netzentgelt")
                 # Börse, OeMAG-Hochrechnung und aWATTar SUNNY nur abfragen,
                 # wenn sie der gewählte Basistarif sind.
                 quelle_basis = str(

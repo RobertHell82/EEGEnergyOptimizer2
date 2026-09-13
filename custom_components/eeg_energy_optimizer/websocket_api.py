@@ -529,6 +529,7 @@ def async_register_websocket_commands(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_get_peakshare_communities)
     websocket_api.async_register_command(hass, ws_get_peakshare_data)
     websocket_api.async_register_command(hass, ws_get_oemag_tarif)
+    websocket_api.async_register_command(hass, ws_get_netzentgelte)
     websocket_api.async_register_command(hass, ws_get_bilanz)
     websocket_api.async_register_command(hass, ws_get_override)
     websocket_api.async_register_command(hass, ws_set_override)
@@ -1835,6 +1836,45 @@ async def ws_get_activity_log(
         "offset": offset,
         "has_more": offset + limit < total,
     })
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "eeg_optimizer/get_netzentgelte",
+        vol.Optional("refresh"): bool,
+    }
+)
+@websocket_api.async_response
+async def ws_get_netzentgelte(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict,
+) -> None:
+    """Netznutzungsentgelt je Netzbereich (Netzebene 7) samt Herkunft.
+
+    Für das Netzbereich-Dropdown und die Anzeige „Netzgebühr laut
+    Verordnung". Die Werte kommen aus dem RIS (netzentgelt.py); Stand,
+    Quelle und Alter stehen dabei, damit ein veralteter Satz auffällt.
+    ``refresh`` erzwingt einen Abruf. Ohne Anbieter (sollte nicht vorkommen,
+    er wird vor dem Assistenten angelegt) antwortet der eingebaute
+    Schnappschuss.
+    """
+    entry, data = _get_entry_data(hass, connection, msg)
+    if entry is None:
+        return
+
+    provider = data.get("netzentgelt")
+    if provider is None:
+        from .netzentgelt import SNAPSHOT, tabelle_status
+
+        connection.send_result(
+            msg["id"], tabelle_status(SNAPSHOT, None, "Anbieter nicht geladen")
+        )
+        return
+
+    if msg.get("refresh"):
+        await provider.async_fetch(force=True)
+    connection.send_result(msg["id"], provider.status())
 
 
 @websocket_api.websocket_command(

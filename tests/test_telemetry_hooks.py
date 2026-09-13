@@ -314,6 +314,65 @@ def test_profil_whitelist_laesst_fahrplan_parameter_durch():
         assert key not in settings
 
 
+def test_profile_setzt_den_bezugspreis_aus_den_teilen_zusammen():
+    """Seit v28 liegt der Bezugspreis als Arbeitspreis + Netzgebühr in der
+    Konfiguration. Das Backend bekommt weiter den Gesamtpreis — und die
+    Teile samt Haken für die zeitvariablen Sätze dazu."""
+    from custom_components.eeg_energy_optimizer import _build_telemetry_profile
+
+    hass = MagicMock()
+    hass.config = SimpleNamespace(country="AT")
+    entry = SimpleNamespace(
+        data={
+            CONF_INVERTER_TYPE: "huawei_sun2000",
+            "schedule_energy_price": 0.19,
+            "schedule_netzbereich": "manual",
+            "schedule_network_fee": 0.06,
+            "schedule_snap_enabled": True,
+        },
+        options={},
+        created_at=None,
+    )
+
+    settings = _build_telemetry_profile(
+        hass, entry, identity_registered_at=None
+    )["settings"]
+
+    assert settings["schedule_consumption_price"] == pytest.approx(0.25)
+    assert settings["schedule_energy_price"] == 0.19
+    assert settings["schedule_network_fee"] == 0.06
+    assert settings["schedule_netzbereich"] == "manual"
+    assert settings["schedule_snap_enabled"] is True
+
+
+def test_profile_nimmt_die_netzgebuehr_des_netzbereichs():
+    """Mit gewähltem Netzbereich kommt die Netzgebühr aus der Verordnung —
+    der Gesamtpreis im Profil muss sie enthalten, sonst passt die gemeldete
+    Zielfunktion nicht zu dem, was der Fahrplan gerechnet hat."""
+    from custom_components.eeg_energy_optimizer import _build_telemetry_profile
+    from custom_components.eeg_energy_optimizer.netzentgelt import SNAPSHOT
+
+    netz_wien = SNAPSHOT.tarife["wien"].ap * 1.2 / 100
+    hass = MagicMock()
+    hass.config = SimpleNamespace(country="AT")
+    entry = SimpleNamespace(
+        data={
+            CONF_INVERTER_TYPE: "fronius_gen24",
+            "schedule_energy_price": 0.19,
+            "schedule_netzbereich": "wien",
+        },
+        options={},
+        created_at=None,
+    )
+
+    settings = _build_telemetry_profile(
+        hass, entry, identity_registered_at=None
+    )["settings"]
+
+    assert settings["schedule_consumption_price"] == pytest.approx(0.19 + netz_wien, abs=1e-5)
+    assert settings["schedule_network_fee"] == pytest.approx(netz_wien, abs=1e-5)
+
+
 # ---------------------------------------------------------------------------
 # _snapshot_state — Zustandskennung aus den Maschinenfeldern des Executors
 # ---------------------------------------------------------------------------

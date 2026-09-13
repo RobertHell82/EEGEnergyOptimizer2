@@ -30,7 +30,7 @@ __init__.py: async_setup_entry()
   → Activity log: persistent ring buffer (5000 entries, paginated API)
   → 30s timer: _guard_cycle()          — ScheduleExecutor
   → 1min timer: ScheduleRunner.async_step()
-  → 30min timer: PeakShare + OeMAG refresh (+ spot / OeMAG estimate / aWATTar SUNNY, when chosen as base tariff)
+  → 30min timer: PeakShare + OeMAG + grid-tariff refresh (+ spot / OeMAG estimate / aWATTar SUNNY, when chosen as base tariff)
 
 schedule.py: ScheduleRunner (planning, 1 min)
   → async_collect_inputs()  [event loop] — profile, battery, PV forecast,
@@ -80,6 +80,7 @@ schedule_executor.py: ScheduleExecutor (execution, 30 s)
 | `schedule.py` | Planning — `ScheduleInputs`, `HAConfig` (the bridge to `opt()`), `ScheduleRunner` (collect in loop, solve in worker thread); profit comparison (`simuliere_standardbetrieb` greedy self-consumption reference with the same physics as the LP: AC efficiency, Harald's two-step internal-resistance losses above 0.1 C / 0.2 C, and the configured max-SOC cap; `bewerte_geldfluesse` with real tariffs — community rates only for energy the community's quarter-hour saldo actually absorbs, rest at base tariff/spot series; end-of-horizon battery credit at `endbestand_satz` = base tariff × efficiency − aging) |
 | `schedule_executor.py` | Execution — `plan_action()` + `ScheduleExecutor.async_guard_cycle()`; the **only** place that writes inverter commands |
 | `eeg_price.py` | Synthetic feed-in tariff from community demand — turns PeakShare demand into a price surcharge. Quote mode (`eeg_demand_source = "quote"`, for communities without PeakShare): fixed day/night acceptance quota per community (`peakshare_quote_pct[_2]`, `peakshare_quote_night_pct[_2]`) → blended price `Anteil · Quote · (Wert − Basistarif)` instead of the demand-normalised signal; the same quota replaces the saldo in `bewerte_geldfluesse` (declared assumption, the one exception to "no invented revenue"); PeakShare is not fetched in quote mode |
+| `netzentgelt.py` | Grid usage tariff (Netzebene 7) per grid area, read from the regulation instead of typed in: RIS OGD API (`data.bka.gv.at`) → paragraph HTML → table `LP \| AP \| SNAP \| WiNAP`. The user picks one of the 14 grid areas (ElWG Anlage I); the provider returns AP plus the time-variable rates, net cents → gross €/kWh. Two regulations, one parser: SNE-V 2018 § 5 until 31.12.2026, SNE-T-V (to the SNE-G-V) from 2027 — columns found by name, one row per area or the 2018 sub-rows (`nicht gemessene Leistung` = household). Built-in `SNAPSHOT` (SNE-V 2018 idF BGBl. II 305/2025) covers first start and every fetch failure; `schedule_netzbereich = "manual"` keeps a hand-typed fee. **TODO 2027: put the published SNE-T-V's `Gesetzesnummer`/paragraph into `QUELLEN` and refresh `SNAPSHOT`.** |
 | `oemag.py` | Optional base tariff: OeMAG monthly market price, scraped from the HTML table (no API), cached across restarts; also reads the per-month calculation basis + balancing-energy cost for the estimator |
 | `oemag_schaetzung.py` | Estimate of the OeMAG tariff for the *current* month (source `oemag_estimate`): aWATTar day-ahead prices weighted by Austrian solar generation (Energy-Charts), clamped to 60–100 % of the E-Control quarterly price (scraped; fallback derived from clamped months of the OeMAG table), minus balancing cost. Validated 2025-01…2026-08: MAE 0.21 ct |
 | `awattar_sunny.py` | Optional base tariff: aWATTar SUNNY fixed monthly feed-in price (source `awattar_sunny`). No API — reads the yearly tab of aWATTar's published price sheet (Google Sheet, gviz CSV) and falls back to the tariff page; two contract variants (`awattar_sunny_vertrag` = `neu`/`alt`, contracts after/until 25.02.2026) because the sheet carries two SUNNY columns; cached across restarts, hourly retry while the current month is missing |
@@ -97,7 +98,7 @@ schedule_executor.py: ScheduleExecutor (execution, 30 s)
 | `config_flow.py` | Single-click config flow (full setup happens in panel) |
 | `peakshare.py` | PeakShareProvider — fetches + caches community demand forecasts (half-hourly refresh; hourly values, `opt()` resamples to 15 min itself) |
 | `telemetry.py`, `telemetry_buffer.py` | Opt-in reporting — profile + failures only, ring buffer with backoff |
-| `websocket_api.py` | 25 WebSocket commands for panel (config, schedule, control state, PeakShare, OeMAG, spot price, aWATTar SUNNY, feed-in statistics, daily balance, probes, telemetry, activity log) |
+| `websocket_api.py` | 26 WebSocket commands for panel (config, schedule, control state, PeakShare, OeMAG, spot price, aWATTar SUNNY, grid tariffs, feed-in statistics, daily balance, probes, telemetry, activity log) |
 | `inverter/base.py` | Abstract inverter interface (InverterBase ABC) |
 | `inverter/huawei.py` | Huawei SUN2000 implementation via HA services — Single + Master/Slave (multi-device) |
 | `inverter/_distribution.py` | Shared proportional discharge distribution (SolarEdge + Huawei multi-battery) |
@@ -192,7 +193,7 @@ three intents. `Fahrplan-Status` shows what actually happened:
 - **API**: Paginated WebSocket endpoint (`get_activity_log` with `offset`/`limit`)
 - **Frontend**: Loads 100 entries initially, "Mehr laden" fetches 100 more per click, live events via subscription
 
-### WebSocket API (29 commands)
+### WebSocket API (30 commands)
 
 | Command | Description |
 |---------|-------------|
@@ -214,6 +215,7 @@ three intents. `Fahrplan-Status` shows what actually happened:
 | `eeg_optimizer/get_peakshare_communities` | List of PeakShare community names for dropdown |
 | `eeg_optimizer/get_peakshare_data` | PeakShare community demand forecast |
 | `eeg_optimizer/get_oemag_tarif` | Current OeMAG market price (base tariff option); with `schaetzung: true` also computes/returns the current-month estimate under `schaetzung` |
+| `eeg_optimizer/get_netzentgelte` | Grid usage tariff per grid area (net + gross, AP/SNAP/WiNAP) with regulation, effective date, age, last error (`refresh` forces a fetch) |
 | `eeg_optimizer/get_bilanz` | Money balance for the "Was deine PV bringt" card — PV saving and optimiser share for today / month / year plus the day's breakdown (incl. `vorteil_begruendung` when the share is negative) |
 | `eeg_optimizer/get_override` | Active pause or `{aktiv: false}` |
 | `eeg_optimizer/set_override` | Start a pause — `stunden` and/or `bis_soc_pct` (at least one); replaces a running one, takes effect immediately, answers with the state *after* the immediate guard run |
@@ -506,7 +508,7 @@ only, hidden during the startup phase); it reloads with every guard cycle,
 keyed on the status sensor's `letzte_aktualisierung`, so it never contradicts
 the status card above for longer than one cycle.
 
-Config entry version: 27 (migrations in `__init__.py`)
+Config entry version: 28 (migrations in `__init__.py`)
 
 ## Development Notes
 

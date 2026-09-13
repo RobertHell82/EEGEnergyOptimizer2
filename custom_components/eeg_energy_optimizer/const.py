@@ -416,12 +416,15 @@ TELEMETRY_SETTINGS_KEYS = (
     "spot_feedin_fee",
     "spot_feedin_fee_pct",
     "awattar_sunny_vertrag",
+    # Bezugspreis seit v28 in zwei Teilen (Arbeitspreis + Netzgebuehr aus dem
+    # Netzbereich oder von Hand) plus Haken fuer die zeitvariablen Saetze;
+    # der Gesamtpreis wird im Profil daraus zusammengesetzt, damit das Backend
+    # die Zielfunktion weiter als einen Wert sieht.
+    "schedule_energy_price",
+    "schedule_netzbereich",
+    "schedule_network_fee",
+    "schedule_snap_enabled",
     "schedule_consumption_price",
-    # Zweiter Bezugspreis samt Fenster (leer = ein Preis rund um die Uhr).
-    "schedule_consumption_price_night",
-    "schedule_consumption_price_snap",
-    "schedule_consumption_night_start",
-    "schedule_consumption_night_end",
     "schedule_grid_fee",
     "schedule_battery_cost",
     "schedule_night_start",

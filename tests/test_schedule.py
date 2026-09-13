@@ -915,7 +915,7 @@ async def test_bezugspreis_direkt_oder_aus_grid_fee():
     inputs, _ = await _collect({**BASE_CONFIG, "schedule_feedin_price": 0.082})
     assert inputs.consumption_price == pytest.approx(0.082 + 0.1647)
 
-    # Direkt gesetzt hat Vorrang
+    # Der alte Gesamtpreis (vor v28) gilt weiter, solange kein Arbeitspreis da ist
     inputs, _ = await _collect(
         {
             **BASE_CONFIG,
@@ -924,6 +924,119 @@ async def test_bezugspreis_direkt_oder_aus_grid_fee():
         }
     )
     assert inputs.consumption_price == pytest.approx(0.22)
+    assert inputs.consumption_price_snap is None
+
+
+async def test_bezugspreis_aus_arbeitspreis_und_netzgebuehr():
+    """Seit v28: Bezugspreis = Arbeitspreis + Netzgebühr; der Haken für die
+    zeitvariablen Sätze senkt allein die Netzgebühr."""
+    basis = {
+        **BASE_CONFIG,
+        "schedule_energy_price": 0.19,
+        "schedule_netzbereich": "manual",
+        "schedule_network_fee": 0.06,
+    }
+
+    inputs, _ = await _collect(basis)
+    assert inputs.consumption_price == pytest.approx(0.25)
+    assert inputs.consumption_price_snap is None
+
+    inputs, _ = await _collect({**basis, "schedule_snap_enabled": True})
+    assert inputs.consumption_price == pytest.approx(0.25)
+    assert inputs.consumption_price_snap == pytest.approx(0.25 - 0.06 * 0.20)
+    # Handeingabe kennt keinen WiNAP — er steht nur in der Verordnung.
+    assert inputs.consumption_price_winap is None
+
+    # Haken ohne Netzgebühr: nichts zu rabattieren — kein SNAP-Preis, sonst
+    # trüge das Modell eine Reihe, die nichts unterscheidet.
+    inputs, _ = await _collect(
+        {**basis, "schedule_network_fee": 0, "schedule_snap_enabled": True}
+    )
+    assert inputs.consumption_price == pytest.approx(0.19)
+    assert inputs.consumption_price_snap is None
+
+    # Arbeitspreis schlägt den Altschlüssel; ein leerer Arbeitspreis (0)
+    # lässt den Altschlüssel gelten.
+    inputs, _ = await _collect({**basis, "schedule_consumption_price": 0.30})
+    assert inputs.consumption_price == pytest.approx(0.25)
+    inputs, _ = await _collect(
+        {**BASE_CONFIG, "schedule_energy_price": 0, "schedule_consumption_price": 0.30}
+    )
+    assert inputs.consumption_price == pytest.approx(0.30)
+
+
+async def test_netzgebuehr_kommt_aus_dem_netzbereich():
+    """Mit gewähltem Netzbereich holt der Fahrplan die Netzgebühr aus der
+    Verordnung — brutto, denn die Verordnung nennt Nettowerte."""
+    from custom_components.eeg_energy_optimizer import netzentgelt
+
+    netz_oo = netzentgelt.SNAPSHOT.tarife["oberoesterreich"]
+    basis = {
+        **BASE_CONFIG,
+        "schedule_energy_price": 0.19,
+        "schedule_netzbereich": "oberoesterreich",
+    }
+
+    inputs, _ = await _collect(basis)
+    assert inputs.consumption_price == pytest.approx(0.19 + netz_oo.ap * 1.2 / 100)
+    assert inputs.consumption_price_snap is None
+
+    inputs, _ = await _collect({**basis, "schedule_snap_enabled": True})
+    assert inputs.consumption_price_snap == pytest.approx(
+        0.19 + netz_oo.snap * 1.2 / 100
+    )
+
+
+async def test_winap_wirkt_sobald_die_verordnung_ihn_kennt():
+    """Der Winter-Nieder-Arbeitspreis kommt aus der Tabelle, nicht aus der
+    Konfiguration — steht dort eine WiNAP-Spalte, rechnet der Fahrplan damit."""
+    from custom_components.eeg_energy_optimizer import netzentgelt
+
+    class _Provider:
+        tabelle = netzentgelt.Tariftabelle(
+            stand="2027-01-01",
+            quelle="SNE-T-V § 9 (RIS NOR9)",
+            url=None,
+            tarife={"wien": netzentgelt.Netztarif(5.30, 4.24, 4.24)},
+        )
+
+    config = {
+        **BASE_CONFIG,
+        "schedule_energy_price": 0.19,
+        "schedule_netzbereich": "wien",
+        "schedule_snap_enabled": True,
+    }
+    hass = _hass_with(config)
+    hass.data[sched.DOMAIN]["entry1"]["netzentgelt"] = _Provider()
+
+    with (
+        patch.object(sched, "_now_local", return_value=NOW),
+        patch.object(
+            sched, "_async_solar_forecast_wh", AsyncMock(return_value=_wh_hours(NOW))
+        ),
+    ):
+        inputs, _ = await sched.async_collect_inputs(hass, "entry1")
+
+    assert inputs.consumption_price == pytest.approx(0.19 + 5.30 * 1.2 / 100)
+    assert inputs.consumption_price_snap == pytest.approx(0.19 + 4.24 * 1.2 / 100)
+    assert inputs.consumption_price_winap == pytest.approx(0.19 + 4.24 * 1.2 / 100)
+
+
+def test_bezugspreis_gesamt_liest_beide_schreibweisen():
+    from custom_components.eeg_energy_optimizer.netzentgelt import netzgebuehr_fuer
+
+    assert sched.bezugspreis_gesamt({}) is None
+    assert sched.bezugspreis_gesamt({"schedule_consumption_price": "0.22"}) == pytest.approx(0.22)
+    netz = netzgebuehr_fuer(
+        {"schedule_netzbereich": "manual", "schedule_network_fee": "0.06"}
+    )
+    assert sched.bezugspreis_gesamt(
+        {"schedule_energy_price": 0.19}, netz
+    ) == pytest.approx(0.25)
+    # Ohne Netzgebühr zählt nur der Arbeitspreis
+    assert sched.bezugspreis_gesamt({"schedule_energy_price": 0.19}) == pytest.approx(0.19)
+    # Unsinn im Feld ist „nicht gesetzt", nicht ein Absturz
+    assert sched.bezugspreis_gesamt({"schedule_energy_price": "abc"}) is None
 
 
 async def test_standardverguetung_nachtsatz_wird_gelesen():

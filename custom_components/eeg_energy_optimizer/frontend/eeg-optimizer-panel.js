@@ -249,11 +249,15 @@ const WIZARD_DEFAULTS = {
   schedule_feedin_price_night: 0,
   schedule_night_start: "20:00",
   schedule_night_end: "06:00",
-  schedule_consumption_price: 0.26,
-  schedule_consumption_price_night: 0,
-  schedule_consumption_price_snap: 0,
-  schedule_consumption_night_start: "22:00",
-  schedule_consumption_night_end: "06:00",
+  // Bezugspreis in zwei Teilen: Arbeitspreis der Energie (inkl. MwSt) plus
+  // Netzgebühr. Die Netzgebühr kommt aus der Verordnung, sobald der
+  // Netzbereich gewählt ist (leer = keine eigene, „manual" = Handeingabe in
+  // schedule_network_fee). SNAP und WiNAP senken nur den Netzanteil — als
+  // Haken, weil Fenster und Rabatt aus der Verordnung kommen.
+  schedule_energy_price: 0.20,
+  schedule_netzbereich: "",
+  schedule_network_fee: 0,
+  schedule_snap_enabled: false,
   // Alterungskosten der Batterie: derselbe Wert wie DEFAULT_BATTERY_COST im
   // Backend (schedule.py) — im Feld sichtbar statt nur als Platzhalter.
   schedule_battery_cost: 0.01,
@@ -371,6 +375,88 @@ const euroAus = (ct) => Math.round(Number(ct || 0) * 1000) / 100000;
 const leseZahl = (el) => {
   const roh = parseFloat(el.value) || 0;
   return el.dataset?.unit === "ct" ? euroAus(roh) : roh;
+};
+
+// Netzbereiche laut Anlage I zum ElWG, beschriftet mit dem Netzbetreiber,
+// dessen Netz den Bereich bildet. Muss zu NETZBEREICHE in netzentgelt.py
+// passen (ein Test vergleicht beide Listen). Die Sätze kommen nicht von
+// hier, sondern vom Backend — dieses Verzeichnis trägt nur das Dropdown,
+// solange die Antwort noch unterwegs ist.
+const NETZBEREICHE = [
+  ["burgenland", "Burgenland (Netz Burgenland)"],
+  ["kaernten", "Kärnten (KNG-Kärnten Netz)"],
+  ["klagenfurt", "Klagenfurt (Energie Klagenfurt)"],
+  ["niederoesterreich", "Niederösterreich (Netz NÖ)"],
+  ["oberoesterreich", "Oberösterreich (Netz OÖ)"],
+  ["linz", "Linz (LINZ NETZ)"],
+  ["salzburg", "Salzburg (Salzburg Netz)"],
+  ["steiermark", "Steiermark (Energienetze Steiermark)"],
+  ["graz", "Graz (Stromnetz Graz)"],
+  ["tirol", "Tirol (TINETZ)"],
+  ["innsbruck", "Innsbruck (IKB Innsbruck)"],
+  ["vorarlberg", "Vorarlberg (Vorarlberger Energienetze)"],
+  ["wien", "Wien (Wiener Netze)"],
+  ["kleinwalsertal", "Kleinwalsertal (Energieversorgung Kleinwalsertal)"],
+];
+
+// Der Bezugspreis ist die Summe aus Arbeitspreis und Netzgebühr; in den
+// Fenstern der Verordnung (SNAP im Sommer, ab 2027 WiNAP im Winter) gilt
+// der verbilligte Netzsatz. Dieselbe Rechnung wie bezugspreise_aus_config()
+// in schedule.py — hier nur für die Anzeige unter den Feldern und in der
+// Zusammenfassung. `netze` ist die Antwort von get_netzentgelte; ohne sie
+// (noch nicht geladen) zählt nur, was in der Konfiguration steht.
+const SNAP_RABATT = 0.2;
+
+// Die Netzsätze dieses Anschlusses in €/kWh brutto: aus der Verordnung zum
+// gewählten Netzbereich, sonst die Handeingabe, sonst gar keine.
+const netzsaetze = (d, netze) => {
+  const bereich = String(d.schedule_netzbereich || "");
+  if (bereich === "manual") {
+    const ap = Number(d.schedule_network_fee) || 0;
+    return ap > 0 ? { ap, snap: ap * (1 - SNAP_RABATT), winap: null, manuell: true } : null;
+  }
+  if (!bereich) return null;
+  const treffer = (netze?.bereiche || []).find((b) => b.key === bereich);
+  if (!treffer || !(treffer.ap_brutto > 0)) return null;
+  return {
+    ap: treffer.ap_brutto,
+    snap: treffer.snap_brutto,
+    winap: treffer.winap_brutto,
+    manuell: false,
+  };
+};
+
+const bezugspreisSumme = (d, netze) =>
+  (Number(d.schedule_energy_price) || 0) + (netzsaetze(d, netze)?.ap || 0);
+const bezugspreisFenster = (d, netze, welches) => {
+  const netz = netzsaetze(d, netze);
+  const satz = netz?.[welches];
+  if (!netz || satz == null || !(satz < netz.ap)) return null;
+  return (Number(d.schedule_energy_price) || 0) + satz;
+};
+const bezugspreisText = (d, netze) => {
+  const energie = Number(d.schedule_energy_price) || 0;
+  if (!(energie > 0)) return "Bezugspreis: — (Arbeitspreis fehlt)";
+  const netz = netzsaetze(d, netze);
+  let text = `Bezugspreis: <strong>${fmtDe(bezugspreisSumme(d, netze) * 100, 2)} ct/kWh</strong>`;
+  if (netz) {
+    text += ` (${fmtDe(energie * 100, 2)} Arbeitspreis + ${fmtDe(netz.ap * 100, 2)} Netz)`;
+  }
+  if (d.schedule_snap_enabled) {
+    if (!netz) {
+      text += " — die zeitvariablen Sätze wirken erst mit Netzbereich oder Netzgebühr";
+    } else {
+      const snap = bezugspreisFenster(d, netze, "snap");
+      const winap = bezugspreisFenster(d, netze, "winap");
+      if (snap != null) {
+        text += `<br>Sommer 10–16 Uhr: <strong>${fmtDe(snap * 100, 2)} ct/kWh</strong>`;
+      }
+      if (winap != null) {
+        text += `${snap != null ? " · " : "<br>"}Winter 22–4 Uhr: <strong>${fmtDe(winap * 100, 2)} ct/kWh</strong>`;
+      }
+    }
+  }
+  return text;
 };
 
 class EegOptimizerPanel extends HTMLElement {
@@ -525,6 +611,12 @@ class EegOptimizerPanel extends HTMLElement {
     this._oemagStatus = null;
     this._oemagBusy = false;
     this._oemagRequested = false;
+    // Netznutzungsentgelte je Netzbereich aus der Verordnung. Einmal je
+    // Panel-Sitzung geholt — die Sätze gelten ein Jahr, das Backend hält
+    // sie ohnehin zwischengespeichert.
+    this._netzentgelte = null;
+    this._netzentgelteBusy = false;
+    this._netzentgelteRequested = false;
     // Spotpreis-Status (Quelle „Strombörse"), gleiche Mechanik wie OeMAG.
     this._spotStatus = null;
     this._spotBusy = false;
@@ -724,6 +816,11 @@ class EegOptimizerPanel extends HTMLElement {
             this._render();
           } else if (type === "number") {
             this._settingsData[realField] = leseZahl(target);
+            // Der Bezugspreis unter den Feldern rechnet live mit — ohne
+            // Render, der den Speichern-Knopf austauschen würde.
+            if (realField === "schedule_energy_price" || realField === "schedule_network_fee") {
+              this._syncBezugspreis("settings_");
+            }
           } else {
             this._settingsData[realField] = target.value;
           }
@@ -742,8 +839,17 @@ class EegOptimizerPanel extends HTMLElement {
           return;
         }
         const type = target.type;
-        if (type === "number") {
+        if (type === "checkbox") {
+          // Ein Haken ist an oder aus — target.value wäre immer "on". Die
+          // Haken, die Blöcke ein- und ausblenden (expert_mode,
+          // enable_peakshare), rendert der change-Handler unten nach.
+          this._wizardData[field] = target.checked;
+          if (field === "schedule_snap_enabled") this._syncBezugspreis("");
+        } else if (type === "number") {
           this._wizardData[field] = leseZahl(target);
+          if (field === "schedule_energy_price" || field === "schedule_network_fee") {
+            this._syncBezugspreis("");
+          }
         } else {
           this._wizardData[field] = target.value;
         }
@@ -821,6 +927,9 @@ class EegOptimizerPanel extends HTMLElement {
             // den Verbindungstest ein. Ohne Render war die Auswahl gesetzt,
             // aber es gab kein Feld für die IP-Adresse.
             if (realField === "wallbox_type") this._render();
+            // Der Netzbereich tauscht den Hinweis mit dem Satz aus der
+            // Verordnung und blendet bei „Von Hand eintragen" das Feld ein.
+            if (realField === "schedule_netzbereich") this._render();
           }
           return;
         }
@@ -854,7 +963,13 @@ class EegOptimizerPanel extends HTMLElement {
             if (target.value === "awattar_sunny") this._ensureSunnyStatus();
             this._saveWizardProgress();
             this._render();
-          } else if (field === "awattar_sunny_vertrag" || field === "eeg_demand_source") {
+          } else if (
+            field === "awattar_sunny_vertrag"
+            || field === "eeg_demand_source"
+            // Der Netzbereich tauscht den Hinweis mit dem Satz aus der
+            // Verordnung und blendet bei „Von Hand eintragen" das Feld ein.
+            || field === "schedule_netzbereich"
+          ) {
             this._saveWizardProgress();
             this._render();
           }
@@ -902,6 +1017,38 @@ class EegOptimizerPanel extends HTMLElement {
   // Umschalten auf OeMAG und beim Rendern einer Ansicht, die ihn zeigt.
   // Ein fehlgeschlagener Abruf wird nicht wiederholt (sonst Retry-Sturm bei
   // jedem Render) — dafür gibt es „Jetzt holen".
+  // Die Netzentgelt-Tabelle holen, sobald sie jemand braucht (Tarif-Felder
+  // im Assistenten oder in den Einstellungen). Ein Abruf je Sitzung genügt.
+  _ensureNetzentgelte() {
+    if (this._netzentgelte !== null || this._netzentgelteBusy || this._netzentgelteRequested) return;
+    this._netzentgelteRequested = true;
+    this._loadNetzentgelte();
+  }
+
+  async _loadNetzentgelte(refresh = false) {
+    if (this._netzentgelteBusy || !this._hass) {
+      // Ohne hass gab es keinen Versuch — die Sperre darf nicht stehen bleiben.
+      if (!this._hass) this._netzentgelteRequested = false;
+      return;
+    }
+    this._netzentgelteBusy = true;
+    try {
+      this._netzentgelte = await this._hass.callWS({
+        type: "eeg_optimizer/get_netzentgelte",
+        ...(refresh ? { refresh: true } : {}),
+      });
+    } catch (e) {
+      console.warn("Netzentgelte nicht abrufbar:", e);
+      // bereiche: [] statt null — sonst hielte _ensureNetzentgelte den
+      // Stand für ungeholt und fragte bei jedem Render erneut an.
+      this._netzentgelte = { bereiche: [], fehler: e?.message || String(e) };
+    } finally {
+      this._netzentgelteBusy = false;
+      this._netzentgelteRequested = false;
+      this._render();
+    }
+  }
+
   _ensureOemagTarif() {
     // Bei Quelle „hochgerechnet" muss der Status auch die Hochrechnung
     // tragen — ein früherer Abruf ohne sie zählt dann nicht als geladen.
@@ -2291,8 +2438,15 @@ class EegOptimizerPanel extends HTMLElement {
           this._showValidationError("Bitte die Standardvergütung eintragen.");
           return false;
         }
-        if (!(parseFloat(this._wizardData.schedule_consumption_price) > 0)) {
-          this._showValidationError("Bitte den Bezugspreis eintragen.");
+        if (!(parseFloat(this._wizardData.schedule_energy_price) > 0)) {
+          this._showValidationError("Bitte den Arbeitspreis eintragen.");
+          return false;
+        }
+        // SNAP und WiNAP senken nur die Netzgebühr — ohne sie gäbe es nichts
+        // zu rabattieren, der Haken wäre wirkungslos.
+        if (this._wizardData.schedule_snap_enabled
+            && !netzsaetze(this._wizardData, this._netzentgelte)) {
+          this._showValidationError("Für die zeitvariablen Netzentgelte bitte den Netzbereich wählen — nur die Netzgebühr wird günstiger.");
           return false;
         }
         // Dieselbe Regel wie beim Speichern der Einstellungen: der
@@ -2416,7 +2570,10 @@ class EegOptimizerPanel extends HTMLElement {
     }
     if ((d.schedule_feedin_source || "manual") === "manual"
         && !(Number(d.schedule_feedin_price) > 0)) fehlt.push("Standardvergütung");
-    if (!(Number(d.schedule_consumption_price) > 0)) fehlt.push("Bezugspreis");
+    if (!(Number(d.schedule_energy_price) > 0)) fehlt.push("Arbeitspreis");
+    if (d.schedule_snap_enabled && !netzsaetze(d, this._netzentgelte)) {
+      fehlt.push("Netzbereich (nur die Netzgebühr wird zeitvariabel günstiger)");
+    }
     if (!(Number(d.discharge_power_kw) > 0)) fehlt.push("Batterie-Leistungsgrenze");
     // Zwei getrennte Nachtfenster: das der Standardvergütung braucht nur
     // deren Nachtsatz (und nur bei festem Wert — bei OeMAG und Spot wirkt
@@ -4967,6 +5124,16 @@ class EegOptimizerPanel extends HTMLElement {
     btn.classList.toggle("btn-disabled", this._isNextDisabled() || probing);
   }
 
+  // Die Bezugspreis-Zeile unter Arbeitspreis, Netzgebühr und SNAP-Haken
+  // nachziehen, ohne die Ansicht neu zu rendern. `prefix` sagt, ob die
+  // Zeile im Wizard ("") oder in den Einstellungen ("settings_") steht.
+  _syncBezugspreis(prefix) {
+    const el = this._shadow?.querySelector(`[data-bezugspreis="${prefix}"]`);
+    if (!el) return;
+    const d = prefix === "settings_" ? (this._settingsData || {}) : this._wizardData;
+    el.innerHTML = bezugspreisText(d, this._netzentgelte);
+  }
+
   /* ── Schritt: Willkommen ──────────────────────── */
 
   _renderStepWillkommen() {
@@ -6066,39 +6233,64 @@ class EegOptimizerPanel extends HTMLElement {
     // verstellen. Das Feld ist bewusst nur abgeschaltet und nicht entfernt:
     // auf `true` gesetzt kommt es unverändert zurück.
     const alterungskostenSichtbar = false;
+    // Netzgebühr: Die Sätze stehen in der Verordnung und kommen vom Backend
+    // (get_netzentgelte). Bis die Antwort da ist, steht im Hinweis nur die
+    // Erklärung — die Auswahl selbst funktioniert schon.
+    this._ensureNetzentgelte();
+    const bereich = String(d.schedule_netzbereich || "");
+    const netze = this._netzentgelte;
+    const satz = netzsaetze(d, netze);
+    let netzHinweis;
+    if (bereich === "manual") {
+      netzHinweis = "Trag die Netzgebühr selbst ein — etwa für einen Anschluss, der nicht auf Netzebene 7 hängt, oder wenn dein Preisblatt von der Verordnung abweicht.";
+    } else if (!bereich) {
+      netzHinweis = "Ohne Netzbereich rechnet der Fahrplan nur mit dem Arbeitspreis. Die zeitvariablen Sätze brauchen aber eine getrennte Netzgebühr — wähle deinen Netzbereich, dann kommt sie aus der Verordnung.";
+    } else if (satz) {
+      const stand = netze?.stand ? new Date(netze.stand).toLocaleDateString("de-AT") : "—";
+      const quelle = netze?.aus_snapshot === false ? "aus dem Rechtsinformationssystem" : "aus der eingebauten Kopie der Verordnung";
+      netzHinweis = `<strong>${fmtDe(satz.ap * 100, 2)} ct/kWh</strong> inklusive Mehrwertsteuer — Netzebene 7, Haushalt, gültig ab ${stand}, ${quelle}.`
+        + (satz.snap != null ? ` Im SNAP-Fenster ${fmtDe(satz.snap * 100, 2)} ct` : "")
+        + (satz.winap != null ? `, im WiNAP-Fenster ${fmtDe(satz.winap * 100, 2)} ct` : "")
+        + (satz.snap != null ? "." : "")
+        + " Alle Netzbetreiber eines Bereichs verrechnen denselben Satz.";
+    } else {
+      netzHinweis = "Die Sätze werden geholt …";
+    }
     return `
       <div class="field-group">
-        <label>Bezugspreis (ct/kWh) *</label>
-        <input type="number" data-field="${prefix}schedule_consumption_price" data-unit="ct"
-               value="${ctAus(d.schedule_consumption_price ?? 0.247)}" min="0" max="200" step="0.1">
-        <div class="help-text">Dein Arbeitspreis inklusive Netz und Abgaben. Solange er klar über der Einspeisevergütung liegt, ist die genaue Höhe unwichtig — erst wenn sich beide annähern, ändert sich das Verhalten grundlegend.</div>
+        <label>Arbeitspreis (ct/kWh) *</label>
+        <input type="number" data-field="${prefix}schedule_energy_price" data-unit="ct"
+               value="${Number(d.schedule_energy_price) > 0 ? ctAus(d.schedule_energy_price) : ""}" min="0" max="200" step="0.1">
+        <div class="help-text">Was dein Lieferant je Kilowattstunde verlangt, inklusive Mehrwertsteuer — der Arbeitspreis auf der Stromrechnung. Wer es genau will, rechnet Netzverlustentgelt und Abgaben (Elektrizitätsabgabe, Erneuerbaren-Förderbeitrag) dazu; die bleiben beim SNAP unverändert. Solange der Bezug klar über der Einspeisevergütung liegt, ist die genaue Höhe unwichtig.</div>
       </div>
       <div class="field-group">
-        <label>Bezugspreis im Sommer mittags (ct/kWh)</label>
-        <input type="number" data-field="${prefix}schedule_consumption_price_snap" data-unit="ct"
-               value="${Number(d.schedule_consumption_price_snap) > 0 ? ctAus(d.schedule_consumption_price_snap) : ""}"
-               min="0" max="200" step="0.1" placeholder="leer = kein Sommer-Rabatt">
-        <div class="help-text">Österreich: Der <strong>Sommer-Nieder-Arbeitspreis (SNAP)</strong> senkt das Netznutzungsentgelt vom 1. April bis 30. September täglich zwischen 10 und 16 Uhr um 20 %. Trag hier deinen Bezugspreis abzüglich dieser Ersparnis ein — die Differenz steht im Preisblatt deines Netzbetreibers (z.&nbsp;B. Netz OÖ 1,26&nbsp;ct, Linz Netz 1,11&nbsp;ct). Zeitraum und Uhrzeit stehen in der Verordnung und sind deshalb fest. Voraussetzung ist die viertelstündliche Messung beim Netzbetreiber; für Mengen, die einer Energiegemeinschaft zugeordnet sind, gilt der Rabatt nicht.</div>
+        <label>Netzgebühr — Netzbereich</label>
+        <select data-field="${prefix}schedule_netzbereich">
+          <option value="" ${!bereich ? "selected" : ""}>Keine eigene Netzgebühr (im Arbeitspreis enthalten)</option>
+          ${NETZBEREICHE.map(([key, label]) =>
+            `<option value="${key}" ${bereich === key ? "selected" : ""}>${label}</option>`).join("")}
+          <option value="manual" ${bereich === "manual" ? "selected" : ""}>Von Hand eintragen</option>
+        </select>
+        <div class="help-text">${netzHinweis}</div>
       </div>
+      ${bereich === "manual" ? `
       <div class="field-group">
-        <label>Bezugspreis nachts (ct/kWh)</label>
-        <input type="number" data-field="${prefix}schedule_consumption_price_night" data-unit="ct"
-               value="${Number(d.schedule_consumption_price_night) > 0 ? ctAus(d.schedule_consumption_price_night) : ""}"
-               min="0" max="200" step="0.1" placeholder="leer = rund um die Uhr derselbe Preis">
-        <div class="help-text">Nur ausfüllen, wenn du nachts wirklich weniger zahlst — etwa mit einem Doppeltarif beim Netzentgelt (in Österreich 06–22 und 22–06 Uhr) oder einem Energievertrag mit Nachtsatz. Leer heißt: ein Preis rund um die Uhr.</div>
+        <label>Netzgebühr (ct/kWh)</label>
+        <input type="number" data-field="${prefix}schedule_network_fee" data-unit="ct"
+               value="${Number(d.schedule_network_fee) > 0 ? ctAus(d.schedule_network_fee) : ""}"
+               min="0" max="200" step="0.1" placeholder="z. B. 7,55">
+        <div class="help-text">Das Netznutzungsentgelt je Kilowattstunde inklusive Mehrwertsteuer — die Zeile „Netznutzung Arbeitspreis" im Preisblatt deines Netzbetreibers (Netzebene 7). Nur dieser Teil wird von den zeitvariablen Sätzen gesenkt.</div>
+      </div>` : ""}
+      <div class="field-group">
+        <label style="display:flex;align-items:center;gap:12px;cursor:pointer">
+          <input type="checkbox" data-field="${prefix}schedule_snap_enabled" ${d.schedule_snap_enabled ? "checked" : ""}>
+          <div>
+            <div style="font-weight:500">Zeitvariable Netzentgelte (SNAP und WiNAP)</div>
+            <div class="help-text" style="margin-top:4px">Österreich: Der <strong>Sommer-Nieder-Arbeitspreis (SNAP)</strong> macht die Netzgebühr vom 1. April bis 30. September täglich zwischen 10 und 16 Uhr um 20 % günstiger. Ab 2027 kommt der <strong>Winter-Nieder-Arbeitspreis (WiNAP)</strong> dazu: 1. Oktober bis 31. März, 22 bis 4 Uhr. Zeiträume, Uhrzeiten und Rabatt stehen in der Verordnung und sind deshalb fest. Voraussetzung ist die viertelstündliche Messung beim Netzbetreiber; für Mengen, die einer Energiegemeinschaft zugeordnet sind, gilt der Rabatt nicht.</div>
+          </div>
+        </label>
       </div>
-      ${Number(d.schedule_consumption_price_night) > 0 ? `
-      <div style="display:flex;gap:12px">
-        <div class="field-group" style="flex:1">
-          <label>Bezug nachts von</label>
-          <input type="time" data-field="${prefix}schedule_consumption_night_start" value="${d.schedule_consumption_night_start || "22:00"}">
-        </div>
-        <div class="field-group" style="flex:1">
-          <label>Bezug nachts bis</label>
-          <input type="time" data-field="${prefix}schedule_consumption_night_end" value="${d.schedule_consumption_night_end || "06:00"}">
-        </div>
-      </div>
-      <div class="help-text" style="margin-bottom:16px">Wann der Nachtpreis für den Bezug gilt. Darf über Mitternacht gehen und ist unabhängig vom Nachtfenster der Einspeisung — Netz- und Energievertrag teilen selten dieselben Stunden.</div>` : ""}
+      <div class="help-text" data-bezugspreis="${prefix}" style="margin-bottom:16px">${bezugspreisText(d, this._netzentgelte)}</div>
       ${alterungskostenSichtbar && d.expert_mode ? `
       <div class="field-group">
         <label>Alterungskosten der Batterie (ct/kWh)</label>
@@ -6718,12 +6910,21 @@ class EegOptimizerPanel extends HTMLElement {
         ${(d.schedule_feedin_source || "manual") === "manual" && Number(d.schedule_feedin_price_night ?? 0) > 0
           ? row("Standardvergütung Nacht", `${preis(d.schedule_feedin_price_night, 0)} (${d.schedule_night_start || "20:00"}–${d.schedule_night_end || "06:00"})`)
           : ""}
-        ${row("Bezugspreis", preis(d.schedule_consumption_price, 0.247))}
-        ${Number(d.schedule_consumption_price_snap) > 0
-          ? row("Bezugspreis Sommer mittags", `${preis(d.schedule_consumption_price_snap, 0)} (Apr–Sep, 10:00–16:00)`)
+        ${row("Arbeitspreis", preis(d.schedule_energy_price, 0.20))}
+        ${(() => {
+          const satz = netzsaetze(d, this._netzentgelte);
+          if (!satz) return "";
+          const bereichName = satz.manuell
+            ? "von Hand"
+            : (NETZBEREICHE.find(([k]) => k === d.schedule_netzbereich)?.[1] || "");
+          return row("Netzgebühr", `${preis(satz.ap, 0)} (${bereichName})`);
+        })()}
+        ${row("Bezugspreis", preis(bezugspreisSumme(d, this._netzentgelte), 0.26))}
+        ${d.schedule_snap_enabled && bezugspreisFenster(d, this._netzentgelte, "snap") != null
+          ? row("Bezugspreis Sommer mittags", `${preis(bezugspreisFenster(d, this._netzentgelte, "snap"), 0)} (Apr–Sep, 10:00–16:00)`)
           : ""}
-        ${Number(d.schedule_consumption_price_night) > 0
-          ? row("Bezugspreis Nacht", `${preis(d.schedule_consumption_price_night, 0)} (${d.schedule_consumption_night_start || "22:00"}–${d.schedule_consumption_night_end || "06:00"})`)
+        ${d.schedule_snap_enabled && bezugspreisFenster(d, this._netzentgelte, "winap") != null
+          ? row("Bezugspreis Winter nachts", `${preis(bezugspreisFenster(d, this._netzentgelte, "winap"), 0)} (Okt–Mär, 22:00–04:00)`)
           : ""}
         ${row("Energiegemeinschaft", d.enable_peakshare !== false
           ? `${d.peakshare_community || "BEG"} — ${(d.eeg_demand_source || "peakshare") === "quote" ? "feste Abnahmequote" : "PeakShare-Prognose"}`

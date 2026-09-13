@@ -44,6 +44,14 @@ from .const import (
     GEWINN_HORIZONT_H,
 )
 from .heizstab.controller import heizstab_max_kw, heizstab_waermewert
+from .netzentgelt import (  # noqa: F401 — Schlüssel hier mit-exportiert
+    CONF_SCHEDULE_NETWORK_FEE,
+    CONF_SCHEDULE_NETZBEREICH,
+    SNAP_RABATT,
+    Netzgebuehr,
+    Tariftabelle,
+    netzgebuehr_fuer,
+)
 from .power_readings import (
     compute_house_load_kw,
     compute_pv_now_kw,
@@ -105,29 +113,34 @@ CONF_SCHEDULE_NIGHT_END = "schedule_night_end"
 # Leer heißt: wie das Standard-Fenster — Bestandsanlagen ändern sich nicht.
 CONF_PEAKSHARE_NIGHT_START = "peakshare_night_start"
 CONF_PEAKSHARE_NIGHT_END = "peakshare_night_end"
+# Bezugspreis in zwei Teilen (beide €/kWh inkl. MwSt): der Arbeitspreis der
+# Energie und das Netznutzungsentgelt je Kilowattstunde. Zusammen sind sie
+# der Preis, den eine Kilowattstunde aus dem Netz kostet — getrennt werden
+# sie nur, weil SNAP und WiNAP allein den Netzanteil senken. Die Netzgebühr
+# kommt aus der Verordnung (netzentgelt.py, Schlüssel CONF_SCHEDULE_NETZBEREICH)
+# oder von Hand (CONF_SCHEDULE_NETWORK_FEE). Der Altschlüssel
+# CONF_SCHEDULE_CONSUMPTION_PRICE (ein Gesamtpreis) wird weiter gelesen,
+# falls eine Konfiguration die Migration v28 nicht durchlaufen hat.
+CONF_SCHEDULE_ENERGY_PRICE = "schedule_energy_price"
 CONF_SCHEDULE_CONSUMPTION_PRICE = "schedule_consumption_price"
-# Zweiter Bezugspreis für ein Nachtfenster — leer heißt „ein Preis rund um
-# die Uhr". Gründe gibt es zwei: ein Doppeltarif beim Netzentgelt (in
-# Österreich DTAP/DNAP, 06–22 und 22–06 nach der Systemnutzungsentgelte-
-# Verordnung) und Energieverträge mit eigenem Nachtsatz. Das Fenster ist
-# frei einstellbar, weil beide Verträge eigene Zeiten haben können und die
-# Vorgabe nur der häufigste Fall ist.
-CONF_SCHEDULE_CONSUMPTION_PRICE_NIGHT = "schedule_consumption_price_night"
-CONF_SCHEDULE_CONSUMPTION_NIGHT_START = "schedule_consumption_night_start"
-CONF_SCHEDULE_CONSUMPTION_NIGHT_END = "schedule_consumption_night_end"
-DEFAULT_CONSUMPTION_NIGHT_START = 22
-DEFAULT_CONSUMPTION_NIGHT_END = 6
-# Sommer-Nieder-Arbeitspreis (SNAP): In Österreich seit 1.4.2026 ein um 20 %
-# verringertes Netznutzungsentgelt auf der Netzebene 7, jeweils vom 1. April
-# bis 30. September zwischen 10 und 16 Uhr (SNE-V 2018 idF Novelle 2026,
-# § 2 Abs. 1 Z 9 und § 5 Abs. 1b). Zeitraum und Uhrzeit stehen in der
-# Verordnung und sind deshalb fest verdrahtet — eingegeben wird nur der
-# Preis, der in diesem Fenster gilt.
-CONF_SCHEDULE_CONSUMPTION_PRICE_SNAP = "schedule_consumption_price_snap"
+# Zeitvariable Netzentgelte: Sommer-Nieder-Arbeitspreis (SNAP) — seit
+# 1.4.2026 ein um 20 % verringertes Netznutzungsentgelt auf der Netzebene 7,
+# 1. April bis 30. September, 10 bis 16 Uhr (SNE-V 2018 idF Novelle 2026,
+# § 2 Abs. 1 Z 9 und § 5 Abs. 1b) — und ab 2027 der Winter-Nieder-Arbeits-
+# preis (WiNAP), 1. Oktober bis 31. März, 22 bis 4 Uhr des Folgetags (SNE-G-V
+# § 7 Abs. 4). Zeiträume, Uhrzeiten und Rabatt stehen in der Verordnung und
+# sind deshalb fest verdrahtet — konfiguriert wird nur, ob der Anschluss die
+# zeitvariablen Sätze bekommt (Voraussetzung: Viertelstundenmessung). Der
+# Schlüssel heißt nach dem ersten Fenster; er schaltet beide.
+CONF_SCHEDULE_SNAP_ENABLED = "schedule_snap_enabled"
 SNAP_MONAT_VON = 4       # 1. April
 SNAP_MONAT_BIS = 9       # 30. September (einschließlich)
 SNAP_STUNDE_VON = 10
 SNAP_STUNDE_BIS = 16     # 16:00 gehört nicht mehr dazu
+WINAP_MONAT_VON = 10     # 1. Oktober
+WINAP_MONAT_BIS = 3      # 31. März (einschließlich, über den Jahreswechsel)
+WINAP_STUNDE_VON = 22
+WINAP_STUNDE_BIS = 4     # 04:00 gehört nicht mehr dazu
 CONF_SCHEDULE_GRID_FEE = "schedule_grid_fee"
 CONF_SCHEDULE_BATTERY_COST = "schedule_battery_cost"
 # Mindest-Ladestand in Prozent, unter den der Fahrplan nicht planen darf.
@@ -271,15 +284,12 @@ class ScheduleInputs:
     min_soc_pct: float = 0.0
     # Obergrenze in Prozent; 100 = der Fahrplan darf bis voll planen
     max_soc_pct: float = 100.0
-    # Bezugspreis im Nachtfenster; None = ein Preis rund um die Uhr. Das
-    # Fenster ist ein eigenes, nicht das der Einspeisung: Netz- und
-    # Energievertrag teilen selten dieselben Stunden.
-    consumption_price_night: float | None = None
-    consumption_night_start_hour: int = DEFAULT_CONSUMPTION_NIGHT_START
-    consumption_night_end_hour: int = DEFAULT_CONSUMPTION_NIGHT_END
-    # Bezugspreis im SNAP-Fenster (Sommer, 10–16 Uhr); None = kein SNAP.
-    # Fenstergrenzen kommen aus der Verordnung, nicht aus der Konfiguration.
+    # Bezugspreis im SNAP-Fenster (Sommer, 10–16 Uhr) und im WiNAP-Fenster
+    # (Winter, 22–4 Uhr); None = Fenster gibt es nicht. Abgeleitet aus
+    # Arbeitspreis + verbilligter Netzgebühr; die Fenstergrenzen kommen aus
+    # der Verordnung, nicht aus der Konfiguration.
     consumption_price_snap: float | None = None
+    consumption_price_winap: float | None = None
     forecast_source: str = ""
     # Preisaufschlag je Zeitpunkt aus dem Bedarf der Energiegemeinschaften
     # (€/kWh, siehe eeg_price.py). Leer = keine Gemeinschaft wirkt mit.
@@ -600,15 +610,15 @@ class HAConfig:
         return self._feedin_series.loc[start_time:]
 
     def consumption_price(self, start_time):
-        """Skalar ohne Nachtpreis, sonst eine Reihe je Zeitpunkt.
+        """Skalar ohne Zeitfenster, sonst eine Reihe je Zeitpunkt.
 
         Pandas nimmt beides — der Skalar wird über alle Slots gestreckt.
-        Mit Nachtpreis muss es eine Reihe sein, sonst plant das LP gegen
-        einen Preis, den es nachts gar nicht gibt.
+        Mit SNAP oder WiNAP muss es eine Reihe sein, sonst plant das LP im
+        Fenster gegen einen Preis, den es dort gar nicht gibt.
         """
         if (
-            self._inputs.consumption_price_night is None
-            and self._inputs.consumption_price_snap is None
+            self._inputs.consumption_price_snap is None
+            and getattr(self._inputs, "consumption_price_winap", None) is None
         ):
             return self._inputs.consumption_price
         if self._consumption_price_series is None:
@@ -669,31 +679,91 @@ def ist_im_snap_fenster(stamp: datetime) -> bool:
     )
 
 
+def ist_im_winap_fenster(stamp: datetime) -> bool:
+    """Liegt der Zeitpunkt im Winter-Nachtfenster der Verordnung?
+
+    1. Oktober bis 31. März, jeweils 22:00 bis 04:00 des Folgetags. Die
+    Nacht gehört zum Tag, an dem sie beginnt: 31.3. 22:00 bis 1.4. 04:00
+    zählt noch dazu, 1.10. 00:00 bis 04:00 noch nicht.
+    """
+    if stamp.hour >= WINAP_STUNDE_VON:
+        tag = stamp
+    elif stamp.hour < WINAP_STUNDE_BIS:
+        tag = stamp - timedelta(days=1)
+    else:
+        return False
+    return tag.month >= WINAP_MONAT_VON or tag.month <= WINAP_MONAT_BIS
+
+
 def bezugspreis_zu(inputs: ScheduleInputs, stamp: datetime) -> float:
     """Bezugspreis, der zu diesem Zeitpunkt gilt (€/kWh).
 
-    Drei mögliche Preise, in dieser Reihenfolge: der günstigere Sommer-
-    Mittagspreis (SNAP), der Nachtpreis, sonst der Tagespreis. SNAP steht
-    vorn, weil sein Fenster aus der Verordnung kommt und sich mit einem
-    üblichen Nachtfenster ohnehin nicht überschneidet — bei einem ungewöhnlich
-    gesetzten Nachtfenster gewinnt die Verordnung.
-
-    Ohne zweiten Preis ist es immer derselbe. Ein Fenster, dessen Grenzen
-    zusammenfallen, ist kein Fenster — dann gilt ebenfalls der Tagespreis.
+    Im SNAP-Fenster der Sommer-Mittagspreis, im WiNAP-Fenster der Winter-
+    Nachtpreis, sonst der eine Bezugspreis. Die Fenster überschneiden sich
+    nicht (Sommer/Winter). Ohne Zeitfenster ist es rund um die Uhr derselbe.
     """
     snap = getattr(inputs, "consumption_price_snap", None)
     if snap is not None and ist_im_snap_fenster(stamp):
         return float(snap)
-    nacht = getattr(inputs, "consumption_price_night", None)
-    if nacht is None:
-        return inputs.consumption_price
-    if _ist_im_nachtfenster(
-        stamp.hour,
-        getattr(inputs, "consumption_night_start_hour", DEFAULT_CONSUMPTION_NIGHT_START),
-        getattr(inputs, "consumption_night_end_hour", DEFAULT_CONSUMPTION_NIGHT_END),
-    ):
-        return float(nacht)
+    winap = getattr(inputs, "consumption_price_winap", None)
+    if winap is not None and ist_im_winap_fenster(stamp):
+        return float(winap)
     return inputs.consumption_price
+
+
+def _preis_oder_none(wert: Any) -> float | None:
+    """Ein Panel-Zahlenfeld lesen: leer, 0 oder Unsinn heißt „nicht gesetzt".
+
+    Ein leeres Zahlenfeld kommt als 0 an, und 0 hieße bei einem Preis
+    „gratis" — das darf kein Feld unbemerkt bewirken.
+    """
+    try:
+        zahl = float(wert) if wert not in (None, "") else None
+    except (TypeError, ValueError):
+        return None
+    return zahl if zahl is not None and zahl > 0 else None
+
+
+def bezugspreis_gesamt(
+    config: dict, netz: Netzgebuehr | None = None
+) -> float | None:
+    """Bezugspreis aus der Konfiguration (€/kWh) — oder None, wenn keiner da ist.
+
+    Seit v28 in zwei Teilen: Arbeitspreis der Energie plus Netzgebühr
+    (``netz``, siehe netzentgelt.netzgebuehr_fuer; ohne sie zählt nur der
+    Arbeitspreis). Der alte Gesamtpreis (``schedule_consumption_price``)
+    gilt weiter, solange kein Arbeitspreis eingetragen ist — für
+    Konfigurationen, die die Migration nicht durchlaufen haben.
+    """
+    energie = _preis_oder_none(config.get(CONF_SCHEDULE_ENERGY_PRICE))
+    if energie is not None:
+        return energie + (netz.ap if netz is not None else 0.0)
+    return _preis_oder_none(config.get(CONF_SCHEDULE_CONSUMPTION_PRICE))
+
+
+def bezugspreise_aus_config(
+    config: dict, fallback: float, netz: Netzgebuehr | None = None
+) -> tuple[float, float | None, float | None]:
+    """Bezugspreis, SNAP-Preis und WiNAP-Preis (alle €/kWh) aus der Konfiguration.
+
+    Ohne Angabe gilt ``fallback`` (Einspeisung plus grid_fee, wie bei
+    Harald). Die Fensterpreise entstehen nur, wenn der Haken gesetzt ist
+    UND eine Netzgebühr mit dem jeweiligen Satz da ist — ohne Netzanteil
+    gibt es nichts zu rabattieren, und eine Reihe, die nichts unterscheidet,
+    muss das Modell nicht tragen. Der WiNAP kommt erst mit der Verordnung
+    ab 2027 (Spalte in der Tabelle); bis dahin bleibt er None.
+    """
+    energie = _preis_oder_none(config.get(CONF_SCHEDULE_ENERGY_PRICE))
+    bezug = bezugspreis_gesamt(config, netz)
+    if bezug is None:
+        bezug = fallback
+    snap = winap = None
+    if energie is not None and netz is not None and config.get(CONF_SCHEDULE_SNAP_ENABLED):
+        if netz.snap is not None and netz.snap < netz.ap:
+            snap = energie + netz.snap
+        if netz.winap is not None and netz.winap < netz.ap:
+            winap = energie + netz.winap
+    return bezug, snap, winap
 
 
 def _min_soc_pct(config: dict) -> float:
@@ -1389,43 +1459,18 @@ async def async_collect_inputs(
                 "Keine Spotpreise verfügbar, es gilt die Handeingabe (%.5f €/kWh)",
                 feedin_tag,
             )
-    bezug = config.get(CONF_SCHEDULE_CONSUMPTION_PRICE)
-    if bezug:
-        bezug = float(bezug)
-    else:
-        bezug = feedin_tag + float(config.get(CONF_SCHEDULE_GRID_FEE, DEFAULT_GRID_FEE))
-    # Zweiter Bezugspreis fürs Nachtfenster. Das Panel speichert ein leeres
-    # Zahlenfeld als 0 — und 0 heißt hier „gibt es nicht", nicht „nachts
-    # gratis": Mit einem Nachtpreis von null lüde das Modell die Batterie
-    # jede Nacht kostenlos aus dem Netz voll. Ein Wert gleich dem Tagespreis
-    # fällt ebenfalls weg, sonst trüge das Modell eine Reihe mit, die nichts
-    # unterscheidet.
-    bezug_nacht = config.get(CONF_SCHEDULE_CONSUMPTION_PRICE_NIGHT)
-    try:
-        bezug_nacht = float(bezug_nacht) if bezug_nacht not in (None, "") else None
-    except (TypeError, ValueError):
-        bezug_nacht = None
-    if bezug_nacht is not None and (
-        bezug_nacht <= 0 or abs(bezug_nacht - bezug) < 1e-9
-    ):
-        bezug_nacht = None
-    # SNAP: derselbe Umgang mit der Null wie beim Nachtpreis — ein leeres
-    # Panel-Feld kommt als 0 an und heißt „nicht gesetzt", nicht „mittags
-    # gratis".
-    bezug_snap = config.get(CONF_SCHEDULE_CONSUMPTION_PRICE_SNAP)
-    try:
-        bezug_snap = float(bezug_snap) if bezug_snap not in (None, "") else None
-    except (TypeError, ValueError):
-        bezug_snap = None
-    if bezug_snap is not None and (
-        bezug_snap <= 0 or abs(bezug_snap - bezug) < 1e-9
-    ):
-        bezug_snap = None
-    bezug_nacht_von = _stunde_aus_zeit(
-        config.get(CONF_SCHEDULE_CONSUMPTION_NIGHT_START), DEFAULT_CONSUMPTION_NIGHT_START
+    # Bezugspreis = Arbeitspreis + Netzgebühr; im SNAP- (und ab 2027 im
+    # WiNAP-)Fenster gilt der verbilligte Netzsatz. Die Netzgebühr kommt
+    # aus der Verordnung (Netzbereich, RIS-Tabelle des Providers) oder von
+    # Hand. Ohne Angabe wie bei Harald Einspeisung plus grid_fee.
+    netz_provider = data.get("netzentgelt")
+    netz = netzgebuehr_fuer(
+        config, netz_provider.tabelle if netz_provider is not None else None
     )
-    bezug_nacht_bis = _stunde_aus_zeit(
-        config.get(CONF_SCHEDULE_CONSUMPTION_NIGHT_END), DEFAULT_CONSUMPTION_NIGHT_END
+    bezug, bezug_snap, bezug_winap = bezugspreise_aus_config(
+        config,
+        feedin_tag + float(config.get(CONF_SCHEDULE_GRID_FEE, DEFAULT_GRID_FEE)),
+        netz,
     )
 
     # Bedarfsprognose EINMAL sammeln — für die Preisfunktion (Steuerung) und
@@ -1498,10 +1543,8 @@ async def async_collect_inputs(
         eeg_night_start_hour=eeg_nacht_von,
         eeg_night_end_hour=eeg_nacht_bis,
         consumption_price=bezug,
-        consumption_price_night=bezug_nacht,
         consumption_price_snap=bezug_snap,
-        consumption_night_start_hour=bezug_nacht_von,
-        consumption_night_end_hour=bezug_nacht_bis,
+        consumption_price_winap=bezug_winap,
         # Wie bei den übrigen Fahrplan-Zahlen zählt auch hier ein leeres Feld
         # als „nicht gesetzt": das Panel speicherte leere Zahlenfelder als 0,
         # und eine 0 hieße, die Optimierung schont die Batterie überhaupt

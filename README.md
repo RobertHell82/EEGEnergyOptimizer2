@@ -70,7 +70,7 @@ Das Sidebar-Panel (`/eeg-optimizer`) führt durch die Einrichtung:
 2. Wechselrichtertyp wählen + automatische Sensorerkennung
 3. Batterie- & PV-Sensoren zuordnen
 4. Prognosequelle wählen (Solcast / Forecast.Solar)
-5. Fahrplan-Einstellungen (Einspeisevergütung, Bezugspreis, Mindest- und Maximum-Ladestand, Batterie-Leistungsgrenze; PeakShare-Community optional)
+5. Fahrplan-Einstellungen (Einspeisevergütung, Arbeitspreis + Netzbereich, Mindest- und Maximum-Ladestand, Batterie-Leistungsgrenze; PeakShare-Community optional)
 6. Einspeisegrenze (optional)
 7. Wechselrichter-Verbindungstest
 
@@ -115,7 +115,9 @@ Weitere Steuergrößen im Fahrplan:
 | **Maximum-Ladestand** | Obergrenze der Planung (Vorgabe 100 = bis voll laden) |
 | **Einspeisegrenze** | Maximale Leistung am Netzanschluss, um die herum geplant wird |
 | **Alterungskosten der Batterie** | Preis pro umgesetzter kWh — ein zu kleiner Preisunterschied lohnt den Zyklus nicht (fest 1 ct, derzeit nicht einstellbar) |
-| **Bezugspreis** | Bewertet Strom, der sonst aus dem Netz gekauft werden müsste |
+| **Arbeitspreis** | Was der Lieferant je kWh verlangt (inkl. MwSt) — bewertet Strom, der sonst aus dem Netz gekauft werden müsste |
+| **Netzbereich** | Bestimmt die Netzgebühr: Das Netznutzungsentgelt der Netzebene 7 kommt aus der Systemnutzungsentgelte-Verordnung (Rechtsinformationssystem des Bundes), täglich aktualisiert. Für Sonderfälle lässt sich die Gebühr auch von Hand eintragen |
+| **Zeitvariable Netzentgelte** | Der Sommer-Nieder-Arbeitspreis (SNAP, April–September 10–16 Uhr) und ab 2027 der Winter-Nieder-Arbeitspreis (WiNAP, Oktober–März 22–4 Uhr) senken die Netzgebühr. Voraussetzung ist die viertelstündliche Messung beim Netzbetreiber |
 
 Für die Standardvergütung (der Basistarif — Nachtsatz nur bei der Quelle „Fester Wert") und getrennt davon für die Gemeinschaften lässt sich je ein **Nachtsatz** mit eigenem Nachtfenster hinterlegen.
 

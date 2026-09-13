@@ -82,7 +82,7 @@ async def test_solaredge_already_latest_no_migration():
     hass.config_entries.async_update_entry = MagicMock()
     entry = MagicMock()
     # Aktuelle Schema-Version (config_flow.VERSION). Bei Anhebung hier mitziehen.
-    entry.version = 27
+    entry.version = 28
     entry.data = {
         "inverter_type": "solaredge_storedge",
         "battery_soc_sensor": "sensor.eeg_energy_optimizer_combined_soc",

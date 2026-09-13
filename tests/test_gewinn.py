@@ -600,7 +600,7 @@ def test_gewinn_fenster_verlaengert_kurze_plaene_nicht():
 
 
 # ---------------------------------------------------------------------------
-# Zweiter Bezugspreis: Nachtfenster
+# Bezugspreis: ein Preis rund um die Uhr, im SNAP-Fenster ein zweiter
 # ---------------------------------------------------------------------------
 
 
@@ -610,36 +610,9 @@ def _bezug(stunde: int, **over):
     return sched.bezugspreis_zu(inputs, MITTAG.replace(hour=stunde, minute=0))
 
 
-def test_ohne_nachtpreis_gilt_ein_preis_rund_um_die_uhr():
+def test_ohne_snap_gilt_ein_preis_rund_um_die_uhr():
     for stunde in (0, 5, 12, 23):
         assert _bezug(stunde) == pytest.approx(0.25)
-
-
-def test_nachtpreis_gilt_im_fenster_ueber_mitternacht():
-    over = dict(consumption_price_night=0.18,
-                consumption_night_start_hour=22, consumption_night_end_hour=6)
-    assert _bezug(23, **over) == pytest.approx(0.18)
-    assert _bezug(2, **over) == pytest.approx(0.18)
-    assert _bezug(5, **over) == pytest.approx(0.18)
-    # Grenzen: 22 gehört dazu, 6 nicht mehr.
-    assert _bezug(22, **over) == pytest.approx(0.18)
-    assert _bezug(6, **over) == pytest.approx(0.25)
-    assert _bezug(12, **over) == pytest.approx(0.25)
-
-
-def test_nachtfenster_ohne_mitternachtssprung():
-    over = dict(consumption_price_night=0.20,
-                consumption_night_start_hour=1, consumption_night_end_hour=5)
-    assert _bezug(0, **over) == pytest.approx(0.25)
-    assert _bezug(3, **over) == pytest.approx(0.20)
-    assert _bezug(5, **over) == pytest.approx(0.25)
-
-
-def test_gleiche_grenzen_sind_kein_fenster():
-    over = dict(consumption_price_night=0.20,
-                consumption_night_start_hour=4, consumption_night_end_hour=4)
-    for stunde in (0, 4, 12, 23):
-        assert _bezug(stunde, **over) == pytest.approx(0.25)
 
 
 def test_snap_gilt_im_sommer_zwischen_zehn_und_sechzehn():
@@ -665,23 +638,92 @@ def test_snap_gilt_nur_im_sommerhalbjahr():
         assert sched.bezugspreis_zu(inputs, stamp) == pytest.approx(erwartet), monat
 
 
-def test_snap_schlaegt_den_nachtpreis():
-    """Die Fenster überschneiden sich normalerweise nicht — bei einem
-    ungewöhnlich gesetzten Nachtfenster gewinnt die Verordnung."""
+def test_winap_gilt_im_winter_zwischen_zweiundzwanzig_und_vier():
+    """Zeitraum und Uhrzeit stehen in der SNE-G-V (§ 7 Abs. 4): 1. Oktober
+    bis 31. März, 22:00 bis 04:00 des Folgetags."""
+    inputs = _inputs(consumption_price=0.25, consumption_price_winap=0.23)
+    januar = datetime(2027, 1, 15, tzinfo=timezone.utc)
+
+    def preis(tag, stunde):
+        return sched.bezugspreis_zu(inputs, tag.replace(hour=stunde))
+
+    assert preis(januar, 22) == pytest.approx(0.23)
+    assert preis(januar, 23) == pytest.approx(0.23)
+    assert preis(januar, 0) == pytest.approx(0.23)
+    assert preis(januar, 3) == pytest.approx(0.23)
+    # 04:00 gehört nicht mehr dazu, 21:00 noch nicht.
+    assert preis(januar, 4) == pytest.approx(0.25)
+    assert preis(januar, 21) == pytest.approx(0.25)
+    assert preis(januar, 12) == pytest.approx(0.25)
+
+
+def test_winap_gilt_nur_im_winterhalbjahr():
+    inputs = _inputs(consumption_price=0.25, consumption_price_winap=0.23)
+    for monat, erwartet in (
+        (9, 0.25), (10, 0.23), (12, 0.23), (1, 0.23), (3, 0.23), (4, 0.25), (7, 0.25)
+    ):
+        stamp = datetime(2027, monat, 15, 23, tzinfo=timezone.utc)
+        assert sched.bezugspreis_zu(inputs, stamp) == pytest.approx(erwartet), monat
+
+
+def test_winap_am_saisonrand_zaehlt_der_beginn_der_nacht():
+    """„22 Uhr bis 4 Uhr des Folgetags": Die Nacht vom 31.3. auf den 1.4.
+    gehört noch dazu, die Stunden vor 4 Uhr am 1.10. noch nicht."""
+    inputs = _inputs(consumption_price=0.25, consumption_price_winap=0.23)
+
+    assert sched.bezugspreis_zu(
+        inputs, datetime(2027, 3, 31, 23, tzinfo=timezone.utc)
+    ) == pytest.approx(0.23)
+    assert sched.bezugspreis_zu(
+        inputs, datetime(2027, 4, 1, 2, tzinfo=timezone.utc)
+    ) == pytest.approx(0.23)
+    assert sched.bezugspreis_zu(
+        inputs, datetime(2027, 10, 1, 2, tzinfo=timezone.utc)
+    ) == pytest.approx(0.25)
+    assert sched.bezugspreis_zu(
+        inputs, datetime(2027, 10, 1, 22, tzinfo=timezone.utc)
+    ) == pytest.approx(0.23)
+
+
+def test_snap_und_winap_stehen_nebeneinander():
+    """Beide Fenster gesetzt: jedes gilt in seiner Jahreshälfte, dazwischen
+    der volle Bezugspreis."""
     inputs = _inputs(
-        consumption_price=0.25, consumption_price_snap=0.24,
-        consumption_price_night=0.18,
-        consumption_night_start_hour=8, consumption_night_end_hour=18,
+        consumption_price=0.25,
+        consumption_price_snap=0.24,
+        consumption_price_winap=0.23,
     )
-    juli_mittag = datetime(2026, 7, 15, 12, tzinfo=timezone.utc)
-    juli_abend = datetime(2026, 7, 15, 17, tzinfo=timezone.utc)
-    assert sched.bezugspreis_zu(inputs, juli_mittag) == pytest.approx(0.24)
-    assert sched.bezugspreis_zu(inputs, juli_abend) == pytest.approx(0.18)
+    assert sched.bezugspreis_zu(
+        inputs, datetime(2027, 7, 15, 12, tzinfo=timezone.utc)
+    ) == pytest.approx(0.24)
+    assert sched.bezugspreis_zu(
+        inputs, datetime(2027, 1, 15, 23, tzinfo=timezone.utc)
+    ) == pytest.approx(0.23)
+    assert sched.bezugspreis_zu(
+        inputs, datetime(2027, 1, 15, 12, tzinfo=timezone.utc)
+    ) == pytest.approx(0.25)
+    assert sched.bezugspreis_zu(
+        inputs, datetime(2027, 7, 15, 23, tzinfo=timezone.utc)
+    ) == pytest.approx(0.25)
+
+
+def test_winap_allein_ergibt_eine_preisreihe():
+    """Auch ohne SNAP muss das LP eine Reihe sehen — sonst plant es nachts
+    gegen einen Preis, den es dort nicht gibt."""
+    pytest.importorskip("pandas")
+    januar = datetime(2027, 1, 15, tzinfo=timezone.utc)
+    stamps = [januar.replace(hour=h) for h in (12, 21, 22, 23)]
+    inputs = _inputs(
+        timestamps=stamps, consumption_kw=[0.5] * 4, production_kw=[0.0] * 4,
+        consumption_price=0.25, consumption_price_winap=0.23,
+    )
+    reihe = sched.HAConfig(inputs).consumption_price(stamps[0])
+    assert [round(float(v), 4) for v in list(reihe)] == [0.25, 0.25, 0.23, 0.23]
 
 
 def test_snap_allein_ergibt_eine_preisreihe():
-    """Auch ohne Nachtpreis muss das LP eine Reihe sehen, sonst plant es
-    mittags gegen einen Preis, den es dort nicht gibt."""
+    """Mit SNAP muss das LP eine Reihe je Slot sehen, keinen Skalar — sonst
+    plant es mittags gegen einen Preis, den es dort nicht gibt."""
     pytest.importorskip("pandas")
     juli = datetime(2026, 7, 15, tzinfo=timezone.utc)
     stamps = [juli.replace(hour=h) for h in (8, 11, 14, 20)]
@@ -694,17 +736,17 @@ def test_snap_allein_ergibt_eine_preisreihe():
 
 
 def test_netzbezug_wird_mit_dem_preis_des_slots_bewertet():
-    """Ein Slot um 23 Uhr mit 4 kW Bezug: eine Viertelstunde, 1 kWh."""
-    inputs = _inputs(consumption_price_night=0.18,
-                     consumption_night_start_hour=22, consumption_night_end_hour=6)
+    """Ein Slot mit 4 kW Bezug: eine Viertelstunde, 1 kWh — mittags im
+    August zum SNAP-Preis, um 23 Uhr zum vollen Bezugspreis."""
+    inputs = _inputs(consumption_price=0.25, consumption_price_snap=0.24)
     nachts = sched.bewerte_geldfluesse(
         [_slot(MITTAG.replace(hour=23, minute=0), 0, grid_p=-4.0)], inputs
     )
-    tags = sched.bewerte_geldfluesse(
-        [_slot(MITTAG.replace(hour=12, minute=0), 0, grid_p=-4.0)], inputs
+    mittags = sched.bewerte_geldfluesse(
+        [_slot(MITTAG, 0, grid_p=-4.0)], inputs
     )
-    assert nachts["bezug"] == pytest.approx(0.18)
-    assert tags["bezug"] == pytest.approx(0.25)
+    assert nachts["bezug"] == pytest.approx(0.25)
+    assert mittags["bezug"] == pytest.approx(0.24)
 
 
 def test_gewinn_wird_auch_bei_quelle_spot_gerechnet():
@@ -837,25 +879,7 @@ def test_deckel_kappt_echte_boersenpreise_nicht():
     assert werte == [0.42, 0.35, 0.25, 0.10], f"Börsenpreise gekappt: {werte}"
 
 
-def test_bezugspreis_kommt_als_reihe_ins_modell():
-    """Mit Nachtpreis muss das LP eine Reihe je Slot sehen, keinen Skalar —
-    sonst plant es nachts gegen einen Preis, den es dort nicht gibt."""
-    pytest.importorskip("pandas")
-    stamps = [NOW.replace(hour=h, minute=0) for h in (12, 21, 22, 23)]
-    inputs = _inputs(
-        timestamps=stamps,
-        consumption_kw=[0.5] * 4,
-        production_kw=[0.0] * 4,
-        consumption_price=0.25,
-        consumption_price_night=0.18,
-        consumption_night_start_hour=22,
-        consumption_night_end_hour=6,
-    )
-    reihe = sched.HAConfig(inputs).consumption_price(stamps[0])
-    assert [round(float(v), 4) for v in list(reihe)] == [0.25, 0.25, 0.18, 0.18]
-
-
-def test_ohne_nachtpreis_bleibt_der_skalar():
+def test_ohne_snap_bleibt_der_skalar():
     """Ohne zweiten Preis ändert sich für das Modell nichts — es bekommt
     denselben Skalar wie bisher und streckt ihn selbst über die Slots."""
     inputs = _inputs(consumption_price=0.25)
