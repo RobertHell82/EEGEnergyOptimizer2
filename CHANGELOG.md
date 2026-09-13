@@ -10,6 +10,21 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
+## [2.1.1-dev15] - 2026-09-13
+
+### Behoben
+
+- **Geplante Wärme deckelte den Heizstab, auch wenn viel mehr Überschuss da war.** Sobald der Fahrplan Wärme vorsah, galt sein Wert als Obergrenze — selbst dann, wenn die Einspeisung am Limit klebte und der Wechselrichter die PV bereits beschnitt. Auf einer Anlage mit 4 kW Einspeisegrenze standen so 0,63 kW Wärme im Plan, und genau dort blieb der Sollwert stehen, während die restlichen Kilowatt abgeregelt wurden. Klebt die Einspeisung an der Grenze, ist der Planwert jetzt nur noch die Untergrenze: Die Prognose kannte den Überschuss nicht, die Messung schon. Bleibt die Einspeisung darunter, deckelt der Plan wie bisher.
+
+### Hinzugefügt
+
+- **Die Netzgebühr enthält jetzt alle vier Posten, die je Kilowattstunde anfallen.** Bisher zählte allein das Netznutzungsentgelt; auf einer Anlage in Oberösterreich fehlten dadurch rund 1,5 ct je Kilowattstunde, und der Fahrplan bewertete jede gespeicherte Kilowattstunde zu niedrig. Dazu kommen jetzt das **Netzverlustentgelt** (§ 6 derselben Verordnung, je Netzbereich), die **Elektrizitätsabgabe** (Elektrizitätsabgabegesetz — Regelsatz 1,5 ct aus § 4 Abs. 2, für 2026 auf 0,1 ct gesenkt laut § 7) und der **Erneuerbaren-Förderbeitrag** (jährliche Förderbeitragsverordnung, § 2). Alle drei kommen wie der Arbeitspreis täglich aus dem Rechtsinformationssystem; nichts davon ist eingetippt. Die Befristung der Elektrizitätsabgabe wird mitgelesen — am 1. Jänner 2027 fällt der Satz ohne Zutun auf den Regelsatz zurück. Gesenkt wird von SNAP und WiNAP weiterhin nur das Netznutzungsentgelt. Beträge je Zählpunkt statt je Kilowattstunde (Erneuerbaren-Pauschale, Messentgelt, Grundpreis) bleiben außen vor: Für den Wert einer gespeicherten Kilowattstunde zählen sie nicht.
+- **Die Aufschlüsselung im Panel zeigt die ganze Rechnung.** Jeder Posten netto, die Summe, die Umsatzsteuer, der Bruttowert — dazu die Fenster von SNAP und WiNAP und die Herkunft jedes einzelnen Postens mit RIS-Link. Bei Handeingabe steht dort, dass nur die bundesweiten Abgaben dazukommen und das Netzverlustentgelt einen Netzbereich braucht.
+
+### Geändert
+
+- **Der Hilfetext beim Arbeitspreis sagt jetzt das Gegenteil von vorher:** Netzverlustentgelt und Abgaben nicht selbst dazurechnen — sie kommen aus der Verordnung. Wer sie bisher dem Arbeitspreis zugeschlagen hat, trägt sie jetzt doppelt und sollte das Feld auf den reinen Arbeitspreis des Lieferanten zurücksetzen.
+
 ## [2.1.1-dev14] - 2026-09-13
 
 ### Behoben
