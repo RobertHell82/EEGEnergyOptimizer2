@@ -10,6 +10,12 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
+## [2.1.1-dev16] - 2026-09-13
+
+### Behoben
+
+- **Das Netzverlustentgelt blieb nach dem Update auf null.** Bei Netz Oberösterreich standen 0,000 statt 0,528 ct: Der gespeicherte Tabellenstand stammte aus der Vorversion und kannte das Feld nicht — und weil er erst Stunden alt war, hielt die Tagesfrist genau den Abruf auf, der ihn ergänzt hätte. Ein Stand ohne die neuen Posten gilt jetzt als nicht geholt und wird beim nächsten Lauf vervollständigt. Zusätzlich fällt jeder Posten einzeln auf die eingebaute Kopie zurück: Kennt eine Tabelle den Arbeitspreis, aber nicht das Netzverlustentgelt, kommt dieser eine Wert aus dem Schnappschuss, statt den Bezugspreis zu niedrig zu rechnen.
+
 ## [2.1.1-dev15] - 2026-09-13
 
 ### Behoben
