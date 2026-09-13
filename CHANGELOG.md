@@ -10,6 +10,16 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
+## [2.1.1-dev19] - 2026-09-13
+
+### Behoben
+
+- **Eine angehobene Mindestreserve konnte die Batterie dauerhaft sperren.** Für eine erzwungene Entladung hebt der Treiber die Mindestreserve des Wechselrichters auf den Ziel-Ladestand — scheiterte die Entladung danach am Schreiben, blieb der angehobene Wert stehen, und der Fahrplan las ihn als Geräte-Reserve zurück. Auf einer Anlage standen so 78,1 % statt 10 % im Wechselrichter: Bei 84,3 % Ladestand blieb 1 kWh nutzbar statt 11,5, die Batterie stand die ganze Nacht still und das Haus kaufte Strom. Der gelesene Wert gilt jetzt nur noch dann als Geräte-Reserve, wenn wir sie nicht selbst angehoben haben; der gesicherte Vorwert wird nach einem Neustart auch aus dem Speicher geholt, und eine gescheiterte Entladung schreibt ihn zurück.
+
+### Geändert
+
+- **Die Willkommensseite nennt alle Wechselrichter.** Bei den Voraussetzungen fehlten Kostal Plenticore und SMA Smart Energy, bei den getesteten Setups Sigenergy SigenStor. Beide Listen sind jetzt vollständig, mit einem Satz zum Stand: Kostal und SMA werden gesteuert, sind aber im Feldtest; SolarEdge wird nur angezeigt.
+
 ## [2.1.1-dev18] - 2026-09-13
 
 ### Geändert
