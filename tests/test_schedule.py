@@ -540,9 +540,14 @@ def test_haconfig_bietet_das_api_von_config_dummy():
 # ---------------------------------------------------------------------------
 
 
-def _solcast_state(tag: datetime, werte: list[tuple[str, float, float]]):
+def _solcast_state(
+    tag: datetime,
+    werte: list[tuple[str, float, float]],
+    entity_id: str = "sensor.solcast_pv_forecast_prognose_heute",
+):
     """Sensor-Attrappe mit detailedForecast im Format von solcast_solar."""
     state = MagicMock()
+    state.entity_id = entity_id
     state.attributes = {
         "detailedForecast": [
             {
@@ -597,6 +602,87 @@ def test_worst_case_kommt_aus_p10_nicht_aus_faktor():
     # und es ist wirklich der p10 der Prognose, nicht 60 % davon
     index_0700 = next(i for i, t in enumerate(stamps) if (t.hour, t.minute) == (7, 0))
     assert p10[index_0700] == pytest.approx(0.98)
+
+
+# Zweite Anlage: dieselben Zeitstempel, andere Leistung. So sah es auf der
+# Instanz in Grünbach aus, wo neben der eigenen Solcast-Integration eine
+# zweite für eine Testanlage lief.
+SOLCAST_FREMD = [(uhr, est / 2, p10 / 2) for uhr, est, p10 in SOLCAST_TAG]
+
+
+def _registry_stub(monkeypatch, zuordnung: dict[str, str]):
+    """Minimale entity_registry-Attrappe: entity_id → config_entry_id.
+
+    Über ``monkeypatch`` gesetzt, damit der Stub am Testende verschwindet —
+    andere Testdateien (Sigenergy, Huawei) patchen dieselben Modulnamen.
+    """
+    import sys
+    import types
+
+    eintraege = {
+        eid: types.SimpleNamespace(entity_id=eid, config_entry_id=entry)
+        for eid, entry in zuordnung.items()
+    }
+    registry = MagicMock()
+    registry.async_get = lambda eid: eintraege.get(eid)
+
+    modul = types.ModuleType("homeassistant.helpers.entity_registry")
+    modul.async_get = lambda hass: registry
+    modul.async_entries_for_config_entry = lambda reg, entry: [
+        e for e in eintraege.values() if e.config_entry_id == entry
+    ]
+    for name in ("homeassistant", "homeassistant.helpers"):
+        if name not in sys.modules:
+            monkeypatch.setitem(sys.modules, name, types.ModuleType(name))
+    monkeypatch.setattr(
+        sys.modules["homeassistant.helpers"], "entity_registry", modul, raising=False
+    )
+    monkeypatch.setitem(sys.modules, "homeassistant.helpers.entity_registry", modul)
+
+
+def test_zweite_solcast_integration_wird_nicht_mitgelesen(monkeypatch):
+    """Nur die Prognose der EIGENEN Anlage zählt.
+
+    Läuft eine zweite Solcast-Integration in derselben Instanz, tragen ihre
+    Tagessensoren dasselbe Zeitraster. Ohne Zuordnung gewann schlicht der
+    zuletzt gelesene Sensor — in Grünbach fuhr der Fahrplan dadurch die
+    Prognose einer fremden Anlage (13.09.2026), sah nie Überschuss und plante
+    keine Wärme, während die PV am Einspeiselimit abgeregelt wurde.
+    """
+    _registry_stub(monkeypatch, {
+        "sensor.solcast_pv_forecast_prognose_morgen": "eigene",
+        "sensor.solcast_pv_forecast_prognose_heute": "eigene",
+        "sensor.fremd_solcast_prognose_heute": "fremde",
+    })
+    hass = MagicMock()
+    hass.states.async_all.return_value = [
+        _solcast_state(NOW, SOLCAST_TAG),
+        # kommt nach der eigenen und hätte sie früher überschrieben
+        _solcast_state(NOW, SOLCAST_FREMD, "sensor.fremd_solcast_prognose_heute"),
+    ]
+    config = {
+        "forecast_tomorrow_entity": "sensor.solcast_pv_forecast_prognose_morgen",
+        "forecast_remaining_entity": "sensor.solcast_pv_forecast_prognose_heute",
+    }
+
+    detailed = sched._solcast_detailed(hass, config)
+
+    sechs_uhr = NOW.replace(hour=6, minute=0, second=0, microsecond=0)
+    assert detailed[sechs_uhr] == (0.48, 0.21), "Werte der eigenen Anlage"
+
+
+def test_ohne_zuordnung_bleibt_die_attributsuche():
+    """Ist die Registry nicht lesbar, wird weiter über das Attribut gesucht.
+
+    Der Fahrplan soll nicht ausfallen, nur weil die Zuordnung fehlt — die
+    Prognose ist dann bestenfalls unscharf, aber vorhanden.
+    """
+    hass = MagicMock()
+    hass.states.async_all.return_value = [_solcast_state(NOW, SOLCAST_TAG)]
+
+    detailed = sched._solcast_detailed(hass, {})
+
+    assert len(detailed) == len(SOLCAST_TAG)
 
 
 def test_p10_wird_nach_unten_auf_den_worst_case_faktor_begrenzt():

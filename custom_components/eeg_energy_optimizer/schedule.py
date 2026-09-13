@@ -31,7 +31,9 @@ from . import eeg_price
 from .const import (
     CONF_BATTERY_SOC_SENSOR,
     CONF_DISCHARGE_POWER_KW,
+    CONF_FORECAST_REMAINING_ENTITY,
     CONF_FORECAST_SOURCE,
+    CONF_FORECAST_TOMORROW_ENTITY,
     CONF_GRID_EXPORT_LIMIT_ENABLED,
     CONF_GRID_EXPORT_LIMIT_KW,
     CONF_INVERTER_AC_LIMIT_KW,
@@ -892,7 +894,49 @@ def _consumption_from_profile(coordinator: Any, stamps: list[datetime]) -> list[
     return values
 
 
-def _solcast_detailed(hass: HomeAssistant) -> dict[datetime, tuple[float, float]]:
+def _solcast_entity_ids(
+    hass: HomeAssistant, config: dict[str, Any]
+) -> set[str] | None:
+    """Die Prognose-Entities DIESER Anlage — None heißt „nicht zuzuordnen".
+
+    Anker sind die im Assistenten gewählten Prognose-Sensoren: Sie stehen in
+    der Konfiguration, es muss also kein Entity-Name erraten werden. Über die
+    Entity-Registry führt der Sensor zu seinem Config-Entry und damit zu allen
+    Tagessensoren derselben Solcast-Installation.
+
+    Nötig, sobald mehr als eine Solcast-Integration in der Instanz läuft
+    (zweite Anlage, zweites Konto): Deren Tagessensoren tragen dasselbe
+    Zeitraster, und ohne Zuordnung gewinnt schlicht der zuletzt gelesene —
+    der Fahrplan führe dann die fremde Anlage.
+    """
+    try:
+        from homeassistant.helpers import entity_registry as er
+
+        registry = er.async_get(hass)
+    except Exception:  # noqa: BLE001 — ohne Registry bleibt die Attributsuche
+        return None
+    for key in (CONF_FORECAST_TOMORROW_ENTITY, CONF_FORECAST_REMAINING_ENTITY):
+        entity_id = str(config.get(key) or "").strip()
+        if not entity_id:
+            continue
+        try:
+            eintrag = registry.async_get(entity_id)
+            if eintrag is None or not eintrag.config_entry_id:
+                continue
+            geschwister = er.async_entries_for_config_entry(
+                registry, eintrag.config_entry_id
+            )
+        except Exception:  # noqa: BLE001
+            continue
+        ids = {e.entity_id for e in geschwister}
+        if ids:
+            return ids
+    return None
+
+
+def _solcast_detailed(
+    hass: HomeAssistant, config: dict[str, Any] | None = None
+) -> dict[datetime, tuple[float, float]]:
     """Halbstundenwerte aus den Solcast-Tagessensoren sammeln.
 
     Solcast hängt an jeden Tagessensor ein Attribut ``detailedForecast`` mit
@@ -900,14 +944,22 @@ def _solcast_detailed(hass: HomeAssistant) -> dict[datetime, tuple[float, float]
     pv_estimate90}`` — Leistung in kW. Über sieben Tagessensoren ergibt das
     eine Woche Vorausschau samt Worst-Case-Pfad.
 
-    Gesucht wird über das Attribut, nicht über Entity-Namen: die sind
-    lokalisiert (``prognose_heute`` gegen ``forecast_today``) und wären eine
-    dauerhafte Fehlerquelle.
+    Gelesen werden nur die Sensoren der eigenen Solcast-Installation
+    (``_solcast_entity_ids``). Lässt sie sich nicht bestimmen, bleibt die
+    Suche über das Attribut — sie kommt ohne Entity-Namen aus, die ja
+    lokalisiert sind (``prognose_heute`` gegen ``forecast_today``). Fallen
+    dabei zwei Quellen auf denselben Zeitpunkt, steht das als Warnung im
+    Protokoll: Dann ist die Reihe nicht mehr eindeutig.
     """
+    erlaubt = _solcast_entity_ids(hass, config or {})
     werte: dict[datetime, tuple[float, float]] = {}
+    herkunft: dict[datetime, str] = {}
+    fremde: set[str] = set()
     for state in hass.states.async_all("sensor"):
         detailed = state.attributes.get("detailedForecast")
         if not isinstance(detailed, list):
+            continue
+        if erlaubt is not None and state.entity_id not in erlaubt:
             continue
         for eintrag in detailed:
             if not isinstance(eintrag, dict):
@@ -932,7 +984,19 @@ def _solcast_detailed(hass: HomeAssistant) -> dict[datetime, tuple[float, float]
                 )
             except (TypeError, ValueError):
                 continue
+            alt = herkunft.get(stamp)
+            if alt is not None and alt != state.entity_id:
+                fremde.add(state.entity_id)
+                fremde.add(alt)
             werte[stamp] = (erwartung, p10)
+            herkunft[stamp] = state.entity_id
+    if fremde:
+        _LOGGER.warning(
+            "PV-Prognose: mehrere Quellen liefern denselben Zeitraum (%s) — "
+            "die Reihe ist nicht eindeutig. Prüfe im Assistenten, ob die "
+            "gewählten Prognose-Sensoren zu dieser Anlage gehören.",
+            ", ".join(sorted(fremde)),
+        )
     return werte
 
 
@@ -1219,7 +1283,7 @@ async def async_collect_inputs(
     # Die Prognose kommt vor dem Zeitraster, denn sie bestimmt, wie weit
     # überhaupt geplant werden darf.
     # Erste Wahl: Solcast-Halbstundenwerte, die bringen einen echten p10 mit.
-    detailed = _solcast_detailed(hass)
+    detailed = _solcast_detailed(hass, config)
     wh_hours: dict[str, float] | None = None
     if detailed:
         horizon = DEFAULT_HORIZON_HOURS
