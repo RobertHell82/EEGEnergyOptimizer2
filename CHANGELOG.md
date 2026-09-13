@@ -10,6 +10,12 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
+## [2.1.1-dev17] - 2026-09-13
+
+### Behoben
+
+- **Der Fahrplan sparte die Pufferkapazität für den sonnigsten Tag auf, statt heute zu heizen.** Das Aufnahmebudget des Puffers war eine einzige Schranke über den ganzen 48-Stunden-Horizont — das Modell behandelte den Puffer damit wie einen Vorrat, der nur einmal gefüllt wird, und legte die Wärme dorthin, wo sie am wenigsten kostete. Auf einer Anlage fiel so von 18,4 geplanten Kilowattstunden keine einzige auf den laufenden Tag, während nachmittags eingespeist wurde. Rechnerisch stimmte das, praktisch nicht: Der Puffer kühlt über Nacht aus und wird leergezapft, der Wärmebedarf entsteht trotzdem und muss dann aus einer anderen Quelle gedeckt werden. Die Schranke gilt jetzt je Kalendertag — für heute aus der gemessenen Puffertemperatur, für die Folgetage als Annahme, die jeder neue Planlauf korrigiert.
+
 ## [2.1.1-dev16] - 2026-09-13
 
 ### Behoben
