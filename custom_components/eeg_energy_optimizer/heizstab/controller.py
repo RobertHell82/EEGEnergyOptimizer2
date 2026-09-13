@@ -44,9 +44,13 @@ bei „Überschuss zuerst in den Heizstab" immer, bei Batterie-Vorrang erst,
 wenn das Ladelimit am Maximum steht oder die Batterie voll ist. Umgekehrt
 wartet Guard 1 (Ladelimit anheben) auf ``gesaettigt``.
 
-Der Heizstab ist absichtlich KEINE Variable im LP: Haralds Modell bleibt
-unverändert (siehe CLAUDE.md). ``discard`` fällt beim Optimieren ohnehin
-an, der Heizstab ist die Verwendung dafür.
+Der Heizstab IST eine Variable im LP (``heater_p`` in
+``chamo/opt_highs.py``, seit 2.1.1-dev2) und geht mit dem Wärmewert in die
+Zielfunktion — das Modell wirft Einspeisung bewusst weg, wenn die Wärme mehr
+bringt. Die frühere Aussage, Haralds Modell bleibe unverändert, gilt seitdem
+nicht mehr; siehe „Heizstab im Optimierungsmodell" in CLAUDE.md. Hier im
+Controller steht nur noch die Ausführung: Der Plan sagt, wie viel erlaubt
+ist, die Messung, wie viel wirklich da ist.
 """
 
 from __future__ import annotations

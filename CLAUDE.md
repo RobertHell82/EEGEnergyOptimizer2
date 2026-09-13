@@ -433,6 +433,13 @@ manual test exists to settle them at the device:
 
 ### Heizstab im Optimierungsmodell (2.1.1-dev2)
 
+> **Achtung, Upstream-Divergenz:** Mit dieser Änderung ist `chamo/opt_highs.py`
+> nicht mehr Haralds unveränderter Stand. Das LP hat seitdem eine
+> Entscheidungsvariable (`heater_p`), zwei Nebenbedingungen (Kopplung an
+> `discard_p`, Pufferbudget) und einen Term in der Zielfunktion mehr. Bei
+> jedem Abgleich mit Haralds Original ist dieser Block gesondert zu
+> behandeln; alles andere im Modell ist unangetastet.
+
 Bis dahin war `discard` in der Zielfunktion nichts wert: Das Modell regelte
 ab, wenn es musste, und der Heizstab bekam den Rest nachgelagert zugeteilt
 (`_heizstab_plan_kw`). Damit konnte es abends entladen, obwohl dieselbe
@@ -441,12 +448,19 @@ Kilowattstunde am nächsten Tag im Puffer mehr gebracht hätte.
 Jetzt wird `discard_p` in `heater_p` + `spill_p` aufgeteilt, und `heater_p`
 geht mit dem Wärmewert in die Zielfunktion. Zwei Deckel begrenzen ihn:
 `heizstab_max_kw` je Slot (was physikalisch durchpasst) und
-`heizstab_budget_kwh` über den Horizont (was der Puffer noch aufnimmt) — eine
-einzige Summenschranke statt eines zweiten Speichers mit Zeitverlauf. Das
-Budget kommt aus der gemessenen Puffertemperatur
-(`HeizstabController.puffer_budget_kwh`, 1,163 Wh/(L·K)) und wird bei jedem
-Planlauf neu gebildet: Es schrumpft, während der Puffer warm wird, und gibt
-die Abendentladung von selbst wieder frei.
+`heizstab_budget_kwh` **je Kalendertag** (was der Puffer noch aufnimmt) statt
+eines zweiten Speichers mit Zeitverlauf. Das Budget kommt aus der gemessenen
+Puffertemperatur (`HeizstabController.puffer_budget_kwh`, 1,163 Wh/(L·K)) und
+wird bei jedem Planlauf neu gebildet: Es schrumpft, während der Puffer warm
+wird, und gibt die Abendentladung von selbst wieder frei.
+
+Die Tagesschranke ist seit 2.1.1-dev17 wichtig (vorher eine Summe über den
+ganzen Horizont): Der Puffer ist kein Vorrat, der einmal gefüllt wird — über
+Nacht kühlt er aus und wird leergezapft. Mit einer Schranke über 48 Stunden
+sparte das Modell die Kapazität für den sonnigsten Tag auf und ließ die Wärme
+heute liegen, obwohl sie bis dahin ohnehin verloren geht. Für den laufenden
+Tag stimmt die Schranke exakt (gemessene Temperatur), für die Folgetage ist
+sie eine Annahme, die jeder neue Planlauf korrigiert.
 
 **Alles davon hängt an drei Bedingungen** — Leistung, Wärmewert *und* Budget
 müssen größer null sein. Fehlt eine, wird im LP nichts aufgebaut und das
