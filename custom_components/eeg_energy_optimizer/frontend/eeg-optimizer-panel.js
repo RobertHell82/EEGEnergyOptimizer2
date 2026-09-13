@@ -6344,12 +6344,11 @@ class EegOptimizerPanel extends HTMLElement {
     // Die Kostenseite: was Energie kostet, wenn sie nicht vom Dach kommt,
     // und was das Zwischenspeichern die Batterie kostet.
     //
-    // Die Alterungskosten sind derzeit AUSGEBLENDET (Nutzerentscheid
-    // 28.08.2026) — sie wirken weiter mit ihrer Vorgabe von 1 ct/kWh
-    // (DEFAULT_BATTERY_COST in schedule.py), man kann sie nur nicht mehr
-    // verstellen. Das Feld ist bewusst nur abgeschaltet und nicht entfernt:
-    // auf `true` gesetzt kommt es unverändert zurück.
-    const alterungskostenSichtbar = false;
+    // Die Alterungskosten sind seit 13.09.2026 wieder einstellbar, aber nur
+    // im Expertenmodus: Bei knappen Preisabständen entscheiden allein sie,
+    // ob die Nacht-Entladung überhaupt zustande kommt — die Schwelle ist
+    // Tagesvergütung + Alterungskosten. Vorgabe bleibt 1 ct/kWh
+    // (DEFAULT_BATTERY_COST in schedule.py).
     // Netzgebühr: Die Sätze stehen in der Verordnung und kommen vom Backend
     // (get_netzentgelte). Bis die Antwort da ist, steht im Hinweis nur die
     // Erklärung — die Auswahl selbst funktioniert schon.
@@ -6410,12 +6409,12 @@ class EegOptimizerPanel extends HTMLElement {
         </label>
       </div>
       <div class="help-text" data-bezugspreis="${prefix}" style="margin-bottom:16px">${bezugspreisText(d, this._netzentgelte)}</div>
-      ${alterungskostenSichtbar && d.expert_mode ? `
+      ${d.expert_mode ? `
       <div class="field-group">
         <label>Alterungskosten der Batterie (ct/kWh)</label>
         <input type="number" data-field="${prefix}schedule_battery_cost" data-unit="ct"
                value="${ctAus(Number(d.schedule_battery_cost) > 0 ? d.schedule_battery_cost : 0.01)}" min="0.1" max="100" step="0.1">
-        <div class="help-text">Was eine durchgesetzte Kilowattstunde die Batterie an Lebensdauer kostet. Höhere Werte machen die Optimierung zurückhaltender: sie speichert nur, wenn sich der Umweg lohnt. Ein leeres Feld gilt als 1 ct — ohne Alterungskosten lädt und entlädt die Optimierung ohne jede Zurückhaltung.</div>
+        <div class="help-text">Was eine durchgesetzte Kilowattstunde die Batterie an Lebensdauer kostet. Höhere Werte machen die Optimierung zurückhaltender: sie speichert nur, wenn sich der Umweg lohnt. Ein leeres Feld gilt als 1 ct — ohne Alterungskosten lädt und entlädt die Optimierung ohne jede Zurückhaltung. Bei der Entladung in die Gemeinschaft ist der Wert die Schwelle: Sie kommt erst zustande, wenn der Nachtsatz über der Einspeisevergütung plus Alterungskosten liegt.</div>
       </div>` : ""}`;
   }
 
