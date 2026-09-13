@@ -10,6 +10,12 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
+## [2.1.1-dev22] - 2026-09-13
+
+### Behoben
+
+- **Nach jedem Speichern plante der Fahrplan bis zu 15 Minuten mit dem alten Verbrauchsprofil.** Jedes Speichern im Panel lädt die Integration neu. Dabei entsteht das Verbrauchsprofil aus den Statistiken, wie sie gerade dastehen — erst danach rechnet der Backfill sie aus den Quellsensoren neu. Die Schleife, die das Ergebnis nachladen sollte, brach ab, sobald überhaupt Daten da waren; dieser Zustand galt aber schon vom ersten Laden, und der Import über die Recorder-Queue war da noch gar nicht sichtbar. Bis zum nächsten Turnus (15 Minuten) rechnete der Fahrplan also mit Zahlen, die der Backfill gerade ersetzt hatte — und steuerte dabei echt. An einer Anlage standen so 43,3 statt 17,5 kWh Tagesverbrauch: Der Fahrplan sah keinen PV-Überschuss, bewertete die Batterie mit dem Bezugspreis statt der Einspeisevergütung und unterließ die ganze Nacht jede Entladung in die Gemeinschaft. Jetzt wird auf die Recorder-Queue gewartet und danach gezielt nachgeladen, bis sich die Werte tatsächlich geändert haben.
+
 ## [2.1.1-dev21] - 2026-09-13
 
 ### Geändert
