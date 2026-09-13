@@ -10,6 +10,21 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
+## [2.1.1-dev13] - 2026-09-12
+
+### Hinzugefügt
+
+- **Die Netzgebühr kommt aus der Verordnung — man wählt nur den Netzbereich.** Das Netznutzungsentgelt legt die E-Control per Verordnung fest, und alle Netzbetreiber eines Netzbereichs verrechnen denselben Satz. Statt den Wert aus dem Preisblatt abzutippen, wählt man jetzt einen der 14 Netzbereiche (Anlage I zum Elektrizitätswirtschaftsgesetz, beschriftet mit dem jeweiligen Netzbetreiber); die Integration holt den Arbeitspreis der Netzebene 7 für Haushalte samt den zeitvariablen Sätzen täglich aus dem Rechtsinformationssystem des Bundes, rechnet die Mehrwertsteuer dazu und zeigt Satz, Stand und Herkunft im Panel an. Für Sonderfälle bleibt „Von Hand eintragen". Fällt der Abruf aus, gilt die zuletzt gelesene Tabelle, und vor dem ersten Abruf eine eingebaute Kopie der Verordnung — der Fahrplan steht nie ohne Netzgebühr da.
+- **Der Winter-Nieder-Arbeitspreis (WiNAP) ist vorbereitet.** Ab 1. Jänner 2027 ersetzt die Tarifverordnung zur neuen Grundsatzverordnung die heutige Systemnutzungsentgelte-Verordnung; sie bringt neben dem SNAP ein zweites verbilligtes Fenster: 1. Oktober bis 31. März, 22 bis 4 Uhr des Folgetags. Der Fahrplan rechnet damit, sobald die Verordnung den Satz nennt — der Tabellenleser sucht die Spalten nach Namen und kommt mit beiden Verordnungen zurecht. Bis dahin bleibt das Fenster still, weil es in der geltenden Verordnung keinen WiNAP-Satz gibt. Am Saisonrand zählt der Beginn der Nacht: Die Nacht vom 31. März auf den 1. April gehört noch dazu, die Stunden vor 4 Uhr am 1. Oktober noch nicht.
+
+### Geändert
+
+- **Bezugspreis in zwei Teilen: Arbeitspreis + Netzgebühr, zeitvariable Sätze als Haken.** Bisher stand ein Gesamtpreis im Feld, und wer den SNAP nutzt, musste sich den Sommer-Mittagspreis selbst ausrechnen und in ein zweites Feld tippen. Jetzt trägt man nur noch den Arbeitspreis des Lieferanten ein (inklusive Mehrwertsteuer), wählt den Netzbereich und setzt den Haken „Zeitvariable Netzentgelte". Der Bezugspreis ergibt sich als Summe und steht live unter den Feldern, mit den Preisen der beiden Fenster darunter. Ohne Netzgebühr bleibt der Haken wirkungslos, das Panel sagt es dazu. Bestehende Einstellungen werden umgerechnet (Migration v28): Der alte Gesamtpreis wird zum Arbeitspreis; war ein SNAP-Preis eingetragen, wird daraus die Netzgebühr zurückgerechnet und als Handeingabe hinterlegt, sodass Gesamt- und SNAP-Preis exakt gleich bleiben — den Netzbereich wählt man, wenn man mag. Die Telemetrie meldet den Bezugspreis weiter als einen Gesamtwert und zusätzlich die Teile samt Netzbereich.
+
+### Entfernt
+
+- **Der Bezugspreis für die Nacht samt Zeitfenster** aus 2.1.1-dev8. Ein frei eingestellter zweiter Preis für die Nacht wird nicht gebraucht (Nutzerentscheid 12.09.2026) — die Preisunterschiede, auf die der Fahrplan reagiert, stehen in der Verordnung und heißen SNAP und WiNAP. Gespeicherte Nachtpreise werden bei der Migration entfernt.
+
 ## [2.1.1-dev12] - 2026-09-11
 
 ### Hinzugefügt
