@@ -10,6 +10,18 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
+## [2.1.1-dev14] - 2026-09-13
+
+### Behoben
+
+- **Der Fahrplan rechnete mit der PV-Prognose einer fremden Anlage, wenn zwei Solcast-Integrationen in derselben Instanz liefen.** Die Halbstundenwerte wurden über alle Sensoren mit dem Attribut `detailedForecast` gesammelt und je Zeitpunkt überschrieben — der zuletzt gelesene gewann. Betroffen war, wer eine zweite Anlage oder ein zweites Solcast-Konto in derselben Home-Assistant-Instanz betreibt; auf einer Anlage mit 15 kWp und 4 kW Einspeisegrenze rechnete der Plan dadurch mit 10,2 statt 23,6 kWh Tagesertrag, sah nie Überschuss, plante keine Wärme und ließ die PV am Einspeiselimit abregeln. Die Prognose kommt jetzt aus der Solcast-Installation, zu der die im Assistenten gewählten Prognose-Sensoren gehören. Lässt sich das nicht zuordnen, bleibt es bei der bisherigen Suche — kollidieren dabei zwei Quellen, steht das als Warnung im Protokoll.
+- **Der Heizstab nahm sich an einer abgeregelten Anlage selbst aus dem Rennen.** Fiel die Einspeisung unter die Grenze, zog er die gesamte Lücke vom Sollwert ab — im selben Takt, in dem Guard 1 das Ladelimit nach derselben Lücke zurücknahm. Zusammen verschwand mehr Last, als fehlte: Die Einspeisung schoss über die Grenze, der Wechselrichter regelte ab, und im nächsten Takt klebte sie wieder am Limit. Der Heizstab pendelte so zwischen 0 und 2 kW und nahm im Mittel 0,97 statt der erlaubten 3,0 kW auf. Solange noch eingespeist wird, geht er jetzt nur anteilig zurück; bei Netzbezug bleibt es bei der vollen Lücke, sofort. Zusätzlich wartet die Rücknahme einen Takt, wenn gerade angehoben wurde — der Wechselrichter braucht 10 bis 30 Sekunden, um die PV nachzuführen, und die Lücke bis dahin ist keine.
+- **Bei fast voller Batterie bekam der Heizstab weiterhin nur die Hälfte des Überschusses.** Der Anteil wuchs bis zum halbvollen Speicher und blieb dann stehen, sodass bei 94 % Ladestand noch immer 3 von 6 kW für die Batterie reserviert waren, während sie mit 0,7 kW lud und der Rest abgeregelt wurde. Jetzt wächst der Anteil bis zum vollen Speicher weiter, bis dem Heizstab alles zusteht.
+
+### Hinzugefügt
+
+- **Die Netzgebühr lässt sich aufklappen und zeigt, woraus sie sich zusammensetzt.** Arbeitspreis der Netzebene 7 netto, die Umsatzsteuer als eigene Zeile, der Bruttowert, mit dem der Fahrplan rechnet, darunter SNAP und WiNAP jeweils netto wie brutto — dazu die Fundstelle in der Verordnung, der Stand des Satzes und ob er frisch aus dem Rechtsinformationssystem stammt oder aus der eingebauten Kopie, mit Link. Bei Handeingabe steht dort, dass aus der Verordnung nur der pauschale SNAP-Abschlag kommt und es keinen WiNAP gibt.
+
 ## [2.1.1-dev13] - 2026-09-12
 
 ### Hinzugefügt
