@@ -1749,6 +1749,88 @@ def _ct_wert(wert: float | None) -> float | None:
     return None if wert is None else round(wert * 100, 2)
 
 
+async def warte_auf_recorder(hass: Any) -> bool:
+    """Warten, bis die Recorder-Queue durch ist — True, wenn das gelang.
+
+    ``async_import_statistics`` stellt den Import nur in die Queue; bis er
+    lesbar ist, vergehen auf großen Instanzen bis zu einer Minute. Wer
+    vorher liest, bekommt die alten Werte und hält sie für das Ergebnis.
+    Schlägt das Warten fehl (kein Recorder, ältere HA-Version), sagt der
+    Rückgabewert das — der Aufrufer fasst dann nach, statt sich auf einen
+    Import zu verlassen, der vielleicht noch unterwegs ist.
+    """
+    try:
+        from homeassistant.components.recorder import get_instance
+
+        await get_instance(hass).async_block_till_done()
+        return True
+    except Exception:  # noqa: BLE001 — jeder Fehler heißt nur „nicht gewartet"
+        _LOGGER.debug("Recorder-Queue nicht abwartbar", exc_info=True)
+        return False
+
+
+def profil_fingerabdruck(coordinator: Any) -> float:
+    """Kennzahl über alle geladenen Stundenmittel — ändert sich mit den Werten.
+
+    ``stats_count`` allein reicht nicht: Nach einem korrigierenden Backfill
+    stehen dieselbe Anzahl Datenpunkte, aber andere Werte da.
+    """
+    return round(
+        sum(
+            float(wert)
+            for stunden in (getattr(coordinator, "bucket_avg", None) or {}).values()
+            for wert in stunden.values()
+        ),
+        3,
+    )
+
+
+async def profil_nachladen(
+    coordinator: Any,
+    refresh: Any,
+    *,
+    queue_durch: bool,
+    vorher: float,
+    delays: tuple[int, ...] = (5, 10, 20, 30, 60),
+    sleep: Any = None,
+) -> int:
+    """Das Profil nach dem Backfill neu laden. Gibt die Zahl der Läufe zurück.
+
+    Ist die Recorder-Queue nachweislich durch, steht der Import in der
+    Datenbank und ein einziger Lauf genügt. Sonst wird nachgefasst, bis
+    entweder Daten da sind *und* sich die Werte gegenüber ``vorher``
+    geändert haben — oder die Versuche aufgebraucht sind (fabrikneue
+    Instanz ohne Historie; das Profil füllt sich dann mit der Zeit).
+
+    Die frühere Fassung brach ab, sobald ``stats_count > 0`` war. Beim
+    Reload stand dieser Wert aber schon vom ersten Laden — die Schleife
+    endete nach dem ersten Lauf mit genau den alten Zahlen, die der
+    Backfill gerade ersetzt hatte. Am 13.09.2026 plante der Fahrplan
+    dadurch 15 Minuten lang mit 43,3 statt 17,5 kWh Tagesverbrauch: Er sah
+    keinen PV-Überschuss und unterließ jede Entladung in die Gemeinschaft.
+    """
+    if sleep is None:
+        sleep = asyncio.sleep
+
+    def _fertig() -> bool:
+        if coordinator.stats_count <= 0:
+            return False
+        return queue_durch or profil_fingerabdruck(coordinator) != vorher
+
+    await refresh()
+    laeufe = 1
+    if _fertig():
+        return laeufe
+
+    for delay in delays:
+        await sleep(delay)
+        await refresh()
+        laeufe += 1
+        if _fertig():
+            break
+    return laeufe
+
+
 # ---------------------------------------------------------------------------
 # Platform setup
 # ---------------------------------------------------------------------------
@@ -1771,33 +1853,33 @@ async def async_setup_entry(
     # Single initial load — backfill runs in background and refreshes after
     await coordinator.async_update()
 
+    async def _refresh_profil() -> None:
+        refresh = data.get("refresh_consumption_profile")
+        if refresh is not None:
+            # Aktualisiert Coordinator + Profil-/Prognose-Sensoren inkl.
+            # State-Write (Panel-Hinweis verschwindet sofort).
+            await refresh()
+        else:
+            # Sensoren noch nicht registriert (Setup läuft noch) — nur den
+            # Coordinator laden.
+            await coordinator.async_update()
+
     async def _backfill_then_refresh():
+        # Das Profil oben entstand auf den Statistiken, wie sie beim Start
+        # dastanden. Der Backfill rechnet sie aus den Quellsensoren neu —
+        # bis das Ergebnis gelesen ist, plant der Fahrplan mit den alten
+        # Zahlen, und er steuert dabei echt. Deshalb wird hier auf den
+        # Recorder gewartet und danach gezielt nachgeladen, statt auf gut
+        # Glück zu pollen (siehe profil_nachladen).
+        vorher = profil_fingerabdruck(coordinator)
         await async_backfill_hausverbrauch_stats(hass, config)
-        # Zwei Latenzquellen haben das Panel bisher minutenlang
-        # "Verbrauchsdaten werden berechnet..." anzeigen lassen:
-        # (1) async_import_statistics läuft asynchron über die Recorder-
-        #     Queue — direkt nach dem Backfill ist der Import oft noch
-        #     nicht lesbar (auf großen Instanzen bis ~1 min).
-        # (2) Der Profil-SENSOR (dessen stats_count das Panel prüft) wurde
-        #     nur vom Slow-Timer aktualisiert — Default alle 15 Minuten.
-        # Daher: kurz nachfassen, bis der Coordinator Daten sieht, und
-        # dabei die Profil-Sensoren direkt aktualisieren. Gibt es gar
-        # keine Sensor-Historie (fabrikneue Instanz), läuft die Schleife
-        # nach ~2 min leer aus — das Profil füllt sich dann mit der Zeit.
-        for delay in (0, 5, 10, 20, 30, 60):
-            if delay:
-                await asyncio.sleep(delay)
-            refresh = data.get("refresh_consumption_profile")
-            if refresh is not None:
-                # Aktualisiert Coordinator + Profil-/Prognose-Sensoren
-                # inkl. State-Write (Panel-Hinweis verschwindet sofort).
-                await refresh()
-            else:
-                # Sensoren noch nicht registriert (Setup läuft noch) —
-                # nur den Coordinator laden.
-                await coordinator.async_update()
-            if coordinator.stats_count > 0:
-                break
+        queue_durch = await warte_auf_recorder(hass)
+        await profil_nachladen(
+            coordinator,
+            _refresh_profil,
+            queue_durch=queue_durch,
+            vorher=vorher,
+        )
 
     hass.async_create_task(_backfill_then_refresh())
 
