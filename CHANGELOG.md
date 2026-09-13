@@ -10,6 +10,12 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
+## [2.1.1-dev21] - 2026-09-13
+
+### Geändert
+
+- **Die Alterungskosten der Batterie sind im Expertenmodus wieder einstellbar.** Sie waren seit Ende August ausgeblendet und wirkten still mit ihrer Vorgabe von 1 ct/kWh. Bei knappen Preisabständen entscheidet aber allein dieser Wert, ob die Entladung in die Gemeinschaft überhaupt zustande kommt: Die Schwelle ist Einspeisevergütung plus Alterungskosten. An einer Anlage mit 9,0 ct Vergütung und 10,2 ct Nachtsatz der Gemeinschaft lagen so nur wenige Viertelstunden der Nacht über der Schwelle — mit niedrigeren Alterungskosten wäre es die halbe Nacht. Das Feld steht wieder bei den Kosten, Vorgabe unverändert 1 ct/kWh.
+
 ## [2.1.1-dev20] - 2026-09-13
 
 ### Behoben
