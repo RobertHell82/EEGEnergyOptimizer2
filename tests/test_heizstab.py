@@ -488,6 +488,35 @@ def test_plan_ueber_der_geraeteleistung_wird_gedeckelt():
     assert soll == pytest.approx(6.0)
 
 
+def test_plan_deckelt_nicht_wenn_die_einspeisung_am_limit_klebt():
+    """Mehr Überschuss als geplant: Der Planwert ist dann nur die Untergrenze.
+
+    In Grünbach standen am 13.09.2026 bei 4 kW Einspeisung am Limit — die PV
+    wurde also beschnitten — ganze 0,63 kW Wärme im Plan, und genau dort blieb
+    der Sollwert stehen („Heizstab am Maximum"). Die Prognose kannte den
+    Überschuss nicht; die Messung schon.
+    """
+    hz = _geplant()
+    hz.sollwert_kw = 0.63
+    soll, grund = hz.regeln(
+        entladung=False, export_kw=4.0, grenze_kw=4.0, vorrang_frei=True,
+        plan_kw=0.63,
+    )
+    assert soll == pytest.approx(1.13), "ein Schritt über den Plan hinaus"
+    assert "ungeplanter Überschuss" in grund
+
+
+def test_plan_bleibt_gedeckelt_unter_der_grenze():
+    """Unter der Einspeisegrenze bleibt der Plan die Obergrenze."""
+    hz = _geplant()
+    hz.sollwert_kw = 0.63
+    soll, _ = hz.regeln(
+        entladung=False, export_kw=1.5, grenze_kw=4.0, vorrang_frei=True,
+        plan_kw=0.63,
+    )
+    assert soll == pytest.approx(0.63), "kein Schritt über den Plan"
+
+
 def test_plan_weicht_bei_netzbezug_zurueck():
     """Die Prognose sagt, wie viel erlaubt ist — die Messung, wie viel da ist.
     Bei Bezug fällt der Sollwert um die volle Lücke, statt Netzstrom zu ziehen."""

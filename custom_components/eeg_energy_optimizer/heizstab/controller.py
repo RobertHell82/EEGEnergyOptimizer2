@@ -21,7 +21,11 @@ Die Regel je Guard-Lauf (30 s), siehe ``naechster_sollwert``:
   Puffer zugeschlagen, weil die Wärme mehr bringt als die Einspeisung —
   ausgeführt wird sie trotzdem nur so weit, wie die Messung sie hergibt.
   Ist die PV schwächer als prognostiziert, fällt der Sollwert von selbst
-  zurück, statt Netzstrom zu verheizen.
+  zurück, statt Netzstrom zu verheizen. Klebt die Einspeisung dagegen an
+  der Grenze, ist MEHR Überschuss da als geplant: Dann ist der Planwert nur
+  die Untergrenze und es gilt die Grenz-Regel mit dem vollen Anteil — sonst
+  hielte eine zu niedrige Prognose den Heizstab fest, während der
+  Wechselrichter die PV beschneidet.
 * Einspeisung klebt an der Grenze → ein Schritt (0,5 kW) hinauf. Die wahre
   Höhe des Überschusses ist dann unsichtbar, der Wechselrichter regelt schon
   ab — deshalb tasten statt springen.
@@ -469,7 +473,10 @@ class HeizstabController:
 
         ``plan_kw`` ist die Wärme, die der laufende Fahrplan-Slot vorsieht
         (0 = keine). Sie ersetzt die Einspeisegrenze als Ziel: Geregelt wird
-        auf „Einspeisung ≈ 0", aber nie über die geplante Leistung hinaus.
+        auf „Einspeisung ≈ 0", gedeckelt auf die geplante Leistung — solange
+        die Einspeisung unter der Grenze bleibt. Klebt sie an der Grenze, ist
+        mehr Überschuss da, als die Prognose kannte; dann ist der Planwert nur
+        die Untergrenze und es gilt die Grenz-Regel mit dem vollen Anteil.
         Beides zusammen führt den Plan aus, ohne ihn blind zu schreiben — die
         Prognose sagt, wie viel erlaubt ist, die Messung, wie viel da ist.
         Der Anteil aus ``deckel_kw`` gilt hier NICHT: Das LP hat Batterie und
@@ -516,6 +523,24 @@ class HeizstabController:
             return 0.0, f"Maximaltemperatur erreicht ({self.maxtemp_c:.0f} °C)"
         if plan_kw > 0:
             ziel_kw = min(float(plan_kw), self.max_kw)
+            # Klebt die Einspeisung an der Grenze, ist mehr Überschuss da, als
+            # der Plan kannte — der Wechselrichter regelt gerade ab. Dann ist
+            # der Planwert nur noch die Untergrenze und es gilt die Grenz-Regel
+            # mit dem vollen Anteil. Sonst deckelte eine zu niedrige Prognose
+            # den Heizstab fest, während die PV beschnitten wird: In Grünbach
+            # standen am 13.09.2026 bei 4 kW Einspeisung am Limit ganze 0,63 kW
+            # Wärme im Plan, und genau dort blieb der Sollwert stehen.
+            if export_kw is not None and export_kw >= grenze_kw - GUARD_EXPORT_STICKY_BAND_KW:
+                obergrenze = self.max_kw if deckel_kw is None else min(deckel_kw, self.max_kw)
+                obergrenze = max(ziel_kw, obergrenze)
+                soll, grund = naechster_sollwert(
+                    self.sollwert_kw, export_kw, grenze_kw, obergrenze,
+                    vorrang_frei, self._einschwingt,
+                )
+                return soll, (
+                    f"Fahrplan: {ziel_kw:.1f} kW Wärme, dazu ungeplanter "
+                    f"Überschuss bis {obergrenze:.1f} kW — {grund}"
+                )
             soll, grund = naechster_sollwert(
                 self.sollwert_kw, export_kw, HEIZSTAB_PLAN_EXPORT_ZIEL_KW,
                 ziel_kw, True, self._einschwingt,
