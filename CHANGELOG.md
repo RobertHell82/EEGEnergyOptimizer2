@@ -10,6 +10,16 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
+## [2.1.1-dev18] - 2026-09-13
+
+### Geändert
+
+- **Ein abgelehnter Schreibversuch am Fronius sagt jetzt, was abgelehnt wurde.** Bisher stand nur „write error at register 40356 (value=64664)" im Protokoll — dass 40356 das Register `InWRte` ist und 64664 die Zweierkomplement-Darstellung von −872, also ein negativer Entlade-Sollwert, musste man sich ausrechnen. Die Meldung nennt jetzt Registernamen, vorzeichenbehafteten Wert und die Modbus-Ausnahme im Klartext.
+
+### Dokumentation
+
+- **Richtiggestellt, dass der Heizstab eine Variable im Optimierungsmodell ist.** Modul-Docstring und Entwicklerdoku behaupteten beide noch das Gegenteil; seit 2.1.1-dev2 hat das Modell eine Entscheidungsvariable, zwei Nebenbedingungen und einen Term in der Zielfunktion mehr. Die Entwicklerdoku weist jetzt ausdrücklich auf diese Abweichung vom Upstream-Modell hin.
+
 ## [2.1.1-dev17] - 2026-09-13
 
 ### Behoben
