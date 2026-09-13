@@ -1114,15 +1114,15 @@ async def test_winap_wirkt_sobald_die_verordnung_ihn_kennt():
     ):
         inputs, _ = await sched.async_collect_inputs(hass, "entry1")
 
-    # Die Attrappe kennt kein Netzverlustentgelt; die Abgaben kommen dazu.
-    assert inputs.consumption_price == pytest.approx(
-        0.19 + 5.30 * 1.2 / 100 + ABGABEN_BRUTTO
-    )
+    # Die Attrappe kennt kein Netzverlustentgelt — dafür gilt dann der
+    # Schnappschuss (Wien: 0,700 ct netto), die Abgaben kommen dazu.
+    fest = (0.700 * 1.2 / 100) + ABGABEN_BRUTTO
+    assert inputs.consumption_price == pytest.approx(0.19 + 5.30 * 1.2 / 100 + fest)
     assert inputs.consumption_price_snap == pytest.approx(
-        0.19 + 4.24 * 1.2 / 100 + ABGABEN_BRUTTO
+        0.19 + 4.24 * 1.2 / 100 + fest
     )
     assert inputs.consumption_price_winap == pytest.approx(
-        0.19 + 4.24 * 1.2 / 100 + ABGABEN_BRUTTO
+        0.19 + 4.24 * 1.2 / 100 + fest
     )
 
 

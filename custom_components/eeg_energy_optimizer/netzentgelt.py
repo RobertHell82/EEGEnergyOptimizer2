@@ -684,6 +684,38 @@ def brutto(ct_netto: float | None) -> float | None:
     return round(ct_netto * MWST / 100.0, 6)
 
 
+def _verlust_fuer(tarif: Netztarif, bereich: str) -> float:
+    """Netzverlustentgelt des Bereichs, Cent/kWh netto — 0, wenn nirgends bekannt.
+
+    Eine Tabelle kann den Arbeitspreis kennen und das Netzverlustentgelt
+    nicht: § 6 wird getrennt geholt, und ein Cache aus einer Version vor
+    2.1.1-dev15 kennt das Feld gar nicht. Dann gilt der Schnappschuss für
+    diesen einen Posten, statt ihn mit null anzusetzen und den Bezugspreis
+    zu niedrig zu rechnen.
+    """
+    if tarif.verlust is not None:
+        return tarif.verlust
+    eingebaut = SNAPSHOT.tarife.get(bereich)
+    if eingebaut is not None and eingebaut.verlust is not None:
+        return eingebaut.verlust
+    return 0.0
+
+
+def ist_vollstaendig(tabelle: Tariftabelle | None) -> bool:
+    """Trägt die Tabelle alle Posten, die der Fahrplan braucht?
+
+    Ein gespeicherter Stand aus einer älteren Version kennt weder
+    Netzverlustentgelt noch Abgaben. Er ist nicht falsch, nur unvollständig —
+    und weil er frisch ist, käme der Tagesabruf nicht mehr dazu, ihn zu
+    ergänzen. Deshalb gilt so ein Stand als nicht geholt.
+    """
+    if tabelle is None or not tabelle.tarife:
+        return False
+    if tabelle.abgaben is None:
+        return False
+    return any(t.verlust is not None for t in tabelle.tarife.values())
+
+
 def netzgebuehr_fuer(
     config: dict[str, Any], tabelle: Tariftabelle | None = None
 ) -> Netzgebuehr | None:
@@ -726,7 +758,7 @@ def netzgebuehr_fuer(
     tarif = tabelle.tarife.get(bereich)
     if tarif is None:
         return None
-    verlust = brutto(tarif.verlust) or 0.0
+    verlust = brutto(_verlust_fuer(tarif, bereich)) or 0.0
     fest = verlust + zusatz
     nutzung = brutto(tarif.ap) or 0.0
     snap = brutto(tarif.snap)
@@ -766,11 +798,11 @@ def tabelle_status(
                 "ap_netto": tarif.ap,
                 "snap_netto": tarif.snap,
                 "winap_netto": tarif.winap,
-                "verlust_netto": tarif.verlust,
+                "verlust_netto": _verlust_fuer(tarif, key),
                 "ap_brutto": brutto(tarif.ap),
                 "snap_brutto": brutto(tarif.snap),
                 "winap_brutto": brutto(tarif.winap),
-                "verlust_brutto": brutto(tarif.verlust),
+                "verlust_brutto": brutto(_verlust_fuer(tarif, key)),
             }
         )
     abgaben = tabelle.abgaben or (SNAPSHOT.abgaben if tabelle.abgaben is None else None)
@@ -783,7 +815,7 @@ def tabelle_status(
         "fehler": fehler,
         "mwst": MWST,
         "bereiche": bereiche,
-        "verlust_quelle": tabelle.verlust_quelle,
+        "verlust_quelle": tabelle.verlust_quelle or SNAPSHOT.verlust_quelle,
         "elektrizitaetsabgabe_netto": abgaben.elektrizitaet if abgaben else None,
         "elektrizitaetsabgabe_quelle": abgaben.elektrizitaet_quelle if abgaben else None,
         "foerderbeitrag_netto": abgaben.foerderbeitrag if abgaben else None,
@@ -870,8 +902,17 @@ class NetzentgeltProvider:
                 if tabelle.tarife:
                     self._tabelle = tabelle
                 geholt = stored.get("geholt")
-                if geholt:
+                # Einen unvollständigen Stand (vor 2.1.1-dev15: ohne
+                # Netzverlustentgelt und Abgaben) NICHT als frisch verbuchen —
+                # sonst hielte die Tagesfrist den Abruf auf, der die fehlenden
+                # Posten erst holt.
+                if geholt and ist_vollstaendig(tabelle):
                     self._geholt = datetime.fromisoformat(geholt)
+                elif geholt:
+                    _LOGGER.debug(
+                        "Netzentgelte: gespeicherter Stand ohne Netzverlust-"
+                        "entgelt/Abgaben — wird neu geholt"
+                    )
         except Exception:
             _LOGGER.debug("Netzentgelte: keine gespeicherte Tabelle vorhanden")
 

@@ -16,6 +16,7 @@ from pathlib import Path
 import pytest
 
 from custom_components.eeg_energy_optimizer import netzentgelt as n
+from custom_components.eeg_energy_optimizer.netzentgelt import _utcnow
 
 FIXTURE = Path(__file__).parent / "fixtures" / "ris_snev2018_p5_NOR40273644.html"
 FIXTURE_P6 = Path(__file__).parent / "fixtures" / "ris_snev2018_p6_netzverlust.html"
@@ -249,14 +250,16 @@ def test_gelesene_tabelle_schlaegt_den_schnappschuss_bereichsweise():
         stand="2027-01-01", quelle="SNE-T-V § 9 (RIS NOR1)", url=None,
         tarife={"wien": n.Netztarif(5.30, 4.24, 4.24)},
     )
-    # Die erfundene Tabelle kennt kein Netzverlustentgelt; die bundesweiten
-    # Abgaben kommen weiter aus dem Schnappschuss.
-    abgaben = (ELEKTRIZITAETSABGABE_2026 + FOERDERBEITRAG_2026) * 1.2 / 100
+    # Die erfundene Tabelle kennt kein Netzverlustentgelt und keine Abgaben;
+    # beides kommt für diese Posten weiter aus dem Schnappschuss, statt mit
+    # null angesetzt zu werden.
+    fest = (0.700 + ELEKTRIZITAETSABGABE_2026 + FOERDERBEITRAG_2026) * 1.2 / 100
     wien = n.netzgebuehr_fuer({"schedule_netzbereich": "wien"}, tabelle)
-    assert wien.ap == pytest.approx(5.30 * 1.2 / 100 + abgaben)
-    assert wien.winap == pytest.approx(4.24 * 1.2 / 100 + abgaben)
+    assert wien.ap == pytest.approx(5.30 * 1.2 / 100 + fest)
+    assert wien.winap == pytest.approx(4.24 * 1.2 / 100 + fest)
     assert wien.stand == "2027-01-01"
     # Ein Bereich, den die gelesene Tabelle nicht kennt, kommt aus dem Schnappschuss
+    abgaben = (ELEKTRIZITAETSABGABE_2026 + FOERDERBEITRAG_2026) * 1.2 / 100
     linz = n.netzgebuehr_fuer({"schedule_netzbereich": "linz"}, tabelle)
     assert linz.ap == pytest.approx((5.57 + 0.487) * 1.2 / 100 + abgaben)
     assert linz.stand == "2026-04-01"
@@ -419,6 +422,40 @@ async def test_provider_nimmt_die_tarifverordnung_sobald_sie_gilt(monkeypatch):
     assert tabelle.tarife["wien"].winap == pytest.approx(4.24)
     assert not any("NORGAS" in u for u, _ in netz.aufrufe)
     assert netz.aufrufe[0][1]["Suchworte"] == "Netzebene 7"
+
+
+async def test_alter_cache_gilt_nicht_als_frisch(monkeypatch):
+    """Ein gespeicherter Stand ohne die neuen Posten muss neu geholt werden.
+
+    Auf einer Anlage stand nach dem Update auf 2.1.1-dev15 ein
+    Netzverlustentgelt von null: Der Cache stammte aus der Vorversion, kannte
+    das Feld nicht — und weil er erst drei Stunden alt war, hielt die
+    Tagesfrist den Abruf auf, der es ergänzt hätte.
+    """
+    alt = {
+        "stand": "2026-04-01",
+        "quelle": "SNE-V 2018 § 5 (RIS NOR40273644)",
+        "url": None,
+        "tarife": {"oberoesterreich": {"ap": 6.29, "snap": 5.03, "winap": None}},
+    }
+    assert n.ist_vollstaendig(n.Tariftabelle.aus_dict(alt)) is False
+    assert n.ist_vollstaendig(n.SNAPSHOT) is True
+
+    provider = n.NetzentgeltProvider(hass=None, entry_id="e1")
+
+    class _Store:
+        async def async_load(self):
+            return {"tabelle": alt, "geholt": _utcnow().isoformat()}
+
+    provider._store = _Store()
+    await provider.async_load()
+    # Tabelle übernommen, aber nicht als frisch verbucht
+    assert provider.tabelle.tarife["oberoesterreich"].ap == 6.29
+    assert provider._geholt is None
+
+    # Solange der Abruf noch nicht lief, trägt der Schnappschuss den Posten
+    g = provider.netzgebuehr({"schedule_netzbereich": "oberoesterreich"})
+    assert g.netzverlust == pytest.approx(OOE_VERLUST * 1.2 / 100)
 
 
 async def test_provider_faellt_bei_fehler_auf_den_schnappschuss(monkeypatch):
