@@ -1635,7 +1635,7 @@ class OptimierungsVorteilSensor(_BilanzSensor):
 
 
 # ---------------------------------------------------------------------------
-# Fahrplan (chamo-Prototyp)
+# Fahrplan (chamo)
 # ---------------------------------------------------------------------------
 
 
@@ -2021,7 +2021,7 @@ async def async_setup_entry(
         + ([combined_grid_sensor] if combined_grid_sensor else [])
         + ([combined_soc_sensor] if combined_soc_sensor else [])
         + ([combined_capacity_sensor] if combined_capacity_sensor else [])
-        # Fahrplan-Prototyp: Plan-Werte im selben Takt wie die Ist-Werte,
+        # Fahrplan: Plan-Werte im selben Takt wie die Ist-Werte,
         # damit Plan und Ist in der Recorder-Historie vergleichbar sind.
         + [
             FahrplanBatterieleistungSensor(hass, entry),

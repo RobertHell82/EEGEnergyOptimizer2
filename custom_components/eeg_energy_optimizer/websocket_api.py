@@ -549,7 +549,7 @@ def async_register_websocket_commands(hass: HomeAssistant) -> None:
     # aus den Auto-Sensoren; die sind live und brauchen kein Polling.
     websocket_api.async_register_command(hass, ws_probe_ambibox)
     websocket_api.async_register_command(hass, ws_ambibox_manual)
-    # Fahrplan (chamo-Prototyp)
+    # Fahrplan (chamo)
     websocket_api.async_register_command(hass, ws_tagesbilanz_jetzt)
     websocket_api.async_register_command(hass, ws_get_schedule_archive)
     websocket_api.async_register_command(hass, ws_get_schedule)
@@ -2605,7 +2605,7 @@ async def ws_telemetry_forget(
 
 
 # ---------------------------------------------------------------------------
-# Fahrplan (chamo-Prototyp)
+# Fahrplan (chamo)
 # ---------------------------------------------------------------------------
 
 

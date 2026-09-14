@@ -1,18 +1,21 @@
 # EEG Energy Optimizer
 
-> **Prototyp-Zweig.** Dieses Repo enthält den LP-Fahrplan-Optimierer aus [EngagePV/chamo](https://gitlab.com/EngagePV/chamo) — er ist hier der **einzige Aktor**: Er rechnet jede Minute und steuert die Anlage (derzeit Fronius Gen24, Huawei SUN2000, Kostal Plenticore, Sigenergy SigenStor, SMA Smart Energy und SolaX Gen4+). Die Zustands-Heuristik der produktiven Integration ist entfernt. Details und Installation: [CHAMO.md](CHAMO.md).
+> Gesteuert wird ausschließlich über einen **LP-Fahrplan-Optimierer** (aus [EngagePV/chamo](https://gitlab.com/EngagePV/chamo) von Harald Geyer): Er rechnet jede Minute einen Plan über 48 Stunden und setzt ihn am Wechselrichter durch. Feste Zeitfenster und Zustandsregeln gibt es nicht — das Verhalten entsteht aus den Preisen. Technische Details: [CHAMO.md](CHAMO.md).
 
 HACS-kompatible Home Assistant Integration für vorausschauendes Batteriemanagement, optimiert für Energiegemeinschaften (EEG) im DACH-Raum.
 
 ## Funktionen
 
 - **Fahrplan-Optimierung** — rechnet jede Minute aus den Einspeisepreisen den erlösbesten Lade- und Entladeplan über 48 Stunden. Feste Zeitfenster gibt es nicht: Zeigt der Preisverlauf keinen Mehrwert, plant der Fahrplan auch keine Einspeisung
+- **Einspeisetarife, die sich selbst aktualisieren** — OeMAG, Energie AG „Team Sonne Float“, aWATTar SUNNY oder der Börsen-Spotpreis; die Monatstarife auch als Hochrechnung für den laufenden Monat, statt einen Monat hinterherzulaufen
 - **Fahrplan-Steuerung** — setzt den Plan alle 30 Sekunden am Wechselrichter durch: Ladelimit und erzwungene Entladung, nachgeführt an den Messwerten, mit Not-Aus und Failsafe
 - **Einspeisegrenze** — plant um die Exportgrenze des Netzbetreibers herum und hebt das Ladelimit an, wenn die Einspeisung trotzdem an der Grenze klebt
 - **PeakShare-Integration** — die Bedarfsprognose deiner EEG-Community wird zum Auf- bzw. Abschlag auf den Basistarif und geht so direkt in den Fahrplan ein; im Dashboard ist die Bedarfskurve sichtbar
+- **Heizstab** (Beta) — ein Fronius Ohmpilot als zweite Senke: Der Optimierer plant die Wärme mit, wenn sie mehr bringt als die Einspeisung, und die Steuerung führt den Heizstab dem Plan nach. Statt abgeregelt zu werden, geht der Überschuss in den Puffer
+- **Wallbox** (Beta) — eine bidirektionale Ambibox als dritte Senke, mit Ladezustand und Ladeleistung des Fahrzeugs im Dashboard
 - **PV-Prognose** — Solcast Solar und Forecast.Solar Unterstützung mit 7-Tage-Ausblick
 - **Verbrauchsprofil** — lernt stündliche Verbrauchsmuster pro Wochentag aus den HA-Recorder-Daten
-- **Live-Dashboard** — Sidebar-Panel mit Energiefluss, Diagrammen, PeakShare-Bedarfskurve, manueller Wechselrichtersteuerung und Aktivitätsprotokoll
+- **Live-Dashboard** — Sidebar-Panel mit Energiefluss, Fahrplan und Ist-Verlauf, PeakShare-Bedarfskurve, Geldbilanz und Aktivitätsprotokoll. Die Steuerung lässt sich pausieren — für eine Dauer oder bis die Batterie einen Ladestand erreicht hat
 - **Einrichtungsassistent** — schrittweises Onboarding mit automatischer Sensorerkennung
 
 ### EEG-Statistik
@@ -26,7 +29,7 @@ Der EEG Energy Optimizer sendet anonymisierte Diagnose- und Wirksamkeitsdaten an
 | **Profil** | bei Setup, Restart, Settings-Change | App-Version, HA-Version, Wechselrichter-Typ, Batterie-Kapazität, PV-Peak, Prognose-Quelle, Länder-ISO-Code, ausgewählte EEG-Community (sofern PeakShare aktiv), gefilterte Settings (Whitelist) |
 | **Failure** | bei Auftreten (mit Dedup) | Zeitstempel, Kategorie, Schweregrad, gehashte Fehlermeldung, Kontext-JSON |
 
-> Im Prototyp-Zweig entfallen die Snapshot-, State-Change- und Outcome-Meldungen der produktiven Integration — ihre Semantik war an die alte Zustandslogik gebunden. Profil- und Failure-Meldungen laufen weiter.
+> Snapshot-, State-Change- und Outcome-Meldungen gibt es nicht mehr — ihre Semantik war an die frühere Zustandslogik gebunden, die es nicht mehr gibt. Profil- und Failure-Meldungen laufen weiter.
 
 Die Settings-Whitelist enthält ausschließlich numerische/kategorische Konfigurationswerte (Tarife, Batterie-Leistungsgrenze, Vorausschau etc.) — **keine Entity-IDs**, keine Sensor-Namen.
 
@@ -42,9 +45,20 @@ Die Settings-Whitelist enthält ausschließlich numerische/kategorische Konfigur
 
 Pro Anlage wird einmalig eine zufällige **UUIDv4** + ein **API-Key** erzeugt und lokal gespeichert. Es gibt keinen Bezug zu HA-Account, IP, Hardware-ID oder sonstigen Identifikatoren. Beim Klick auf „Daten löschen" werden alle Daten dieser Anlage serverseitig kaskadiert gelöscht und die UUID lokal entfernt.
 
-## Unterstützter Wechselrichter
+## Unterstützte Wechselrichter
 
-**Huawei SUN2000** (via [Huawei Solar](https://github.com/wlcrs/huawei_solar) Integration) — Single oder Master/Slave (mehrere Wechselrichter + Batterien). Direkte Anbindung an den Wechselrichter/Dongle oder über das EMMA-Energiemanagement (`sensor.emma_*`-Sensoren, Netz-Vorzeichen wird automatisch korrigiert — siehe [Huawei-Guide](docs/guides/huawei.md)).
+Alle sechs werden vom Fahrplan **gesteuert** (Ladelimit und erzwungene Entladung), nicht nur ausgelesen:
+
+| Wechselrichter | Anbindung | Guide |
+|---|---|---|
+| **Fronius Gen24** | direkt per Modbus TCP (SunSpec Model 124) | [Guide](docs/guides/fronius.md) |
+| **Huawei SUN2000** | via [Huawei Solar](https://github.com/wlcrs/huawei_solar); Single oder Master/Slave (mehrere Wechselrichter + Batterien), direkt am Dongle oder über EMMA | [Guide](docs/guides/huawei.md) |
+| **Kostal Plenticore** (Beta) | direkt per Modbus TCP | [Guide](docs/guides/kostal.md) |
+| **Sigenergy SigenStor** | via [Sigenergy-Integration](https://github.com/TypQxQ/Sigenergy-Local-Modbus) | [Guide](docs/guides/sigenergy.md) |
+| **SMA Smart Energy** (Beta) | direkt per Modbus TCP (externes Batteriemanagement) | [Guide](docs/guides/sma.md) |
+| **SolaX Gen4+** | via [solax_modbus](https://github.com/wills106/homeassistant-solax-modbus) | [Guide](docs/guides/solax.md) |
+
+**Beta** heißt: Die Steuerung ist an einer echten Anlage nachgewiesen, aber noch nicht so breit erprobt wie die übrigen. Den genauen Stand je Gerät führt [docs/wechselrichter-status.md](docs/wechselrichter-status.md).
 
 > **SolarEdge wird derzeit nicht unterstützt.** Der Treiber ist vollständig enthalten, aber stillgelegt: Er steht nicht zur Auswahl und wird nicht gesteuert. Er wird wieder freigeschaltet, sobald die Fahrplan-Steuerung an einer echten Anlage des jeweiligen Typs nachgewiesen ist — Stand, offene Punkte und Freischaltweg: **[docs/wechselrichter-status.md](docs/wechselrichter-status.md)**.
 
@@ -84,7 +98,11 @@ Jede Minute rechnet die Integration einen **linearen Optimierungs-Fahrplan** üb
 
 Der Fahrplan kennt keine Zeitfenster und keine Zustände — er kennt nur einen **Preis je Viertelstunde**. Die Einspeisevergütung ist eine Zeitreihe aus zwei Teilen:
 
-1. **Basistarif** — ein fester Wert, der OeMAG-Monatstarif (zuletzt veröffentlicht oder für den laufenden Monat hochgerechnet) oder der Börsen-Spotpreis.
+1. **Basistarif** — was du bekommst, wenn die Energie nicht in einer Gemeinschaft landet. Zur Wahl stehen ein fester Wert und vier Quellen, die sich selbst aktualisieren:
+   - **OeMAG-Monatstarif** — zuletzt veröffentlicht oder für den laufenden Monat hochgerechnet (aus Börsenpreis und österreichischer PV-Erzeugung, Abweichung im Mittel 0,2 ct)
+   - **Energie AG „Team Sonne Float"** — Referenzmarktwert Photovoltaik § 13 EAG minus Abschlag, ebenfalls veröffentlicht oder hochgerechnet; die Variante *Loyal Float* mit ihrer Mindestvergütung von 2 ct ist wählbar
+   - **aWATTar SUNNY** — fester Monatstarif, beide Vertragsvarianten
+   - **Börsen-Spotpreis** (EPEX AT/DE über die aWATTar-API) — als Zeitreihe je Stunde, mit Cent- und Prozentabschlag des Vermarkters
 2. **Auf- und Abschlag der Energiegemeinschaften** — hat eine Gemeinschaft in einer Viertelstunde Bedarf, steigt der Preis; hat sie Überschuss, sinkt er.
 
 Der Optimierer maximiert daraus den Erlös über 48 Stunden: Wo eine Kilowattstunde mehr wert ist, wird eingespeist; wo sie weniger wert ist, wird geladen oder gehalten.
@@ -111,10 +129,10 @@ Weitere Steuergrößen im Fahrplan:
 
 | Größe | Wirkung |
 |---|---|
-| **Mindest-Ladestand** | Harte Untergrenze — darunter wird nicht entladen |
+| **Mindest-Ladestand** | Harte Untergrenze — darunter wird nicht entladen. Höchstens 20 Prozentpunkte unter dem Maximum-Ladestand, damit ein nutzbarer Bereich bleibt |
 | **Maximum-Ladestand** | Obergrenze der Planung (Vorgabe 100 = bis voll laden) |
 | **Einspeisegrenze** | Maximale Leistung am Netzanschluss, um die herum geplant wird |
-| **Alterungskosten der Batterie** | Preis pro umgesetzter kWh — ein zu kleiner Preisunterschied lohnt den Zyklus nicht (fest 1 ct, derzeit nicht einstellbar) |
+| **Alterungskosten der Batterie** | Preis pro umgesetzter kWh — ein zu kleiner Preisunterschied lohnt den Zyklus nicht. Vorgabe 1 ct, im Expertenmodus einstellbar; bei der Entladung in die Gemeinschaft ist der Wert die Schwelle (Vergütung plus Alterungskosten) |
 | **Arbeitspreis** | Was der Lieferant je kWh verlangt (inkl. MwSt) — bewertet Strom, der sonst aus dem Netz gekauft werden müsste |
 | **Netzbereich** | Bestimmt die Netzgebühr: Das Netznutzungsentgelt der Netzebene 7 kommt aus der Systemnutzungsentgelte-Verordnung (Rechtsinformationssystem des Bundes), täglich aktualisiert. Für Sonderfälle lässt sich die Gebühr auch von Hand eintragen |
 | **Zeitvariable Netzentgelte** | Der Sommer-Nieder-Arbeitspreis (SNAP, April–September 10–16 Uhr) und ab 2027 der Winter-Nieder-Arbeitspreis (WiNAP, Oktober–März 22–4 Uhr) senken die Netzgebühr. Voraussetzung ist die viertelstündliche Messung beim Netzbetreiber |
@@ -127,7 +145,8 @@ Alle 30 Sekunden hält die **Steuerung** den zuletzt gerechneten Fahrplan gegen 
 
 - **Plant der Slot Laden**, wird das Ladelimit auf die Planleistung gesetzt. Die **Ladelimit-Nachführung** hebt es schrittweise an, wenn die gemessene Einspeisung an der Einspeisegrenze klebt (stille Abregelung), und nimmt es mit Hysterese wieder auf den Planwert zurück.
 - **Plant der Slot Einspeisung aus der Batterie**, wird eine erzwungene Entladung gestartet. Die **Entlade-Nachführung** rechnet die gemessene Hauslast auf die geplante Netzleistung auf, damit die geplante Einspeisung tatsächlich am Netzanschluss ankommt.
-- **Plant der Slot nichts**, bleibt das Laden blockiert — sonst würde der Automatikmodus Überschuss in die Batterie laden, den der Plan einspeisen will.
+- **Plant der Slot nichts**, bleibt das Laden blockiert — sonst würde der Automatikmodus Überschuss in die Batterie laden, den der Plan einspeisen will. Ist die Batterie ohnehin voll, wird gar nicht eingegriffen: Ein Ladelimit bewirkt dort nichts und stünde nur im Weg.
+- **Ist ein Heizstab eingerichtet**, führt die Steuerung ihn im selben Takt nach: geregelt auf „Einspeisung ≈ 0“, gedeckelt auf die geplante Wärme. Der Sollwert geht alle 20 Sekunden an den Ohmpilot, weil dessen Watchdog nach 50 Sekunden abschaltet.
 
 Sicherheitsnetze:
 
@@ -155,7 +174,7 @@ Viele Netzbetreiber begrenzen die maximale Einspeiseleistung (z. B. 4 kW). Kennt
 ## Voraussetzungen
 
 - Home Assistant 2025.1.0 oder neuer
-- Ein **Huawei SUN2000** mit Batteriespeicher und die [Huawei Solar](https://github.com/wlcrs/huawei_solar) Integration, installiert und konfiguriert
+- Einer der oben genannten **Wechselrichter mit Batteriespeicher**. Fronius, Kostal und SMA werden direkt per Modbus TCP angesprochen und brauchen keine weitere Integration; Huawei, Sigenergy und SolaX setzen die jeweilige Integration voraus
 - Eine PV-Prognose-Integration (Solcast Solar oder Forecast.Solar)
 
 ## Lizenz

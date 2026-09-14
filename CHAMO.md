@@ -1,24 +1,24 @@
-# Fahrplan-Prototyp (chamo)
+# Der Fahrplan (chamo)
 
-Dieses Repo ist ein **Prototyp-Zweig** des EEG Energy Optimizer. Es enthält
-zusätzlich zur produktiven Integration den LP-Fahrplan-Optimierer aus
-[EngagePV/chamo](https://gitlab.com/EngagePV/chamo) von Harald Geyer.
+Der EEG Energy Optimizer wird ausschließlich vom LP-Fahrplan-Optimierer aus
+[EngagePV/chamo](https://gitlab.com/EngagePV/chamo) von Harald Geyer gesteuert.
+Diese Seite beschreibt, wie er eingebunden ist.
 
 Der Fahrplan ist der **einzige Aktor**: Jede Minute rechnet der
 `ScheduleRunner` einen Fahrplan über 48 Stunden, alle 30 Sekunden hält die
 **Steuerung** (`ScheduleExecutor`) den zuletzt gerechneten Plan gegen die
-Messwerte und setzt ihn am Wechselrichter durch — derzeit nur bei **Huawei
-SUN2000**, die anderen fünf Treiber rechnen und zeigen an
-(`supports_schedule_control = False`). Die Zustands-Heuristik der produktiven
-Integration (Morgen-Einspeisung, Nacht-Entladung, Einspeisebegrenzung) ist
-vollständig entfernt — ihre Verhalten entstehen im Fahrplan von selbst aus den
-Tarifen. Rechnen und Steuern sind strikt getrennt: Der Optimierer schreibt nie
+Messwerte und setzt ihn am Wechselrichter durch — bei **Fronius Gen24**,
+**Huawei SUN2000**, **Kostal Plenticore**, **Sigenergy SigenStor**,
+**SMA Smart Energy** und **SolaX Gen4+**. Allein SolarEdge ist stillgelegt
+(`supports_schedule_control = False`), bis die Steuerung an einer echten
+Anlage dieses Typs nachgewiesen ist. Eine Zustands-Heuristik (Morgen-
+Einspeisung, Nacht-Entladung, Einspeisebegrenzung) gibt es nicht — diese
+Verhalten entstehen im Fahrplan von selbst aus den Tarifen. Rechnen und Steuern sind strikt getrennt: Der Optimierer schreibt nie
 selbst, nur die Steuerung.
 
-> **Wichtig:** Dieses Repo hat dieselbe Domain wie die produktive Integration.
-> In einem Home Assistant kann nur **eine** von beiden installiert sein. Die
-> Config-Entry-Version bleibt bei 20, ein Rückwechsel ist also jederzeit
-> möglich, ohne die Konfiguration zu verlieren.
+> **Wichtig:** Die Integration belegt dieselbe Domain wie die frühere,
+> zustandsbasierte Fassung des EEG Energy Optimizer. In einem Home Assistant
+> kann nur **eine** von beiden installiert sein.
 
 ## Was ist neu
 
