@@ -644,6 +644,7 @@ from unittest.mock import MagicMock as _MM  # noqa: E402
 
 from custom_components.eeg_energy_optimizer.const import (  # noqa: E402
     CONF_HEIZSTAB_ENABLED,
+    CONF_HEIZSTAB_HOST,
     DOMAIN,
 )
 from custom_components.eeg_energy_optimizer.power_readings import (  # noqa: E402
@@ -701,3 +702,40 @@ class TestHeizstabInDerHauslast:
             "sensor.grid": _make_state("2.0", "kW"),
         }, 5.0)
         assert compute_house_load_kw(hass, self._cfg()) == 0.0
+
+    # -- Zwei Config-Entries derselben Domain auf einer HA-Instanz ---------
+
+    def _zwei_entries(self):
+        """Grünbach + Testaufbau auf einer Instanz: zwei Entries, zwei Heizstäbe."""
+        cfg_a = self._cfg(**{CONF_HEIZSTAB_HOST: "192.168.100.58"})
+        cfg_e = self._cfg(**{CONF_HEIZSTAB_HOST: "192.168.200.58"})
+        ctrl_a, ctrl_e = _MM(), _MM()
+        ctrl_a.leistung_kw = 2.5
+        ctrl_e.leistung_kw = 4.0
+        hass = _make_hass({})
+        hass.data = {DOMAIN: {
+            "entry_a": {"config": cfg_a, "heizstab": ctrl_a},
+            "entry_e": {"config": cfg_e, "heizstab": ctrl_e},
+        }}
+        return hass, cfg_a, cfg_e
+
+    def test_zwei_entries_jeder_seinen_eigenen_heizstab(self):
+        """Bisher nahm die Funktion den ERSTEN Controller in hass.data —
+        Entry A zog den Heizstab von E vom Hausverbrauch ab."""
+        hass, cfg_a, cfg_e = self._zwei_entries()
+        assert compute_heizstab_kw(hass, cfg_a) == pytest.approx(2.5)
+        assert compute_heizstab_kw(hass, cfg_e) == pytest.approx(4.0)
+
+    def test_kopie_der_config_findet_den_eigenen_heizstab(self):
+        """schedule.py reicht eine KOPIE der Config weiter, und die Sensoren
+        halten nach einem Hot-Reload das alte Dict — die Zuordnung darf nicht
+        an der Objektidentität hängen, sondern an der Adresse des Ohmpilot."""
+        hass, _cfg_a, cfg_e = self._zwei_entries()
+        assert compute_heizstab_kw(hass, dict(cfg_e)) == pytest.approx(4.0)
+
+    def test_entry_ohne_eigenen_controller_bekommt_keinen_fremden(self):
+        """Entry A hat den Heizstab aktiviert, aber keinen Controller (anderer
+        Host, noch nicht gebaut) — der von E gehört trotzdem nicht ihm."""
+        hass, cfg_a, _cfg_e = self._zwei_entries()
+        del hass.data[DOMAIN]["entry_a"]["heizstab"]
+        assert compute_heizstab_kw(hass, cfg_a) == 0.0

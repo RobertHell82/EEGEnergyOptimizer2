@@ -17,7 +17,7 @@
 
 <h3>So funktioniert es</h3>
 <p>Der Heizstab ist eine <strong>zweite Senke</strong> neben der Batterie. Er hat zwei Betriebsarten, und alle 30 Sekunden entscheidet sich, welche gilt.</p>
-<p><strong>1. Nach Plan.</strong> Sieht die laufende Viertelstunde des Optimierungsplans Wärme vor, ist diese Leistung die Vorgabe. Das Modell hat die Kilowattstunde dem Puffer zugeschlagen, weil der Wärmewert höher liegt als die Einspeisevergütung — dann wird geheizt, auch wenn die Einspeisung weit unter der Grenze bleibt. Ausgeführt wird der Plan aber nur so weit, wie die Messung ihn trägt: Geregelt wird auf <strong>Einspeisung ≈ 0</strong>, nie über die geplante Leistung hinaus. Liefert die PV weniger als vorhergesagt, fällt der Sollwert von selbst zurück, statt Netzstrom zu verheizen.</p>
+<p><strong>1. Nach Plan.</strong> Sieht die laufende Viertelstunde des Optimierungsplans Wärme vor, ist diese Leistung die Vorgabe. Das Modell hat die Kilowattstunde dem Puffer zugeschlagen, weil der Wärmewert höher liegt als die Einspeisevergütung — dann wird geheizt, auch wenn die Einspeisung weit unter der Grenze bleibt. Ausgeführt wird der Plan aber nur so weit, wie die Messung ihn trägt: Geregelt wird auf <strong>Einspeisung ≈ 0</strong>, nie über die geplante Leistung hinaus. Liefert die PV weniger als vorhergesagt, fällt der Sollwert von selbst zurück, statt Netzstrom zu verheizen. Auf dem Weg zum Ziel wird der Sollwert nur um die <strong>gemessene</strong> Einspeisung angehoben, höchstens 0,5 kW je Lauf — sobald etwa 0,3 kW ins Netz gehen, bleibt er stehen. Er pendelt nicht um das Ziel und zieht dabei keinen Netzstrom.</p>
 <p><strong>2. Nach der Einspeisegrenze.</strong> Plant der Slot keine Wärme — oder ist der Plan veraltet —, gilt die alte Regel für den Überschuss, den keine Prognose kannte:</p>
 <table>
 <thead>
@@ -41,6 +41,7 @@
 </tr>
 </tbody>
 </table>
+<p><em>Fällt der Netz-Messwert einen Lauf lang aus (der Zähler antwortet nicht), hält der Heizstab seinen Sollwert; erst beim zweiten fehlenden Messwert in Folge geht er auf 0. Ein einzelner Aussetzer kostete sonst Minuten Wärme, denn der Weg zurück geht in Schritten.</em></p>
 <p>Was der Heizstab <strong>nie</strong> tut:</p>
 <ul>
 <li><strong>Aus der Batterie heizen.</strong> Entlädt die Optimierung gerade ins Netz, steht der Heizstab auf 0. Eine Einspeisung aus der Batterie ist kein Überschuss.</li>
@@ -57,7 +58,7 @@
 <li><strong>Ab 50 %</strong> ist es die Hälfte für jeden.</li>
 <li><strong>Dazwischen</strong> gleitend.</li>
 </ul>
-<p>Unter der Mindesttemperatur hat der Heizstab davon unabhängig Vorrang und volle Leistung. Der Plan für die Batterie bleibt in jedem Fall unangetastet.</p>
+<p>Unter der Mindesttemperatur hat der Heizstab davon unabhängig Vorrang und volle Leistung. Der Plan für die Batterie bleibt in jedem Fall unangetastet. Nur eine <strong>volle</strong> Batterie hebt die Aufteilung auf — nicht jede Viertelstunde, in der die Optimierung den Wechselrichter sich selbst überlässt.</p>
 <h3>Was die Wärme wert ist</h3>
 <p>Jede Kilowattstunde, die aus PV in den Puffer geht, zählt mit dem <strong>Wärmewert</strong> — unabhängig davon, wie warm der Puffer gerade ist. Das ist die Zahl, gegen die der Optimizer die Einspeisung abwägt: Liegt der Wärmewert darüber, heizt er den Puffer, statt einzuspeisen.</p>
 <p><em>Die Obergrenze ist allein die <strong>Maximaltemperatur</strong>: Ist sie erreicht, nimmt der Puffer nichts mehr auf, und die Energie geht wieder ins Netz.</em></p>
@@ -138,7 +139,7 @@
 </tr>
 <tr>
 <td>40800</td>
-<td>Ist-Leistung, alle 10 s gelesen</td>
+<td>Ist-Leistung, alle 10 s gelesen. Werte über dem Doppelten der Nennleistung gelten als Lesefehler, nicht als Messwert</td>
 </tr>
 <tr>
 <td>40808</td>

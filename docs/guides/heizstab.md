@@ -22,7 +22,7 @@ Der Gen24 kann den Ohmpilot selbst regeln — aber er regelt die **Einspeisung a
 
 Der Heizstab ist eine **zweite Senke** neben der Batterie. Er hat zwei Betriebsarten, und alle 30 Sekunden entscheidet sich, welche gilt.
 
-**1. Nach Plan.** Sieht die laufende Viertelstunde des Optimierungsplans Wärme vor, ist diese Leistung die Vorgabe. Das Modell hat die Kilowattstunde dem Puffer zugeschlagen, weil der Wärmewert höher liegt als die Einspeisevergütung — dann wird geheizt, auch wenn die Einspeisung weit unter der Grenze bleibt. Ausgeführt wird der Plan aber nur so weit, wie die Messung ihn trägt: Geregelt wird auf **Einspeisung ≈ 0**, nie über die geplante Leistung hinaus. Liefert die PV weniger als vorhergesagt, fällt der Sollwert von selbst zurück, statt Netzstrom zu verheizen.
+**1. Nach Plan.** Sieht die laufende Viertelstunde des Optimierungsplans Wärme vor, ist diese Leistung die Vorgabe. Das Modell hat die Kilowattstunde dem Puffer zugeschlagen, weil der Wärmewert höher liegt als die Einspeisevergütung — dann wird geheizt, auch wenn die Einspeisung weit unter der Grenze bleibt. Ausgeführt wird der Plan aber nur so weit, wie die Messung ihn trägt: Geregelt wird auf **Einspeisung ≈ 0**, nie über die geplante Leistung hinaus. Liefert die PV weniger als vorhergesagt, fällt der Sollwert von selbst zurück, statt Netzstrom zu verheizen. Auf dem Weg zum Ziel wird der Sollwert nur um die **gemessene** Einspeisung angehoben, höchstens 0,5 kW je Lauf — sobald etwa 0,3 kW ins Netz gehen, bleibt er stehen. Er pendelt nicht um das Ziel und zieht dabei keinen Netzstrom.
 
 **2. Nach der Einspeisegrenze.** Plant der Slot keine Wärme — oder ist der Plan veraltet —, gilt die alte Regel für den Überschuss, den keine Prognose kannte:
 
@@ -31,6 +31,8 @@ Der Heizstab ist eine **zweite Senke** neben der Batterie. Er hat zwei Betriebsa
 | **Klebt an der Grenze** (± 0,1 kW) | Der Wechselrichter regelt gerade ab. Der Heizstab bekommt 0,5 kW mehr — in Schritten, weil die wahre Höhe des Überschusses unsichtbar ist |
 | **Deutlich unter der Grenze** (mehr als 0,3 kW) | Der Heizstab gibt genau die Lücke wieder her, in einem Schritt. Bei Netzbezug fällt er sofort auf 0 |
 | **Dazwischen** | Nichts ändern |
+
+_Fällt der Netz-Messwert einen Lauf lang aus (der Zähler antwortet nicht), hält der Heizstab seinen Sollwert; erst beim zweiten fehlenden Messwert in Folge geht er auf 0. Ein einzelner Aussetzer kostete sonst Minuten Wärme, denn der Weg zurück geht in Schritten._
 
 Was der Heizstab **nie** tut:
 
@@ -52,7 +54,7 @@ Beim **ungeplanten** Überschuss — mehr Sonne als vorhergesagt — teilen sich
 - **Ab 50 %** ist es die Hälfte für jeden.
 - **Dazwischen** gleitend.
 
-Unter der Mindesttemperatur hat der Heizstab davon unabhängig Vorrang und volle Leistung. Der Plan für die Batterie bleibt in jedem Fall unangetastet.
+Unter der Mindesttemperatur hat der Heizstab davon unabhängig Vorrang und volle Leistung. Der Plan für die Batterie bleibt in jedem Fall unangetastet. Nur eine **volle** Batterie hebt die Aufteilung auf — nicht jede Viertelstunde, in der die Optimierung den Wechselrichter sich selbst überlässt.
 
 ## Was die Wärme wert ist
 
@@ -98,7 +100,7 @@ Alle Felder stehen in den **Einstellungen** im eigenen Tab **Heizstab**. Im Einr
 | Register | Zweck |
 |---|---|
 | 40599 | Leistungs-Sollwert in Watt — alle 20 s geschrieben, auch wenn er sich nicht ändert (Watchdog des Ohmpilot: 50 s). Misst der Ohmpilot 0 W, obwohl ein Sollwert ansteht, geht er sofort erneut hinaus |
-| 40800 | Ist-Leistung, alle 10 s gelesen |
+| 40800 | Ist-Leistung, alle 10 s gelesen. Werte über dem Doppelten der Nennleistung gelten als Lesefehler, nicht als Messwert |
 | 40808 | Wassertemperatur in 0,1 °C, alle 10 s gelesen |
 | 40400 | Unix-Zeit, alle 6 Stunden gesetzt — sonst meldet der Ohmpilot Fehler 925 |
 

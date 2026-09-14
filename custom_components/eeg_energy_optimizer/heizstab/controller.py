@@ -8,7 +8,9 @@ zöge ein fest geschriebener Sollwert Netzstrom.
 
 Die Regel je Guard-Lauf (30 s), siehe ``naechster_sollwert``:
 
-* Nicht erlaubt (Optimierung aus, Startphase, Entladung, kein Messwert) → 0.
+* Nicht erlaubt (Optimierung aus, Startphase, Entladung) → 0. Fehlt der
+  Netz-Messwert, bleibt der Sollwert einen Lauf stehen — erst der zweite
+  Aussetzer in Folge heißt 0 (ein einzelner kostete sonst Minuten Wärme).
 * Unter der Mindesttemperatur → Vorrang vor der Einspeisung: der Heizstab
   nimmt allen PV-Überschuss, auch den unterhalb der Einspeisegrenze (Regel
   auf „Einspeisung ≈ 0"), aber weder Netz- noch Batteriestrom. Nur wenn
@@ -21,8 +23,13 @@ Die Regel je Guard-Lauf (30 s), siehe ``naechster_sollwert``:
   Puffer zugeschlagen, weil die Wärme mehr bringt als die Einspeisung —
   ausgeführt wird sie trotzdem nur so weit, wie die Messung sie hergibt.
   Ist die PV schwächer als prognostiziert, fällt der Sollwert von selbst
-  zurück, statt Netzstrom zu verheizen. Klebt die Einspeisung dagegen an
-  der Grenze, ist MEHR Überschuss da als geplant: Dann ist der Planwert nur
+  zurück, statt Netzstrom zu verheizen. Unter der Grenze ist der Überschuss
+  MESSBAR: Angehoben wird nur um genau ihn (höchstens 0,5 kW je Lauf), bis
+  die Einspeisung am Ziel steht — nicht in festen Schritten, sonst pendelt
+  der Heizstab um einen Schritt und zieht jeden zweiten Takt Netzstrom
+  (Grünbach, 14.09.2026). Dasselbe gilt für das Komfortheizen. Klebt die
+  Einspeisung dagegen an der Grenze, ist MEHR Überschuss da als geplant:
+  Dann ist der Planwert nur
   die Untergrenze und es gilt die Grenz-Regel mit dem vollen Anteil — sonst
   hielte eine zu niedrige Prognose den Heizstab fest, während der
   Wechselrichter die PV beschneidet.
@@ -88,6 +95,7 @@ from ..const import (
     HEIZSTAB_KONFLIKT_TOLERANZ_KW,
     HEIZSTAB_MINTEMP_HYSTERESE_K,
     HEIZSTAB_NACHSCHREIBEN_ABSTAND_S,
+    HEIZSTAB_NETZ_FEHLT_HALTEN_LAEUFE,
     HEIZSTAB_PLAN_EXPORT_ZIEL_KW,
     HEIZSTAB_RUECKNAHME_ANTEIL,
     HEIZSTAB_SATT_TOLERANZ_KW,
@@ -185,29 +193,53 @@ def naechster_sollwert(
     max_kw: float,
     vorrang_frei: bool,
     einschwingen: bool = False,
+    tasten: bool = True,
 ) -> tuple[float, str]:
     """Die Überschuss-Regel als reine Funktion (siehe Modul-Docstring).
 
     ``export_kw`` positiv = Einspeisung, negativ = Bezug, None = kein
-    Messwert. Liefert den neuen Sollwert in kW und die Begründung.
+    Messwert (→ 0; die Karenz für einen einzelnen Aussetzer liegt im
+    Controller, ``_regel``). Liefert den neuen Sollwert in kW und die
+    Begründung.
 
     ``einschwingen`` sagt, dass der letzte Lauf angehoben hat und der
     Wechselrichter die PV noch nachführt. Eine Lücke ist dann kein Beweis für
     einen zu hohen Sollwert, sondern meistens nur Trägheit — sie wird einmal
     übergangen. Netzbezug bleibt davon unberührt (siehe
     ``HEIZSTAB_EINSCHWING_LAEUFE``).
+
+    ``tasten`` sagt, dass ``grenze_kw`` die EINSPEISEGRENZE ist: Klebt die
+    Einspeisung dort, regelt der Wechselrichter ab, und die wahre Höhe des
+    Überschusses ist unsichtbar — deshalb ein fester Schritt hinauf. Ist das
+    Ziel dagegen eine Marke UNTER der Grenze (Komfort, Fahrplan: 0,3 kW), ist
+    der Überschuss messbar, und ``tasten=False`` hebt nur um genau ihn an
+    (höchstens einen Schritt). Mit dem festen Schritt entstand dort ein
+    Grenzzyklus: Einspeisung 0,25 ≥ 0,2 → +0,5 kW → Netzbezug → volle Lücke
+    zurück → wieder 0,25 → … Grünbach, 14.09.2026: Ist-Leistung 2,69 ↔
+    3,20 kW (genau ein Schritt), jeder zweite Takt rund 0,2 kW Bezug.
     """
     if export_kw is None:
         return 0.0, "kein Netz-Messwert"
     if max_kw <= 0:
         return 0.0, "keine Leistung konfiguriert"
     if export_kw >= grenze_kw - GUARD_EXPORT_STICKY_BAND_KW:
+        lage = "an der Grenze" if tasten else "über dem Ziel"
         if not vorrang_frei:
-            return alt_kw, "Einspeisung an der Grenze — Batterie hat Vorrang"
+            return alt_kw, f"Einspeisung {lage} — Batterie hat Vorrang"
         if alt_kw >= max_kw - HEIZSTAB_SATT_TOLERANZ_KW:
-            return max_kw, "Einspeisung an der Grenze — Heizstab am Maximum"
-        neu = min(max_kw, alt_kw + HEIZSTAB_STEP_KW)
-        return round(neu, 3), "Einspeisung an der Grenze — Heizstab angehoben"
+            return max_kw, f"Einspeisung {lage} — Heizstab am Maximum"
+        if tasten:
+            neu = min(max_kw, alt_kw + HEIZSTAB_STEP_KW)
+            return round(neu, 3), "Einspeisung an der Grenze — Heizstab angehoben"
+        # Ziel unter der Einspeisegrenze: Der Überschuss steht in der Messung.
+        # Genau ihn nehmen — nicht mehr, sonst kippt die Einspeisung in Bezug,
+        # und die Bezugs-Rücknahme unten holt alles wieder zurück (Zyklus).
+        # Im Band Ziel − 0,1 … Ziel ist nichts zu holen: stehen bleiben.
+        schritt = min(HEIZSTAB_STEP_KW, export_kw - grenze_kw)
+        if schritt <= 0.0:
+            return alt_kw, "Einspeisung am Ziel — Heizstab bleibt"
+        neu = min(max_kw, alt_kw + schritt)
+        return round(neu, 3), "Einspeisung über dem Ziel — Heizstab um den Überschuss angehoben"
     if export_kw < grenze_kw - GUARD_EXPORT_RELEASE_KW:
         luecke = grenze_kw - export_kw
         if export_kw < 0:
@@ -270,6 +302,9 @@ class HeizstabController:
         # Hat der letzte Lauf angehoben? Dann führt der Wechselrichter die PV
         # noch nach, und eine Lücke im nächsten Takt ist keine Aussage.
         self._einschwing_laeufe = 0
+        # Wie viele Läufe in Folge fehlt der Netz-Messwert? Der erste wird
+        # überbrückt (Sollwert gehalten), siehe ``_regel``.
+        self._netz_fehlt_laeufe = 0
         # Wer bei neuen Messwerten Bescheid haben will (Sensoren, Push-Modell).
         self._listener: list[Callable[[], None]] = []
 
@@ -382,9 +417,18 @@ class HeizstabController:
         if watt is None:
             return None
         try:
-            return max(0.0, float(watt) / 1000.0)
+            kw = float(watt) / 1000.0
         except (TypeError, ValueError):
             return None
+        # Plausibilität: Das Register ist ein int32 und kam bis 2.1.1-dev25
+        # ungeprüft hier an. Ein Lesefehler (0x7FFFFFFF, verrutschte Wortfolge)
+        # stünde sonst als Ist-Leistung im Hausverbrauch — der kippt dann auf
+        # 0 — und ließe die Fremdsteuerungs-Meldung anlaufen. Mehr als das
+        # Doppelte seiner Nennleistung zieht kein Heizstab: kein Messwert.
+        deckel_kw = 2.0 * self.max_kw
+        if deckel_kw > 0.0 and kw > deckel_kw:
+            return None
+        return max(0.0, kw)
 
     @property
     def temperatur_c(self) -> float | None:
@@ -510,6 +554,11 @@ class HeizstabController:
         Startphase entscheidet der Executor selbst — dort ist der Sollwert 0,
         ohne diese Funktion.
         """
+        # Aussetzer des Netzsensors zählen — die Karenz sitzt in ``_regel``.
+        if export_kw is None:
+            self._netz_fehlt_laeufe += 1
+        else:
+            self._netz_fehlt_laeufe = 0
         if not self.enabled:
             return 0.0, "Heizstab deaktiviert"
         # Vor allem anderen, auch vor der Mindesttemperatur: Heizt eine
@@ -532,9 +581,8 @@ class HeizstabController:
             # keinen Netzstrom — geregelt wird auf Einspeisung ≈ 0 statt auf
             # die Einspeisegrenze. Die Maximaltemperatur ist hier ohne Belang,
             # sie liegt über der Mindesttemperatur.
-            soll, grund = naechster_sollwert(
-                self.sollwert_kw, export_kw, HEIZSTAB_KOMFORT_EXPORT_ZIEL_KW,
-                self.max_kw, True, self._einschwingt,
+            soll, grund = self._regel(
+                export_kw, HEIZSTAB_KOMFORT_EXPORT_ZIEL_KW, self.max_kw, True, tasten=False,
             )
             return soll, f"Mindesttemperatur unterschritten {temp_text} — Vorrang vor der Einspeisung: {grund}"
         if self._max_gesperrt:
@@ -551,17 +599,15 @@ class HeizstabController:
             if export_kw is not None and export_kw >= grenze_kw - GUARD_EXPORT_STICKY_BAND_KW:
                 obergrenze = self.max_kw if deckel_kw is None else min(deckel_kw, self.max_kw)
                 obergrenze = max(ziel_kw, obergrenze)
-                soll, grund = naechster_sollwert(
-                    self.sollwert_kw, export_kw, grenze_kw, obergrenze,
-                    vorrang_frei, self._einschwingt,
+                soll, grund = self._regel(
+                    export_kw, grenze_kw, obergrenze, vorrang_frei, tasten=True,
                 )
                 return soll, (
                     f"Fahrplan: {ziel_kw:.1f} kW Wärme, dazu ungeplanter "
                     f"Überschuss bis {obergrenze:.1f} kW — {grund}"
                 )
-            soll, grund = naechster_sollwert(
-                self.sollwert_kw, export_kw, HEIZSTAB_PLAN_EXPORT_ZIEL_KW,
-                ziel_kw, True, self._einschwingt,
+            soll, grund = self._regel(
+                export_kw, HEIZSTAB_PLAN_EXPORT_ZIEL_KW, ziel_kw, True, tasten=False,
             )
             return soll, f"Fahrplan: {ziel_kw:.1f} kW Wärme — {grund}"
         max_kw = self.max_kw
@@ -571,11 +617,44 @@ class HeizstabController:
             zusatz = f" (Anteil am Überschuss: {max_kw:.1f} kW)"
             if max_kw <= 0:
                 return 0.0, "Batterie hat Vorrang — sie ist fast leer"
-        soll, grund = naechster_sollwert(
-            self.sollwert_kw, export_kw, grenze_kw, max_kw, vorrang_frei,
-            self._einschwingt,
-        )
+        soll, grund = self._regel(export_kw, grenze_kw, max_kw, vorrang_frei, tasten=True)
         return soll, grund + zusatz
+
+    def _regel(
+        self,
+        export_kw: float | None,
+        grenze_kw: float,
+        max_kw: float,
+        vorrang_frei: bool,
+        *,
+        tasten: bool,
+    ) -> tuple[float, str]:
+        """``naechster_sollwert`` mit dem Zustand des Controllers — und der
+        Karenz bei fehlendem Netz-Messwert.
+
+        Ein einzelner Aussetzer des Netzsensors (Modbus-Timeout des Zählers,
+        Neustart der Quell-Integration) ist kein Grund, den Heizstab
+        abzuschalten. Bis 2.1.1-dev25 ging der Sollwert sofort auf 0, und der
+        Weg zurück kostete höchstens 0,5 kW je 30 s — bei 3,4 kW Plan 3,5
+        Minuten Wärme für einen Messwert, der einen Takt später wieder da
+        war. Deshalb bleibt der letzte Sollwert so viele Läufe stehen, wie
+        ``HEIZSTAB_NETZ_FEHLT_HALTEN_LAEUFE`` sagt (gedeckelt auf das aktuelle
+        Maximum, falls der Plan inzwischen weniger vorsieht); erst danach
+        heißt „kein Messwert" wieder 0 — länger blind weiterzuheizen wäre
+        Netzbezug ohne Zeuge.
+
+        Gilt nur hier, wo die Messung entscheidet: Entladung, Maximal-
+        temperatur und Sperre heißen 0, mit oder ohne Messwert.
+        """
+        if export_kw is None and self._netz_fehlt_laeufe <= HEIZSTAB_NETZ_FEHLT_HALTEN_LAEUFE:
+            return (
+                round(min(self.sollwert_kw, max(0.0, max_kw)), 3),
+                "kein Netz-Messwert — letzter Sollwert gehalten",
+            )
+        return naechster_sollwert(
+            self.sollwert_kw, export_kw, grenze_kw, max_kw, vorrang_frei,
+            self._einschwingt, tasten,
+        )
 
     # ------------------------------------------------------------------
     # Schreiben / Lesen (Treiber)

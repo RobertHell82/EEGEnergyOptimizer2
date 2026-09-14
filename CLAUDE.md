@@ -65,7 +65,8 @@ schedule_executor.py: ScheduleExecutor (execution, 30 s)
   → _heizstab_schritt() after every run — the heater (heizstab/) is a second
     sink with two modes: (1) the running slot plans heat → regulate on
     "export ≈ 0", capped at the planned kW (the forecast says how much is
-    allowed, the measurement how much is there); (2) no planned heat → the
+    allowed, the measurement how much is there; up only by the MEASURED
+    surplus, ≤ 0.5 kW/run, settles at 0.3 kW export); (2) no planned heat → the
     surplus rule at the export limit: export sticks to the limit → +0.5 kW
     per run, below the limit → down by the measured gap. Discharge / mode
     Aus / startup → 0. Unplanned surplus is shared with the battery by SOC
@@ -372,6 +373,18 @@ the event loop is long enough for HA to flag a blocking call.
   the executor hands the running slot's `heizstab` kW to `regeln(plan_kw=…)`,
   which regulates on "export ≈ 0" but never above the planned value — weaker
   PV than forecast lets the setpoint fall back instead of burning grid power.
+  Below the export limit the setpoint rises only by the **measured** surplus
+  (≤ 0.5 kW per run, `naechster_sollwert(tasten=False)`) and settles at 0.3 kW
+  export — the fixed 0.5-kW step there produced a limit cycle with grid import
+  every second run (Grünbach 14.09.2026, fixed 2.1.1-dev26); at the export
+  limit the fixed step stays (curtailment hides the surplus). A single missing
+  grid reading holds the last setpoint for one run
+  (`HEIZSTAB_NETZ_FEHLT_HALTEN_LAEUFE`), the second in a row means 0. Actual
+  power > 2 × `heizstab_max_kw` counts as no reading (int32 read error).
+  `compute_heizstab_kw` resolves the entry's OWN controller — by config-dict
+  identity, else by Ohmpilot host (two entries on one instance). Only a release
+  with reason "Normalbetrieb (Batterie voll)" counts as a saturated battery for
+  the surplus share; a release for house-discharge does not.
   A stale plan (> 15 min, same check as the inverter part) counts as no plan.
   Without planned heat the surplus rule at the export limit applies (up in
   0.5-kW steps because curtailment hides the true surplus, down by the

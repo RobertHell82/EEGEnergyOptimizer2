@@ -4,7 +4,8 @@ Schreibt einen stufenlosen Leistungs-Sollwert (0 bis max_power W) per Modbus
 TCP direkt an den Ohmpilot, ohne Umweg über den Fronius Gen24.
 
 Watchdog: Der Ohmpilot schaltet nach 50 s ohne neuen Sollwert automatisch ab.
-Empfohlenes Schreibintervall: alle 25 bis 30 Sekunden.
+Geschrieben wird alle 20 Sekunden (``HEIZSTAB_WRITE_INTERVAL_S``) — so
+übersteht der Heizstab einen ausgefallenen Schreibtakt.
 
 Voraussetzung: Der Ohmpilot ist vom Gen24 ENTKOPPELT (Kopplung im
 Gen24-Webinterface gelöst oder anderes Subnetz). Sonst schreiben zwei

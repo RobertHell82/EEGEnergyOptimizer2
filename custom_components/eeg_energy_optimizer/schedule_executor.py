@@ -77,6 +77,10 @@ _LOGGER = logging.getLogger(__name__)
 
 # LP-Rauschen: |Werte| unterhalb dieser Schwelle gelten als 0.
 _EPS_KW = 0.001
+# Klartext der Freigabe bei voller Batterie. Der Executor fragt ihn ab
+# (``_batterie_gesaettigt``): Nur DIESE Freigabe heißt „die Batterie nimmt
+# nichts mehr auf" — die Freigabe für die Entladung fürs Haus heißt es nicht.
+RELEASE_GRUND_BATTERIE_VOLL = "Normalbetrieb (Batterie voll)"
 # Unter dieser Entladeleistung lohnt keine erzwungene Entladung — die
 # gemessene PV deckt die geplante Einspeisung bereits, der Automatikmodus
 # speist den Überschuss von selbst ein.
@@ -177,7 +181,7 @@ def plan_action(result: dict | None, now: datetime) -> PlanAction | None:
             "release",
             slot_t=slot_t,
             consumption_kw=consumption,
-            reason="Normalbetrieb (Batterie voll)",
+            reason=RELEASE_GRUND_BATTERIE_VOLL,
         )
     # Batterie hat Platz: Freigeben wäre falsch — der Automatikmodus würde
     # PV-Überschuss in die Batterie laden, den der Plan einspeisen will
@@ -628,8 +632,16 @@ class ScheduleExecutor:
         if not self._supported:
             return True
         action = self.last_action
-        if action is not None and action.kind == "release":
-            # Batterie voll oder Entladung fürs Haus — Laden ist kein Thema.
+        if (
+            action is not None
+            and action.kind == "release"
+            and action.reason == RELEASE_GRUND_BATTERIE_VOLL
+        ):
+            # Nur die volle Batterie zählt. Bis 2.1.1-dev25 galt JEDE Freigabe
+            # als gesättigt — auch die für die Entladung fürs Haus, bei der
+            # die Batterie Platz hat. Dann entfiel der Deckel, und der
+            # Heizstab durfte ungeplanten Überschuss ganz nehmen, der der
+            # Batterie anteilig zusteht.
             return True
         return self._ladelimit_am_maximum
 

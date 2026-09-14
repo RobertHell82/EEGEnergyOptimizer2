@@ -1316,6 +1316,35 @@ async def test_batterie_voll_gibt_heizstab_frei_auch_bei_batterie_vorrang(mock_h
     assert hz.sollwert_kw == pytest.approx(HEIZSTAB_STEP_KW)
 
 
+async def test_freigabe_fuer_den_hausverbrauch_ist_keine_saettigung(mock_hass, mock_inverter):
+    """„release" hieß bisher pauschal „Batterie gesättigt": Der Deckel entfiel,
+    der Heizstab durfte den ganzen ungeplanten Überschuss nehmen. Das stimmt
+    bei voller Batterie — nicht aber, wenn der Slot nur die Entladung fürs
+    Haus dem Automatikmodus überlässt: Die Batterie hat Platz, und der
+    Überschuss gehört anteilig ihr (bei 50 % die Hälfte)."""
+    cfg = _cfg_heizstab()
+    ex, _, _ = _make_executor_mit_heizstab(mock_hass, mock_inverter, cfg)
+    ex._batterie_soc_pct = lambda: 50.0
+    with _messwerte(export=4.0, haus=0.5, pv=8.0):
+        await ex.async_guard_cycle(_state(_slot(0, battery_p=1.0, soc=50)), MODE_EIN, now=NOW)
+    assert ex.last_action is not None and ex.last_action.kind == "release"
+    assert ex.last_action.reason is None
+    assert ex._batterie_gesaettigt() is False
+    assert ex._heizstab_deckel_kw() == pytest.approx(3.0)
+
+
+async def test_freigabe_wegen_voller_batterie_bleibt_saettigung(mock_hass, mock_inverter):
+    cfg = _cfg_heizstab()
+    ex, _, _ = _make_executor_mit_heizstab(mock_hass, mock_inverter, cfg)
+    ex._batterie_soc_pct = lambda: 99.5
+    with _messwerte(export=4.0, haus=0.5, pv=8.0):
+        await ex.async_guard_cycle(_state(_slot(0, battery_p=0.0, soc=99.5)), MODE_EIN, now=NOW)
+    assert ex.last_action is not None
+    assert ex.last_action.reason == "Normalbetrieb (Batterie voll)"
+    assert ex._batterie_gesaettigt() is True
+    assert ex._heizstab_deckel_kw() is None
+
+
 async def test_entladung_setzt_heizstab_null(mock_hass, mock_inverter):
     """Einspeisung aus der Batterie ist kein Überschuss — der Heizstab bleibt aus,
     auch wenn die gemessene Einspeisung an der Grenze liegt."""

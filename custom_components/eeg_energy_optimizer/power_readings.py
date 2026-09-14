@@ -31,6 +31,7 @@ from .const import (
     INVERTER_SIGN_CONVENTIONS,
     INVERTER_TYPE_HUAWEI,
 )
+from .heizstab.controller import heizstab_host
 
 
 def resolve_battery_capacity_kwh(hass: Any, config: dict) -> float | None:
@@ -304,21 +305,43 @@ def compute_heizstab_kw(hass: Any, config: dict) -> float:
     alle 10 s frisch) — nicht ein HA-Sensor, dessen entity_id der Nutzer
     umbenennen kann. Ohne Messwert 0: dann ist der Heizstab aus oder nicht
     erreichbar, und in beiden Fällen zieht er nichts (Watchdog des Ohmpilot).
+
+    Welcher Controller gehört zu ``config``? Bis 2.1.1-dev25 der ERSTE in
+    ``hass.data`` — auf einer Instanz mit zwei Config-Entries (Grünbach +
+    Testaufbau) zog damit der eine Entry den Heizstab des anderen vom
+    Hausverbrauch ab. Zuerst zählt die Objektidentität des Config-Dicts; die
+    trägt aber nicht überall: ``schedule.py`` reicht eine Kopie weiter, und
+    die Sensoren halten nach einem Hot-Reload das alte Dict. Dann entscheidet
+    die Adresse des Ohmpilot — sie ist es, die einen Controller zu einer
+    Konfiguration macht (ihre Änderung löst ohnehin einen vollen Reload aus).
     """
     if not config.get(CONF_HEIZSTAB_ENABLED):
         return 0.0
     try:
-        for data in (hass.data.get(DOMAIN) or {}).values():
-            if not isinstance(data, dict):
-                continue
-            controller = data.get("heizstab")
-            if controller is None:
-                continue
-            kw = getattr(controller, "leistung_kw", None)
-            return float(kw) if kw else 0.0
+        eintraege = [
+            data for data in (hass.data.get(DOMAIN) or {}).values()
+            if isinstance(data, dict)
+        ]
+        eigener = next((d for d in eintraege if d.get("config") is config), None)
+        if eigener is None:
+            host = heizstab_host(config)
+            eigener = next(
+                (
+                    d for d in eintraege
+                    if d.get("heizstab") is not None
+                    and heizstab_host(d.get("config") or {}) == host
+                ),
+                None,
+            )
+        if eigener is None:
+            return 0.0
+        controller = eigener.get("heizstab")
+        if controller is None:
+            return 0.0
+        kw = getattr(controller, "leistung_kw", None)
+        return float(kw) if kw else 0.0
     except (AttributeError, TypeError):
         return 0.0
-    return 0.0
 
 
 def compute_house_load_kw(hass: Any, config: dict) -> float | None:

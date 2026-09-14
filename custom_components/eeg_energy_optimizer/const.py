@@ -303,6 +303,9 @@ WASSER_WH_PRO_LITER_KELVIN = 1.163
 # Nachführung: klebt die Einspeisung an der Grenze, ist die wahre Höhe des
 # Überschusses unsichtbar (der Wechselrichter regelt bereits ab) — deshalb
 # in Schritten nach oben. Dieselben Bänder wie Guard 1 (GUARD_EXPORT_*).
+# Nur dort: Liegt das Ziel UNTER der Grenze (Komfort, Fahrplan), ist der
+# Überschuss messbar, und angehoben wird um genau ihn — der Schritt ist dann
+# bloß die Obergrenze je Lauf (siehe naechster_sollwert, ``tasten``).
 HEIZSTAB_STEP_KW = 0.5
 # Nach unten ist die Lücke zwar messbar, aber sie sagt nicht, WER sie
 # verursacht hat. An einer Anlage mit 4-kW-Einspeisegrenze (Grünbach,
@@ -320,6 +323,13 @@ HEIZSTAB_RUECKNAHME_ANTEIL = 0.5
 # Lücke, die keine ist — sie wird einmal übergangen. Bei Netzbezug nicht:
 # der ist echt, egal wie frisch der letzte Schritt war.
 HEIZSTAB_EINSCHWING_LAEUFE = 1
+# Fehlt der Netz-Messwert (Modbus-Timeout des Zählers, Neustart der
+# Quell-Integration), bleibt der Sollwert so viele Läufe stehen, bevor er
+# auf 0 geht. Sofort abzuschalten kostete Wärme, die nicht wiederkommt: Der
+# Weg zurück geht in Schritten von höchstens 0,5 kW je 30 s — bei 3,4 kW
+# Plan 3,5 Minuten für einen Messwert, der einen Takt später wieder da war.
+# Länger blind weiterzuheizen wäre umgekehrt Netzbezug ohne Zeuge.
+HEIZSTAB_NETZ_FEHLT_HALTEN_LAEUFE = 1
 # Watchdog des Ohmpilot: 50 s ohne Sollwert → Heizstab aus. Geschrieben
 # wird deshalb alle 20 s, unabhängig davon, ob sich der Wert geändert hat.
 # Bei den früheren 30 s riss der Watchdog schon, wenn ein einziger Takt
@@ -349,6 +359,11 @@ HEIZSTAB_KOMFORT_EXPORT_ZIEL_KW = 0.3
 # Wärme zugeschlagen, weil sie mehr bringt als die Einspeisung; die Messung
 # entscheidet nur noch, ob sie auch wirklich da ist. Dieselbe Marke wie beim
 # Komfortheizen: darunter bliebe ein dauerhafter kleiner Netzbezug möglich.
+# Angehoben wird auf dem Weg dorthin um den GEMESSENEN Überschuss, nicht in
+# festen Schritten: Mit festen 0,5 kW pendelte der Heizstab um genau einen
+# Schritt (Einspeisung 0,25 ≥ 0,2 → +0,5 → Bezug → volle Lücke zurück → …)
+# und zog jeden zweiten Takt rund 0,2 kW aus dem Netz — Grünbach,
+# 14.09.2026, Ist-Leistung 2,69 ↔ 3,20 kW.
 HEIZSTAB_PLAN_EXPORT_ZIEL_KW = 0.3
 # Ab diesem Abstand zum Maximum gilt der Heizstab als gesättigt.
 HEIZSTAB_SATT_TOLERANZ_KW = 0.05

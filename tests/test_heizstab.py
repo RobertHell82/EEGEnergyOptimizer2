@@ -580,6 +580,189 @@ def test_entladung_schlaegt_den_plan():
 
 
 # ---------------------------------------------------------------------------
+# Ziel unter der Einspeisegrenze: der Überschuss ist messbar — kein Tasten
+# ---------------------------------------------------------------------------
+
+
+async def _simuliere(hz, ueberschuss_kw, laeufe=20, **regeln_kw):
+    """Fester PV-Überschuss; die Einspeisung ist, was der Heizstab davon übrig lässt.
+
+    Der Sollwert geht wie im Betrieb über ``async_set_sollwert`` (samt
+    Einschwingfrist). Liefert die Einspeisung NACH jedem Lauf.
+    """
+    exporte = []
+    for _ in range(laeufe):
+        export = ueberschuss_kw - hz.sollwert_kw
+        soll, grund = hz.regeln(
+            entladung=False, export_kw=export, grenze_kw=4.0, vorrang_frei=False,
+            **regeln_kw,
+        )
+        await hz.async_set_sollwert(soll, grund)
+        exporte.append(round(ueberschuss_kw - hz.sollwert_kw, 3))
+    return exporte
+
+
+async def test_plan_kein_grenzzyklus_mit_netzbezug():
+    """Grünbach, 14.09.2026: Die Ist-Leistung pendelte 2,69 ↔ 3,20 kW — genau
+    ein Schritt — und jeder zweite Takt zog rund 0,2 kW aus dem Netz.
+
+    Die Regel war für die Einspeisegrenze gebaut: Dort regelt der
+    Wechselrichter ab, der Überschuss ist unsichtbar, also fester Schritt. Im
+    Planbetrieb liegt das Ziel bei 0,3 kW Einspeisung und der Überschuss IST
+    messbar. Trotzdem galt: Einspeisung 0,25 ≥ 0,2 → +0,5 kW → Netzbezug →
+    volle Lücke zurück → wieder ≥ 0,2 → … Mit 2,95 kW Überschuss heißt das
+    2,65 ↔ 3,15 kW, im Bezugstakt −0,2 kW.
+    """
+    hz = _geplant()
+    exporte = await _simuliere(hz, 2.95, plan_kw=3.4)
+    assert min(exporte) >= 0.0, f"Netzbezug im Zyklus: {exporte}"
+    # … und die Regel konvergiert: Die letzten Läufe ändern nichts mehr, die
+    # Einspeisung steht am Ziel.
+    assert exporte[-1] == exporte[-2] == exporte[-3]
+    assert exporte[-1] == pytest.approx(HEIZSTAB_PLAN_EXPORT_ZIEL_KW, abs=0.1)
+
+
+async def test_komfort_kein_grenzzyklus_mit_netzbezug():
+    """Dieselbe Regel läuft unter der Mindesttemperatur mit Ziel 0,3 kW."""
+    hz = _komfort_ohne_netz()
+    exporte = await _simuliere(hz, 2.95)
+    assert min(exporte) >= 0.0, f"Netzbezug im Zyklus: {exporte}"
+    assert exporte[-1] == exporte[-2] == exporte[-3]
+
+
+def test_ziel_unter_der_grenze_hebt_nur_um_den_gemessenen_ueberschuss():
+    """Einspeisung 0,45 kW bei Ziel 0,3: nicht +0,5, sondern +0,15 — danach
+    steht die Einspeisung genau am Ziel."""
+    neu, grund = naechster_sollwert(
+        2.5, export_kw=0.45, grenze_kw=HEIZSTAB_PLAN_EXPORT_ZIEL_KW, max_kw=6.0,
+        vorrang_frei=True, tasten=False,
+    )
+    assert neu == pytest.approx(2.65)
+    assert "angehoben" in grund
+
+
+def test_ziel_unter_der_grenze_hoechstens_ein_schritt_je_lauf():
+    """Viel Überschuss: trotzdem nicht springen — der Wechselrichter führt die
+    PV erst nach, und ein Sprung über das Ziel hinaus wäre Netzbezug."""
+    neu, _ = naechster_sollwert(
+        0.0, export_kw=2.0, grenze_kw=HEIZSTAB_PLAN_EXPORT_ZIEL_KW, max_kw=6.0,
+        vorrang_frei=True, tasten=False,
+    )
+    assert neu == pytest.approx(HEIZSTAB_STEP_KW)
+
+
+def test_am_ziel_bleibt_der_heizstab_stehen():
+    """Einspeisung 0,25 kW liegt im Band 0,2 … 0,3: nichts anheben — jeder
+    Schritt kippte sie in Netzbezug."""
+    neu, grund = naechster_sollwert(
+        2.65, export_kw=0.25, grenze_kw=HEIZSTAB_PLAN_EXPORT_ZIEL_KW, max_kw=6.0,
+        vorrang_frei=True, tasten=False,
+    )
+    assert neu == pytest.approx(2.65)
+    assert "bleibt" in grund
+
+
+def test_an_der_einspeisegrenze_bleibt_der_feste_schritt():
+    """An der Grenze regelt der Wechselrichter ab — die Messung zeigt keine
+    Lücke, obwohl Überschuss da ist. Dort weiter tasten, wie bisher."""
+    neu, grund = naechster_sollwert(
+        2.0, export_kw=4.0, grenze_kw=4.0, max_kw=6.0, vorrang_frei=True, tasten=True,
+    )
+    assert neu == pytest.approx(2.0 + HEIZSTAB_STEP_KW)
+    assert "angehoben" in grund
+
+
+# ---------------------------------------------------------------------------
+# Netz-Messwert fehlt: einen Takt halten, erst dann aus
+# ---------------------------------------------------------------------------
+
+
+def test_fehlender_netzmesswert_haelt_den_sollwert_einen_takt():
+    """Ein einzelner Aussetzer des Netzsensors setzte den Heizstab sofort auf
+    0 — und danach ging es mit 0,5 kW je 30 s wieder hinauf: bei 3,4 kW Plan
+    3,5 Minuten ohne Wärme, für einen Messwert, der 30 s später wieder da
+    war. Jetzt bleibt der Sollwert einen Lauf stehen; erst der zweite
+    fehlende Messwert in Folge schaltet ab."""
+    hz = _geplant()
+    hz.sollwert_kw = 3.4
+    soll, grund = hz.regeln(
+        entladung=False, export_kw=None, grenze_kw=4.0, vorrang_frei=True, plan_kw=3.4
+    )
+    assert soll == pytest.approx(3.4)
+    assert "gehalten" in grund
+    soll, grund = hz.regeln(
+        entladung=False, export_kw=None, grenze_kw=4.0, vorrang_frei=True, plan_kw=3.4
+    )
+    assert soll == 0.0
+    assert "kein Netz-Messwert" in grund
+
+
+def test_gueltiger_messwert_setzt_die_karenz_zurueck():
+    hz = _geplant()
+    hz.sollwert_kw = 3.4
+    hz.regeln(entladung=False, export_kw=None, grenze_kw=4.0, vorrang_frei=True, plan_kw=3.4)
+    hz.regeln(entladung=False, export_kw=0.3, grenze_kw=4.0, vorrang_frei=True, plan_kw=3.4)
+    soll, grund = hz.regeln(
+        entladung=False, export_kw=None, grenze_kw=4.0, vorrang_frei=True, plan_kw=3.4
+    )
+    assert soll == pytest.approx(3.4)
+    assert "gehalten" in grund
+
+
+def test_karenz_gilt_an_der_einspeisegrenze_und_im_komfort():
+    """Alle drei Regelpfade halten — die Messung fehlt in jedem gleich."""
+    hz = _geplant()
+    hz.sollwert_kw = 2.0
+    soll, _ = hz.regeln(entladung=False, export_kw=None, grenze_kw=4.0, vorrang_frei=True)
+    assert soll == pytest.approx(2.0)
+    hz = _komfort_ohne_netz()
+    hz.sollwert_kw = 2.0
+    soll, _ = hz.regeln(entladung=False, export_kw=None, grenze_kw=4.0, vorrang_frei=False)
+    assert soll == pytest.approx(2.0)
+
+
+def test_karenz_nicht_bei_entladung_oder_maximaltemperatur():
+    """Gehalten wird nur, wo die Messung entscheidet. Entladung und
+    Maximaltemperatur heißen 0 — mit oder ohne Netz-Messwert."""
+    hz = _geplant()
+    hz.sollwert_kw = 2.0
+    soll, grund = hz.regeln(entladung=True, export_kw=None, grenze_kw=4.0, vorrang_frei=True)
+    assert soll == 0.0
+    assert "Entladung" in grund
+    hz = HeizstabController(MagicMock(), _cfg(), _treiber(temp=81.0))
+    hz.pruefe_temperaturen()
+    hz.sollwert_kw = 2.0
+    soll, grund = hz.regeln(entladung=False, export_kw=None, grenze_kw=4.0, vorrang_frei=True)
+    assert soll == 0.0
+    assert "Maximaltemperatur" in grund
+
+
+# ---------------------------------------------------------------------------
+# Ist-Wert: ein unplausibles Register ist kein Messwert
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("watt", [13_000, 2_147_483_647])
+def test_unplausible_ist_leistung_ist_kein_messwert(watt):
+    """Das int32-Register wurde ungeprüft übernommen. Ein Lesefehler stand
+    damit als Ist-Leistung im Hausverbrauch (auf 0 gekappt) und ließ die
+    Fremdsteuerungs-Meldung anlaufen. Über dem Doppelten der Nennleistung
+    gilt der Wert als „kein Messwert"."""
+    hz = HeizstabController(MagicMock(), _cfg(), _treiber(power_w=watt, temp=60.0))
+    assert hz.leistung_kw is None
+    assert hz.status()["leistung_kw"] is None
+    hz.sollwert_kw = 0.0
+    hz._konflikt_pruefen()
+    assert hz._konflikt_seit is None, "kein Fremdsteuerungs-Verdacht aus einem Lesefehler"
+
+
+def test_ist_leistung_bis_zum_doppelten_maximum_gilt():
+    """Ein 6-kW-Heizstab, der 6,5 kW zieht, ist echt (Toleranz, Netzspannung)."""
+    hz = HeizstabController(MagicMock(), _cfg(), _treiber(power_w=6_500, temp=60.0))
+    assert hz.leistung_kw == pytest.approx(6.5)
+
+
+# ---------------------------------------------------------------------------
 # Host-Normalisierung: eine URL im Feld darf die Verbindung nicht verhindern
 # ---------------------------------------------------------------------------
 
