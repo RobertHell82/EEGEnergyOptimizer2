@@ -10,6 +10,17 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
+## [2.1.1-dev24] - 2026-09-14
+
+### Hinzugefügt
+
+- **Der Einspeisetarif der Energie AG wird gelesen und hält sich selbst aktuell.** Neue Quellen der Standardvergütung: `energie_ag` (zuletzt veröffentlichter Monat) und `energie_ag_estimate` (laufender Monat, hochgerechnet). Die Energie AG rechnet „Team Sonne Float" nach einer veröffentlichten Formel — Referenzmarktwert Photovoltaik § 13 EAG minus 1,5 ct Abschlag —, und der Referenzmarktwert kommt von der E-Control, auf die auch das Preisblatt verweist. Gelesen wird zweimal täglich von dort, stündlich solange der fällige Monat fehlt; fällt die Quelle aus, bleibt der zuletzt gelesene Wert stehen. Beide Preisvarianten sind wählbar: „Team Sonne Float" (sinkt nie unter 0 ct) und „Team Sonne Loyal Float" (mindestens 2 ct, nur mit Stromliefervertrag bei der Energie AG Vertrieb) — im April 2026 war das der ganze Unterschied, 0,20 gegen 2,00 ct. Der Abschlag ist einstellbar, weil er VPI-wertgesichert ist. Die Rechnung wurde gegen alle zwölf Monate der Preisgrafik des Preisblatts geprüft und traf jeden auf 0,00 ct.
+- **Hochrechnung für den laufenden Monat, ohne zusätzlichen Abruf.** Ein Monat erscheint erst Anfang des Folgemonats (August 2026 am 4. September) — die Quelle liefe also immer einen Monat hinterher. Der Rohwert der OeMAG-Hochrechnung IST dieser Referenzmarktwert, gerechnet nach derselben Vorschrift, nur vor Korridor und Ausgleichsenergie: `energie_ag_estimate` rechnet damit weiter und teilt sich den Abruf, statt dieselben Daten ein zweites Mal zu holen.
+
+### Geändert
+
+- **README und CHAMO.md beschreiben keinen Prototyp mehr** — und nennen wieder, was die Integration wirklich kann. Beide sprachen noch vom „Prototyp-Zweig"; das README kannte außerdem nur einen einzigen Wechselrichter (Huawei), obwohl sechs gesteuert werden, führte die Alterungskosten als „nicht einstellbar" (sie sind es seit 2.1.1-dev21 wieder), verschwieg Heizstab und Wallbox und versprach eine manuelle Wechselrichtersteuerung, die es nicht mehr gibt. CHAMO.md behauptete, nur Huawei werde gesteuert.
+
 ## [2.1.1-dev23] - 2026-09-14
 
 ### Behoben
