@@ -10,6 +10,12 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
+## [2.1.1-dev27] - 2026-09-14
+
+### Behoben
+
+- **Die Statuskarte nannte den Grund einer Freigabe dreimal.** Unter „kein Eingriff, Eigenverbrauch des Wechselrichters“ standen „(Batterie voll)“ und darunter noch einmal „Normalbetrieb (Batterie voll)“ — der Klartext des letzten Laufs und der Grund der Plan-Absicht sind bei einer Freigabe derselbe Satz. Jetzt steht er einmal, ohne die Klammer: „Batterie voll“.
+
 ## [2.1.1-dev26] - 2026-09-14
 
 ### Behoben
