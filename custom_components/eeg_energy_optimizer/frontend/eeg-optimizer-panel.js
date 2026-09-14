@@ -7801,8 +7801,17 @@ class EegOptimizerPanel extends HTMLElement {
       while (statusText && trimChars.indexOf(statusText.charAt(0)) >= 0) {
         statusText = statusText.slice(1);
       }
+      // Bleibt nur eine Klammer übrig — „Normalbetrieb (Batterie voll)" ohne
+      // „Normalbetrieb" —, ist die Klammer der ganze Inhalt: ohne sie lesen.
+      const klammer = statusText.match(/^\((.*)\)$/);
+      if (klammer) statusText = klammer[1];
       if (statusText) statusText = statusText.charAt(0).toUpperCase() + statusText.slice(1);
     }
+    // Der Grund der Plan-Absicht steht bei einer Freigabe wörtlich schon im
+    // Status („Normalbetrieb (Batterie voll)" in beiden) — dann nicht noch
+    // einmal. In Grünbach stand „Batterie voll" dreimal untereinander.
+    const planGrund = a.plan_grund && !String(a.status || "").includes(String(a.plan_grund))
+      ? String(a.plan_grund) : "";
 
     // Startphase (erste 90 s nach dem Start): es gibt noch nichts zu
     // berichten — nur der Hinweis, sonst nichts. Sollwerte, Gründe und
@@ -7883,7 +7892,7 @@ class EegOptimizerPanel extends HTMLElement {
     return `
       ${gesetzt.length ? `<div style="font-size:13px;color:var(--secondary-text-color);margin-top:4px">${gesetzt.join(trenner)}</div>` : ""}
       ${statusText ? `<div style="font-size:12px;color:var(--secondary-text-color);margin-top:4px;opacity:0.85">${this._escapeHtml(statusText)}</div>` : ""}
-      ${a.plan_grund ? `<div style="font-size:12px;color:var(--secondary-text-color);margin-top:2px;opacity:0.85">${this._escapeHtml(a.plan_grund)}</div>` : ""}
+      ${planGrund ? `<div style="font-size:12px;color:var(--secondary-text-color);margin-top:2px;opacity:0.85">${this._escapeHtml(planGrund)}</div>` : ""}
       ${warnings}`;
   }
 
