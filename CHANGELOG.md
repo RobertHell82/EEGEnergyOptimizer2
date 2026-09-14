@@ -10,6 +10,20 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
+## [2.1.1-dev26] - 2026-09-14
+
+### Behoben
+
+- **Der Heizstab pendelte im Planbetrieb um einen Schritt und zog jeden zweiten Takt Netzstrom.** Die Nachführung war für die Einspeisegrenze gebaut: Dort regelt der Wechselrichter ab, der wahre Überschuss ist unsichtbar, also ein fester Schritt von 0,5 kW. Dieselbe Regel lief aber auch nach Fahrplan und unter der Mindesttemperatur mit dem Ziel „Einspeisung ≈ 0,3 kW" — wo der Überschuss messbar ist. Ab 0,2 kW Einspeisung kamen 0,5 kW dazu, die Einspeisung kippte in Netzbezug, die Rücknahme holte die ganze Lücke zurück, und alles begann von vorn. In Grünbach pendelte die Ist-Leistung so zwischen 2,69 und 3,20 kW — die Differenz ist genau ein Schritt — und jeder zweite Takt zog rund 0,2 kW aus dem Netz. Unter der Grenze wird jetzt nur um die gemessene Einspeisung angehoben (höchstens 0,5 kW je Lauf); der Sollwert läuft auf 0,3 kW Einspeisung zu und bleibt dort stehen. An der Einspeisegrenze bleibt der feste Schritt, und die Rücknahme bei Netzbezug bleibt als Notbremse für Wolken.
+- **Ein einzelner Aussetzer des Netzsensors kostete Minuten Wärme.** Fehlte der Netz-Messwert einen Lauf lang, ging der Sollwert sofort auf 0 — und danach in Schritten von 0,5 kW je 30 Sekunden wieder hinauf: bei 3,4 kW Plan 3,5 Minuten. Jetzt hält der Heizstab seinen Sollwert einen Lauf; erst der zweite fehlende Messwert in Folge schaltet ab.
+- **Bei zwei Anlagen auf einer Home-Assistant-Instanz zog die eine den Heizstab der anderen vom Hausverbrauch ab.** Die Heizstab-Leistung kam vom ersten gefundenen Heizstab, egal zu welchem Konfigurationseintrag er gehörte. Jetzt zählt der eigene — erkannt an der Konfiguration, sonst an der Adresse des Ohmpilot.
+- **Ein Lesefehler im Leistungsregister des Ohmpilot galt als Messwert.** Das Register wurde ungeprüft übernommen; ein unplausibler Wert hätte den Hausverbrauch auf 0 gekippt und die Meldung „zweite Steuerung am Ohmpilot" ausgelöst. Werte über dem Doppelten der Nennleistung gelten jetzt als „kein Messwert".
+- **Die Freigabe des Wechselrichters galt pauschal als „Batterie voll".** Überlässt der Fahrplan die Entladung fürs Haus dem Automatikmodus, entfiel damit die Aufteilung des ungeplanten Überschusses, und der Heizstab durfte alles nehmen — obwohl die Batterie Platz hat. Jetzt zählt nur die Freigabe wegen voller Batterie.
+
+### Geändert
+
+- **Der Altschlüssel „Temperatur der anderen Heizquelle" wird aus der Konfiguration entfernt.** Er ist seit 2.1.1-dev6 wirkungslos und stand in Bestandskonfigurationen nur noch herum. Konfigurationsversion 29.
+
 ## [2.1.1-dev25] - 2026-09-14
 
 ### Behoben
