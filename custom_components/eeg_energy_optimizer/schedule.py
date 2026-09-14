@@ -150,12 +150,9 @@ CONF_SCHEDULE_BATTERY_COST = "schedule_battery_cost"
 # sondern Batterieschonung: eine Tiefentladung kostet Lebensdauer, und der
 # Wechselrichter regelt in den letzten Prozent ohnehin unsauber.
 CONF_SCHEDULE_MIN_SOC_PCT = "schedule_min_soc_pct"
-# Obergrenze der Einstellung. Bis 2.1.1-dev2 lag sie bei 30 % mit der
-# Begründung, darüber bleibe zu wenig, um eine Nacht zu tragen. Das ist eine
-# Frage der Anlagengröße, nicht des Prinzips: Wer 40 kWh hat, trägt jede
-# Nacht auch mit der Hälfte im Speicher. Die Grenze schützt jetzt nur noch
-# davor, dass Boden und Deckel (MIN_MAX_SOC_PCT) sich kreuzen.
-MAX_MIN_SOC_PCT = 50
+# Nutzbarer Bereich, der zwischen Boden und Deckel mindestens bleiben muss.
+# Darunter hätte der Fahrplan nichts mehr zu entscheiden.
+SOC_BAND_MIN_PCT = 20
 
 # Maximum-Ladestand in Prozent: darüber plant der Fahrplan nicht. Gegenstück
 # zum Mindest-Ladestand — manche Zellchemien altern nahe der Vollladung
@@ -164,10 +161,16 @@ MAX_MIN_SOC_PCT = 50
 # ``schedule_max_soc_enabled`` ist entfallen (Migration v27): der Zustand
 # steckt allein im Wert, 100 ist der Aus-Zustand.
 CONF_SCHEDULE_MAX_SOC_PCT = "schedule_max_soc_pct"
-# Untergrenze der Einstellung. Zusammen mit MAX_MIN_SOC_PCT (50) bleiben
-# immer mindestens 20 Prozentpunkte nutzbarer Bereich — Boden und Deckel
-# können sich also nie kreuzen, egal wie beides eingestellt ist.
+# Untergrenze der Einstellung. Zusammen mit SOC_BAND_MIN_PCT bleiben immer
+# mindestens 20 Prozentpunkte nutzbarer Bereich — Boden und Deckel können
+# sich also nie kreuzen, egal wie beides eingestellt ist.
 MIN_MAX_SOC_PCT = 70
+# Was der Mindest-Ladestand höchstens sein darf, wenn der Deckel so tief
+# steht wie erlaubt. Bei höherem Deckel ist mehr möglich — wie viel, sagt
+# `max_min_soc_pct()`. Bis 2.1.1-dev22 war dieser Wert die Kappung für jede
+# Anlage: Wer bei Deckel 100 einen Boden von 60 % wollte, bekam stumm 50
+# (gemeldet am 14.09.2026 — eingestellt 60 %, angezeigt und wirksam 50 %).
+MAX_MIN_SOC_PCT = MIN_MAX_SOC_PCT - SOC_BAND_MIN_PCT
 
 # Slotlänge, bewusst nicht einstellbar: 15 Minuten sind das Abrechnungsraster.
 # Feiner bringt keine bessere Entscheidung, kostet aber Rechenzeit; gröber
@@ -768,19 +771,28 @@ def bezugspreise_aus_config(
     return bezug, snap, winap
 
 
+def max_min_soc_pct(config: dict) -> float:
+    """Wie hoch der Mindest-Ladestand an DIESER Anlage sein darf.
+
+    Der Deckel abzüglich des nutzbaren Bandes: Bei Deckel 100 (Vorgabe) sind
+    das 80 %, beim tiefsten erlaubten Deckel 70 % noch 50 %. Die Grenze soll
+    nur verhindern, dass Boden und Deckel sich kreuzen — wie viel Reserve
+    sinnvoll ist, entscheidet die Anlagengröße, nicht die Integration.
+    """
+    return max(0.0, _max_soc_pct(config) - SOC_BAND_MIN_PCT)
+
+
 def _min_soc_pct(config: dict) -> float:
     """Mindest-Ladestand in Prozent — 0 heißt „bis leer planen erlaubt".
 
     Eine 0 ist eine Aussage, nur ein fehlender oder unlesbarer Wert nimmt die
-    Vorgabe. Gekappt bei ``MAX_MIN_SOC_PCT`` — die Grenze hält Boden und
-    Deckel auseinander, wie viel Reserve sinnvoll ist, entscheidet die
-    Anlagengröße.
+    Vorgabe. Gekappt bei ``max_min_soc_pct()``, also am eingestellten Deckel.
     """
     raw = config.get(CONF_SCHEDULE_MIN_SOC_PCT)
     if raw is None or raw == "":
         return DEFAULT_MIN_SOC_PCT
     try:
-        return max(0.0, min(MAX_MIN_SOC_PCT, float(raw)))
+        return max(0.0, min(max_min_soc_pct(config), float(raw)))
     except (TypeError, ValueError):
         return DEFAULT_MIN_SOC_PCT
 

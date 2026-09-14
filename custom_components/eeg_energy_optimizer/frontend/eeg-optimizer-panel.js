@@ -264,6 +264,8 @@ const WIZARD_DEFAULTS = {
 
   // Batterie-Leistungsgrenze des Fahrplans (Schlüssel bleibt discharge_power_kw)
   discharge_power_kw: 5.0,
+  // Mindest-Ladestand: derselbe Wert wie DEFAULT_MIN_SOC_PCT im Backend.
+  schedule_min_soc_pct: 10,
   // Maximum-Ladestand: 100 heisst bis voll laden (kein eigener Schalter,
   // der Zustand steckt allein im Wert — Migration v27).
   schedule_max_soc_pct: 100,
@@ -6418,18 +6420,31 @@ class EegOptimizerPanel extends HTMLElement {
       </div>` : ""}`;
   }
 
+  // Boden und Deckel des Ladestands — genau die Regeln aus dem Backend
+  // (schedule.py: `_max_soc_pct`, `max_min_soc_pct`, `_min_soc_pct`).
+  // Nachgerechnet statt nur angezeigt: Sagt ein Feld etwas anderes, als die
+  // Optimierung rechnet, ist es schlimmer als kein Feld. Am 14.09.2026 stand
+  // an einer Anlage ein Mindest-Ladestand von 60 % im Feld, während die
+  // Optimierung mit 50 % plante und die Grafik ebendiese 50 % zeichnete.
+  _socGrenzen(d) {
+    const rohDeckel = Number(d.schedule_max_soc_pct ?? 100);
+    // Eine 0 ist ein geleertes Feld und keine Angabe; gekappt auf [70, 100].
+    const deckel = rohDeckel > 0 ? Math.max(70, Math.min(100, rohDeckel)) : 100;
+    // Zwischen Boden und Deckel bleiben immer SOC_BAND_MIN_PCT Punkte.
+    const maxBoden = Math.max(0, deckel - 20);
+    const rohBoden = d.schedule_min_soc_pct;
+    const zahl = (rohBoden === undefined || rohBoden === null || rohBoden === "")
+      ? 10 : Number(rohBoden);
+    const boden = Number.isFinite(zahl) ? Math.max(0, Math.min(maxBoden, zahl)) : 10;
+    return { deckel, boden, maxBoden };
+  }
+
   _maxSocFeld(d, prefix) {
     // Maximum-Ladestand — Gegenstück zum Mindest-Ladestand, immer sichtbar
     // und ohne eigenen Schalter: der Zustand steckt allein im Wert, 100 ist
     // die Vorgabe und heißt „bis voll laden" (Migration v27 hat den
     // früheren Ein/Aus-Schlüssel entfernt).
-    const roh = Number(d.schedule_max_soc_pct ?? 100);
-    // Genau die Regel aus _max_soc_pct im Backend: eine 0 ist ein geleertes
-    // Feld und keine Angabe, gekappt wird auf [70, 100]. Nachgerechnet statt
-    // nur angezeigt — sagte das Feld etwas anderes als die Optimierung
-    // rechnet, wäre es schlimmer als kein Feld.
-    const deckel = roh > 0 ? Math.max(70, Math.min(100, roh)) : 100;
-    const boden = Number(d.schedule_min_soc_pct ?? 10);
+    const { deckel, boden } = this._socGrenzen(d);
     const kap = Number(d.battery_capacity_kwh) || 0;
     // Was nutzbar bleibt — die Zahl, die der Nutzer wirklich wissen will.
     const nutzbarPct = Math.max(0, deckel - boden);
@@ -6466,6 +6481,7 @@ class EegOptimizerPanel extends HTMLElement {
 
   _batterieOptFields(d, prefix) {
     const maxSocFeld = this._maxSocFeld(d, prefix);
+    const { deckel, boden, maxBoden } = this._socGrenzen(d);
     // Grenzen der Batterie für die Optimierung. Die frühere Notstromreserve
     // mit eigener kWh-Angabe und Überbrückungsdauer ist entfallen: sie folgt
     // jetzt aus dem Mindest-Ladestand (Kapazität × Prozent). Eine
@@ -6485,8 +6501,9 @@ class EegOptimizerPanel extends HTMLElement {
       <div class="field-group">
         <label>Mindest-Ladestand (%) *</label>
         <input type="number" data-field="${prefix}schedule_min_soc_pct"
-               value="${d.schedule_min_soc_pct ?? 10}" min="0" max="50" step="1">
-        <div class="help-text">Wie viel im Speicher bleiben soll: ${fmtDe(Number(d.schedule_min_soc_pct ?? 10), 0)} % von ${d.battery_capacity_kwh ? fmtDe(Number(d.battery_capacity_kwh), 1) + " kWh" : "der Kapazität"} sind die Sicherheitsreserve, die die Optimierung vorhält. Schont die Zellen und lässt einen Puffer für Lastspitzen — 0 erlaubt die Entladung bis leer. Höchstens 50 %; wie viel sinnvoll ist, hängt von der Größe des Speichers ab.</div>
+               value="${boden}" min="0" max="${maxBoden}" step="1">
+        <div class="help-text">Wie viel im Speicher bleiben soll: ${fmtDe(boden, 0)} % von ${d.battery_capacity_kwh ? fmtDe(Number(d.battery_capacity_kwh), 1) + " kWh" : "der Kapazität"} sind die Sicherheitsreserve, die die Optimierung vorhält. Schont die Zellen und lässt einen Puffer für Lastspitzen — 0 erlaubt die Entladung bis leer. Wie viel sinnvoll ist, hängt von der Größe des Speichers ab.</div>
+        <div class="help-text">Höchstens <strong>${fmtDe(maxBoden, 0)} %</strong> — 20 Prozentpunkte unter dem Maximum-Ladestand von ${fmtDe(deckel, 0)} %, damit der Optimierung ein nutzbarer Bereich bleibt. Ein höherer Wert wird auf diese Grenze gesetzt.</div>
       </div>
       ${maxSocFeld}
 `;
@@ -6997,9 +7014,9 @@ class EegOptimizerPanel extends HTMLElement {
         ${d.pv_peak_kwp ? row("PV-Spitzenleistung", fmtDe(Number(d.pv_peak_kwp), 1) + " kWp") : ""}
         ${row("Einspeisegrenze", d.grid_export_limit_enabled ? `Aktiv — ${fmtDe(Number(d.grid_export_limit_kw ?? 4), 1)} kW` : "Deaktiviert")}
         ${row("Batterie-Leistungsgrenze", fmtDe(Number(d.discharge_power_kw ?? 5), 1) + " kW")}
-        ${row("Mindest-Ladestand", fmtDe(Number(d.schedule_min_soc_pct ?? 10), 0) + " %"
+        ${row("Mindest-Ladestand", fmtDe(this._socGrenzen(d).boden, 0) + " %"
           + (d.battery_capacity_kwh
-            ? ` (${fmtDe(Number(d.battery_capacity_kwh) * Number(d.schedule_min_soc_pct ?? 10) / 100, 2)} kWh Reserve)`
+            ? ` (${fmtDe(Number(d.battery_capacity_kwh) * this._socGrenzen(d).boden / 100, 2)} kWh Reserve)`
             : ""))}
       </div>
 

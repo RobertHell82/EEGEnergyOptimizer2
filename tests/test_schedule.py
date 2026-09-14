@@ -266,11 +266,23 @@ def test_mindest_ladestand_wird_gelesen_wie_eingetragen():
     assert sched._min_soc_pct({"schedule_min_soc_pct": 0}) == 0.0
     assert sched._min_soc_pct({"schedule_min_soc_pct": "15"}) == 15.0
     assert sched._min_soc_pct({"schedule_min_soc_pct": -3}) == 0.0
-    # Gekappt bei 30 %: darüber bliebe zu wenig nutzbarer Bereich
-    assert sched._min_soc_pct({"schedule_min_soc_pct": 99}) == 50.0
-    assert sched._min_soc_pct({"schedule_min_soc_pct": 50}) == 50.0
+    # Gekappt am eingestellten Deckel, nicht an einer festen Zahl: Bei Deckel
+    # 100 (Vorgabe) sind 60 oder 80 % Boden erlaubt. Vorher kappte jede
+    # Anlage stumm bei 50 % — an einer Anlage waren 60 % eingestellt, wirksam
+    # und angezeigt wurden 50 % (14.09.2026).
+    assert sched._min_soc_pct({"schedule_min_soc_pct": 60}) == 60.0
+    assert sched._min_soc_pct({"schedule_min_soc_pct": 99}) == 80.0
+    # Je tiefer der Deckel, desto tiefer auch die Obergrenze des Bodens.
+    assert sched._min_soc_pct({"schedule_min_soc_pct": 99, "schedule_max_soc_pct": 70}) == 50.0
+    assert sched._min_soc_pct({"schedule_min_soc_pct": 60, "schedule_max_soc_pct": 70}) == 50.0
     # Boden und Deckel dürfen sich nie kreuzen — das ist der Grund der Grenze.
     assert sched.MAX_MIN_SOC_PCT < sched.MIN_MAX_SOC_PCT
+    assert sched.MAX_MIN_SOC_PCT == sched.MIN_MAX_SOC_PCT - sched.SOC_BAND_MIN_PCT
+    # Zwischen Boden und Deckel bleibt immer das volle Band, egal wie beides
+    # eingestellt ist.
+    for deckel in (70, 80, 90, 100):
+        cfg = {"schedule_min_soc_pct": 100, "schedule_max_soc_pct": deckel}
+        assert sched._max_soc_pct(cfg) - sched._min_soc_pct(cfg) == sched.SOC_BAND_MIN_PCT
 
 
 async def test_ohne_pv_prognose_kein_fahrplan():
