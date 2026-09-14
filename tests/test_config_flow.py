@@ -88,14 +88,13 @@ class TestConfigFlowMetadata:
     def test_version_in_sync_with_migration(self):
         """VERSION must match the highest migration target in __init__.py.
 
-        Latest migration: v28 (Bezugspreis in zwei Teilen — Arbeitspreis +
-        Netzgebuehr, SNAP als Haken, Nachtpreis entfallen).
+        Latest migration: v29 (Altschluessel heizstab_alt_temp_c entfernt).
         """
-        assert EegEnergyOptimizerConfigFlow.VERSION == 28
+        assert EegEnergyOptimizerConfigFlow.VERSION == 29
 
-    def test_config_flow_version_is_28(self):
-        """Smoke: VERSION wurde von 27 auf 28 angehoben."""
-        assert EegEnergyOptimizerConfigFlow.VERSION == 28
+    def test_config_flow_version_is_29(self):
+        """Smoke: VERSION wurde von 28 auf 29 angehoben."""
+        assert EegEnergyOptimizerConfigFlow.VERSION == 29
 
 
 class TestStepUser:

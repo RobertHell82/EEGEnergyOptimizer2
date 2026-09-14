@@ -1274,6 +1274,16 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 new_data["schedule_netzbereich"] = ""
         hass.config_entries.async_update_entry(entry, data=new_data, version=28)
 
+    if entry.version < 29:
+        # v29 — „heizstab_alt_temp_c" (Temperatur der anderen Heizquelle,
+        # Trennung Ersatz-/Zusatzwärme) ist seit 2.1.1-dev6 wirkungslos und
+        # wurde nur noch mitgeschleppt — in Grünbach stand er weiter mit 55
+        # in der Konfiguration. Er geht, damit niemand später rätselt, was er
+        # bewirkt. Sonst ändert sich nichts.
+        new_data = {**entry.data}
+        new_data.pop("heizstab_alt_temp_c", None)
+        hass.config_entries.async_update_entry(entry, data=new_data, version=29)
+
     return True
 
 
