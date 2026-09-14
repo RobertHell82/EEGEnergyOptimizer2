@@ -85,7 +85,7 @@ schedule_executor.py: ScheduleExecutor (execution, 30 s)
 | `oemag_schaetzung.py` | Estimate of the OeMAG tariff for the *current* month (source `oemag_estimate`): aWATTar day-ahead prices weighted by Austrian solar generation (Energy-Charts), clamped to 60–100 % of the E-Control quarterly price (scraped; fallback derived from clamped months of the OeMAG table), minus balancing cost. Validated 2025-01…2026-08: MAE 0.21 ct |
 | `awattar_sunny.py` | Optional base tariff: aWATTar SUNNY fixed monthly feed-in price (source `awattar_sunny`). No API — reads the yearly tab of aWATTar's published price sheet (Google Sheet, gviz CSV) and falls back to the tariff page; two contract variants (`awattar_sunny_vertrag` = `neu`/`alt`, contracts after/until 25.02.2026) because the sheet carries two SUNNY columns; cached across restarts, hourly retry while the current month is missing |
 | `power_readings.py` | Shared sensor reads — house load (minus heater), PV now, grid export, heater power, battery capacity resolution |
-| `heizstab/controller.py` | Heater control — `HeizstabController` (`regeln()`: comfort → discharge → max temperature → plan (`plan_kw`) → surplus rule `naechster_sollwert`; temperature hysteresis, saturation, `puffer_budget_kwh` for the LP, 30-s watchdog write, 10-s read, 6-h time sync, foreign-control detection), `create_heizstab()` factory |
+| `heizstab/controller.py` | Heater control — `HeizstabController` (`regeln()`: comfort → discharge → max temperature → plan (`plan_kw`) → surplus rule `naechster_sollwert`; temperature hysteresis, saturation, `puffer_budget_kwh` for the LP, 20-s watchdog write (plus an immediate rewrite when the device reads 0 W under a standing setpoint), 10-s read, 6-h time sync, detection of both foreign control and a device that does not follow), `create_heizstab()` factory |
 | `heizstab/ohmpilot_modbus.py` | Fronius Ohmpilot driver via direct Modbus TCP (setpoint 40599 int32 W big-endian, actual power 40800, temperature 40808 in 0.1 °C, unix time 40400; 50-s device watchdog). Taken over from HA_Optimierung_Gruenbach, registers verified on the device there |
 | `schedule_archive.py` | Rolling archive of computed plans (7 days, gzip, ~8 KB each) for after-the-fact debugging |
 | `schedule_archive_view.py` | HTTP view that packs archive + settings + measured history into a downloadable ZIP |
@@ -388,7 +388,21 @@ the event loop is long enough for HA to flag a blocking call.
   because it contradicted the plan. Config keys `heizstab_*` live in their
   own settings tab **Heizstab**; host/port/max/enabled trigger a full reload,
   the rest hot-reload. Foreign control (a second writer on the Ohmpilot) is
-  detected after 3 min of "draws more than set" and shown in the status card.
+  detected after 3 min of "draws more than set"; the opposite case ("delivers
+  less than set" for 2 min, `folgt_nicht`) is detected too. Both are shown in
+  the status card. The heater's measured power reaches the status card through
+  the Hausverbrauch sensor's attributes, not its own entity: that card must
+  show one point in time (see **Status card** below).
+- **Status card — one point in time**: PV, battery, grid and Hausverbrauch are
+  computed together every 30 s; the heater pushes its own value every 10 s.
+  Reading the four entities separately put three different timestamps in one
+  card and the balance did not add up (Grünbach, 14.09.2026: 72 % of samples,
+  up to 5 kW off). The panel therefore reads PV/battery/grid/heater from the
+  **attributes of the Hausverbrauch sensor**, which reads them in one go, and
+  the Hausverbrauch value from its state. `bilanz_unvollstaendig` marks the
+  case where the formula went negative and was clamped to 0 — that 0 is a
+  limit, not a measurement. Any new value on that card belongs in the same
+  attribute set.
 - **Consumption Profile**: Hourly averages from recorder, split by 7 individual weekdays (mo–so), rolling window (default 4 weeks), with weekday fallback chain for missing data.
 - **Dual Update Timers**: Slow sensors (profile) every 15min, fast sensors (forecasts, battery, Hausverbrauch) every 1min. Hard-wired since v26 — the former config keys `update_interval_fast_min`/`update_interval_slow_min` are removed by migration.
 

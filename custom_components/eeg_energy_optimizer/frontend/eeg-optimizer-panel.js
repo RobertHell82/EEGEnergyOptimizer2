@@ -7629,12 +7629,15 @@ class EegOptimizerPanel extends HTMLElement {
     } else if (a.plan_aktion === "release") {
       gesetzt.push("kein Eingriff, Eigenverbrauch des Wechselrichters");
     }
-    // Heizstab: Sollwert, Ist-Leistung und Wassertemperatur in einer Zeile.
+    // Heizstab: Sollwert und Wassertemperatur — was die Steuerung vorgibt.
+    // Die gemessene Leistung steht in der Statuskarte oben; hier stünde sie
+    // aus einem anderen Zeitstand (Snapshot des letzten Steuerungslaufs) und
+    // widerspräche der Karte. Weicht sie dauerhaft ab, sagt das eine eigene
+    // Warnzeile weiter unten, statt beide Zahlen nebeneinanderzustellen.
     if (a.heizstab_sollwert_kw != null) {
       let hz = Number(a.heizstab_sollwert_kw) > 0.05
         ? `Heizstab <strong>${fmtDe(a.heizstab_sollwert_kw, 2)} kW</strong>`
         : "Heizstab <strong>aus</strong>";
-      if (a.heizstab_leistung_kw != null) hz += ` (Ist ${fmtDe(a.heizstab_leistung_kw, 2)} kW)`;
       if (a.heizstab_temperatur_c != null) hz += `, ${fmtDe(a.heizstab_temperatur_c, 0)} °C`;
       gesetzt.push(hz);
     }
@@ -7702,6 +7705,23 @@ class EegOptimizerPanel extends HTMLElement {
         + "oder die noch nicht geloeste Kopplung zum Gen24. Solange das so "
         + "ist, greift weder die Maximaltemperatur noch der Schutz vor dem "
         + "Verheizen von Batteriestrom.");
+    }
+    // Die Gegenrichtung: Die Vorgabe steht, Schreibfehler gibt es keine, und
+    // trotzdem kommt beim Geraet weniger an. In Gruenbach (14.09.2026) fiel
+    // die Ist-Leistung bei unveraendertem Sollwert minutenlang auf 0 und
+    // schoss danach ueber den Wert hinaus — 70-mal an einem Vormittag,
+    // ohne dass irgendetwas es gemeldet haette.
+    else if (a.heizstab_folgt_nicht) {
+      const gemessen = a.heizstab_leistung_kw != null
+        ? `${fmtDe(a.heizstab_leistung_kw, 2)} kW gemessen gegen ${fmtDe(a.heizstab_sollwert_kw, 2)} kW vorgegeben — `
+        : "";
+      warnings += warnRow("mdi:heating-coil", "var(--error-color, #f44336)",
+        `Der Heizstab heizt weniger als vorgegeben (${gemessen}seit Minuten). `
+        + "Die Steuerung schreibt den Sollwert sofort nach, wenn das Geraet "
+        + "auf 0 faellt. Haelt es trotzdem an, fuehrt der Ohmpilot die "
+        + "Vorgabe nicht aus — zu pruefen sind seine Uebertemperatur"
+        + "abschaltung, der Fuehler am Puffer und die Verkabelung des "
+        + "Heizstabs. Die geplante Waerme kommt so nicht in den Puffer.");
     }
     if (a.heizstab_komfort_netz) {
       warnings += warnRow("mdi:thermometer-alert", "var(--info-color, #2196f3)",
@@ -8954,19 +8974,43 @@ class EegOptimizerPanel extends HTMLElement {
     const narrowClass = this._narrow ? " narrow" : "";
 
     // --- Live values for header card ---
-    // Read power sensors and normalize to kW
-    // Read all values from our own calculated sensors (normalized, multi-inverter aware)
-    const pvKw = this._readFloat("sensor.eeg_energy_optimizer_pv_leistung") || 0;
-    const batKw = this._readFloat("sensor.eeg_energy_optimizer_batterieleistung") || 0;
-    let gridKw = this._readFloat("sensor.eeg_energy_optimizer_netzleistung") || 0;
-    const hausKw = this._readFloat("sensor.eeg_energy_optimizer_hausverbrauch") || 0;
+    // EIN Zeitstand für die ganze Karte. PV, Batterie, Netz und Heizstab
+    // hängen als Attribute am Hausverbrauchs-Sensor, der sie in einem Zug
+    // liest — die vier Einzelsensoren dagegen aktualisieren in
+    // verschiedenen Takten (Heizstab alle 10 s per Push, der Rest alle
+    // 30 s). Gemischt ergab das eine Karte, deren Werte einander
+    // widersprachen: an der Anlage Grünbach am 14.09.2026 in 72 % der
+    // Momente, mit Abweichungen bis 5 kW — PV 5,18 kW neben Batterie
+    // 1,77 + Netz 0,72 + Haus 0,00 + Heizstab 0,00. Jeder Wert stimmte,
+    // nur galten sie nie gleichzeitig.
+    const hausEntity = this._entityIds?.hausverbrauch
+      || "sensor.eeg_energy_optimizer_hausverbrauch";
+    const hausAttr = this._readState(hausEntity)?.attributes || {};
+    // Fallback auf die Einzelsensoren, solange die Attribute fehlen (erster
+    // Lauf nach dem Start, ältere Integration).
+    const einZeitstand = hausAttr.pv_leistung_kw != null;
+    const pvKw = einZeitstand ? Number(hausAttr.pv_leistung_kw)
+      : (this._readFloat("sensor.eeg_energy_optimizer_pv_leistung") || 0);
+    const batKw = einZeitstand ? Number(hausAttr.batterie_leistung_kw)
+      : (this._readFloat("sensor.eeg_energy_optimizer_batterieleistung") || 0);
+    let gridKw = einZeitstand ? Number(hausAttr.netz_leistung_kw)
+      : (this._readFloat("sensor.eeg_energy_optimizer_netzleistung") || 0);
+    const hausKw = this._readFloat(hausEntity) || 0;
+    // Geht die Bilanz nicht auf, wurde der Hausverbrauch auf 0 begrenzt —
+    // die Karte sagt das, statt eine glatte Null als Messwert auszugeben.
+    const hausGeklemmt = hausAttr.bilanz_unvollstaendig === true;
     // Heizstab: eigene Größe neben dem Hausverbrauch, der ihn herausrechnet.
-    // Die entity_id kommt aus der Registry, weil HA sie aus dem Anzeigenamen
-    // bildet; null (statt 0) heißt „Ohmpilot antwortet nicht".
+    // Die Zahl kommt aus demselben Zeitstand wie der Rest; ob überhaupt ein
+    // Messwert da ist, sagt der Live-Sensor (null = „Ohmpilot antwortet
+    // nicht"). Die entity_id kommt aus der Registry, weil HA sie aus dem
+    // Anzeigenamen bildet.
     const heizAktiv = !!this._config?.heizstab_enabled;
     const heizEntity = this._entityIds?.heizstab_leistung
       || "sensor.eeg_energy_optimizer_heizstab_leistung";
-    const heizKw = heizAktiv ? this._readFloat(heizEntity) : null;
+    const heizMesswert = heizAktiv ? this._readFloat(heizEntity) : null;
+    const heizKw = !heizAktiv || heizMesswert == null ? null
+      : (hausAttr.heizstab_leistung_kw != null
+        ? Number(hausAttr.heizstab_leistung_kw) : heizMesswert);
     const heizTempC = heizAktiv
       ? this._readFloat(this._entityIds?.heizstab_temperatur
         || "sensor.eeg_energy_optimizer_heizstab_temperatur")
@@ -8982,7 +9026,6 @@ class EegOptimizerPanel extends HTMLElement {
     const batEntity = "sensor.eeg_energy_optimizer_batterieleistung";
     const gridEntity = "sensor.eeg_energy_optimizer_netzleistung";
     const socEntity = this._config?.battery_soc_sensor || "";
-    const hausEntity = "sensor.eeg_energy_optimizer_hausverbrauch";
 
     return `
       <div class="dashboard-grid${narrowClass}">
@@ -9026,7 +9069,7 @@ class EegOptimizerPanel extends HTMLElement {
                 <div class="hlv${batEntity ? " hlv-clickable" : ""}" ${batEntity ? `data-action="show-entity" data-entity="${batEntity}"` : ""}><span class="hlv-label">Batterie</span><span class="hlv-val ${batColor}">${fmtDe(Math.abs(batKw), 2)} kW <small>(${batLabel})</small></span></div>
                 <div class="hlv${socEntity ? " hlv-clickable" : ""}" ${socEntity ? `data-action="show-entity" data-entity="${socEntity}"` : ""}><span class="hlv-label">SOC</span><span class="hlv-val ${socColor}">${socText}%</span></div>
                 <div class="hlv${gridEntity ? " hlv-clickable" : ""}" ${gridEntity ? `data-action="show-entity" data-entity="${gridEntity}"` : ""}><span class="hlv-label">Netz</span><span class="hlv-val ${gridColor}">${fmtDe(Math.abs(gridKw), 2)} kW <small>(${gridLabel})</small></span></div>
-                <div class="hlv hlv-clickable" data-action="show-entity" data-entity="${hausEntity}"><span class="hlv-label">Haus</span><span class="hlv-val val-blue">${fmtDe(hausKw, 2)} kW</span></div>
+                <div class="hlv hlv-clickable" data-action="show-entity" data-entity="${hausEntity}"${hausGeklemmt ? ` title="Die Leistungsbilanz geht gerade nicht auf — die Messwerte des Wechselrichters stammen aus verschiedenen Sekunden. Der Hausverbrauch ist deshalb auf 0 kW begrenzt."` : ""}><span class="hlv-label">Haus${hausGeklemmt ? " *" : ""}</span><span class="hlv-val val-blue">${fmtDe(hausKw, 2)} kW</span></div>
                 ${heizAktiv ? `<div class="hlv hlv-clickable" data-action="show-entity" data-entity="${heizEntity}"><span class="hlv-label">Heizstab</span><span class="hlv-val ${heizKw == null ? "" : "val-heiz"}">${heizKw == null ? "\u2014" : `${fmtDe(heizKw, 2)} kW`}${heizTempC == null ? "" : ` <small>(${fmtDe(heizTempC, 0)} °C)</small>`}</span></div>` : ""}
               </div>`}
           <div style="margin-top:12px">

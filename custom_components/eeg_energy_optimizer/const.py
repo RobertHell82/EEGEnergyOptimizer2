@@ -321,10 +321,20 @@ HEIZSTAB_RUECKNAHME_ANTEIL = 0.5
 # der ist echt, egal wie frisch der letzte Schritt war.
 HEIZSTAB_EINSCHWING_LAEUFE = 1
 # Watchdog des Ohmpilot: 50 s ohne Sollwert → Heizstab aus. Geschrieben
-# wird deshalb alle 30 s, unabhängig davon, ob sich der Wert geändert hat.
-HEIZSTAB_WRITE_INTERVAL_S = 30
+# wird deshalb alle 20 s, unabhängig davon, ob sich der Wert geändert hat.
+# Bei den früheren 30 s riss der Watchdog schon, wenn ein einziger Takt
+# ausfiel (30 + 30 = 60 > 50) — und ausfallen kann er: Schreiben und Lesen
+# teilen sich denselben Modbus-Lock, ein hängendes Lesen kostet bis zu 5 s
+# je Register. Mit 20 s übersteht der Heizstab einen verpassten Takt.
+HEIZSTAB_WRITE_INTERVAL_S = 20
 HEIZSTAB_READ_INTERVAL_S = 10
 HEIZSTAB_TIMESYNC_INTERVAL_H = 6
+# Steht der Sollwert über null und misst der Ohmpilot trotzdem nichts, ist
+# sein Watchdog gerissen (oder jemand hat ihn auf 0 gesetzt). Dann sofort
+# nachschreiben, statt bis zum nächsten Schreibtakt zu warten — höchstens
+# aber in diesem Abstand, damit ein Gerät, das aus einem anderen Grund nicht
+# heizt (Übertemperatur, Defekt), keine Dauerschleife auslöst.
+HEIZSTAB_NACHSCHREIBEN_ABSTAND_S = 10
 # Maximaltemperatur: gesperrt ab Maximum, frei erst wieder unter Maximum − Hysterese.
 HEIZSTAB_TEMP_HYSTERESE_K = 3.0
 # Mindesttemperatur: Komfortheizen ab unter Minimum, Ende bei Minimum + Hysterese.
@@ -350,6 +360,15 @@ HEIZSTAB_SATT_TOLERANZ_KW = 0.05
 # normalen Rampenvorgang: Der Ohmpilot ist in weit unter einer Minute unten.
 HEIZSTAB_KONFLIKT_TOLERANZ_KW = 0.3
 HEIZSTAB_KONFLIKT_MINUTEN = 3.0
+# Die Gegenprobe: Das Gerät zieht dauerhaft deutlich WENIGER als vorgegeben.
+# In Grünbach (14.09.2026) fiel die Ist-Leistung bei unverändertem Sollwert
+# von 2,62 kW minutenlang auf 0 und schoss danach auf 3,2 kW — 70-mal an
+# einem Vormittag, die längste Phase 13 Minuten. Gemeldet hat das nichts:
+# `fremdsteuerung` prüft nur die andere Richtung, und Schreibfehler gab es
+# keine. Das kostet direkt Wärme, deshalb kürzer als die Karenz oben — aber
+# lang genug, dass die Rampe nach einem Sprung nicht als Fehler zählt.
+HEIZSTAB_FOLGT_NICHT_TOLERANZ_KW = 0.5
+HEIZSTAB_FOLGT_NICHT_MINUTEN = 2.0
 
 # Aufteilung des Überschusses ohne Heizstab-Vorrang. Nicht „erst die Batterie,
 # dann der Heizstab", sondern beide gleichzeitig — mit einem Anteil, der vom

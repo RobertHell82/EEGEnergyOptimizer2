@@ -6,5 +6,5 @@ Zwei Schichten, wie bei den Wechselrichtern:
   Temperatur, Zeitsynchronisation). Übernommen aus HA_Optimierung_Gruenbach.
 * ``controller.py`` — die Regel: wann heizt der Heizstab, mit wie viel, und
   warum. Wird vom ``ScheduleExecutor`` je Guard-Lauf gefragt; schreibt
-  selbst alle 30 s, weil der Ohmpilot ohne Sollwert nach 50 s abschaltet.
+  selbst alle 20 s, weil der Ohmpilot ohne Sollwert nach 50 s abschaltet.
 """

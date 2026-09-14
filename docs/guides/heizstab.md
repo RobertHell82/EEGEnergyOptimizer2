@@ -16,7 +16,7 @@ Der Gen24 kann den Ohmpilot selbst regeln — aber er regelt die **Einspeisung a
 > [!CAUTION]
 > **Zwei Steuerungen auf einem Gerät gehen nicht.** Der Ohmpilot kennt keine Zugriffsrechte — wer zuletzt auf das Register schreibt, gewinnt. Bleibt er mit dem Gen24 gekoppelt, heizt der Gen24 jede Einspeisung weg und der Optimizer setzt sie zurück; am Ende gewinnt keiner. Dasselbe gilt für **jede andere Steuerung**: eine alte Automatisierung, ein Node-RED-Flow, eine zweite Integration. Erst alles andere abschalten, dann einschalten.
 >
-> Achte darauf, dass wirklich der **schreibende** Teil aus ist. An einer Anlage stand der Modus der Vorgänger-Integration auf „Aus", ihr Keepalive schrieb den letzten Sollwert aber weiter alle paar Sekunden ins Register — der Heizstab lief mit 2,4 kW, während der Optimizer „Heizstab aus" anzeigte und alle 30 Sekunden 0 W schrieb. Sichtbar war das nur als Sägezahn in der gemessenen Leistung. Genau diesen Fall meldet die Statuskarte inzwischen von selbst (siehe unten).
+> Achte darauf, dass wirklich der **schreibende** Teil aus ist. An einer Anlage stand der Modus der Vorgänger-Integration auf „Aus", ihr Keepalive schrieb den letzten Sollwert aber weiter alle paar Sekunden ins Register — der Heizstab lief mit 2,4 kW, während der Optimizer „Heizstab aus" anzeigte und alle 20 Sekunden 0 W schrieb. Sichtbar war das nur als Sägezahn in der gemessenen Leistung. Genau diesen Fall meldet die Statuskarte inzwischen von selbst (siehe unten).
 
 ## So funktioniert es
 
@@ -81,7 +81,11 @@ Alle Felder stehen in den **Einstellungen** im eigenen Tab **Heizstab**. Im Einr
 > **Optimierung aus heißt Heizstab aus.** Es gibt keinen Notbetrieb, der den Ohmpilot ohne Optimierung weiterregelt. Wer den Ohmpilot ohne Optimizer betreiben will, koppelt ihn wieder an den Gen24.
 
 > [!NOTE]
-> **Wenn das Gerät der Vorgabe nicht folgt, sagt es die Statuskarte.** Zieht der Heizstab länger als drei Minuten deutlich mehr, als vorgegeben ist, erscheint eine Warnung: Dann schreibt jemand anderes auf denselben Ohmpilot. Solange das so ist, greift weder die Maximaltemperatur noch der Schutz davor, Batteriestrom zu verheizen — der Optimizer setzt seinen Sollwert zwar weiter alle 30 Sekunden, wird aber überschrieben.
+> **Wenn das Gerät der Vorgabe nicht folgt, sagt es die Statuskarte** — in beide Richtungen.
+>
+> Zieht der Heizstab länger als drei Minuten deutlich **mehr**, als vorgegeben ist, schreibt jemand anderes auf denselben Ohmpilot. Solange das so ist, greift weder die Maximaltemperatur noch der Schutz davor, Batteriestrom zu verheizen — der Optimizer setzt seinen Sollwert zwar weiter alle 20 Sekunden, wird aber überschrieben.
+>
+> Liefert er länger als zwei Minuten deutlich **weniger**, führt das Gerät die Vorgabe nicht aus. Fällt die gemessene Leistung auf null, obwohl ein Sollwert ansteht, schreibt der Optimizer ihn sofort nach — der häufigste Grund ist der Watchdog des Ohmpilot. Bleibt es dabei, liegt es am Gerät: Übertemperaturabschaltung, Fühler am Puffer oder Verkabelung des Heizstabs.
 
 > [!NOTE]
 > **Der Hausverbrauch ist ohne den Heizstab.** Sensor „Hausverbrauch", Verbrauchsprofil und Entlade-Nachführung rechnen den Heizstab heraus — er ist eine gesteuerte Senke, kein Verbrauch, den das Profil lernen soll. Sein Anteil steht in den eigenen Sensoren „Heizstab Leistung", „Heizstab Sollwert", „Heizstab Temperatur" und „Heizstab Energie heute".
@@ -90,7 +94,7 @@ Alle Felder stehen in den **Einstellungen** im eigenen Tab **Heizstab**. Im Einr
 
 | Register | Zweck |
 |---|---|
-| 40599 | Leistungs-Sollwert in Watt — alle 30 s geschrieben, auch wenn er sich nicht ändert (Watchdog des Ohmpilot: 50 s) |
+| 40599 | Leistungs-Sollwert in Watt — alle 20 s geschrieben, auch wenn er sich nicht ändert (Watchdog des Ohmpilot: 50 s). Misst der Ohmpilot 0 W, obwohl ein Sollwert ansteht, geht er sofort erneut hinaus |
 | 40800 | Ist-Leistung, alle 10 s gelesen |
 | 40808 | Wassertemperatur in 0,1 °C, alle 10 s gelesen |
 | 40400 | Unix-Zeit, alle 6 Stunden gesetzt — sonst meldet der Ohmpilot Fehler 925 |

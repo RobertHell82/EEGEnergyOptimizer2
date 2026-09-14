@@ -154,7 +154,7 @@ class OhmpilotModbus:
     async def async_set_power(self, watts: int) -> bool:
         """Leistungs-Sollwert in Watt setzen (0 bis max_power).
 
-        Muss alle 25-30 Sekunden aufgerufen werden (Watchdog: 50s).
+        Muss alle 20 Sekunden aufgerufen werden (Watchdog: 50s).
         """
         watts = max(0, min(watts, self._max_power))
 

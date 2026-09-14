@@ -372,3 +372,91 @@ class TestEntladungInsNetzSensor:
         sensor = EntladungInsNetzSensor(hass, self._entry())
         await sensor.async_update()
         assert sensor.native_value == 0.0
+
+
+# ---------------------------------------------------------------------------
+# Hausverbrauch: die vier Werte EINES Messzeitpunkts
+#
+# Die Statuskarte des Panels liest PV, Batterie, Netz und Heizstab aus diesen
+# Attributen statt aus den vier Einzelsensoren — die aktualisieren in
+# verschiedenen Takten und ergaben eine Karte, deren Werte einander
+# widersprachen (Gruenbach, 14.09.2026: in 72 % der Momente, bis 5 kW).
+# ---------------------------------------------------------------------------
+
+
+def _hausverbrauch_sensor(hass, config):
+    from custom_components.eeg_energy_optimizer.sensor import HausverbrauchSensor
+
+    entry = MagicMock()
+    entry.entry_id = "entry1"
+    return HausverbrauchSensor(hass, entry, config)
+
+
+def _hass_mit_leistungen(pv, bat, netz, heizstab_kw=None):
+    hass = MagicMock()
+    zustaende = {
+        "sensor.pv": _make_state(pv, {"unit_of_measurement": "kW"}),
+        "sensor.bat": _make_state(bat, {"unit_of_measurement": "kW"}),
+        "sensor.grid": _make_state(netz, {"unit_of_measurement": "kW"}),
+    }
+    hass.states.get = MagicMock(side_effect=lambda eid: zustaende.get(eid))
+    controller = MagicMock()
+    controller.leistung_kw = heizstab_kw
+    hass.data = {DOMAIN: {"entry1": {"heizstab": controller}}}
+    return hass
+
+
+_BASIS = {
+    "inverter_type": "fronius_gen24",
+    "pv_power_sensor": "sensor.pv",
+    "battery_power_sensor": "sensor.bat",
+    "grid_power_sensor": "sensor.grid",
+}
+
+
+async def test_hausverbrauch_traegt_alle_vier_werte_eines_zeitpunkts():
+    hass = _hass_mit_leistungen(5.0, 1.0, 1.5, heizstab_kw=2.0)
+    sensor = _hausverbrauch_sensor(hass, {**_BASIS, "heizstab_enabled": True})
+    await sensor.async_update()
+
+    a = sensor.extra_state_attributes
+    assert a["pv_leistung_kw"] == 5.0
+    assert a["batterie_leistung_kw"] == 1.0
+    assert a["netz_leistung_kw"] == 1.5
+    assert a["heizstab_leistung_kw"] == 2.0
+    # Die Karte rechnet damit nach: PV − Batterie − Netz − Heizstab = Haus.
+    assert sensor.native_value == pytest.approx(0.5)
+    assert (a["pv_leistung_kw"] - a["batterie_leistung_kw"] - a["netz_leistung_kw"]
+            - a["heizstab_leistung_kw"]) == pytest.approx(sensor.native_value)
+    assert "bilanz_unvollstaendig" not in a
+
+
+async def test_heizstab_null_steht_trotzdem_im_attribut():
+    """Sonst kann die Karte „Heizstab aus" nicht von „keiner da" trennen."""
+    hass = _hass_mit_leistungen(3.0, 0.0, 2.7, heizstab_kw=0.0)
+    sensor = _hausverbrauch_sensor(hass, {**_BASIS, "heizstab_enabled": True})
+    await sensor.async_update()
+    assert sensor.extra_state_attributes["heizstab_leistung_kw"] == 0.0
+
+
+async def test_ohne_heizstab_kein_attribut():
+    hass = _hass_mit_leistungen(3.0, 0.0, 2.7)
+    sensor = _hausverbrauch_sensor(hass, _BASIS)
+    await sensor.async_update()
+    assert "heizstab_leistung_kw" not in sensor.extra_state_attributes
+
+
+async def test_negative_bilanz_wird_ausgewiesen_statt_stumm_geklemmt():
+    """Genau der Fall aus Gruenbach: Die Messwerte passen nicht zusammen.
+
+    Der Hausverbrauch bleibt bei 0 — eine negative Hauslast gibt es nicht —,
+    aber die Karte erfaehrt, dass die 0 eine Begrenzung ist und kein Messwert.
+    """
+    hass = _hass_mit_leistungen(4.50, 0.0, 4.0, heizstab_kw=3.13)
+    sensor = _hausverbrauch_sensor(hass, {**_BASIS, "heizstab_enabled": True})
+    await sensor.async_update()
+
+    assert sensor.native_value == 0.0
+    a = sensor.extra_state_attributes
+    assert a["bilanz_unvollstaendig"] is True
+    assert a["bilanz_rest_kw"] == pytest.approx(-2.63, abs=0.01)

@@ -20,8 +20,10 @@ from custom_components.eeg_energy_optimizer.const import (
     CONF_HEIZSTAB_VORRANG,
     CONF_HEIZSTAB_WAERMEWERT,
     CONF_HEIZSTAB_MAXTEMP_C,
+    HEIZSTAB_FOLGT_NICHT_MINUTEN,
     HEIZSTAB_KOMFORT_EXPORT_ZIEL_KW,
     HEIZSTAB_KONFLIKT_MINUTEN,
+    HEIZSTAB_NACHSCHREIBEN_ABSTAND_S,
     HEIZSTAB_PLAN_EXPORT_ZIEL_KW,
     HEIZSTAB_STEP_KW,
 )
@@ -802,3 +804,219 @@ def test_unerreichbare_sperrentitaet_gilt_als_frei():
 def test_ohne_sperrentitaet_keine_sperre():
     controller = HeizstabController(MagicMock(), _budget_cfg(), _treiber(temp=45.0))
     assert controller.gesperrt is False
+
+
+# ---------------------------------------------------------------------------
+# Die Gegenrichtung: Das Geraet liefert WENIGER als vorgegeben
+#
+# Gruenbach, 14.09.2026: Der Sollwert stand unveraendert auf 2,62 kW, die
+# gemessene Leistung fiel minutenlang auf 0 und schoss danach auf 3,2 kW —
+# 70-mal an einem Vormittag, die laengste Phase 13 Minuten. Gemeldet hat das
+# nichts: `fremdsteuerung` prueft nur die andere Richtung, Schreibfehler gab
+# es keine. Sichtbar war es allein als Zappeln in der Ist-Kurve.
+# ---------------------------------------------------------------------------
+
+
+async def test_folgt_nicht_erst_nach_der_karenzzeit(monkeypatch):
+    """Sollwert 2,6 kW, Geraet zieht nichts — gemeldet erst nach Minuten."""
+    from custom_components.eeg_energy_optimizer.heizstab import controller as mod
+
+    jetzt = [1000.0]
+    monkeypatch.setattr(mod.time, "time", lambda: jetzt[0])
+    t = _treiber(power_w=0, temp=60.0)
+    hz = HeizstabController(MagicMock(), _cfg(), t)
+    hz.sollwert_kw = 2.62
+
+    await hz.async_lesen()
+    assert hz.folgt_nicht is False           # Karenz laeuft erst an
+
+    jetzt[0] += HEIZSTAB_FOLGT_NICHT_MINUTEN * 60 - 1
+    await hz.async_lesen()
+    assert hz.folgt_nicht is False
+
+    jetzt[0] += 2
+    await hz.async_lesen()
+    assert hz.folgt_nicht is True
+    assert hz.status()["folgt_nicht"] is True
+    assert hz.status()["folgt_nicht_zaehler"] == 1
+
+
+async def test_folgt_nicht_ignoriert_regelabweichung(monkeypatch):
+    """Ein paar hundert Watt unter dem Sollwert sind die Rampe, kein Fehler."""
+    from custom_components.eeg_energy_optimizer.heizstab import controller as mod
+
+    jetzt = [1000.0]
+    monkeypatch.setattr(mod.time, "time", lambda: jetzt[0])
+    t = _treiber(power_w=2400, temp=60.0)    # 2,4 kW bei Sollwert 2,62
+    hz = HeizstabController(MagicMock(), _cfg(), t)
+    hz.sollwert_kw = 2.62
+    await hz.async_lesen()
+    jetzt[0] += HEIZSTAB_FOLGT_NICHT_MINUTEN * 60 + 10
+    await hz.async_lesen()
+    assert hz.folgt_nicht is False
+
+
+async def test_ohne_vorgabe_kein_vorwurf(monkeypatch):
+    """Sollwert 0 und Ist 0 heisst: alles richtig, nicht `folgt nicht`."""
+    from custom_components.eeg_energy_optimizer.heizstab import controller as mod
+
+    jetzt = [1000.0]
+    monkeypatch.setattr(mod.time, "time", lambda: jetzt[0])
+    hz = HeizstabController(MagicMock(), _cfg(), _treiber(power_w=0, temp=60.0))
+    hz.sollwert_kw = 0.0
+    await hz.async_lesen()
+    jetzt[0] += HEIZSTAB_FOLGT_NICHT_MINUTEN * 60 + 10
+    await hz.async_lesen()
+    assert hz.folgt_nicht is False
+
+
+async def test_ohne_messwert_kein_vorwurf_beim_folgen(monkeypatch):
+    """Antwortet der Ohmpilot nicht, meldet das `verfuegbar` — nicht diese Regel."""
+    from custom_components.eeg_energy_optimizer.heizstab import controller as mod
+
+    jetzt = [1000.0]
+    monkeypatch.setattr(mod.time, "time", lambda: jetzt[0])
+    hz = HeizstabController(MagicMock(), _cfg(),
+                            _treiber(power_w=None, temp=None, connected=False))
+    hz.sollwert_kw = 2.62
+    jetzt[0] += HEIZSTAB_FOLGT_NICHT_MINUTEN * 60 + 10
+    await hz.async_lesen()
+    assert hz.folgt_nicht is False
+
+
+async def test_neuer_sollwert_setzt_das_folgen_zurueck(monkeypatch):
+    """Nach einem Sprung darf das Geraet erst einmal nachziehen."""
+    from custom_components.eeg_energy_optimizer.heizstab import controller as mod
+
+    jetzt = [1000.0]
+    monkeypatch.setattr(mod.time, "time", lambda: jetzt[0])
+    hz = HeizstabController(MagicMock(), _cfg(), _treiber(power_w=0, temp=60.0))
+    hz.sollwert_kw = 2.62
+    await hz.async_lesen()
+    jetzt[0] += HEIZSTAB_FOLGT_NICHT_MINUTEN * 60 + 10
+    await hz.async_lesen()
+    assert hz.folgt_nicht is True
+
+    await hz.async_set_sollwert(4.0, "Ueberschuss")
+    assert hz.folgt_nicht is False
+
+
+# ---------------------------------------------------------------------------
+# Gerissener Watchdog: sofort nachschreiben statt auf den Takt zu warten
+# ---------------------------------------------------------------------------
+
+
+async def test_nachschreiben_wenn_das_geraet_auf_null_faellt(monkeypatch):
+    """Sollwert steht, Ist ist 0 → der Sollwert geht sofort wieder hinaus."""
+    from custom_components.eeg_energy_optimizer.heizstab import controller as mod
+
+    jetzt = [1000.0]
+    monkeypatch.setattr(mod.time, "time", lambda: jetzt[0])
+    t = _treiber(power_w=0, temp=60.0)
+    hz = HeizstabController(MagicMock(), _cfg(), t)
+    hz.sollwert_kw = 2.62
+
+    await hz.async_lesen()
+    t.async_set_power.assert_called_once_with(2620)
+
+    # Innerhalb des Mindestabstands bleibt es bei dem einen Versuch.
+    jetzt[0] += HEIZSTAB_NACHSCHREIBEN_ABSTAND_S - 1
+    await hz.async_lesen()
+    assert t.async_set_power.call_count == 1
+
+    # Danach wieder — solange das Geraet nichts zieht.
+    jetzt[0] += 2
+    await hz.async_lesen()
+    assert t.async_set_power.call_count == 2
+
+
+async def test_kein_nachschreiben_wenn_das_geraet_heizt(monkeypatch):
+    """Laeuft der Heizstab, gibt es nichts nachzuschreiben."""
+    from custom_components.eeg_energy_optimizer.heizstab import controller as mod
+
+    jetzt = [1000.0]
+    monkeypatch.setattr(mod.time, "time", lambda: jetzt[0])
+    t = _treiber(power_w=2600, temp=60.0)
+    hz = HeizstabController(MagicMock(), _cfg(), t)
+    hz.sollwert_kw = 2.62
+    await hz.async_lesen()
+    t.async_set_power.assert_not_called()
+
+
+async def test_kein_nachschreiben_ohne_vorgabe(monkeypatch):
+    """Sollwert 0: Die 0 ist gewollt, sie wird nicht als Ausfall gelesen."""
+    from custom_components.eeg_energy_optimizer.heizstab import controller as mod
+
+    jetzt = [1000.0]
+    monkeypatch.setattr(mod.time, "time", lambda: jetzt[0])
+    t = _treiber(power_w=0, temp=60.0)
+    hz = HeizstabController(MagicMock(), _cfg(), t)
+    hz.sollwert_kw = 0.0
+    await hz.async_lesen()
+    t.async_set_power.assert_not_called()
+
+
+async def test_kein_nachschreiben_ohne_messwert(monkeypatch):
+    """Ohne Ist-Wert ist unbekannt, ob das Geraet heizt — dann kein Schluss."""
+    from custom_components.eeg_energy_optimizer.heizstab import controller as mod
+
+    jetzt = [1000.0]
+    monkeypatch.setattr(mod.time, "time", lambda: jetzt[0])
+    t = _treiber(power_w=None, temp=None, connected=False)
+    hz = HeizstabController(MagicMock(), _cfg(), t)
+    hz.sollwert_kw = 2.62
+    await hz.async_lesen()
+    t.async_set_power.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Beide Meldungen entstehen durch ZEITABLAUF, nicht durch einen neuen
+# Messwert. Wer die Flanke aus einem Vorher/Nachher um die Pruefung herum
+# ableitet, sieht sie nie: Beide Seiten fragen dieselbe, schon vorgerueckte
+# Uhr. Genau daran ging die Fremdsteuerungs-Warnung ins Leere.
+# ---------------------------------------------------------------------------
+
+
+async def test_beide_warnungen_werden_genau_einmal_geloggt(monkeypatch, caplog):
+    import logging
+    from custom_components.eeg_energy_optimizer.heizstab import controller as mod
+
+    jetzt = [1000.0]
+    monkeypatch.setattr(mod.time, "time", lambda: jetzt[0])
+
+    # Fremdsteuerung: Sollwert 0, Geraet zieht 2,4 kW
+    t = _treiber(power_w=2400, temp=60.0)
+    hz = HeizstabController(MagicMock(), _cfg(), t)
+    hz.sollwert_kw = 0.0
+    with caplog.at_level(logging.WARNING, logger=mod._LOGGER.name):
+        await hz.async_lesen()
+        jetzt[0] += HEIZSTAB_KONFLIKT_MINUTEN * 60 + 1
+        await hz.async_lesen()
+        await hz.async_lesen()          # zweiter Lauf meldet nicht erneut
+    assert sum("mehr als vorgegeben" in r.message for r in caplog.records) == 1
+
+    # Folgt nicht: Sollwert 2,6 kW, Geraet zieht nichts
+    caplog.clear()
+    jetzt[0] += 10
+    t2 = _treiber(power_w=0, temp=60.0)
+    hz2 = HeizstabController(MagicMock(), _cfg(), t2)
+    hz2.sollwert_kw = 2.62
+    with caplog.at_level(logging.WARNING, logger=mod._LOGGER.name):
+        await hz2.async_lesen()
+        jetzt[0] += HEIZSTAB_FOLGT_NICHT_MINUTEN * 60 + 1
+        await hz2.async_lesen()
+        jetzt[0] += HEIZSTAB_NACHSCHREIBEN_ABSTAND_S + 1
+        await hz2.async_lesen()         # zweiter Lauf meldet nicht erneut
+    assert sum("weniger als vorgegeben" in r.message for r in caplog.records) == 1
+    assert hz2.status()["folgt_nicht_zaehler"] == 1
+
+    # Erholt sich das Geraet und faellt spaeter wieder aus, wird erneut
+    # gemeldet — sonst bliebe ein Dauerproblem nach dem ersten Mal stumm.
+    t2.last_power_w = 2600
+    await hz2.async_lesen()
+    assert hz2.folgt_nicht is False
+    t2.last_power_w = 0
+    await hz2.async_lesen()
+    jetzt[0] += HEIZSTAB_FOLGT_NICHT_MINUTEN * 60 + 1
+    await hz2.async_lesen()
+    assert hz2.status()["folgt_nicht_zaehler"] == 2

@@ -523,18 +523,36 @@ class HausverbrauchSensor(SensorEntity):
         # battery positive = charging, negative = discharging
         # grid positive = export, negative = import
         # All values normalized to kW by _read_power_kw
+        from .heizstab.controller import heizstab_enabled
         from .power_readings import compute_heizstab_kw
 
         heizstab_power = compute_heizstab_kw(self.hass, self._config)
-        hausverbrauch = max(pv_power - battery_power - grid_power - heizstab_power, 0.0)
+        roh = pv_power - battery_power - grid_power - heizstab_power
+        hausverbrauch = max(roh, 0.0)
         self._attr_native_value = round(hausverbrauch, 3)
+        # Diese vier Werte sind EIN Messzeitpunkt — sie werden hier in einem
+        # Zug gelesen. Die Statuskarte des Panels zeigt deshalb sie, nicht die
+        # vier Einzelsensoren: Die aktualisieren in unterschiedlichen Takten
+        # (Heizstab alle 10 s, der Rest alle 30 s), und die Karte zeigte dann
+        # Werte, die nie gleichzeitig galten — in Grünbach am 14.09.2026 in
+        # 72 % der Momente, mit Abweichungen bis 5 kW.
         attrs = {
             "pv_leistung_kw": round(max(pv_power, 0.0), 3),
             "batterie_leistung_kw": round(battery_power, 3),
             "netz_leistung_kw": round(grid_power, 3),
         }
-        if heizstab_power:
+        if heizstab_enabled(self._config):
+            # Auch die 0 gehört hierher: Ohne sie kann das Panel „Heizstab
+            # aus" nicht von „kein Heizstab konfiguriert" unterscheiden.
             attrs["heizstab_leistung_kw"] = round(heizstab_power, 3)
+        if roh < -0.05:
+            # Die Bilanz geht nicht auf. Das passiert, wenn die Quellsensoren
+            # aus verschiedenen Sekunden stammen (Fronius pollt alle 10 s,
+            # eine Anlage am Einspeiselimit springt dazwischen um mehrere kW).
+            # Ohne diesen Hinweis stünde nur eine glatte 0,00 da, die wie ein
+            # Messwert aussieht.
+            attrs["bilanz_unvollstaendig"] = True
+            attrs["bilanz_rest_kw"] = round(roh, 3)
         if self._pv_sensor_2_id:
             pv2_val = _read_power_kw(self.hass, self._pv_sensor_2_id)
             if pv2_val is not None:
@@ -804,6 +822,7 @@ class FahrplanStatusSensor(SensorEntity):
                 "heizstab_komfort_netz": bool(heizstab.get("komfort_aus_netz")),
                 "heizstab_verfuegbar": bool(heizstab.get("verfuegbar")),
                 "heizstab_fremdsteuerung": bool(heizstab.get("fremdsteuerung")),
+                "heizstab_folgt_nicht": bool(heizstab.get("folgt_nicht")),
             })
         self.async_write_ha_state()
         return kurz
@@ -1177,6 +1196,11 @@ class HeizstabSollwertSensor(_HeizstabSensor):
             # True heißt: Das Gerät folgt dem Sollwert nicht — es zieht seit
             # Minuten mehr, als vorgegeben ist.
             "fremdsteuerung": st.get("fremdsteuerung"),
+            # Die Gegenrichtung: Es zieht seit Minuten deutlich weniger.
+            # Der Zähler sagt, wie oft das seit dem Start passiert ist —
+            # ohne ihn sieht man im Rückblick nur eine zappelnde Ist-Kurve.
+            "folgt_nicht": st.get("folgt_nicht"),
+            "folgt_nicht_zaehler": st.get("folgt_nicht_zaehler"),
         }
 
 

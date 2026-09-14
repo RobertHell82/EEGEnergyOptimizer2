@@ -81,10 +81,13 @@ from ..const import (
     GUARD_EXPORT_RELEASE_KW,
     GUARD_EXPORT_STICKY_BAND_KW,
     HEIZSTAB_EINSCHWING_LAEUFE,
+    HEIZSTAB_FOLGT_NICHT_MINUTEN,
+    HEIZSTAB_FOLGT_NICHT_TOLERANZ_KW,
     HEIZSTAB_KOMFORT_EXPORT_ZIEL_KW,
     HEIZSTAB_KONFLIKT_MINUTEN,
     HEIZSTAB_KONFLIKT_TOLERANZ_KW,
     HEIZSTAB_MINTEMP_HYSTERESE_K,
+    HEIZSTAB_NACHSCHREIBEN_ABSTAND_S,
     HEIZSTAB_PLAN_EXPORT_ZIEL_KW,
     HEIZSTAB_RUECKNAHME_ANTEIL,
     HEIZSTAB_SATT_TOLERANZ_KW,
@@ -95,7 +98,7 @@ from ..const import (
 
 _LOGGER = logging.getLogger(__name__)
 
-# Unter dieser Änderung wird nicht sofort geschrieben — der 30-s-Schreiber
+# Unter dieser Änderung wird nicht sofort geschrieben — der 20-s-Schreiber
 # bringt den Wert ohnehin mit dem nächsten Watchdog-Takt.
 _SOFORT_SCHREIBEN_AB_KW = 0.05
 
@@ -253,6 +256,17 @@ class HeizstabController:
         self.write_failures = 0
         # Seit wann zieht das Gerät mehr, als vorgegeben ist? None = passt.
         self._konflikt_seit: float | None = None
+        # Die Gegenrichtung: seit wann zieht es deutlich weniger? None = passt.
+        self._folgt_nicht_seit: float | None = None
+        # Schon gemeldet? Die Flanke entsteht durch ZEITABLAUF, nicht durch
+        # einen neuen Messwert — ein Vorher/Nachher-Vergleich um die Prüfung
+        # herum sieht sie deshalb nie (beide Seiten fragen dieselbe Uhr).
+        self._konflikt_gemeldet = False
+        self._folgt_nicht_gemeldet = False
+        # Wann zuletzt außer der Reihe nachgeschrieben (gerissener Watchdog)?
+        self._letztes_nachschreiben: float = 0.0
+        # Wie oft heute schon? Zählt für die Diagnose, nicht für die Regelung.
+        self._folgt_nicht_zaehler = 0
         # Hat der letzte Lauf angehoben? Dann führt der Wechselrichter die PV
         # noch nach, und eine Lücke im nächsten Takt ist keine Aussage.
         self._einschwing_laeufe = 0
@@ -574,7 +588,7 @@ class HeizstabController:
     async def async_set_sollwert(self, kw: float, grund: str) -> None:
         """Sollwert übernehmen; bei relevanter Änderung sofort schreiben.
 
-        Unabhängig davon schreibt der 30-s-Takt (``async_schreiben``) den
+        Unabhängig davon schreibt der 20-s-Takt (``async_schreiben``) den
         aktuellen Wert immer wieder — das ist der Watchdog des Ohmpilot.
         """
         kw = max(0.0, float(kw))
@@ -588,8 +602,12 @@ class HeizstabController:
         geaendert = abs(kw - self.sollwert_kw) >= _SOFORT_SCHREIBEN_AB_KW
         if geaendert:
             # Neuer Sollwert, neue Beweislage: Das Gerät darf jetzt erst
-            # einmal nachziehen, bevor wieder von Fremdsteuerung die Rede ist.
+            # einmal nachziehen, bevor wieder von Fremdsteuerung oder einer
+            # nicht ausgeführten Vorgabe die Rede ist.
             self._konflikt_seit = None
+            self._folgt_nicht_seit = None
+            self._konflikt_gemeldet = False
+            self._folgt_nicht_gemeldet = False
         self.sollwert_kw = kw
         self.grund = grund
         if geaendert:
@@ -630,9 +648,11 @@ class HeizstabController:
             # Ohne Messwert keine Aussage — der Ausfall wird über
             # `verfuegbar` gemeldet, nicht hier.
             self._konflikt_seit = None
+            self._konflikt_gemeldet = False
             return
         if ist <= self.sollwert_kw + HEIZSTAB_KONFLIKT_TOLERANZ_KW:
             self._konflikt_seit = None
+            self._konflikt_gemeldet = False
             return
         if self._konflikt_seit is None:
             self._konflikt_seit = time.time()
@@ -640,6 +660,64 @@ class HeizstabController:
                 "Heizstab: %.2f kW gemessen bei Sollwert %.2f kW — beobachte",
                 ist, self.sollwert_kw,
             )
+
+    @property
+    def folgt_nicht(self) -> bool:
+        """Bleibt der Heizstab seit Minuten deutlich hinter dem Sollwert?
+
+        Das Gegenstück zu ``fremdsteuerung``. Ohne diese Meldung sieht
+        niemand, wenn das Gerät eine Vorgabe schlicht nicht ausführt: Der
+        Sollwert steht, Schreibfehler gibt es keine, und trotzdem bleibt der
+        Puffer kalt (Grünbach, 14.09.2026 — 70 solcher Phasen an einem
+        Vormittag, die längste 13 Minuten).
+        """
+        if self._folgt_nicht_seit is None:
+            return False
+        return (time.time() - self._folgt_nicht_seit) >= HEIZSTAB_FOLGT_NICHT_MINUTEN * 60
+
+    def _folgen_pruefen(self) -> None:
+        """Nach jedem Lesen: Kommt beim Gerät an, was vorgegeben ist?"""
+        ist = self.leistung_kw
+        if ist is None or self.sollwert_kw <= _SOFORT_SCHREIBEN_AB_KW:
+            # Ohne Messwert oder ohne Vorgabe gibt es nichts zu erfüllen.
+            self._folgt_nicht_seit = None
+            self._folgt_nicht_gemeldet = False
+            return
+        if ist >= self.sollwert_kw - HEIZSTAB_FOLGT_NICHT_TOLERANZ_KW:
+            self._folgt_nicht_seit = None
+            self._folgt_nicht_gemeldet = False
+            return
+        if self._folgt_nicht_seit is None:
+            self._folgt_nicht_seit = time.time()
+            _LOGGER.debug(
+                "Heizstab: nur %.2f kW gemessen bei Sollwert %.2f kW — beobachte",
+                ist, self.sollwert_kw,
+            )
+
+    async def _watchdog_nachschreiben(self) -> bool:
+        """Sollwert über null, Gerät misst nichts → sofort neu vorgeben.
+
+        Der wahrscheinlichste Grund ist der gerissene Watchdog des Ohmpilot:
+        Er hat abgeschaltet und wartet auf den nächsten Sollwert. Bis zum
+        regulären Schreibtakt vergehen sonst bis zu 20 s, in denen die Wärme
+        verloren geht. Der Mindestabstand hält das bei einem Gerät, das aus
+        einem anderen Grund nicht heizt, beim Lesetakt — nicht darunter.
+        """
+        if self._treiber is None or self.sollwert_kw <= _SOFORT_SCHREIBEN_AB_KW:
+            return False
+        ist = self.leistung_kw
+        if ist is None or ist > _SOFORT_SCHREIBEN_AB_KW:
+            return False
+        jetzt = time.time()
+        if jetzt - self._letztes_nachschreiben < HEIZSTAB_NACHSCHREIBEN_ABSTAND_S:
+            return False
+        self._letztes_nachschreiben = jetzt
+        _LOGGER.debug(
+            "Heizstab: 0 kW gemessen bei Sollwert %.2f kW — Sollwert wird "
+            "sofort nachgeschrieben (Watchdog?)",
+            self.sollwert_kw,
+        )
+        return await self.async_schreiben()
 
     async def async_lesen(self) -> None:
         """Ist-Leistung und Temperatur aus dem Gerät holen, Sensoren anstoßen."""
@@ -649,9 +727,9 @@ class HeizstabController:
             await self._treiber.async_read_sensors()
         except Exception:  # noqa: BLE001
             _LOGGER.exception("Heizstab: Lesen fehlgeschlagen")
-        vorher = self.fremdsteuerung
         self._konflikt_pruefen()
-        if self.fremdsteuerung and not vorher:
+        if self.fremdsteuerung and not self._konflikt_gemeldet:
+            self._konflikt_gemeldet = True
             _LOGGER.warning(
                 "Heizstab: zieht seit %.0f Minuten mehr als vorgegeben "
                 "(%.2f kW gemessen, %.2f kW vorgegeben) — schreibt eine "
@@ -659,6 +737,23 @@ class HeizstabController:
                 HEIZSTAB_KONFLIKT_MINUTEN, self.leistung_kw or 0.0,
                 self.sollwert_kw,
             )
+        self._folgen_pruefen()
+        if self.folgt_nicht and not self._folgt_nicht_gemeldet:
+            self._folgt_nicht_gemeldet = True
+            self._folgt_nicht_zaehler += 1
+            _LOGGER.warning(
+                "Heizstab: liefert seit %.0f Minuten weniger als vorgegeben "
+                "(%.2f kW gemessen, %.2f kW vorgegeben, Schreiben %s) — "
+                "%d. Mal seit dem Start. Führt der Ohmpilot die Vorgabe "
+                "nicht aus?",
+                HEIZSTAB_FOLGT_NICHT_MINUTEN, self.leistung_kw or 0.0,
+                self.sollwert_kw,
+                "ok" if self.last_write_ok else "fehlgeschlagen",
+                self._folgt_nicht_zaehler,
+            )
+        # Erst melden, dann handeln: Ein gerissener Watchdog kostet Wärme,
+        # solange niemand den Sollwert erneuert.
+        await self._watchdog_nachschreiben()
         for melden in list(self._listener):
             try:
                 melden()
@@ -729,6 +824,8 @@ class HeizstabController:
             "last_write_ok": self.last_write_ok,
             "write_failures": self.write_failures,
             "fremdsteuerung": self.fremdsteuerung,
+            "folgt_nicht": self.folgt_nicht,
+            "folgt_nicht_zaehler": self._folgt_nicht_zaehler,
             "last_error": None if self._treiber is None else getattr(self._treiber, "last_error", None),
         }
 
