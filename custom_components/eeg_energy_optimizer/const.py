@@ -457,6 +457,8 @@ TELEMETRY_SETTINGS_KEYS = (
     "spot_feedin_fee",
     "spot_feedin_fee_pct",
     "awattar_sunny_vertrag",
+    "energie_ag_variante",
+    "energie_ag_abschlag",
     # Bezugspreis seit v28 in zwei Teilen (Arbeitspreis + Netzgebuehr aus dem
     # Netzbereich oder von Hand) plus Haken fuer die zeitvariablen Saetze;
     # der Gesamtpreis wird im Profil daraus zusammengesetzt, damit das Backend

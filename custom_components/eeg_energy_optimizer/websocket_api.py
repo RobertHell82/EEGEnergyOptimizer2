@@ -536,6 +536,7 @@ def async_register_websocket_commands(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_clear_override)
     websocket_api.async_register_command(hass, ws_get_spot_preis)
     websocket_api.async_register_command(hass, ws_get_awattar_sunny)
+    websocket_api.async_register_command(hass, ws_get_energie_ag)
     websocket_api.async_register_command(hass, ws_refresh_consumption_profile)
     # Phase 8 — Telemetry-Steuerung (D-32 / D-33)
     websocket_api.async_register_command(hass, ws_telemetry_get_status)
@@ -2297,6 +2298,60 @@ async def ws_get_awattar_sunny(
         await provider.async_fetch()
 
     connection.send_result(msg["id"], provider.status())
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "eeg_optimizer/get_energie_ag",
+        vol.Optional("refresh"): bool,
+        vol.Optional("abschlag"): vol.Any(float, int, str, None),
+    }
+)
+@websocket_api.async_response
+async def ws_get_energie_ag(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict,
+) -> None:
+    """Energie AG „Team Sonne Float": Referenzmarktwert, beide Varianten, Alter.
+
+    Beide Preisvarianten stehen in der Antwort, das Panel zeigt die gewählte —
+    auch eine noch nicht gespeicherte Auswahl. Dasselbe gilt für ``abschlag``:
+    Wird er übergeben, rechnet die Antwort damit, sodass die Vorschau schon
+    beim Tippen stimmt. ``refresh`` erzwingt einen Abruf („Jetzt holen").
+
+    Die Hochrechnung des laufenden Monats steht unter ``schaetzung``; sie
+    kommt aus dem OeMAG-Schätzer und ist nur da, wenn der gelaufen ist.
+    """
+    entry, data = _get_entry_data(hass, connection, msg)
+    if entry is None:
+        return
+
+    provider = data.get("energie_ag")
+    if provider is None:
+        connection.send_result(
+            msg["id"],
+            {"float": None, "loyal_float": None, "fehler": "Anbieter nicht geladen"},
+        )
+        return
+
+    if msg.get("refresh"):
+        await provider.async_fetch(force=True)
+        # Die Hochrechnung teilt sich den OeMAG-Schätzer — „Jetzt holen" soll
+        # auch sie auffrischen, sonst bleibt die Vorschau leer.
+        schaetzer = data.get("oemag_schaetzung")
+        if schaetzer is not None:
+            try:
+                await schaetzer.async_fetch()
+            except Exception:  # noqa: BLE001 — der Monatswert steht trotzdem
+                _LOGGER.debug("OeMAG-Hochrechnung: Abruf fehlgeschlagen", exc_info=True)
+    elif not provider.hat_daten():
+        await provider.async_fetch()
+
+    abschlag = msg.get("abschlag")
+    if abschlag is None:
+        abschlag = (data.get("config") or {}).get("energie_ag_abschlag")
+    connection.send_result(msg["id"], provider.status(abschlag))
 
 
 def _consumption_status_payload(coordinator) -> dict:

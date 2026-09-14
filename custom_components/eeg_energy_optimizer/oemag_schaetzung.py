@@ -268,6 +268,26 @@ class OemagSchaetzer:
             return None
         return self._preis
 
+    @property
+    def roh(self) -> float | None:
+        """Der ungekappte Monatsmittelwert in €/kWh, sonst None.
+
+        Das ist der Referenzmarktwert Photovoltaik nach § 13 EAG: derselbe
+        mengengewichtete Mittelwert, den die E-Control im Folgemonat
+        veröffentlicht, nur hier schon für den laufenden Monat gerechnet —
+        vor Korridor und Ausgleichsenergie, die allein zum OeMAG-Tarif
+        gehören. ``energie_ag.py`` rechnet damit weiter.
+
+        Wie ``preis`` nur für den laufenden Monat gültig: Eine Hochrechnung
+        aus einem anderen Monat sagt über diesen nichts.
+        """
+        if self._roh is None or self._geholt is None:
+            return None
+        jetzt = _now_local()
+        if (self._jahr, self._monat) != (jetzt.year, jetzt.month):
+            return None
+        return self._roh
+
     def status(self) -> dict[str, Any]:
         """Für die Anzeige: Wert, Herleitung, Datenstand, Fehler."""
         alter_min = None

@@ -87,8 +87,29 @@ class _Oemag:
         self.preis = preis
 
 
+class _EnergieAg:
+    """Attrappe des Energie-AG-Anbieters.
+
+    Variante und Abschlag gehen bei jeder Abfrage mit — genau wie beim echten
+    Anbieter, damit der Test bemerkt, wenn schedule.py sie nicht weiterreicht.
+    """
+
+    def __init__(self, preis, geschaetzt=None):
+        self._preis = preis
+        self._geschaetzt = geschaetzt
+        self.gefragt = []
+
+    def preis_fuer(self, variante, abschlag=None):
+        self.gefragt.append(("veroeffentlicht", variante, abschlag))
+        return self._preis
+
+    def preis_geschaetzt(self, variante, abschlag=None):
+        self.gefragt.append(("schaetzung", variante, abschlag))
+        return self._geschaetzt
+
+
 def _hass(config, peakshare=None, oemag=None, oemag_schaetzung=None,
-          awattar_sunny=None):
+          awattar_sunny=None, energie_ag=None):
     hass = MagicMock()
     hass.data = {
         sched.DOMAIN: {
@@ -100,6 +121,7 @@ def _hass(config, peakshare=None, oemag=None, oemag_schaetzung=None,
                 "oemag": oemag,
                 "oemag_schaetzung": oemag_schaetzung,
                 "awattar_sunny": awattar_sunny,
+                "energie_ag": energie_ag,
             }
         }
     }
@@ -117,8 +139,9 @@ def _hass(config, peakshare=None, oemag=None, oemag_schaetzung=None,
 
 
 async def _collect(config, peakshare=None, oemag=None, oemag_schaetzung=None,
-                   awattar_sunny=None):
-    hass = _hass(config, peakshare, oemag, oemag_schaetzung, awattar_sunny)
+                   awattar_sunny=None, energie_ag=None):
+    hass = _hass(config, peakshare, oemag, oemag_schaetzung, awattar_sunny,
+                 energie_ag)
     with (
         patch.object(sched, "_now_local", return_value=NOW),
         patch.object(
@@ -540,3 +563,71 @@ async def test_peakshare_modus_bleibt_mit_quotenfeldern_unveraendert():
     um18 = [b for t, b in zip(inputs.timestamps, inputs.eeg_bonus) if t.hour == 18]
     assert um18 and all(b == pytest.approx(0.095 - 0.08989) for b in um18)
     assert all(b == 0.0 for t, b in zip(inputs.timestamps, inputs.eeg_bonus) if t.hour == 12)
+
+
+# ---------------------------------------------------------------------------
+# Basistarif der Energie AG: veröffentlichter Monat oder Hochrechnung
+#
+# Referenzmarktwert Photovoltaik § 13 EAG minus Abschlag. Dieselben zwei
+# Spielarten wie bei der OeMAG — und dieselbe Regel: kein Nachtsatz, und ohne
+# Wert gilt die Handeingabe.
+# ---------------------------------------------------------------------------
+
+
+async def test_energie_ag_ist_der_basistarif():
+    inputs, problem = await _collect(
+        {**BASE_CONFIG, "schedule_feedin_source": "energie_ag",
+         "schedule_feedin_price_night": 0.12},
+        energie_ag=_EnergieAg(0.0792),
+    )
+    assert problem is None
+    assert inputs.feedin_price == pytest.approx(0.0792)
+    # Ein Monatswert hat keine Tagesstruktur — auch hier kein Nachtsatz.
+    assert inputs.feedin_price_night is None
+
+
+async def test_energie_ag_variante_und_abschlag_gehen_mit():
+    """Beides wird je Abfrage übergeben, damit eine Änderung in den
+    Einstellungen sofort wirkt statt erst nach einem Neuaufbau."""
+    anbieter = _EnergieAg(0.0792)
+    await _collect(
+        {**BASE_CONFIG, "schedule_feedin_source": "energie_ag",
+         "energie_ag_variante": "loyal_float", "energie_ag_abschlag": 0.017},
+        energie_ag=anbieter,
+    )
+    assert anbieter.gefragt == [("veroeffentlicht", "loyal_float", 0.017)]
+
+
+async def test_energie_ag_hochrechnung_hat_vorrang():
+    """Quelle „energie_ag_estimate": der laufende Monat zählt, nicht der
+    zuletzt veröffentlichte."""
+    inputs, _ = await _collect(
+        {**BASE_CONFIG, "schedule_feedin_source": "energie_ag_estimate"},
+        energie_ag=_EnergieAg(0.0792, geschaetzt=0.0730),
+    )
+    assert inputs.feedin_price == pytest.approx(0.0730)
+
+
+async def test_energie_ag_hochrechnung_faellt_zurueck():
+    """Ohne Hochrechnung (noch nicht gerechnet, API aus, Monatswechsel) gilt
+    der veröffentlichte Monat."""
+    inputs, _ = await _collect(
+        {**BASE_CONFIG, "schedule_feedin_source": "energie_ag_estimate"},
+        energie_ag=_EnergieAg(0.0792, geschaetzt=None),
+    )
+    assert inputs.feedin_price == pytest.approx(0.0792)
+
+
+async def test_energie_ag_ohne_jeden_wert_gilt_die_handeingabe():
+    inputs, _ = await _collect(
+        {**BASE_CONFIG, "schedule_feedin_source": "energie_ag"},
+        energie_ag=_EnergieAg(None),
+    )
+    assert inputs.feedin_price == pytest.approx(BASE_CONFIG["schedule_feedin_price"])
+
+    # Auch ein gar nicht geladener Anbieter darf den Fahrplan nicht anhalten.
+    inputs, problem = await _collect(
+        {**BASE_CONFIG, "schedule_feedin_source": "energie_ag"}, energie_ag=None,
+    )
+    assert problem is None
+    assert inputs.feedin_price == pytest.approx(BASE_CONFIG["schedule_feedin_price"])

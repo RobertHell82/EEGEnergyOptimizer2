@@ -241,6 +241,10 @@ const WIZARD_DEFAULTS = {
   // aWATTar SUNNY (fester Monatstarif): welche Preisspalte gilt — Verträge
   // bis zum Stichtag 25.02.2026 („alt") oder danach („neu").
   awattar_sunny_vertrag: "neu",
+  // Energie AG: Preisvariante und Abschlag (VPI-wertgesichert, deshalb
+  // einstellbar). Leer heisst: die Vorgabe des Preisblatts, 1,5 ct.
+  energie_ag_variante: "float",
+  energie_ag_abschlag: "",
   // Woher der Fahrplan weiß, wie viel die Gemeinschaft aufnimmt: aus der
   // PeakShare-Prognose (Vorgabe) oder aus einer festen Abnahmequote je
   // Gemeinschaft — für Mitglieder, deren Gemeinschaft kein PeakShare hat.
@@ -737,6 +741,10 @@ class EegOptimizerPanel extends HTMLElement {
     this._sunnyStatus = null;
     this._sunnyBusy = false;
     this._sunnyRequested = false;
+    // Energie AG (Team Sonne Float), gleiche Mechanik.
+    this._energieAgStatus = null;
+    this._energieAgBusy = false;
+    this._energieAgRequested = false;
     this._peakshareCommunitiesCache = [];
     this._peakshareCommunitiesLoading = false;
     // Community-Statistik (Phase 8: Telemetrie-Opt-In)
@@ -1028,10 +1036,13 @@ class EegOptimizerPanel extends HTMLElement {
               if (target.value === "oemag" || target.value === "oemag_estimate") this._ensureOemagTarif();
               if (target.value === "spot") this._ensureSpotStatus();
               if (target.value === "awattar_sunny") this._ensureSunnyStatus();
+              if (target.value === "energie_ag" || target.value === "energie_ag_estimate") this._ensureEnergieAgStatus();
               this._render();
             }
             // Die Vertragsvariante blendet den angezeigten SUNNY-Wert um.
             if (realField === "awattar_sunny_vertrag") this._render();
+            // Dasselbe fuer die Energie-AG-Variante (Mindestverguetung).
+            if (realField === "energie_ag_variante") this._render();
             // Die Bedarfsquelle tauscht die PeakShare-Auswahl gegen Namens-
             // und Quotenfelder.
             if (realField === "eeg_demand_source") this._render();
@@ -1073,6 +1084,7 @@ class EegOptimizerPanel extends HTMLElement {
             if (target.value === "oemag" || target.value === "oemag_estimate") this._ensureOemagTarif();
             if (target.value === "spot") this._ensureSpotStatus();
             if (target.value === "awattar_sunny") this._ensureSunnyStatus();
+            if (target.value === "energie_ag" || target.value === "energie_ag_estimate") this._ensureEnergieAgStatus();
             this._saveWizardProgress();
             this._render();
           } else if (
@@ -1276,6 +1288,46 @@ class EegOptimizerPanel extends HTMLElement {
       this._sunnyStatus = { neu: null, alt: null, fehler: e?.message || String(e) };
     } finally {
       this._sunnyBusy = false;
+      this._render();
+    }
+  }
+
+  // Energie AG „Team Sonne Float": dieselbe Mechanik. Der Abschlag geht mit,
+  // damit die Vorschau schon beim Tippen stimmt — er ist wertgesichert und
+  // deshalb einstellbar, und eine Vorschau mit dem gespeicherten statt dem
+  // getippten Abschlag zeigte einen Preis, den niemand bekommt.
+  _ensureEnergieAgStatus() {
+    if (this._energieAgStatus !== null || this._energieAgBusy || this._energieAgRequested) return;
+    this._energieAgRequested = true;
+    this._loadEnergieAgStatus();
+  }
+
+  async _loadEnergieAgStatus(refresh = false) {
+    if (this._energieAgBusy || !this._hass) {
+      if (!this._hass) this._energieAgRequested = false;
+      return;
+    }
+    this._energieAgBusy = true;
+    if (refresh) this._render();
+    try {
+      // Der getippte Abschlag hat Vorrang vor dem gespeicherten: Die
+      // Einstellungen tragen ihn in `_settingsData`, solange nicht
+      // gespeichert ist.
+      const abschlag = this._settingsData?.energie_ag_abschlag
+        ?? this._config?.energie_ag_abschlag;
+      this._energieAgStatus = await this._hass.callWS({
+        type: "eeg_optimizer/get_energie_ag",
+        ...(refresh ? { refresh: true } : {}),
+        ...(abschlag != null && abschlag !== "" && !isNaN(Number(abschlag))
+          ? { abschlag: Number(abschlag) } : {}),
+      });
+    } catch (e) {
+      console.warn("Energie-AG-Tarif nicht abrufbar:", e);
+      this._energieAgStatus = {
+        float: null, loyal_float: null, fehler: e?.message || String(e),
+      };
+    } finally {
+      this._energieAgBusy = false;
       this._render();
     }
   }
@@ -2050,6 +2102,9 @@ class EegOptimizerPanel extends HTMLElement {
         break;
       case "refresh-sunny":
         this._loadSunnyStatus(true);
+        break;
+      case "refresh-energie-ag":
+        this._loadEnergieAgStatus(true);
         break;
     }
   }
@@ -6110,6 +6165,8 @@ class EegOptimizerPanel extends HTMLElement {
     const quelleOemag = quelle === "oemag" || quelleOemagSchaetzung;
     const quelleSpot = quelle === "spot";
     const quelleSunny = quelle === "awattar_sunny";
+    const quelleEagSchaetzung = quelle === "energie_ag_estimate";
+    const quelleEag = quelle === "energie_ag" || quelleEagSchaetzung;
 
     // Ansicht mit OeMAG-/Spot-/SUNNY-Wert geöffnet (Wizard-Rücksprung,
     // gespeicherte Auswahl): den Tarif holen, statt „Noch kein Tarif
@@ -6117,6 +6174,7 @@ class EegOptimizerPanel extends HTMLElement {
     if (quelleOemag) this._ensureOemagTarif();
     if (quelleSpot) this._ensureSpotStatus();
     if (quelleSunny) this._ensureSunnyStatus();
+    if (quelleEag) this._ensureEnergieAgStatus();
 
     // Der OeMAG-Wert kommt aus einer HTML-Tabelle. Deshalb steht hier immer
     // dabei, aus welchem Monat er ist und wie alt der Abruf — bricht das
@@ -6270,6 +6328,73 @@ class EegOptimizerPanel extends HTMLElement {
         <div class="help-text">Fester Netto-Preis je Monat: EEX-Monatsfuture der ersten zehn Handelstage des Vormonats, gewichtet mit dem PV-Lastprofil, abzüglich 9 % Vermarktung. aWATTar veröffentlicht ihn spätestens am 1. des Monats; gelesen wird zweimal täglich aus der Preistabelle „Berechnungsmethodik &amp; Preise" von aWATTar, zur Not von der Tarifseite. Fehlt der laufende Monat noch, gilt der jüngste veröffentlichte. Antwortet keine Quelle, bleibt der zuletzt gelesene Wert stehen — und wenn es nie einen gab, der fest eingetragene.</div>
         <button class="btn-link" data-action="refresh-sunny" style="font-size:12px;padding:0" ${this._sunnyBusy ? "disabled" : ""}>Jetzt holen</button>
       </div>`;
+    // Energie AG „Team Sonne Float": Referenzmarktwert Photovoltaik § 13 EAG
+    // minus Abschlag. Der Referenzmarktwert kommt von der E-Control —
+    // derselben Stelle, auf die auch das Preisblatt der Energie AG verweist.
+    // Angezeigt wird die gewählte Variante, auch ungespeichert; die
+    // Mindestvergütung von 2 ct gibt es nur mit Stromliefervertrag.
+    const eagVariante = d.energie_ag_variante === "loyal_float" ? "loyal_float" : "float";
+    const ea = this._energieAgStatus;
+    const eaWert = ea ? ea[eagVariante] : null;
+    let eagZeile;
+    if (this._energieAgBusy) {
+      eagZeile = "Tarif wird geholt…";
+    } else if (eaWert && eaWert.preis != null) {
+      const alter = ea.alter_minuten == null
+        ? ""
+        : ea.alter_minuten < 60
+          ? `, geholt vor ${ea.alter_minuten} min`
+          : `, geholt vor ${Math.round(ea.alter_minuten / 60)} h`;
+      const stand = eaWert.monat
+        ? ` (Stand ${monate[eaWert.monat] || eaWert.monat}${eaWert.jahr ? " " + eaWert.jahr : ""})`
+        : "";
+      const referenz = ea.referenzwert != null
+        ? ` — Referenzmarktwert ${fmtDe(ea.referenzwert * 100, 2)} ct abzüglich ${fmtDe((ea.abschlag ?? 0.015) * 100, 2)} ct`
+        : "";
+      eagZeile = `<strong>${fmtDe(eaWert.preis * 100, 3)} ct/kWh</strong>${stand}${referenz}${alter}`
+        + (ea.fehler ? ` — letzter Abruf fehlgeschlagen: ${this._escapeHtml(ea.fehler)}` : "");
+    } else if (ea && ea.fehler) {
+      eagZeile = `Kein Tarif gelesen (${this._escapeHtml(ea.fehler)}) — es gilt der fest eingetragene Wert.`;
+    } else {
+      eagZeile = "Noch kein Tarif geholt.";
+    }
+    // Hochrechnung des laufenden Monats: derselbe Rohwert wie bei der
+    // OeMAG-Schätzung, nur ohne Korridor und ohne Ausgleichsenergie.
+    let eagSchaetzZeile = "";
+    if (quelleEagSchaetzung) {
+      const sch = ea?.schaetzung;
+      if (this._energieAgBusy) {
+        eagSchaetzZeile = "Hochrechnung läuft…";
+      } else if (sch && sch[eagVariante] != null) {
+        eagSchaetzZeile = `<strong>${fmtDe(sch[eagVariante] * 100, 3)} ct/kWh</strong>`
+          + ` — hochgerechneter Referenzmarktwert ${fmtDe(sch.referenzwert * 100, 2)} ct`;
+      } else {
+        eagSchaetzZeile = "Noch keine Hochrechnung — es gilt der zuletzt veröffentlichte Monat.";
+      }
+    }
+    const eagBlock = `
+      <div class="field-group">
+        <label>Preisvariante</label>
+        <select data-field="${prefix}energie_ag_variante">
+          <option value="float" ${eagVariante === "float" ? "selected" : ""}>Team Sonne Float</option>
+          <option value="loyal_float" ${eagVariante === "loyal_float" ? "selected" : ""}>Team Sonne Loyal Float (mind. 2 ct)</option>
+        </select>
+        <div class="help-text">Die Mindestvergütung von 2 ct/kWh gilt nur mit aufrechtem Stromliefervertrag bei der Energie AG Vertrieb. Ohne ihn gilt „Team Sonne Float": derselbe Preis, aber ohne Untergrenze — er sinkt nie unter 0 ct. Im April 2026 war das der ganze Unterschied (0,20 gegen 2,00 ct).</div>
+      </div>
+      <div class="field-group">
+        <label>Abschlag (ct/kWh)</label>
+        <input type="number" data-field="${prefix}energie_ag_abschlag" data-unit="ct"
+               value="${Number(d.energie_ag_abschlag) > 0 ? ctAus(d.energie_ag_abschlag) : ""}"
+               min="0" max="20" step="0.1" placeholder="1,5 — laut Preisblatt">
+        <div class="help-text">Was die Energie AG vom Referenzmarktwert abzieht. Laut Preisblatt 1,5 ct/kWh, aber VPI-wertgesichert — steigt der Wert, trägst du ihn hier ein. Leer heißt 1,5 ct.</div>
+      </div>
+      <div class="field-group">
+        <label>Energie AG — Einspeisevergütung</label>
+        <div class="help-text" style="font-size:13px;color:var(--primary-text-color)">${eagZeile}</div>
+        ${quelleEagSchaetzung ? `<div class="help-text" style="font-size:13px;color:var(--primary-text-color);margin-top:4px">Laufender Monat: ${eagSchaetzZeile}</div>` : ""}
+        <div class="help-text">Die Energie AG rechnet den Preis für jeden Monat im Nachhinein: Referenzmarktwert Photovoltaik nach § 13 EAG, abzüglich des Abschlags. Der Referenzmarktwert ist der mit der österreichischen PV-Erzeugung gewichtete Mittelwert der Börsenpreise des Monats; veröffentlicht wird er von der E-Control, auf die auch das Preisblatt verweist — gelesen wird zweimal täglich von dort.${quelleEagSchaetzung ? " Weil ein Monat erst Anfang des Folgemonats erscheint, rechnet diese Auswahl den laufenden Monat aus Börsenpreis und PV-Erzeugung hoch und fällt auf den veröffentlichten zurück, solange sie das nicht kann." : " Ein Monat erscheint erst Anfang des Folgemonats — bis dahin gilt der davor. Wer stattdessen mit dem laufenden Monat rechnen will, wählt oben die Hochrechnung."} Antwortet die Quelle nicht, bleibt der zuletzt gelesene Wert stehen.</div>
+        <button class="btn-link" data-action="refresh-energie-ag" style="font-size:12px;padding:0" ${this._energieAgBusy ? "disabled" : ""}>Jetzt holen</button>
+      </div>`;
     return `
       <div class="field-group">
         <label>Standardvergütung — Quelle *</label>
@@ -6279,10 +6404,12 @@ class EegOptimizerPanel extends HTMLElement {
           <option value="oemag_estimate" ${quelleOemagSchaetzung ? "selected" : ""}>OeMAG-Einspeisetarif (laufender Monat, hochgerechnet)</option>
           <option value="spot" ${quelleSpot ? "selected" : ""}>Spotpreis der Strombörse (stündlich, z. B. aWATTar SUNNY Spot 60min)</option>
           <option value="awattar_sunny" ${quelleSunny ? "selected" : ""}>aWATTar SUNNY (fester Monatstarif)</option>
+          <option value="energie_ag" ${quelle === "energie_ag" ? "selected" : ""}>Energie AG Team Sonne Float (zuletzt veröffentlichter Monat)</option>
+          <option value="energie_ag_estimate" ${quelleEagSchaetzung ? "selected" : ""}>Energie AG Team Sonne Float (laufender Monat, hochgerechnet)</option>
         </select>
         <div class="help-text">Was du bekommst, wenn die Energie nicht in einer Gemeinschaft landet. Der Fahrplan hält diesen Wert gegen den Bezugspreis und gegen die Vergütung der Gemeinschaften.</div>
       </div>
-      ${quelleOemag ? oemagBlock : quelleSpot ? spotBlock : quelleSunny ? sunnyBlock : `
+      ${quelleOemag ? oemagBlock : quelleSpot ? spotBlock : quelleSunny ? sunnyBlock : quelleEag ? eagBlock : `
       <div style="display:flex;gap:12px;flex-wrap:wrap">
         <div class="field-group" style="flex:1;min-width:140px">
           <label>Einspeisevergütung Tag (ct/kWh) *</label>
@@ -6524,6 +6651,7 @@ class EegOptimizerPanel extends HTMLElement {
     if (gemOemag) this._ensureOemagTarif();
     if (gemQuelle === "spot") this._ensureSpotStatus();
     if (gemQuelle === "awattar_sunny") this._ensureSunnyStatus();
+    if (gemQuelle === "energie_ag" || gemQuelle === "energie_ag_estimate") this._ensureEnergieAgStatus();
     // Basistarif für die Vorschau wie im Backend: OeMAG-Wert, bei Spot der
     // aktuelle Börsenpreis abzüglich Vermarkter-Abschlag (zeitvariabel — die
     // Vorschau nimmt den Augenblickswert als Näherung), sonst Handeingabe.
@@ -6535,6 +6663,14 @@ class EegOptimizerPanel extends HTMLElement {
     } else if (gemQuelle === "awattar_sunny") {
       const su = this._sunnyStatus?.[d.awattar_sunny_vertrag === "alt" ? "alt" : "neu"];
       if (su && su.preis != null) basis = Number(su.preis);
+    } else if (gemQuelle === "energie_ag" || gemQuelle === "energie_ag_estimate") {
+      // Wie im Backend: die Hochrechnung hat Vorrang, sonst der zuletzt
+      // veroeffentlichte Monat.
+      const v = d.energie_ag_variante === "loyal_float" ? "loyal_float" : "float";
+      const hoch = this._energieAgStatus?.schaetzung?.[v];
+      const eaw = this._energieAgStatus?.[v];
+      if (gemQuelle === "energie_ag_estimate" && hoch != null) basis = Number(hoch);
+      else if (eaw && eaw.preis != null) basis = Number(eaw.preis);
     } else if (gemQuelle === "spot" && this._spotStatus?.preis != null) {
       // Cent- und Prozentabschlag wie im Backend (schedule.py): der
       // Prozentsatz geht vom Betrag des Börsenpreises ab.
@@ -6966,6 +7102,14 @@ class EegOptimizerPanel extends HTMLElement {
     const preis = (v, fallback) => `${fmtDe(ctAus(v ?? fallback), 2)} ct/kWh`;
     // aWATTar SUNNY: der Wert der gewählten Vertragsvariante, falls geholt.
     const sunnyWert = this._sunnyStatus?.[d.awattar_sunny_vertrag === "alt" ? "alt" : "neu"];
+    // Energie AG: der Wert der gewählten Preisvariante, bei der Hochrechnung
+    // deren Wert — genau das, womit der Fahrplan rechnet.
+    const eagVar = d.energie_ag_variante === "loyal_float" ? "loyal_float" : "float";
+    const eagQuelle = (d.schedule_feedin_source || "manual") === "energie_ag_estimate";
+    const eagHoch = this._energieAgStatus?.schaetzung?.[eagVar];
+    const eagWert = eagQuelle && eagHoch != null
+      ? eagHoch
+      : this._energieAgStatus?.[eagVar]?.preis;
 
     return `
       <p style="margin-bottom:16px;color:var(--secondary-text-color)">
@@ -7041,6 +7185,10 @@ class EegOptimizerPanel extends HTMLElement {
           ? (sunnyWert && sunnyWert.preis != null
             ? `aWATTar SUNNY — ${fmtDe(sunnyWert.preis * 100, 3)} ct/kWh${d.awattar_sunny_vertrag === "alt" ? " (Altvertrag)" : ""}`
             : "aWATTar SUNNY (noch nicht geholt)")
+          : ["energie_ag", "energie_ag_estimate"].includes(d.schedule_feedin_source || "manual")
+          ? (eagWert != null
+            ? `Energie AG ${eagVar === "loyal_float" ? "Loyal Float" : "Float"} — ${fmtDe(eagWert * 100, 3)} ct/kWh${eagQuelle ? " (laufender Monat, hochgerechnet)" : ""}`
+            : "Energie AG Team Sonne Float (noch nicht geholt)")
           : preis(d.schedule_feedin_price, 0.082))}
         ${(d.schedule_feedin_source || "manual") === "manual" && Number(d.schedule_feedin_price_night ?? 0) > 0
           ? row("Standardvergütung Nacht", `${preis(d.schedule_feedin_price_night, 0)} (${d.schedule_night_start || "20:00"}–${d.schedule_night_end || "06:00"})`)

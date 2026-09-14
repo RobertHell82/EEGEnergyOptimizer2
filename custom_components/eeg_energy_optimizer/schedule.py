@@ -87,14 +87,25 @@ CONF_SCHEDULE_FEEDIN_PRICE = "schedule_feedin_price"
 CONF_SCHEDULE_FEEDIN_PRICE_NIGHT = "schedule_feedin_price_night"
 # Woher der Basistarif kommt: Handeingabe, OeMAG (oemag.py — der zuletzt
 # veröffentlichte Monat oder die Hochrechnung des laufenden Monats aus
-# oemag_schaetzung.py), die Strombörse (spot.py, aWATTar-API) oder der feste
-# Monatstarif aWATTar SUNNY (awattar_sunny.py).
+# oemag_schaetzung.py), die Strombörse (spot.py, aWATTar-API), der feste
+# Monatstarif aWATTar SUNNY (awattar_sunny.py) oder die Energie AG
+# (energie_ag.py — ebenfalls in zwei Spielarten, veröffentlicht und
+# hochgerechnet).
 CONF_SCHEDULE_FEEDIN_SOURCE = "schedule_feedin_source"
 FEEDIN_SOURCE_OEMAG = "oemag"
 FEEDIN_SOURCE_OEMAG_ESTIMATE = "oemag_estimate"
 FEEDIN_SOURCE_SPOT = "spot"
 FEEDIN_SOURCE_AWATTAR_SUNNY = "awattar_sunny"
+FEEDIN_SOURCE_ENERGIE_AG = "energie_ag"
+FEEDIN_SOURCE_ENERGIE_AG_ESTIMATE = "energie_ag_estimate"
 DEFAULT_SCHEDULE_FEEDIN_SOURCE = "manual"
+# Energie AG „Team Sonne Float": Preisvariante und Abschlag. Die Variante
+# entscheidet über die Mindestvergütung von 2 ct (nur mit Stromliefervertrag
+# bei der Energie AG Vertrieb), der Abschlag ist VPI-wertgesichert und
+# deshalb einstellbar statt fest. Siehe energie_ag.py.
+CONF_ENERGIE_AG_VARIANTE = "energie_ag_variante"
+DEFAULT_ENERGIE_AG_VARIANTE = "float"
+CONF_ENERGIE_AG_ABSCHLAG = "energie_ag_abschlag"
 # aWATTar SUNNY führt seit dem 25.02.2026 zwei Preisspalten — Verträge bis
 # zu diesem Tag („alt") und danach („neu"). Welche gilt, sagt das
 # Vertragsdatum des Nutzers; siehe awattar_sunny.py.
@@ -1490,6 +1501,38 @@ async def async_collect_inputs(
         else:
             _LOGGER.debug(
                 "aWATTar-SUNNY-Tarif nicht verfügbar, es gilt die Handeingabe (%.5f €/kWh)",
+                feedin_tag,
+            )
+
+    # Energie AG „Team Sonne Float" (energie_ag.py): Referenzmarktwert
+    # Photovoltaik § 13 EAG minus Abschlag — wie die OeMAG ein Monatswert
+    # ohne Tagesstruktur und ohne Nachtsatz. Variante und Abschlag kommen bei
+    # jeder Abfrage aus der Konfiguration, damit eine Änderung in den
+    # Einstellungen sofort wirkt. Zwei Spielarten wie bei der OeMAG: der
+    # zuletzt VERÖFFENTLICHTE Monat oder die HOCHRECHNUNG des laufenden
+    # (derselbe Schätzer, dessen Rohwert genau dieser Referenzmarktwert ist).
+    if quelle_basis in (FEEDIN_SOURCE_ENERGIE_AG, FEEDIN_SOURCE_ENERGIE_AG_ESTIMATE):
+        feedin_nacht = None
+        energie_ag = data.get("energie_ag")
+        variante = str(
+            config.get(CONF_ENERGIE_AG_VARIANTE) or DEFAULT_ENERGIE_AG_VARIANTE
+        ).lower()
+        abschlag = config.get(CONF_ENERGIE_AG_ABSCHLAG)
+        eag_preis = None
+        if quelle_basis == FEEDIN_SOURCE_ENERGIE_AG_ESTIMATE and energie_ag is not None:
+            eag_preis = energie_ag.preis_geschaetzt(variante, abschlag)
+            if eag_preis is None:
+                _LOGGER.debug(
+                    "Energie-AG-Hochrechnung nicht verfügbar, es gilt der "
+                    "veröffentlichte Monat"
+                )
+        if eag_preis is None and energie_ag is not None:
+            eag_preis = energie_ag.preis_fuer(variante, abschlag)
+        if eag_preis is not None:
+            feedin_tag = float(eag_preis)
+        else:
+            _LOGGER.debug(
+                "Energie-AG-Tarif nicht verfügbar, es gilt die Handeingabe (%.5f €/kWh)",
                 feedin_tag,
             )
 

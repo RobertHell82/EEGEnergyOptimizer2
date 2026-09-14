@@ -1394,6 +1394,24 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if str(config.get("schedule_feedin_source") or "manual").lower() == "awattar_sunny":
         hass.async_create_task(awattar_sunny_provider.async_fetch())
 
+    # Energie AG „Team Sonne Float" (energie_ag.py): der Referenzmarktwert
+    # der E-Control, aus dem die Energie AG ihren Monatspreis rechnet.
+    # Bekommt den Schätzer mit — dessen Rohwert IST derselbe
+    # Referenzmarktwert, nur für den laufenden Monat hochgerechnet, und die
+    # Hochrechnung braucht deshalb keinen eigenen Abruf. Wie die anderen
+    # Anbieter immer angelegt, von selbst geholt nur als gewählte Quelle.
+    from .energie_ag import EnergieAgProvider
+    energie_ag_provider = EnergieAgProvider(hass, entry.entry_id, oemag_schaetzer)
+    await energie_ag_provider.async_load()
+    hass.data[DOMAIN][entry.entry_id]["energie_ag"] = energie_ag_provider
+    _quelle_basis = str(config.get("schedule_feedin_source") or "manual").lower()
+    if _quelle_basis in ("energie_ag", "energie_ag_estimate"):
+        hass.async_create_task(energie_ag_provider.async_fetch())
+        # Die Hochrechnung teilt sich den OeMAG-Schätzer; ohne diesen Anstoß
+        # bliebe sie leer, weil er nur für „oemag_estimate" von selbst läuft.
+        if _quelle_basis == "energie_ag_estimate":
+            hass.async_create_task(oemag_schaetzer.async_fetch())
+
     # Netznutzungsentgelt je Netzbereich aus der Verordnung (netzentgelt.py,
     # RIS). Wie die Tarif-Anbieter vor dem Ausstieg angelegt, damit der
     # Assistent die Sätze zum gewählten Netzbereich zeigen kann; der erste
@@ -2063,8 +2081,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 # Netzentgelte: der Abruf selbst prüft die Tagesfrist, der
                 # halbstündige Takt ist nur der Anlass.
                 namen.append("netzentgelt")
-                # Börse, OeMAG-Hochrechnung und aWATTar SUNNY nur abfragen,
-                # wenn sie der gewählte Basistarif sind.
+                # Börse, Hochrechnungen und die festen Monatstarife nur
+                # abfragen, wenn sie der gewählte Basistarif sind.
                 quelle_basis = str(
                     cfg.get("schedule_feedin_source") or "manual"
                 ).lower()
@@ -2074,6 +2092,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     namen.append("oemag_schaetzung")
                 if quelle_basis == "awattar_sunny":
                     namen.append("awattar_sunny")
+                if quelle_basis in ("energie_ag", "energie_ag_estimate"):
+                    namen.append("energie_ag")
+                    # Die Energie-AG-Hochrechnung rechnet mit dem Rohwert des
+                    # OeMAG-Schätzers weiter — derselbe Abruf, zwei Tarife.
+                    if quelle_basis == "energie_ag_estimate":
+                        namen.append("oemag_schaetzung")
                 for name in namen:
                     quelle = data.get(name)
                     if quelle is None:
