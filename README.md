@@ -11,7 +11,7 @@ HACS-kompatible Home Assistant Integration für vorausschauendes Batteriemanagem
 - **Fahrplan-Steuerung** — setzt den Plan alle 30 Sekunden am Wechselrichter durch: Ladelimit und erzwungene Entladung, nachgeführt an den Messwerten, mit Not-Aus und Failsafe
 - **Einspeisegrenze** — plant um die Exportgrenze des Netzbetreibers herum und hebt das Ladelimit an, wenn die Einspeisung trotzdem an der Grenze klebt
 - **PeakShare-Integration** — die Bedarfsprognose deiner EEG-Community wird zum Auf- bzw. Abschlag auf den Basistarif und geht so direkt in den Fahrplan ein; im Dashboard ist die Bedarfskurve sichtbar
-- **Heizstab** (Beta) — ein Fronius Ohmpilot als zweite Senke: Der Optimierer plant die Wärme mit, wenn sie mehr bringt als die Einspeisung, und die Steuerung führt den Heizstab dem Plan nach. Statt abgeregelt zu werden, geht der Überschuss in den Puffer
+- **Heizstab** (Beta) — ein Fronius Ohmpilot als zweite Senke: Der Optimierer plant die Wärme mit, wenn sie mehr bringt als die Einspeisung, und die Steuerung führt den Heizstab dem Plan nach. Statt abgeregelt zu werden, geht der Überschuss in den Puffer — aber nur echter PV-Überschuss, nie Strom aus der Batterie
 - **Wallbox** (Beta) — eine bidirektionale Ambibox als dritte Senke, mit Ladezustand und Ladeleistung des Fahrzeugs im Dashboard
 - **PV-Prognose** — Solcast Solar und Forecast.Solar Unterstützung mit 7-Tage-Ausblick
 - **Verbrauchsprofil** — lernt stündliche Verbrauchsmuster pro Wochentag aus den HA-Recorder-Daten

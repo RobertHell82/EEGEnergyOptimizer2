@@ -1421,3 +1421,28 @@ async def test_mindesttemperatur_ohne_netzbezug_nimmt_einspeisung_unter_der_gren
     assert "Vorrang vor der Einspeisung" in hz.grund
     # Das Ladelimit der Batterie folgt weiter dem Plan.
     mock_inverter.async_set_charge_limit.assert_awaited_once_with(1.0)
+
+
+async def test_heizstab_plan_nicht_aus_der_batterie(mock_hass, mock_inverter):
+    """Slot plant Wärme UND Entladung: die Wärme gilt als nicht geplant.
+
+    Grünbach, 14.09.2026: 3,38 kW Wärme neben 2,02 kW Entladung — netto
+    wanderte gespeicherte Energie in den Puffer. Das Modell hat dafür jetzt
+    eine Schranke (opt_highs.py); dies ist die Sicherung dahinter.
+    """
+    cfg = _cfg_heizstab()
+    ex, hz, _ = _make_executor_mit_heizstab(mock_hass, mock_inverter, cfg)
+    entladung = _state(_slot(0, battery_p=2.02, heizstab=3.38))
+    assert ex._heizstab_plan_kw(entladung, NOW) == 0.0
+    # Wärme neben Ladung oder ohne Batteriebewegung bleibt die Vorgabe.
+    assert ex._heizstab_plan_kw(
+        _state(_slot(0, battery_p=-1.0, heizstab=3.38)), NOW
+    ) == pytest.approx(3.38)
+    assert ex._heizstab_plan_kw(
+        _state(_slot(0, battery_p=0.0, heizstab=3.38)), NOW
+    ) == pytest.approx(3.38)
+    # Im Lauf greift ohne Planvorgabe die Regel an der Einspeisegrenze:
+    # 1,5 kW Einspeisung liegen unter der Grenze, der Heizstab bleibt aus.
+    with _messwerte(export=1.5, haus=0.5, pv=4.0):
+        await ex.async_guard_cycle(entladung, MODE_EIN, now=NOW)
+    assert hz.sollwert_kw == 0.0

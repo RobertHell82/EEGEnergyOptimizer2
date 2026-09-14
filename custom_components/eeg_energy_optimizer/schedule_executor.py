@@ -708,9 +708,26 @@ class ScheduleExecutor:
         if slot is None:
             return 0.0
         try:
-            return max(0.0, float(slot.get("heizstab") or 0.0))
+            waerme = max(0.0, float(slot.get("heizstab") or 0.0))
+            battery_p = float(slot.get("battery_p") or 0.0)
         except (TypeError, ValueError):
             return 0.0
+        # Die Batterie speist den Heizstab nie. Das Modell hat dafür eine
+        # Schranke (opt_highs.py: Wärme nur aus dem PV-Überschuss über dem
+        # Hausverbrauch); dies ist die zweite Sicherung dahinter — für einen
+        # Plan aus einer älteren Version oder einen, der die Schranke sonst
+        # umgeht. Sieht der Slot Wärme UND Entladung vor (battery_p positiv =
+        # entladen), gilt die Wärme als nicht geplant: Der Heizstab bekommt
+        # dann nur, was die Regel an der Einspeisegrenze als echten Überschuss
+        # misst. Grünbach, 14.09.2026: 3,38 kW Wärme neben 2,02 kW Entladung.
+        if waerme > 0.0 and battery_p > _EPS_KW:
+            _LOGGER.debug(
+                "Heizstab: Slot plant %.2f kW Wärme neben %.2f kW Entladung — "
+                "Wärme aus der Batterie wird nicht ausgeführt",
+                waerme, battery_p,
+            )
+            return 0.0
+        return waerme
 
     async def _heizstab_schritt(
         self,

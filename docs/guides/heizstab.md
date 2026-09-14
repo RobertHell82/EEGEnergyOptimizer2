@@ -81,6 +81,9 @@ Alle Felder stehen in den **Einstellungen** im eigenen Tab **Heizstab**. Im Einr
 > **Optimierung aus heißt Heizstab aus.** Es gibt keinen Notbetrieb, der den Ohmpilot ohne Optimierung weiterregelt. Wer den Ohmpilot ohne Optimizer betreiben will, koppelt ihn wieder an den Gen24.
 
 > [!NOTE]
+> **Die Batterie speist den Heizstab nie.** Der Heizstab bekommt nur, was die PV über den Hausverbrauch hinaus liefert — nie Strom aus dem Speicher. Das gilt auch dann, wenn die Rechnung anders aussieht: Der Optimierungsplan bewertet eine gespeicherte Kilowattstunde nur mit dem, was sie im Plan noch bringt, und an einem Tag mit hoher PV-Prognose für morgen ist das nur die Einspeisevergütung — weniger als der Wärmewert. Trifft die Prognose nicht, fehlt die Energie abends und muss zum vollen Bezugspreis gekauft werden. Diese Wette geht der Optimizer nicht ein. Ohne PV (nachts) bleibt der Heizstab aus, auch bei voller Batterie.
+
+> [!NOTE]
 > **Wenn das Gerät der Vorgabe nicht folgt, sagt es die Statuskarte** — in beide Richtungen.
 >
 > Zieht der Heizstab länger als drei Minuten deutlich **mehr**, als vorgegeben ist, schreibt jemand anderes auf denselben Ohmpilot. Solange das so ist, greift weder die Maximaltemperatur noch der Schutz davor, Batteriestrom zu verheizen — der Optimizer setzt seinen Sollwert zwar weiter alle 20 Sekunden, wird aber überschrieben.

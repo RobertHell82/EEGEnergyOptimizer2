@@ -364,7 +364,7 @@ the event loop is long enough for HA to flag a blocking call.
   2.1.1-dev2 it is a **valued LP variable** (`heater_p` ≤ `discard_p` in
   `opt_highs.py`, objective += heat × `heizstab_waermewert`, capped per slot
   by `heizstab_max_kw` and over the horizon by `heizstab_budget_kwh` from
-  buffer volume × (max temperature − measured temperature)). With heat value
+  buffer volume × (max temperature − measured temperature)). **Hard bound since 2.1.1-dev25: `heater_p` ≤ PV production − house load/η per slot — the battery never feeds the heater.** Without it the LP fed the house from the battery and the heater from PV (Grünbach 14.09.2026: 3.38 kW heat next to 2.02 kW discharge), because it valued the stored kWh only at the feed-in price. The executor mirrors this: planned heat in a slot that also plans discharge is not executed (`_heizstab_plan_kw`). With heat value
   > feed-in price the model deliberately curtails feed-in in favour of the
   buffer; without volume or heat value it falls back to "heater takes what
   is curtailed anyway" (`_heizstab_plan_kw` from the `discard` column).

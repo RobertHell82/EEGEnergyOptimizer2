@@ -136,8 +136,26 @@ def opt(c, start_time):
 		# die Obergrenze in DC umrechnen. Mehr als abgeregelt wird, kann er
 		# ohnehin nicht bekommen (Nebenbedingung unten).
 		heater_ub_dc = heizstab_max_kw / c.ac_efficiency
+		# Wärme NUR aus echtem Überschuss: was die PV über den Hausverbrauch
+		# hinaus liefert. Ohne diese Schranke deckt das Modell den
+		# Hausverbrauch aus der Batterie und schickt dafür die PV in den
+		# Puffer — netto wandert gespeicherte Energie in die Wärme. Formal
+		# ist das kein Batteriestrom im Heizstab, wirtschaftlich schon, und
+		# es ist eine schlechte Wette: Der Gewinn ist der Wärmewert über der
+		# Einspeisevergütung (Grünbach, 14.09.2026: +3,19 ct/kWh), der
+		# Verlust bei zu hoher PV-Prognose der Bezugspreis abzüglich
+		# Wärmewert (−8,13 ct/kWh) — die Energie muss abends zurückgekauft
+		# werden. Das entscheidet ein Betreiber nicht je Tag neu, deshalb
+		# eine harte Schranke und keine Frage der Bewertung.
+		ueberschuss_dc = pd.Series(
+			index=parameters.i,
+			data=(
+				parameters.dc_production - parameters.consumption / c.ac_efficiency
+			).clip(lower=0.0).values,
+		)
 		heater_p = parameters.i.map(lambda i: Variable(
-			'heater_p' + i, lb = 0, ub = min(discard_p_ub[i], heater_ub_dc)))
+			'heater_p' + i, lb = 0,
+			ub = min(discard_p_ub[i], heater_ub_dc, ueberschuss_dc[i])))
 	else:
 		heater_p = pd.Series(0.0, index=parameters.i.index)
 

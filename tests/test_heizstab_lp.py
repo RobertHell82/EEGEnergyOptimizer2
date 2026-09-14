@@ -251,3 +251,121 @@ def test_niedriger_waermewert_aendert_nichts_am_export():
     export_ohne = float(ohne["grid_p"].astype(float).clip(lower=0).sum())
     # Die Einspeisung darf nicht zugunsten der billigen Wärme aufgegeben werden.
     assert export_billig == pytest.approx(export_ohne, abs=1e-6)
+
+
+# ---------------------------------------------------------------------------
+# Die Batterie speist den Heizstab nie
+#
+# Gruenbach, 14.09.2026: Der Plan sah 3,38 kW Waerme UND 2,02 kW
+# Batterieentladung im selben Slot vor — der Ladestand fiel darin von 82,7 %
+# auf 51,5 %, waehrend der Heizstab lief. Formal ging die PV in den Puffer
+# und die Batterie deckte das Haus; netto wanderte gespeicherte Energie in
+# die Waerme. Das Modell rechnete sich das schoen, weil es die gespeicherte
+# kWh nur mit der Einspeiseverguetung bewertete (8,81 ct gegen 12 ct
+# Waermewert) — bei zu hoher PV-Prognose kostet dieselbe kWh abends aber den
+# vollen Bezugspreis (20,13 ct). Betreiberentscheid: niemals.
+#
+# Das Szenario ist der Anlage nachgebaut (Batterie fast voll, PV-Rest heute
+# klein, morgen viel, kleine Grundlast, Waermewert ueber der Einspeisung)
+# und wurde OHNE die Schranke gegengeprueft: dort entlaedt die Batterie beim
+# Heizen mit 1,89 kW, und die Waerme liegt 1,75 kW ueber dem Ueberschuss.
+# ---------------------------------------------------------------------------
+
+GB_START = pd.Timestamp("2026-09-14 15:00", tz=TZ)
+
+
+def _gb_index():
+    return pd.date_range(GB_START, periods=SLOTS, freq="15min")
+
+
+def _gb_pv():
+    idx = _gb_index()
+    h = idx.hour + idx.minute / 60
+    return pd.Series(9.0 * np.clip(np.sin((h - 6) / 14 * np.pi), 0, None) ** 1.3, index=idx)
+
+
+def _gb_load():
+    idx = _gb_index()
+    h = idx.hour + idx.minute / 60
+    return pd.Series(0.3 + 1.5 * np.exp(-(((h - 19.0) / 1.6) ** 2)), index=idx)
+
+
+class _GruenbachConfig(config_dummy.Config):
+    battery_capacity = 10.0
+    battery_power_limit = 5.0
+    ac_limit = 12.0
+    max_blackout_reserve = 0.0
+    battery_free = 1.7          # 83 % voll
+    heizstab_max_kw = 6.0
+    heizstab_waermewert = 0.12  # ueber der Einspeisung, unter dem Bezug
+    heizstab_budget_kwh = 20.0
+
+    def __init__(self) -> None:
+        super().__init__(time_res=TIME_RES)
+        self._pv = _gb_pv()
+        self._load = _gb_load()
+        self.forecast = type("F", (), {
+            "production": lambda s, t0: self._pv.loc[t0:],
+            "min_production": lambda s, t0: self._pv.loc[t0:] * 0.6,
+        })()
+
+    def consumption(self, start_time):
+        return self._load.loc[start_time:]
+
+    def feedin_limit(self, start_time):
+        return 4.0
+
+    def feedin_price(self, start_time):
+        return 0.0888
+
+    def consumption_price(self, start_time):
+        return 0.2013   # 12 ct Arbeitspreis + 8,13 ct Netz Linz
+
+
+def _gb_ueberschuss(table):
+    pv = _gb_pv().reindex(table.index).to_numpy(dtype=float)
+    last = _gb_load().reindex(table.index).to_numpy(dtype=float)
+    return np.clip(pv - last / AC_EFF, 0.0, None)
+
+
+def test_keine_batterieentladung_waehrend_geheizt_wird():
+    table = opt_highs.opt(_GruenbachConfig(), GB_START)
+    heater = np.asarray(table["heater"], dtype=float)
+    battery_p = np.asarray(table["battery_p"], dtype=float)   # positiv = entladen
+
+    assert heater.sum() > 0, "Der Test braucht Slots mit geplanter Waerme"
+    entladung = battery_p[heater > 1e-6]
+    assert (entladung <= 1e-6).all(), (
+        f"Waehrend geheizt wird, entlaedt die Batterie mit bis zu {entladung.max():.2f} kW"
+    )
+
+
+def test_waerme_nie_ueber_dem_ueberschuss_der_pv():
+    """Die Schranke selbst: PV minus Hausverbrauch ist die Obergrenze."""
+    table = opt_highs.opt(_GruenbachConfig(), GB_START)
+    heater = np.asarray(table["heater"], dtype=float)
+    zu_viel = heater - _gb_ueberschuss(table)
+    assert (zu_viel <= 1e-6).all(), (
+        f"Waerme liegt bis zu {zu_viel.max():.2f} kW ueber dem PV-Ueberschuss — "
+        "die Differenz kommt aus der Batterie"
+    )
+
+
+def test_ohne_pv_keine_waerme():
+    """Nachts ist jede Waerme zwangslaeufig Batterie- oder Netzstrom."""
+    table = opt_highs.opt(_GruenbachConfig(), GB_START)
+    heater = np.asarray(table["heater"], dtype=float)
+    pv = _gb_pv().reindex(table.index).to_numpy(dtype=float)
+    assert (heater[pv <= 1e-9] <= 1e-6).all()
+
+
+def test_heizstab_laeuft_bei_echtem_ueberschuss_weiter():
+    """Gegenprobe: Die Schranke darf den Heizstab nicht stilllegen.
+
+    Ohne Schranke plant dasselbe Szenario 38,5 kWh Waerme, mit ihr 35,1 —
+    der Unterschied ist genau der Anteil aus der Batterie. Der Rest muss
+    bleiben, sonst waere die Schranke zu streng.
+    """
+    table = opt_highs.opt(_GruenbachConfig(), GB_START)
+    waerme_kwh = float(np.asarray(table["heater"], dtype=float).sum()) * AC_EFF * P2E
+    assert waerme_kwh > 25.0, f"Nur {waerme_kwh:.1f} kWh Waerme — die Schranke ist zu streng"
