@@ -10,6 +10,13 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
+## [2.1.1-dev25] - 2026-09-14
+
+### Behoben
+
+- **Der Optimierungsplan schickte Batteriestrom in den Heizstab.** In Grünbach sah der Plan im laufenden Slot 3,38 kW Wärme neben 2,02 kW Batterieentladung vor; der Ladestand fiel darin von 82,7 % auf 51,5 %, während der Heizstab lief. Formal ging die PV in den Puffer und die Batterie deckte das Haus — netto wanderte gespeicherte Energie in die Wärme. Das Modell hielt das für ein Plus, weil es die gespeicherte Kilowattstunde nur mit der Einspeisevergütung bewertete (8,81 ct gegen 12 ct Wärmewert): Bei 71 kWh PV-Prognose für morgen war ihr aus Modellsicht nichts Besseres mehr zugedacht. Trifft die Prognose nicht, kostet dieselbe kWh abends den vollen Bezugspreis (20,13 ct) — 3 ct Chance gegen 8 ct Risiko. Der Heizstab bekommt jetzt im Plan höchstens, was die PV über den Hausverbrauch hinaus liefert; die Batterie speist ihn nie. Bei echtem Überschuss läuft er weiter wie bisher (im nachgestellten Szenario 35 statt 38,5 kWh Wärme — der Unterschied ist genau der Anteil aus der Batterie). Als zweite Sicherung führt die Steuerung geplante Wärme nicht aus, wenn derselbe Slot eine Entladung vorsieht.
+- **Dieser Plan legte den Heizstab zugleich komplett lahm.** Weil der Slot Entladung ohne Netzeinspeisung vorsah, griff die Steuerung nicht ein („Entladung nur für den Hausverbrauch"), und der Wechselrichter lud im Automatikmodus die Batterie mit dem ganzen Überschuss. Damit gab es keine Einspeisung mehr, der Heizstab-Regler sah Netzbezug und blieb bei 0 — „Fahrplan: 3.4 kW Wärme — Netzbezug — Heizstab aus". Mit der Schranke entsteht diese Kombination nicht mehr.
+
 ## [2.1.1-dev24] - 2026-09-14
 
 ### Hinzugefügt
