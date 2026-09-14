@@ -10,6 +10,23 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
+## [2.1.1-dev23] - 2026-09-14
+
+### Behoben
+
+- **Die Statuskarte zeigte Werte, die nie gleichzeitig galten.** PV, Batterie, Netz und Hausverbrauch werden gemeinsam alle 30 Sekunden berechnet, die Heizstab-Leistung dagegen alle 10 Sekunden per Push nachgereicht. In der Karte standen damit drei verschiedene Zeitstände nebeneinander, und die Bilanz ging nicht auf: An einer Anlage mit Heizstab in 72 % der Momente, in der Spitze um 5 kW — etwa PV 5,18 kW neben Batterie 1,77 + Netz 0,72 + Haus 0,00 + Heizstab 0,00 kW. Jeder einzelne Wert stimmte. Die Karte liest jetzt alle fünf Werte aus einem Messzeitpunkt (den Attributen des Hausverbrauch-Sensors, der sie in einem Zug liest).
+- **Ein Hausverbrauch von 0,00 kW konnte eine stumme Begrenzung sein.** Die Formel PV − Batterie − Netz − Heizstab wird auf 0 begrenzt, weil es keine negative Hauslast gibt. Passten die Messwerte nicht zusammen, stand dort eine glatte Null, die wie ein Messwert aussah. Jetzt weist der Sensor aus, dass die Bilanz nicht aufgeht, und die Karte kennzeichnet den Wert.
+- **Ein Mindest-Ladestand über 50 % wurde stumm gekappt.** Die Grenze soll nur verhindern, dass Boden und Deckel sich kreuzen, war aber auf den tiefstmöglichen Deckel (70 %) gerechnet und galt dann für jede Anlage. Wer bei Deckel 100 % einen Boden von 60 % einstellte, bekam 50 % — die Optimierung plante damit, die Grafik zeichnete sie, und das Eingabefeld zeigte weiter die eingetippten 60 %. Die Grenze richtet sich jetzt nach dem eingestellten Deckel (bei 100 % sind bis zu 80 % möglich), und das Feld zeigt wie das Maximum-Feld den wirksamen Wert samt seiner Obergrenze.
+- **Die Warnung „zweite Steuerung am Ohmpilot" erschien nie im Protokoll.** Sie hing an einem Vorher/Nachher-Vergleich rund um die Prüfung — die Flanke entsteht aber durch Zeitablauf, und beide Seiten fragten dieselbe, schon vorgerückte Uhr. Die Anzeige in der Statuskarte war davon nicht betroffen.
+
+### Geändert
+
+- **Der Heizstab-Sollwert geht alle 20 statt alle 30 Sekunden an den Ohmpilot** und wird zusätzlich sofort nachgeschrieben, wenn das Gerät 0 W meldet, obwohl ein Sollwert ansteht. Der Watchdog des Ohmpilot schaltet nach 50 Sekunden ab; bei 30 Sekunden Takt genügte dafür ein einziger ausgefallener Schreibvorgang, und Schreiben wie Lesen teilen sich denselben Modbus-Lock.
+
+### Hinzugefügt
+
+- **Meldung, wenn der Heizstab weniger liefert als vorgegeben.** Bisher wurde nur der umgekehrte Fall erkannt. An einer Anlage fiel die gemessene Leistung bei unverändertem Sollwert von 2,62 kW minutenlang auf 0 und schoss danach auf 3,2 kW — 70-mal an einem Vormittag, die längste Phase 13 Minuten, ohne Schreibfehler und ohne jede Meldung. Bleibt die Ist-Leistung länger als zwei Minuten deutlich unter dem Sollwert, sagt es die Statuskarte, und das Protokoll zählt mit, wie oft das seit dem Start passiert ist.
+
 ## [2.1.1-dev22] - 2026-09-13
 
 ### Behoben
