@@ -101,7 +101,7 @@ from ..const import (
     HEIZSTAB_SATT_TOLERANZ_KW,
     HEIZSTAB_STEP_KW,
     HEIZSTAB_TEMP_HYSTERESE_K,
-    WASSER_WH_PRO_LITER_KELVIN,
+    PUFFER_WH_PRO_LITER_KELVIN_EFFEKTIV,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -389,6 +389,12 @@ class HeizstabController:
         Temperatur messbar, Puffer bereits warm, oder eine zweite Wärmequelle
         heizt gerade. Der Fahrplan fällt dann auf das bisherige Verhalten
         zurück (der Heizstab bekommt, was abgeregelt wird).
+
+        Gerechnet wird mit der effektiven Wärmekapazität — Wasser plus
+        HEIZSTAB_WAERMEVERLUST_PCT Verlustaufschlag. Dieselbe Zahl treibt
+        die Temperaturprognose im Fahrplan (schedule.py), damit deren Kurve
+        genau dann die Maximaltemperatur erreicht, wenn dieses Budget
+        verheizt ist.
         """
         if not self.enabled or self.gesperrt:
             return 0.0
@@ -399,7 +405,7 @@ class HeizstabController:
         hub_k = self.maxtemp_c - temp
         if hub_k <= 0:
             return 0.0
-        return round(liter * hub_k * WASSER_WH_PRO_LITER_KELVIN / 1000.0, 3)
+        return round(liter * hub_k * PUFFER_WH_PRO_LITER_KELVIN_EFFEKTIV / 1000.0, 3)
 
     @property
     def waermewert(self) -> float:

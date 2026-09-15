@@ -300,6 +300,26 @@ DEFAULT_HEIZSTAB_PUFFER_LITER = 0.0
 # erwärmen einen Liter um ein Kelvin (4,182 kJ/(kg·K) ÷ 3,6 kJ/Wh).
 WASSER_WH_PRO_LITER_KELVIN = 1.163
 
+# Verlustaufschlag auf die Wärme, die der Heizstab einbringt: Verluste am
+# Heizstab selbst, Wärme, die nicht bis zum Fühler kommt, Schichtung. Ein
+# Puffer braucht damit rund ein Zehntel mehr Energie je Kelvin als die reine
+# Wasserrechnung sagt. Der Aufschlag wirkt an genau zwei Stellen aus derselben
+# Zahl — Pufferbudget (der Plan darf so viel mehr Wärme einplanen) und
+# Temperaturprognose (sie steigt entsprechend langsamer) —, damit die Kurve
+# genau dann die Maximaltemperatur erreicht, wenn das Budget verheizt ist.
+HEIZSTAB_WAERMEVERLUST_PCT = 10.0
+PUFFER_WH_PRO_LITER_KELVIN_EFFEKTIV = WASSER_WH_PRO_LITER_KELVIN * (
+    1.0 + HEIZSTAB_WAERMEVERLUST_PCT / 100.0
+)
+
+# Bereitschaftsverlust des Puffers an die Umgebung, NUR für die
+# Temperaturprognose im Fahrplan (das LP kennt keinen Wärmezustand): rund
+# 0,12 kW sind bei 600 Litern etwa 0,04 K je Viertelstunde, gut 4 K am Tag —
+# so fällt die Kurve über Nacht sichtbar ab, statt flach zu bleiben. Unter
+# die Umgebungstemperatur kühlt der Puffer dadurch nicht.
+PUFFER_BEREITSCHAFTSVERLUST_KW = 0.12
+PUFFER_UMGEBUNG_C = 20.0
+
 # Nachführung: klebt die Einspeisung an der Grenze, ist die wahre Höhe des
 # Überschusses unsichtbar (der Wechselrichter regelt bereits ab) — deshalb
 # in Schritten nach oben. Dieselben Bänder wie Guard 1 (GUARD_EXPORT_*).

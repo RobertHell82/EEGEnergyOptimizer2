@@ -907,10 +907,11 @@ def _budget_cfg(**over):
 
 
 def test_budget_aus_volumen_und_temperatur():
-    """1,163 Wh je Liter und Kelvin — 600 L von 45 auf 80 °C sind 24,4 kWh."""
+    """1,163 Wh je Liter und Kelvin plus 10 % Verlustaufschlag — 600 L von
+    45 auf 80 °C sind 24,4 kWh reine Wasserwärme, 26,9 kWh am Heizstab."""
     controller = HeizstabController(MagicMock(), _budget_cfg(), _treiber(temp=45.0))
     controller._treiber.last_temperature = 45.0
-    assert controller.puffer_budget_kwh == pytest.approx(24.423, abs=0.01)
+    assert controller.puffer_budget_kwh == pytest.approx(26.865, abs=0.01)
 
 
 def test_budget_schrumpft_mit_steigender_temperatur():

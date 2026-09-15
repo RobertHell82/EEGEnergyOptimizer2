@@ -3020,6 +3020,10 @@ class EegOptimizerPanel extends HTMLElement {
     put("planGrid", "fahrplan_netzleistung", "sensor.eeg_energy_optimizer_fahrplan_netzleistung");
     const soc = this._config?.battery_soc_sensor;
     if (soc) ids.soc = soc;
+    // Gemessene Puffertemperatur — neben der Prognose im Ladestandsfeld.
+    if (this._config?.heizstab_enabled) {
+      put("heiztemp", "heizstab_temperatur", "sensor.eeg_energy_optimizer_heizstab_temperatur");
+    }
     return ids;
   }
 
@@ -3146,6 +3150,7 @@ class EegOptimizerPanel extends HTMLElement {
         soc: mittel(e, "soc"),
         planBat,
         planGrid: mittel(e, "planGrid"),
+        heiztemp: mittel(e, "heiztemp"),
       });
     }
     return zeilen;
@@ -3181,6 +3186,7 @@ class EegOptimizerPanel extends HTMLElement {
           + zeile("#43a047", "Netz", d.igrid, d.pgrid)
           + zeile("#1e88e5", "Batterie", d.ibat, d.pbat)
           + zeile("#7cb342", "Ladestand", d.isoc, d.psoc)
+          + (d.ptemp != null ? zeile("#8e24aa", "Puffer \u00b0C", d.itemp ?? "---", d.ptemp) : "")
           + `</div>`
           + `<div style="margin-top:5px;color:var(--secondary-text-color);font-size:10.5px">kW bzw. %  &middot;  Netz + = Einspeisung, Batterie + = laden</div>`;
       } else {
@@ -3202,7 +3208,8 @@ class EegOptimizerPanel extends HTMLElement {
           + line("Netz", d.pgrid, "kW", "#43a047")
           + line("Batterie", batText, "", bat > 0 ? "#1e88e5" : "#ef6c00")
           + line("Ladestand", d.psoc, "%", "#7cb342")
-          + (d.pheiz != null ? line("Heizstab", d.pheiz, "kW", "#c62828") : "");
+          + (d.pheiz != null ? line("Heizstab", d.pheiz, "kW", "#c62828") : "")
+          + (d.ptemp != null ? line("Puffertemperatur", d.ptemp, "\u00b0C", "#8e24aa") : "");
       }
       if (d.preis != null) {
         tt.innerHTML +=
@@ -3318,6 +3325,11 @@ class EegOptimizerPanel extends HTMLElement {
     const heizstabKonfiguriert = !!this._config?.heizstab_enabled;
     const heizstabPlanKwh = slots.reduce((sum, s) => sum + (Number(s.heizstab) || 0), 0)
       * (Math.max(1, Number(d.time_res_min) || 15) / 60);
+    // Puffertemperatur: schedule.py rechnet sie aus der geplanten Wärme nach
+    // (kein Teil des LP). Gezeichnet im Ladestandsfeld — dessen Skala
+    // 0..100 % deckt sich mit 0..100 °C, es braucht keine zweite Achse.
+    const hatPufferTemp = slots.some(s => s.puffer_temp_c != null);
+    const pufferMaxC = Number(d.puffer_maxtemp_c) || 0;
     const histRange = this._schedHistRange || "off";
     const hist = (histRange !== "off" && this._schedHist?.range === histRange)
       ? this._schedHist : null;
@@ -3700,11 +3712,22 @@ class EegOptimizerPanel extends HTMLElement {
       socPath += `${socPath ? "L" : "M"}${x(slotT[i]).toFixed(1)},${ys(s.soc).toFixed(1)}`;
     });
     const socIstPath = hist ? histPath("soc", ys) : "";
+    let tempPath = "";
+    if (hatPufferTemp) {
+      slots.forEach((s, i) => {
+        if (s.puffer_temp_c == null) return;
+        tempPath += `${tempPath ? "L" : "M"}${x(slotT[i]).toFixed(1)},${ys(s.puffer_temp_c).toFixed(1)}`;
+      });
+    }
+    const tempIstPath = (hatPufferTemp && hist) ? histPath("heiztemp", ys) : "";
     const minSoc = Number(d.min_soc_pct ?? 0);
     // Kopfzeile des Ladestandsfeldes. Am Handy steht der Mindestwert hier mit
     // drin — als Beschriftung im Bild lag er quer ueber der Kurve.
     const socTitel = (hist ? "Ladestand (%) — Plan und Ist" : "Geplanter Ladestand (%)")
-      + (schmal && minSoc > 0 ? ` \u00b7 min. ${fmtDe(minSoc, 0)} %` : "");
+      + (schmal && minSoc > 0 ? ` \u00b7 min. ${fmtDe(minSoc, 0)} %` : "")
+      + (hatPufferTemp
+        ? (schmal ? " \u00b7 Puffer \u00b0C" : " \u00b7 Puffertemperatur (\u00b0C, Prognose ohne Zapfung)")
+        : "");
     // Titel getrennt vom Raster: das Vergleichsdiagramm „ohne Optimierung"
     // nutzt dasselbe Raster, braucht aber eine eigene Überschrift.
     const socTitelText = (text) =>
@@ -3715,6 +3738,14 @@ class EegOptimizerPanel extends HTMLElement {
       socGrid += `<line x1="${padL}" y1="${ys(minSoc).toFixed(1)}" x2="${W - padR}" y2="${ys(minSoc).toFixed(1)}" stroke="#e53935" stroke-width="1" stroke-dasharray="4 3" stroke-opacity="0.8"/>`;
       if (!schmal) {
         socGrid += `<text x="${(W - padR - 2).toFixed(1)}" y="${(ys(minSoc) - 4).toFixed(1)}" text-anchor="end" font-size="${fsKlein}" fill="#e53935">Mindest-Ladestand ${fmtDe(minSoc, 0)} %</text>`;
+      }
+    }
+    // Maximaltemperatur des Puffers als Obergrenze der Temperaturkurve —
+    // links beschriftet, der Mindest-Ladestand steht rechts.
+    if (hatPufferTemp && pufferMaxC > 0 && pufferMaxC <= 100) {
+      socGrid += `<line x1="${padL}" y1="${ys(pufferMaxC).toFixed(1)}" x2="${W - padR}" y2="${ys(pufferMaxC).toFixed(1)}" stroke="#8e24aa" stroke-width="1" stroke-dasharray="4 3" stroke-opacity="0.7"/>`;
+      if (!schmal) {
+        socGrid += `<text x="${padL + 4}" y="${(ys(pufferMaxC) - 4).toFixed(1)}" font-size="${fsKlein}" fill="#8e24aa">Maximaltemperatur ${fmtDe(pufferMaxC, 0)} \u00b0C</text>`;
       }
     }
     [0, 50, 100].forEach(pct => {
@@ -3775,9 +3806,11 @@ class EegOptimizerPanel extends HTMLElement {
         + ` data-ppv="${kw(p ? p.PV : null)}" data-pcons="${kw(p ? p.consumption : null)}"`
         + ` data-pgrid="${kw(pGrid)}" data-pbat="${kw(pBat)}" data-psoc="${pct(p ? p.soc : null)}"`
         + (hatHeizstab ? ` data-pheiz="${kw(p ? p.heizstab : null)}"` : "")
+        + (hatPufferTemp ? ` data-ptemp="${p && p.puffer_temp_c != null ? fmtDe(p.puffer_temp_c, 1) : "---"}"` : "")
         + (ist
           ? ` data-past="1" data-ipv="${kw(ist.pv)}" data-icons="${kw(ist.cons)}"`
             + ` data-igrid="${kw(ist.grid)}" data-ibat="${kw(ist.bat)}" data-isoc="${pct(ist.soc)}"`
+            + (hatPufferTemp ? ` data-itemp="${ist.heiztemp == null ? "---" : fmtDe(ist.heiztemp, 1)}"` : "")
           : "")
         + (eegHier.length === 0 ? "" : ` data-eegj="${this._escapeHtml(JSON.stringify(eegHier))}"`)
         + (preisSlot == null ? "" : ` data-preis="${fmtDe(preisSlot * 100, 2)}"`)
@@ -3800,6 +3833,7 @@ class EegOptimizerPanel extends HTMLElement {
       ["#616161", "Verbrauch (Prognose)"],
       ["#43a047", "Netz geplant"],
       ...((hatHeizstab || heizstabKonfiguriert) ? [["#c62828", "Heizstab geplant"]] : []),
+      ...(hatPufferTemp ? [["#8e24aa", "Puffertemperatur (Prognose)"]] : []),
       ...(preisImFeld ? [["#d81b60", "Einspeisepreis (Börse)"]] : []),
       ["#1e88e5", "Batterie laden"],
       ["#ef6c00", "Batterie entladen"],
@@ -3925,6 +3959,8 @@ class EegOptimizerPanel extends HTMLElement {
               <path d="${histPath("bat", y)}" fill="none" stroke="#1e88e5" stroke-width="1.2" stroke-opacity="0.55"/>` : ""}
               <path d="${socPath}" fill="none" stroke="#7cb342" stroke-width="2"/>
               ${socIstPath ? `<path d="${socIstPath}" fill="none" stroke="#7cb342" stroke-width="1.2" stroke-opacity="0.55"/>` : ""}
+              ${tempPath ? `<path d="${tempPath}" fill="none" stroke="#8e24aa" stroke-width="1.6" stroke-dasharray="6 3"/>` : ""}
+              ${tempIstPath ? `<path d="${tempIstPath}" fill="none" stroke="#8e24aa" stroke-width="1.1" stroke-opacity="0.55"/>` : ""}
               ${preisBand}${preisFeld}${preisImFeld ? "" : eegAxis}${jetztLinie}
               <line class="sched-cursor" x1="0" y1="${padT}" x2="0" y2="${socBottom.toFixed(1)}"
                     stroke="var(--primary-text-color,#212121)" stroke-opacity="0.45" stroke-width="1"

@@ -44,6 +44,10 @@ from .const import (
     DOMAIN,
     FORECAST_SOURCE_SOLCAST,
     GEWINN_HORIZONT_H,
+    PUFFER_BEREITSCHAFTSVERLUST_KW,
+    PUFFER_UMGEBUNG_C,
+    PUFFER_WH_PRO_LITER_KELVIN_EFFEKTIV,
+    WASSER_WH_PRO_LITER_KELVIN,
 )
 from .heizstab.controller import heizstab_max_kw, heizstab_waermewert
 from .netzentgelt import (  # noqa: F401 — Schlüssel hier mit-exportiert
@@ -347,6 +351,12 @@ class ScheduleInputs:
     # wird der Heizstab im LP zur bewerteten Senke — sonst bekommt er wie
     # bisher nur, was ohnehin abgeregelt würde. 0 = nicht einplanen.
     heizstab_budget_kwh: float = 0.0
+    # Für die Temperaturprognose im Diagramm (nur Anzeige, nicht im LP —
+    # siehe _puffer_temperatur_verlauf): Puffervolumen, gemessene Temperatur
+    # beim Lauf und Maximaltemperatur. Fehlt eines, gibt es keine Kurve.
+    heizstab_puffer_liter: float = 0.0
+    heizstab_temp_c: float | None = None
+    heizstab_maxtemp_c: float = 0.0
 
 
 class _Forecast:
@@ -1693,6 +1703,13 @@ async def async_collect_inputs(
         heizstab_budget_kwh=float(
             getattr(data.get("heizstab"), "puffer_budget_kwh", 0.0) or 0.0
         ),
+        heizstab_puffer_liter=float(
+            getattr(data.get("heizstab"), "puffer_liter", 0.0) or 0.0
+        ),
+        heizstab_temp_c=getattr(data.get("heizstab"), "temperatur_c", None),
+        heizstab_maxtemp_c=float(
+            getattr(data.get("heizstab"), "maxtemp_c", 0.0) or 0.0
+        ),
     )
     return inputs, None
 
@@ -1772,6 +1789,9 @@ def solve(inputs: ScheduleInputs) -> dict[str, Any]:
             slot.get("discard"), inputs, row.get("heater")
         )
         slots.append(slot)
+    # Puffertemperatur je Slot — Nachrechnung aus der geplanten Wärme, das
+    # LP bleibt davon unberührt.
+    _puffer_temperatur_verlauf(slots, inputs)
 
     result = {
         "slots": slots,
@@ -1784,6 +1804,11 @@ def solve(inputs: ScheduleInputs) -> dict[str, Any]:
         "max_soc_pct": inputs.max_soc_pct,
         "forecast_source": inputs.forecast_source,
     }
+    if slots and slots[0].get("puffer_temp_c") is not None:
+        # Nur mit Kurve: die Marke „Maximaltemperatur" im Ladestandsfeld und
+        # der Startwert, von dem die Prognose ausgeht.
+        result["puffer_maxtemp_c"] = inputs.heizstab_maxtemp_c
+        result["puffer_temp_start_c"] = inputs.heizstab_temp_c
 
     # Gewinnberechnung: was bringt die Optimierung gegenüber dem
     # Standardbetrieb desselben Geräts? Ein Fehler hier darf den Fahrplan
@@ -1856,6 +1881,53 @@ def _heizstab_plan_kw(
     if discard_kw is None or discard_kw <= 0:
         return 0.0
     return round(min(discard_kw * HAConfig.ac_efficiency, inputs.heizstab_max_kw), 4)
+
+
+def _puffer_temperatur_verlauf(
+    slots: list[dict[str, Any]], inputs: ScheduleInputs
+) -> None:
+    """Prognose der Puffertemperatur je Slot — Anzeige, kein Teil des LP.
+
+    Das Modell kennt keinen Wärmezustand, nur die Heizstab-Leistung je Slot
+    und das Tagesbudget in kWh. Die Temperatur ist daraus abgeleitet:
+    gemessene Temperatur beim Lauf, fortgeschrieben mit der geplanten
+    Wärme je Slot, gedeckelt an der Maximaltemperatur. Zwei Verluste machen
+    die Kurve bewusst konservativ:
+
+    * Heizen rechnet mit der EFFEKTIVEN Wärmekapazität (Wasser plus
+      HEIZSTAB_WAERMEVERLUST_PCT) — dieselbe Zahl wie das Pufferbudget des
+      Controllers. Deshalb erreicht die Kurve die Maximaltemperatur genau
+      dann, wenn das Budget verheizt ist, und nicht früher.
+    * Ein fester Bereitschaftsverlust an die Umgebung
+      (PUFFER_BEREITSCHAFTSVERLUST_KW) zieht sie jede Viertelstunde ein
+      wenig herunter — über Nacht sichtbar, nie unter PUFFER_UMGEBUNG_C.
+      Dieser Verlust ist reine Wasserwärme, die den Puffer verlässt, und
+      rechnet deshalb mit der physikalischen Konstante.
+
+    Nicht abgebildet ist die Zapfung (Warmwasser, Heizkreis) — das steht
+    so auch in der Beschriftung. Ohne Volumen, Temperatur oder Heizstab
+    bleibt der Schlüssel weg; das Panel zeichnet die Kurve nur, wenn er da
+    ist. Liegt die gemessene Temperatur schon über der Maximaltemperatur,
+    springt die Kurve nicht auf den Deckel — der gilt erst fürs Heizen.
+    """
+    liter = float(inputs.heizstab_puffer_liter or 0.0)
+    temp = inputs.heizstab_temp_c
+    maxtemp = float(inputs.heizstab_maxtemp_c or 0.0)
+    if inputs.heizstab_max_kw <= 0 or liter <= 0 or temp is None or maxtemp <= 0:
+        return
+    dt_h = inputs.time_res_s / 3600.0
+    k_heiz = 1000.0 / (liter * PUFFER_WH_PRO_LITER_KELVIN_EFFEKTIV)   # K je kWh am Heizstab
+    k_verlust = 1000.0 / (liter * WASSER_WH_PRO_LITER_KELVIN)          # K je kWh Verlust
+    verlust_k = PUFFER_BEREITSCHAFTSVERLUST_KW * dt_h * k_verlust
+    t = float(temp)
+    deckel = max(maxtemp, t)
+    for slot in slots:
+        heiz_kwh = max(0.0, float(slot.get("heizstab") or 0.0)) * dt_h
+        t = min(deckel, t + heiz_kwh * k_heiz)
+        # Bereitschaftsverlust — aber nie unter die Umgebung, und ein Puffer,
+        # der schon kälter ist, wird davon nicht noch kälter gerechnet.
+        t = max(t - verlust_k, min(t, PUFFER_UMGEBUNG_C))
+        slot["puffer_temp_c"] = round(t, 1)
 
 
 def _batterie_verluste_kw(p_kw: float, kapazitaet_kwh: float) -> float:

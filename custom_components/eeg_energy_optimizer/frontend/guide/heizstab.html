@@ -106,7 +106,7 @@
 </tr>
 <tr>
 <td><strong>Puffervolumen (Liter)</strong></td>
-<td>Wie groß der Speicher ist, den der Heizstab erwärmt. Daraus rechnet der Fahrplan, wie viel Wärme noch hineinpasst. Bei Schichtspeichern nur den Teil angeben, der tatsächlich warm wird. Leer = der Heizstab bekommt nur, was ohnehin abgeregelt würde</td>
+<td>Wie groß der Speicher ist, den der Heizstab erwärmt. Daraus rechnet der Fahrplan, wie viel Wärme noch hineinpasst — mit 10 % Verlustaufschlag auf die reine Wasserwärme (1,163 Wh je Liter und Kelvin), für Heizstabverluste, Schichtung und Wärme, die nicht bis zum Fühler kommt. Bei Schichtspeichern nur den Teil angeben, der tatsächlich warm wird. Leer = der Heizstab bekommt nur, was ohnehin abgeregelt würde</td>
 </tr>
 <tr>
 <td><strong>Heizstab sperren, solange diese Entität eingeschaltet ist</strong></td>
@@ -121,6 +121,8 @@
 <div class="guide-alert note"><p><strong>Wenn das Gerät der Vorgabe nicht folgt, sagt es die Statuskarte</strong> — in beide Richtungen.</p>
 <p>Zieht der Heizstab länger als drei Minuten deutlich <strong>mehr</strong>, als vorgegeben ist, schreibt jemand anderes auf denselben Ohmpilot. Solange das so ist, greift weder die Maximaltemperatur noch der Schutz davor, Batteriestrom zu verheizen — der Optimizer setzt seinen Sollwert zwar weiter alle 20 Sekunden, wird aber überschrieben.</p>
 <p>Liefert er länger als zwei Minuten deutlich <strong>weniger</strong>, führt das Gerät die Vorgabe nicht aus. Fällt die gemessene Leistung auf null, obwohl ein Sollwert ansteht, schreibt der Optimizer ihn sofort nach — der häufigste Grund ist der Watchdog des Ohmpilot. Bleibt es dabei, liegt es am Gerät: Übertemperaturabschaltung, Fühler am Puffer oder Verkabelung des Heizstabs.</p></div>
+
+<div class="guide-alert note"><p><strong>Das Fahrplan-Diagramm zeigt die voraussichtliche Puffertemperatur.</strong> Im Ladestandsfeld läuft eine violette Linie mit: die gemessene Temperatur, fortgeschrieben mit der geplanten Wärme je Viertelstunde, gedeckelt an der Maximaltemperatur. Sie rechnet bewusst vorsichtig — mit dem Verlustaufschlag von 10 % und einem Bereitschaftsverlust von rund 0,12 kW an die Umgebung, bei 600 Litern gut 4 K am Tag. Was sie nicht kennt, ist die Zapfung: Warmwasser, das entnommen wird, und ein Heizkreis, der aus dem Puffer zieht, drücken die echte Temperatur schneller nach unten. Mit eingeblendetem Verlauf liegt der gemessene Wert dünn daneben. Die Optimierung selbst rechnet weiterhin nur mit Leistung und Tagesbudget; die Temperatur ist eine Nachrechnung für die Anzeige.</p></div>
 
 <div class="guide-alert note"><p><strong>Der Hausverbrauch ist ohne den Heizstab.</strong> Sensor „Hausverbrauch", Verbrauchsprofil und Entlade-Nachführung rechnen den Heizstab heraus — er ist eine gesteuerte Senke, kein Verbrauch, den das Profil lernen soll. Sein Anteil steht in den eigenen Sensoren „Heizstab Leistung", „Heizstab Sollwert", „Heizstab Temperatur" und „Heizstab Energie heute".</p></div>
 
