@@ -10,6 +10,13 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
+## [2.1.1-dev31] - 2026-09-15
+
+### Behoben
+
+- **Die Steuerwert-Ansicht zeigte in jeder Zeile den Fahrplanwert statt dem, was auf dem Gerät steht.** Seit der dev30 wird die Ladebegrenzung auf die Wechselrichter aufgeteilt — die Ansicht listete aber weiter den Systemwert je Zeile. Auf einer Anlage standen tatsächlich 0 W und 1289 W, angezeigt wurden zweimal 1,29 kW. Damit behauptete ausgerechnet die Kontrollansicht genau die Verdopplung, die behoben worden war. Jetzt steht in jeder Zeile der Wert dieses Geräts, und ihre Summe ergibt den Fahrplanwert.
+- **Ein kurzer Sensoraussetzer warf die Aufteilung auf Batteriegröße zurück.** Die Huawei-Integration setzt die Ladestandssensoren bei jedem Modbus-Aussetzer für ein paar Sekunden auf „nicht verfügbar" — auf einer Anlage mehrmals pro Stunde. Ohne Ladestand teilt die Steuerung vorsichtshalber gleichmäßig auf, und das ging nach hinten los: Bei einer vollen und einer zu 95 % geladenen Batterie bekam die volle die Hälfte der erlaubten Ladeleistung zugeteilt, wo sie nichts mehr aufnehmen kann — die Anlage lud nur halb so stark, wie der Fahrplan erlaubte. Ein Füllstand ändert sich nicht sprunghaft, also gilt der zuletzt gelesene Wert jetzt bis zu 15 Minuten weiter. Danach zählt der Sensor als ausgefallen, damit ein wirklich totes Gerät nicht unbemerkt eine Aufteilung trägt. Das hilft genauso der Entladeverteilung und dem gemeinsamen Ladestand beider Batterien.
+
 ## [2.1.1-dev30] - 2026-09-15
 
 ### Behoben
