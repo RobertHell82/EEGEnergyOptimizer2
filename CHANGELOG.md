@@ -10,6 +10,16 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
+## [2.1.1-dev28] - 2026-09-15
+
+### Hinzugefügt
+
+- **Das Fahrplan-Diagramm zeigt die voraussichtliche Puffertemperatur.** Im Ladestandsfeld läuft eine violette Linie mit — die gemessene Temperatur, fortgeschrieben mit der geplanten Heizstab-Wärme je Viertelstunde, gedeckelt an der Maximaltemperatur, die als Marke eingezeichnet ist. Die Kurve ist eine Nachrechnung für die Anzeige, die Optimierung selbst bleibt unangetastet. Sie rechnet bewusst vorsichtig: Ein Bereitschaftsverlust von rund 0,12 kW an die Umgebung lässt sie über Nacht sichtbar abfallen (bei 600 Litern gut 4 K am Tag), unter 20 °C jedoch nicht. Die Zapfung kennt sie nicht, das sagt die Beschriftung. Im Tooltip steht der Wert je Viertelstunde, mit eingeblendetem Verlauf auch die gemessene Temperatur.
+
+### Geändert
+
+- **Das Pufferbudget rechnet mit 10 % Verlustaufschlag.** Bisher galt die reine Wasserwärme (1,163 Wh je Liter und Kelvin). Heizstabverluste, Schichtung und Wärme, die nicht bis zum Fühler kommt, brauchen in Wirklichkeit mehr — der Plan darf jetzt entsprechend mehr Wärme einplanen: 600 Liter von 45 auf 80 °C sind statt 24,4 kWh nun 26,9 kWh. Derselbe Aufschlag steckt in der Temperaturkurve, damit sie genau dann die Maximaltemperatur erreicht, wenn das Budget verheizt ist. Überhitzen kann nichts, der Heizstab stoppt weiterhin an der Maximaltemperatur.
+
 ## [2.1.1-dev27] - 2026-09-14
 
 ### Behoben
