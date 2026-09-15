@@ -162,6 +162,26 @@ class HuaweiInverter(InverterBase):
                         return eid
         return None
 
+    def _device_or_parent_entity_by_suffix(
+        self, device_id: str, domain: str, suffixes: tuple[str, ...]
+    ) -> str | None:
+        """Wie ``_device_entity_by_suffix``, sucht aber auch am Eltern-WR.
+
+        Huawei hängt die Leistungsgrenzen — Lade- wie Entladeleistung — als
+        Number-Entities ans Wechselrichter-Gerät, ``huawei_device_ids`` zeigen
+        dagegen auf die Batterie-Geräte. Wer nur am Batterie-Gerät sucht,
+        findet sie bei Master/Slave nie.
+        """
+        eid = self._device_entity_by_suffix(device_id, domain, suffixes)
+        if eid and self._hass.states.get(eid) is not None:
+            return eid
+        parent_id = self._parent_device_id(device_id)
+        if parent_id:
+            eid = self._device_entity_by_suffix(parent_id, domain, suffixes)
+            if eid and self._hass.states.get(eid) is not None:
+                return eid
+        return None
+
     def _resolve_charge_entity(self, device_id: str) -> str | None:
         """Find this device's max-charge-power entity, or None if not (yet) there."""
         # 1. Registry: number-Entity dieses Geräts mit Lade-Suffix.
@@ -267,8 +287,14 @@ class HuaweiInverter(InverterBase):
         return None
 
     def _read_max_discharge_power_w(self, device_id: str) -> float | None:
-        """Hardware max discharge power (W) from the discharge-limit number entity."""
-        eid = self._device_entity_by_suffix(
+        """Hardware-Maximum der Entladeleistung (W) aus der Number-Entität.
+
+        Die Entität hängt am Wechselrichter, nicht an der Batterie — deshalb
+        über ``_device_or_parent_entity_by_suffix``. Ohne den Eltern-Fallback
+        lief die proportionale Verteilung bei Master/Slave immer in den
+        Gleich-Split (``_compute_discharge_distribution`` → None).
+        """
+        eid = self._device_or_parent_entity_by_suffix(
             device_id, "number", MAX_DISCHARGE_POWER_SUFFIXES
         )
         if not eid:

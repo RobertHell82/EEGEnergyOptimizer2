@@ -558,6 +558,8 @@ class TestScheduleControlReads:
 # maximale_ladeleistung-Number hängt am Eltern-Wechselrichter (WRM/WRS).
 _CHARGE_WRM = "number.wechselrichter_maximale_ladeleistung"
 _CHARGE_WRS = "number.solar_power_wr_slave_maximale_ladeleistung"
+_DISCHARGE_WRM = "number.wechselrichter_maximale_entladeleistung"
+_DISCHARGE_WRS = "number.solar_power_wr_slave_maximale_entladeleistung"
 
 
 @contextmanager
@@ -622,6 +624,67 @@ class TestChargeLimitOnParentInverter:
             if c.args[0] == "number"
         }
         assert written == {_CHARGE_WRM: 0, _CHARGE_WRS: 0}
+
+
+class TestDischargeLimitOnParentInverter:
+    """Regression: Auch die Entladeleistungs-Grenze hängt am WR-Gerät.
+
+    Auf der Master/Slave-Anlage lief die proportionale Verteilung 244-mal in
+    Folge in den Gleich-Split: ``_read_max_discharge_power_w`` suchte nur am
+    Batterie-Gerät, ``number.wechselrichter_maximale_entladeleistung`` sitzt
+    aber am Eltern-WR. Die 10-kWh- und die 15-kWh-Batterie bekamen dadurch
+    denselben Sollwert.
+    """
+
+    def _build(self, mock_hass):
+        states = {
+            _CHARGE_WRM: _state(max_attr=5000),
+            _CHARGE_WRS: _state(max_attr=5000),
+            _DISCHARGE_WRM: _state(max_attr=5000),
+            _DISCHARGE_WRS: _state(max_attr=5000),
+            # SOC + Kapazität sitzen an den Batterie-Geräten
+            "sensor.batterien_batterieladung": _state("20"),
+            "sensor.batterien_batterieladung_2": _state("20"),
+        }
+        mock_hass.states.get = MagicMock(side_effect=lambda eid: states.get(eid))
+        entries = [
+            _reg_entry(_CHARGE_WRM, "WRM"), _reg_entry(_DISCHARGE_WRM, "WRM"),
+            _reg_entry(_CHARGE_WRS, "WRS"), _reg_entry(_DISCHARGE_WRS, "WRS"),
+            _reg_entry("sensor.batterien_batterieladung", "BM"),
+            _reg_entry("sensor.batterien_batterieladung_2", "BS"),
+        ]
+        ctx = (_registry(entries), _device_registry({"BM": "WRM", "BS": "WRS"}))
+        with ctx[0], ctx[1]:
+            return HuaweiInverter(mock_hass, {
+                "huawei_device_ids": ["BM", "BS"],
+                "huawei_battery_capacities": {"BM": 10, "BS": 15},
+            })
+
+    def test_max_discharge_summed_via_parent_inverter(self, mock_hass):
+        """Systemgrenze = Summe beider WR-Maxima (2×5 kW), nicht None."""
+        inv = self._build(mock_hass)
+        with _registry([
+            _reg_entry(_DISCHARGE_WRM, "WRM"), _reg_entry(_DISCHARGE_WRS, "WRS"),
+        ]), _device_registry({"BM": "WRM", "BS": "WRS"}):
+            assert inv.get_max_discharge_power_kw() == pytest.approx(10.0)
+
+    async def test_discharge_splits_proportional_not_equal(self, mock_hass):
+        """5 kW auf 10/15 kWh bei gleichem SOC → 2 kW / 3 kW statt 2,5/2,5."""
+        inv = self._build(mock_hass)
+        entries = [
+            _reg_entry(_CHARGE_WRM, "WRM"), _reg_entry(_DISCHARGE_WRM, "WRM"),
+            _reg_entry(_CHARGE_WRS, "WRS"), _reg_entry(_DISCHARGE_WRS, "WRS"),
+            _reg_entry("sensor.batterien_batterieladung", "BM"),
+            _reg_entry("sensor.batterien_batterieladung_2", "BS"),
+        ]
+        with _registry(entries), _device_registry({"BM": "WRM", "BS": "WRS"}):
+            assert await inv.async_set_discharge(5.0) is True
+        by_device = {
+            c.args[2]["device_id"]: c.args[2]["power"]
+            for c in mock_hass.services.async_call.call_args_list
+            if c.args[0] == HUAWEI_DOMAIN
+        }
+        assert by_device == {"BM": "2000", "BS": "3000"}
 
 
 class TestIsAvailable:
