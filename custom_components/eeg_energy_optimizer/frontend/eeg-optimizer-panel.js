@@ -8283,6 +8283,10 @@ class EegOptimizerPanel extends HTMLElement {
       const reason = e.reason === "Heartbeat" ? `<span style="opacity:0.5">${zustandLabel}</span>` : `<strong>${zustandLabel}</strong>`;
       const changeBadge = e.reason === "Heartbeat" ? "" : `<span class="activity-badge" style="background:${color}">\u00C4nderung</span>`;
       const testBadge = e.ausführung === false ? `<span class="activity-badge" style="background:var(--warning-color,#ff9800)">Anzeige-Modus</span>` : "";
+      // Nur der Eintrag, dessen eigener Schreibversuch scheiterte, wird
+      // markiert. "schreibfehler" ist ein Zähler seit dem Start und stünde
+      // sonst in jeder Folgezeile — genau das las sich wie viele Fehler.
+      const writeBadge = e.schreibversuch_ok === false ? `<span class="activity-badge" style="background:var(--error-color,#f44336)">Schreibfehler</span>` : "";
       // Details: neue Einträge tragen den Executor-Status; alte Einträge der
       // Zustands-Heuristik ihre historischen Felder (best effort).
       const details = [];
@@ -8290,14 +8294,13 @@ class EegOptimizerPanel extends HTMLElement {
       if (e.status && e.status !== e.zustand) details.push(this._escapeHtml(e.status));
       if (e.plan && e.plan.kind === "discharge") details.push(`Plan: Einspeisung ${fmtDe(e.plan.power_kw ?? 0, 1)} kW`);
       else if (e.plan && e.plan.kind === "charge_limit") details.push(`Plan: Ladelimit ${fmtDe(e.plan.power_kw ?? 0, 1)} kW`);
-      if ((e.schreibfehler || 0) > 0) details.push(`${e.schreibfehler} Schreibfehler`);
       // Legacy-Felder (Einträge vor dem Umbau)
       if (e.bedarf != null && e.status == null) details.push(`Gesamtbedarf ${fmtDe(e.bedarf, 1)} kWh`);
       return `<div class="activity-entry">
         <div class="activity-time">${dateStr}<br>${timeStr}</div>
         <div class="activity-dot" style="background:${color}">${icon}</div>
         <div class="activity-content">
-          <div class="activity-header">${reason} ${changeBadge} ${testBadge}</div>
+          <div class="activity-header">${reason} ${changeBadge} ${testBadge} ${writeBadge}</div>
           <div class="activity-details">${details.join(" \u00b7 ") || "\u2014"}</div>
         </div>
       </div>`;

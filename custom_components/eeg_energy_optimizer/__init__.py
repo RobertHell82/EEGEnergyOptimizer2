@@ -1792,6 +1792,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 "soc": _read_soc(),
                 "plan": status.get("plan_action"),
                 "schreibfehler": status.get("write_failures"),
+                # Kumulativ ist "schreibfehler" — für die Zeile zählt nur, ob
+                # der Schreibversuch DIESES Eintrags durchging.
+                "schreibversuch_ok": status.get("last_write_ok"),
                 "ausführung": mode == MODE_EIN,
                 "heizstab_kw": (status.get("heizstab") or {}).get("sollwert_kw"),
             }
