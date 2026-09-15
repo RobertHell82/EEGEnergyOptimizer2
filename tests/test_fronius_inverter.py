@@ -483,24 +483,6 @@ class TestAsyncDisconnect:
         await inv.async_disconnect()
 
 
-class TestRegisterWriteCounter:
-    """Each successful Modbus write increments register_writes."""
-
-    async def test_counter_increments_per_write(self, inverter, mock_modbus_client):
-        before = inverter.register_writes
-        await inverter.async_set_charge_limit(0)
-        # set_charge_limit writes 4 registers: InWRte, WinTms, RvrtTms, StorCtl_Mod
-        assert inverter.register_writes == before + 4
-
-    async def test_failed_write_does_not_increment(
-        self, inverter, mock_modbus_client
-    ):
-        before = inverter.register_writes
-        mock_modbus_client.write_register = AsyncMock(return_value=_err_response())
-        await inverter.async_set_charge_limit(0)
-        assert inverter.register_writes == before
-
-
 class TestWChaMaxSanityCheck:
     """Implausible WChaMax values are rejected so percentage scaling stays correct."""
 

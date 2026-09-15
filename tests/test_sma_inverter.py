@@ -395,9 +395,3 @@ class TestFahrplanSchnittstelle:
         assert await inverter.async_get_control_values() == []
 
 
-class TestRegisterWriteCounter:
-    async def test_counts_two_writes_per_block(self, inverter):
-        assert inverter.register_writes == 0
-        await inverter.async_set_charge_limit(0)
-        assert inverter.register_writes == 2
-        inverter._cancel_keepalive()

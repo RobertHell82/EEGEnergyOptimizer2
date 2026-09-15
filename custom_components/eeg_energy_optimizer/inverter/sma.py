@@ -290,7 +290,6 @@ class SMAInverter(InverterBase):
                     REG_CMPBMS_OPMOD, block.op_mod,
                 )
                 return False
-            self.register_writes += 1
             await asyncio.sleep(0.2)
 
             result = await self._client.write_registers(
@@ -304,7 +303,6 @@ class SMAInverter(InverterBase):
                     REG_BAT_CHA_MIN_W, REG_GRID_W_SPT + 1, block,
                 )
                 return False
-            self.register_writes += 1
             await asyncio.sleep(0.2)
             _LOGGER.debug("SMA: wrote CmpBMS block %s", block)
             return True

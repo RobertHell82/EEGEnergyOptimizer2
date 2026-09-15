@@ -116,7 +116,7 @@ schedule_executor.py: ScheduleExecutor (execution, 30 s)
 | `ambibox/controller.py` | Interprets those registers into an `AutoZustand`, polls every 15 s, pushes to sensors/panel; owns the manual charge/discharge test (keepalive, time limit, stop) |
 | `frontend/eeg-optimizer-panel.js` | Dashboard + onboarding panel (plain HTMLElement, Shadow DOM) |
 
-### Sensors (25 always + up to 8 conditional)
+### Sensors (24 always + up to 8 conditional)
 
 | # | Sensor | Update | Description |
 |---|--------|--------|-------------|
@@ -128,15 +128,14 @@ schedule_executor.py: ScheduleExecutor (execution, 30 s)
 | 12 | PV-Leistung | fast | Current PV production (kW, MEASUREMENT) |
 | 13 | Netzleistung | fast | Current grid power — positive = export (Einspeisung), negative = import (kW, MEASUREMENT) |
 | 14 | Batterieleistung | fast | Current battery power — positive = charge, negative = discharge (kW, MEASUREMENT) |
-| 15 | Register-Schreibvorgänge | fast | Cumulative inverter Modbus write counter (used for SolarEdge NVRAM monitoring) |
-| 16 | Fahrplan Batterieleistung | fast | **Planned** battery power for the current slot — same cadence as the measured one, so recorder history makes plan and reality comparable |
-| 17 | Fahrplan Netzleistung | fast | **Planned** grid power for the current slot |
-| 18 | Entladung ins Netz | fast | Battery energy that actually reached the grid (kWh, TOTAL with `last_reset`) — the basis of the feed-in statistics card |
-| 19 | Fahrplan-Status | 30s | Executor state ("Laden begrenzt auf 2,0 kW", "Entladung 2,8 kW bis 43 %", "Normalbetrieb", "Anzeige-Modus") + plan/written-value attributes |
-| 20–22 | Ersparnis durch PV — heute / Monat / Jahr | fast | Avoided grid purchase + feed-in revenue (MONETARY, TOTAL). A **measurement**: every kWh is metered, prices come frozen per quarter-hour from `bilanz.py` |
-| 23–25 | Ersparnis durch Optimierung — heute / Monat / Jahr | fast | Actual vs. simulated standard operation over the **measured** PV/load series (MONETARY, TOTAL). A **model**, not a measurement — `None` when the day's starting SOC is unknown |
+| 15 | Fahrplan Batterieleistung | fast | **Planned** battery power for the current slot — same cadence as the measured one, so recorder history makes plan and reality comparable |
+| 16 | Fahrplan Netzleistung | fast | **Planned** grid power for the current slot |
+| 17 | Entladung ins Netz | fast | Battery energy that actually reached the grid (kWh, TOTAL with `last_reset`) — the basis of the feed-in statistics card |
+| 18 | Fahrplan-Status | 30s | Executor state ("Laden begrenzt auf 2,0 kW", "Entladung 2,8 kW bis 43 %", "Normalbetrieb", "Anzeige-Modus") + plan/written-value attributes |
+| 19–21 | Ersparnis durch PV — heute / Monat / Jahr | fast | Avoided grid purchase + feed-in revenue (MONETARY, TOTAL). A **measurement**: every kWh is metered, prices come frozen per quarter-hour from `bilanz.py` |
+| 22–24 | Ersparnis durch Optimierung — heute / Monat / Jahr | fast | Actual vs. simulated standard operation over the **measured** PV/load series (MONETARY, TOTAL). A **model**, not a measurement — `None` when the day's starting SOC is unknown |
 
-> **Never add sensors 20–22 and 23–25 together.** The optimiser advantage is
+> **Never add sensors 19–21 and 22–24 together.** The optimiser advantage is
 > already contained in the PV saving — it is the share of it that stems from
 > the steering, exposed as attribute `davon_optimierung`. Adding both
 > double-counts. The self-check: in mode "Aus" the optimiser advantage must

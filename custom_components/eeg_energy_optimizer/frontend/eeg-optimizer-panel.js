@@ -9231,13 +9231,6 @@ class EegOptimizerPanel extends HTMLElement {
             <h3 class="status-card-title" style="margin:0;display:flex;align-items:center;gap:8px;flex:1;min-width:0">
               <ha-icon icon="mdi:pulse" style="--mdc-icon-size:20px;color:var(--primary-color,#03a9f4);flex-shrink:0"></ha-icon>
               <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Status</span>
-              ${this._config?.inverter_type === "solaredge_storedge" ? `<span class="info-popup-trigger" style="cursor:pointer;flex-shrink:0">
-                <ha-icon icon="mdi:information-outline" style="--mdc-icon-size:18px;color:var(--secondary-text-color)"></ha-icon>
-                <div class="info-popup">
-                  <strong>Schreibvorg\u00e4nge im Wechselrichter</strong>
-                  <p>${fmtDe(this._readFloat("sensor.eeg_energy_optimizer_register_schreibvorgange") ?? 0, 0)} Schreibvorg\u00e4nge in den NVRAM-Speicher seit der Installation. SolarEdge-Ger\u00e4te vertragen davon nur eine begrenzte Zahl \u2014 deshalb schreibt die Steuerung nur, wenn sich ein Wert wirklich \u00e4ndert.</p>
-                </div>
-              </span>` : ""}
             </h3>
             <div class="status-view-pills">
               <button class="view-pill ${this._statusViewVariant === "values" ? "active" : ""}" data-action="set-status-view" data-variant="values" title="Werte-Anzeige">

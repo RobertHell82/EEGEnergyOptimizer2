@@ -7,8 +7,7 @@ Sensoren:
   10.  Batterie fehlende Energie           (fast)
   11.  PV-Prognose heute / 12. morgen      (fast)
   13.  Hausverbrauch / 14. PV-Leistung / 15. Netzleistung / 16. Batterieleistung
-  17.  Register-Schreibvorgänge
-  18.  Fahrplan-Status                     (30-s-Guard-Lauf; unique_id des
+  17.  Fahrplan-Status                     (30-s-Guard-Lauf; unique_id des
        früheren Entscheidungs-Sensors, damit Entität + Historie bleiben)
   +    Fahrplan Batterieleistung / Netzleistung (Plan-Werte des laufenden Slots)
   +    Combined-Sensoren (Paar-Setups, Multi-Battery)
@@ -688,38 +687,7 @@ class BatterieleistungSensor(SensorEntity):
 
 
 # ---------------------------------------------------------------------------
-# Sensor 17: Register-Schreibvorgänge (inverter write counter)
-# ---------------------------------------------------------------------------
-
-class RegisterWritesSensor(SensorEntity):
-    """Counts Modbus/service register writes to the inverter.
-
-    Tracks NVRAM-relevant writes for SolarEdge (and potentially other
-    inverters in the future). Uses state_class=total_increasing so HA
-    tracks the cumulative total across restarts via long-term statistics.
-    The sensor reads the counter from the inverter object every fast update.
-    """
-
-    _attr_has_entity_name = True
-    _attr_name = "Register-Schreibvorgänge"
-    _attr_native_unit_of_measurement = "Writes"
-    _attr_state_class = SensorStateClass.MEASUREMENT
-    _attr_icon = "mdi:database-edit-outline"
-
-    def __init__(self, hass: Any, entry: Any, inverter: Any) -> None:
-        self.hass = hass
-        self._inverter = inverter
-        self._attr_unique_id = f"{DOMAIN}_{entry.entry_id}_register_writes"
-        self._attr_device_info = _device_info(entry.entry_id)
-        self._attr_native_value: int = 0
-
-    async def async_update(self) -> None:
-        if self._inverter is not None:
-            self._attr_native_value = self._inverter.register_writes
-
-
-# ---------------------------------------------------------------------------
-# Sensor 18: Fahrplan-Status (30-s-Guard-Lauf)
+# Sensor 17: Fahrplan-Status (30-s-Guard-Lauf)
 # ---------------------------------------------------------------------------
 
 
@@ -1948,9 +1916,7 @@ async def async_setup_entry(
         if _has_grid_pair(config) else None
     )
 
-    # Register writes sensor — reads counter from inverter object
     inverter = data.get("inverter")
-    register_writes_sensor = RegisterWritesSensor(hass, entry, inverter)
 
     # Combined SOC/Capacity sensors — only created when the driver actually
     # provides them (multi-battery setups, currently only SolarEdge i1+i2+…).
@@ -2016,7 +1982,7 @@ async def async_setup_entry(
         daily_sensors
         + [pv_today_sensor, pv_tomorrow_sensor,
            hausverbrauch_sensor, pv_leistung_sensor, netzleistung_sensor,
-           batterieleistung_sensor, register_writes_sensor]
+           batterieleistung_sensor]
         + ([combined_battery_sensor] if combined_battery_sensor else [])
         + ([combined_grid_sensor] if combined_grid_sensor else [])
         + ([combined_soc_sensor] if combined_soc_sensor else [])

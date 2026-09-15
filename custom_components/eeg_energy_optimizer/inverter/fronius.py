@@ -582,7 +582,7 @@ class FroniusInverter(InverterBase):
     async def _write_register(self, offset: int, value: int) -> bool:
         """Write a single register at Model 124 base + offset.
 
-        Increments register_writes counter and adds 200ms pause after write.
+        Adds a 200ms pause after the write.
         """
         if self._model124_base is None:
             _LOGGER.error("Fronius: Model 124 base address not discovered")
@@ -611,7 +611,6 @@ class FroniusInverter(InverterBase):
                     _modbus_fehlertext(result),
                 )
                 return False
-            self.register_writes += 1
             await asyncio.sleep(0.2)
             _LOGGER.debug(
                 "Fronius: wrote register %d = %d", address, value

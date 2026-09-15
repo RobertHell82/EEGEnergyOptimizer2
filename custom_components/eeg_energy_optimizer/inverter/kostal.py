@@ -239,7 +239,6 @@ class KostalInverter(InverterBase):
                     address, value,
                 )
                 return False
-            self.register_writes += 1
             await asyncio.sleep(0.2)
             _LOGGER.debug("Kostal: wrote register %d = %.1f", address, value)
             return True
