@@ -10,6 +10,17 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
+## [2.1.1-dev29] - 2026-09-15
+
+### Behoben
+
+- **Bei zwei Wechselrichtern bekamen beide Batterien denselben Entladewert, egal wie groß sie sind.** Die Entladung soll sich nach der nutzbaren Energie richten: Eine 15-kWh-Batterie trägt mehr als eine 10-kWh-Batterie. Dafür braucht die Aufteilung die Entladeleistungs-Grenze jedes Geräts — und die wurde an der Batterie gesucht, während Huawei sie am Wechselrichter führt. Sie war damit nie zu finden, und jeder Entladebefehl fiel auf die Gleichverteilung zurück: auf einer Anlage 244-mal in Folge, ohne einen einzigen Treffer. Die kleine Batterie erreichte so ihre Abschaltschwelle früher als die große. Die Suche folgt jetzt demselben Weg zum Wechselrichter, den die Ladebegrenzung schon nimmt. Nebenbei kannte die Steuerung dadurch auch die Gesamt-Entladeleistung der Anlage nicht (bei zwei Geräten mit je 5 kW nun 10 kW statt „unbekannt").
+- **Ein einzelner Schreibfehler stand in jeder folgenden Zeile des Aktivitätsprotokolls.** Angezeigt wurde ein Zähler, der seit dem Start mitläuft — nach einem Fehlschlag trug jeder weitere Eintrag den Hinweis „1 Schreibfehler", auch wenn seither alles durchging. Das las sich wie eine Serie. Jetzt wird nur der Eintrag markiert, dessen eigener Schreibversuch scheiterte; die Gesamtzahl steht weiterhin in der Statuskarte, wo sie hingehört.
+
+### Entfernt
+
+- **Der Sensor „Register-Schreibvorgänge" ist entfallen.** Er zählte Schreibzugriffe in den NVRAM-Speicher, weil SolarEdge davon nur eine begrenzte Zahl verträgt. SolarEdge wird vom Fahrplan nicht gesteuert, und bei allen gesteuerten Wechselrichtern gibt es diese Begrenzung nicht — bei Huawei und SolaX stand der Zähler ohnehin dauerhaft auf 0. Mit ihm entfällt der Hinweistext im Panel.
+
 ## [2.1.1-dev28] - 2026-09-15
 
 ### Hinzugefügt
