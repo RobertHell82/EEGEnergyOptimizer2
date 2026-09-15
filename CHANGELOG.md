@@ -10,6 +10,12 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
+## [2.1.1-dev30] - 2026-09-15
+
+### Behoben
+
+- **Bei zwei Wechselrichtern lud die Batterie doppelt so stark, wie der Fahrplan erlaubte.** Die Ladebegrenzung ist ein Deckel je Gerät, kein Wert für die ganze Anlage — geschrieben wurde aber der Fahrplanwert unverändert an jeden Wechselrichter. Aus „höchstens 4 kW laden" wurden so zweimal 4 kW: Auf einer Anlage lud die Batterie mit 6,8 bis 7,0 kW, während die Statuskarte „Laden begrenzt auf 4,00 kW" meldete. Genau das ist der Fall, für den die Begrenzung gedacht ist — der Überschuss sollte in der Nachbarschaft landen, nicht im Akku. Unbemerkt blieb es, weil die Steuerung beim Nachlesen den kleinsten Gerätewert nahm und damit exakt das zurückbekam, was sie geschrieben hatte: 4 kW, „unverändert". Jetzt wird der Fahrplanwert auf die Geräte aufgeteilt, und zwar nach freiem Platz in der jeweiligen Batterie — eine fast volle gibt ihren Anteil an die andere ab, statt ihn ungenutzt zu binden. Fehlt ein Batteriesensor, wird gleichmäßig geteilt; verdoppelt wird nie. Dieselbe Aufteilung nutzt die Entladung seit der dev29. Nebenbei kennt die Steuerung nun auch die Gesamt-Ladeleistung der Anlage (bei zwei Geräten mit je 5 kW nun 10 kW statt 5 kW), sodass die Nachführung bei abgeregelter Einspeisung wieder bis zum echten Maximum anheben darf.
+
 ## [2.1.1-dev29] - 2026-09-15
 
 ### Behoben
