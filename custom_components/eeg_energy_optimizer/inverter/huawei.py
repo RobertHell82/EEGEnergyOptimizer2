@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 from typing import Any
 
 from .base import InverterBase
@@ -31,6 +32,13 @@ from ._distribution import distribute_proportional
 _LOGGER = logging.getLogger(__name__)
 
 HUAWEI_DOMAIN = "huawei_solar"
+# Wie lange ein zuletzt gelesener SOC weiterverwendet wird, wenn der Sensor
+# gerade "unavailable" meldet. huawei_solar setzt die Sensoren bei jedem
+# Modbus-Aussetzer kurz aus — auf einer Anlage mehrmals je Stunde. Ohne
+# Überbrückung kippt die Leistungsverteilung dann auf Gleichverteilung,
+# obwohl sich am Füllstand nichts geändert hat. 15 Minuten sind lang genug
+# für diese Lücken und kurz genug, dass ein wirklich toter Sensor auffällt.
+SOC_CACHE_MAX_AGE_S = 900
 MAX_CHARGE_POWER_CANDIDATES = [
     "number.batteries_maximale_ladeleistung",
     "number.batterien_maximale_ladeleistung",
@@ -84,6 +92,10 @@ class HuaweiInverter(InverterBase):
                 "device was not auto-detected. Re-run setup wizard to detect the Huawei device."
             )
         self._device_ids: list[str] = ids
+        # Zuletzt je Gerät geschriebenes Ladelimit (kW) — nur Anzeige.
+        self._last_charge_split: dict[str, float] = {}
+        # Letzter gültiger SOC je Gerät: (wert_pct, monotonic_s)
+        self._soc_cache: dict[str, tuple[float, float]] = {}
         # Pro Gerät das Ladeleistungs-Entity auflösen (None = noch nicht da).
         self._charge_entities: dict[str, str | None] = {
             did: self._resolve_charge_entity(did) for did in ids
@@ -262,8 +274,29 @@ class HuaweiInverter(InverterBase):
         return float(state.attributes.get("max", 5000))
 
     def _read_battery_soc_pct(self, device_id: str) -> float | None:
+        """SOC dieses Geräts in %, kurze Sensoraussetzer überbrückt.
+
+        Ein Füllstand ändert sich nicht sprunghaft; ein fehlender Messwert
+        bedeutet fast immer einen Modbus-Aussetzer, nicht eine leere
+        Batterie. Der letzte gelesene Wert gilt daher bis
+        SOC_CACHE_MAX_AGE_S weiter — danach None, damit ein dauerhaft
+        toter Sensor nicht unbemerkt eine Verteilung trägt.
+        """
         eid = self._device_entity_by_suffix(device_id, "sensor", SOC_SUFFIXES)
-        return self._read_sensor_float(eid)
+        val = self._read_sensor_float(eid)
+        now = time.monotonic()
+        if val is not None:
+            self._soc_cache[device_id] = (val, now)
+            return val
+        gepuffert = self._soc_cache.get(device_id)
+        if gepuffert is not None and now - gepuffert[1] <= SOC_CACHE_MAX_AGE_S:
+            _LOGGER.debug(
+                "Huawei: SOC von %s nicht lesbar — letzter Wert %.1f %% "
+                "(%.0f s alt) wird weiterverwendet",
+                device_id, gepuffert[0], now - gepuffert[1],
+            )
+            return gepuffert[0]
+        return None
 
     def _read_battery_capacity_kwh(self, device_id: str) -> float | None:
         """Battery capacity (kWh) for a device.
@@ -440,7 +473,15 @@ class HuaweiInverter(InverterBase):
             charge = self._ensure_charge_entity(did)
             if charge:
                 rows.append(
-                    {"label": f"Ladeleistung max{tag}", "entity_id": charge, "role": "charge_limit"}
+                    {
+                        "label": f"Ladeleistung max{tag}",
+                        "entity_id": charge,
+                        "role": "charge_limit",
+                        # Systemwert ÷ Geräte: Ohne das zeigte die Ansicht in
+                        # jeder Zeile den Fahrplanwert und behauptete damit,
+                        # er stünde auf jedem Gerät.
+                        "written_device_kw": self._last_charge_split.get(did),
+                    }
                 )
             discharge = self._device_entity_by_suffix(
                 did, "number", MAX_DISCHARGE_POWER_SUFFIXES
@@ -588,6 +629,9 @@ class HuaweiInverter(InverterBase):
                 )
         else:
             distribution = {did: power_kw for did in self._device_ids}
+        # Für die Transparenzansicht: Was steht je Gerät, nicht was der
+        # Fahrplan als Systemwert wollte.
+        self._last_charge_split = dict(distribution)
         any_ok = False
         all_ok = True
         for did in self._device_ids:

@@ -2956,7 +2956,11 @@ async def ws_get_control_state(
                 if state is None
                 else state.attributes.get("unit_of_measurement"),
                 "max": None if state is None else state.attributes.get("max"),
-                "written": written.get(role),
+                # Treiber, die einen Systemwert auf mehrere Geräte aufteilen
+                # (Huawei Master/Slave), melden den Gerätewert selbst — sonst
+                # stünde in jeder Zeile der Fahrplanwert und die Summe der
+                # Anzeige wäre ein Vielfaches des tatsächlich Gesetzten.
+                "written": row.get("written_device_kw", written.get(role)),
                 "written_unit": units.get(role),
             }
         )

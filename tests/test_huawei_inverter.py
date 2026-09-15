@@ -10,6 +10,7 @@ warning. Forced discharge still goes via the huawei_solar service
 restore the max charge power and then stop_forcible_charge.
 """
 
+import time
 from contextlib import contextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -18,6 +19,7 @@ import pytest
 from custom_components.eeg_energy_optimizer.inverter.base import InverterBase
 from custom_components.eeg_energy_optimizer.inverter.huawei import (
     HUAWEI_DOMAIN,
+    SOC_CACHE_MAX_AGE_S,
     MAX_CHARGE_POWER_CANDIDATES,
     HuaweiInverter,
 )
@@ -455,6 +457,64 @@ class TestMultiDevice:
         }
         assert sum(targets.values()) == 4000
         assert targets == {_CHARGE_M: 1600, _CHARGE_S: 2400}
+
+    async def test_control_entities_show_per_device_value(self, mock_hass):
+        """Die Transparenzansicht zeigt je Zeile, was auf DEM Gerät steht.
+
+        Vorher trug jede Ladelimit-Zeile den Systemwert — bei zwei Geräten
+        summierte sich die Anzeige damit auf das Doppelte des Gesetzten.
+        """
+        inv = _multi_inverter(mock_hass)
+        with _registry():
+            await inv.async_set_charge_limit(4.0)
+            rows = inv.get_control_entities()
+        geschrieben = {
+            r["entity_id"]: r["written_device_kw"]
+            for r in rows if r["role"] == "charge_limit"
+        }
+        assert geschrieben == {_CHARGE_M: pytest.approx(1.6), _CHARGE_S: pytest.approx(2.4)}
+        assert sum(geschrieben.values()) == pytest.approx(4.0)
+
+    async def test_soc_dropout_keeps_proportional_split(self, mock_hass):
+        """Ein SOC-Aussetzer darf die Verteilung nicht auf gleich kippen.
+
+        huawei_solar setzt die Sensoren bei jedem Modbus-Aussetzer kurz auf
+        "unavailable" — auf einer Anlage mehrmals je Stunde. Der Füllstand
+        ändert sich dabei nicht, also gilt der letzte Wert weiter.
+        """
+        states = dict(_STATES)
+        inv = _multi_inverter(mock_hass)
+        mock_hass.states.get = MagicMock(side_effect=lambda eid: states.get(eid))
+        with _registry():
+            await inv.async_set_charge_limit(4.0)   # füllt den Cache
+            states[_SOC_M] = _state("unavailable")  # Master setzt aus
+            mock_hass.services.async_call.reset_mock()
+            await inv.async_set_charge_limit(4.0)
+        targets = {
+            c.args[2]["entity_id"]: c.args[2]["value"]
+            for c in mock_hass.services.async_call.call_args_list
+        }
+        assert targets == {_CHARGE_M: 1600, _CHARGE_S: 2400}   # nicht 2000/2000
+
+    async def test_soc_cache_expires(self, mock_hass):
+        """Nach SOC_CACHE_MAX_AGE_S gilt der Sensor als tot → Gleichverteilung."""
+        states = dict(_STATES)
+        inv = _multi_inverter(mock_hass)
+        mock_hass.states.get = MagicMock(side_effect=lambda eid: states.get(eid))
+        with _registry():
+            await inv.async_set_charge_limit(4.0)
+            states[_SOC_M] = _state("unavailable")
+            with patch(
+                "custom_components.eeg_energy_optimizer.inverter.huawei.time.monotonic",
+                return_value=time.monotonic() + SOC_CACHE_MAX_AGE_S + 1,
+            ):
+                mock_hass.services.async_call.reset_mock()
+                await inv.async_set_charge_limit(4.0)
+        targets = {
+            c.args[2]["entity_id"]: c.args[2]["value"]
+            for c in mock_hass.services.async_call.call_args_list
+        }
+        assert targets == {_CHARGE_M: 2000, _CHARGE_S: 2000}
 
     async def test_charge_limit_equal_split_without_sensors(self, mock_hass):
         """Fehlt ein Batteriesensor, wird gleich geteilt — nie verdoppelt."""
