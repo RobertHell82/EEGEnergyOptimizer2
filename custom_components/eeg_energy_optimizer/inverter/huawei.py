@@ -388,6 +388,37 @@ class HuaweiInverter(InverterBase):
             })
         return distribute_proportional(total_kw, units, id_key="device_id")
 
+    def _compute_charge_distribution(self, total_kw: float) -> dict | None:
+        """Per-device charge limit proportional to free room, capped at its max.
+
+        Das Ladelimit ist ein Deckel je Gerät, kein Systemwert: Derselbe Wert
+        auf beide Geräte geschrieben ergibt die doppelte Systemleistung (zwei
+        Wechselrichter mit je 4 kW laden 8 kW, obwohl der Fahrplan 4 kW will).
+        Aufgeteilt wird nach freiem Platz ((100 − SOC) × Kapazität), damit eine
+        fast volle Batterie ihren Anteil an die andere abgibt, statt ihn
+        ungenutzt zu binden.
+
+        Returns None, wenn ein Sensor fehlt → Aufrufer nutzt Gleichverteilung.
+        """
+        units = []
+        for did in self._device_ids:
+            soc = self._read_battery_soc_pct(did)
+            cap = self._read_battery_capacity_kwh(did)
+            eid = self._ensure_charge_entity(did)
+            if soc is None or cap is None or eid is None:
+                _LOGGER.debug(
+                    "Huawei: %s missing sensor for charge split "
+                    "(soc=%s cap=%s entity=%s) — fallback to equal",
+                    did, soc, cap, eid,
+                )
+                return None
+            units.append({
+                "device_id": did,
+                "usable_kwh": max(0.0, cap * (100.0 - soc) / 100.0),
+                "max_kw": self._get_max_charge_power(eid) / 1000.0,
+            })
+        return distribute_proportional(total_kw, units, id_key="device_id")
+
     # ------------------------------------------------------------------
     # Fahrplan-Steuerschnittstelle (Schedule-Executor)
     # ------------------------------------------------------------------
@@ -454,24 +485,24 @@ class HuaweiInverter(InverterBase):
     async def async_get_charge_limit_kw(self) -> float | None:
         """Aktuell gesetztes Ladelimit in kW aus der Number-Entität (W→kW).
 
-        Bei mehreren Batterien das MINIMUM: async_set_charge_limit schreibt
-        denselben Wert auf alle Geräte, also ist der kleinste gelesene Wert
-        der Stand, von dem Guard 1 weiterrechnen muss.
+        Bei mehreren Batterien die SUMME: Jedes Gerät lädt bis zu seinem
+        eigenen Limit, das System also bis zur Summe. async_set_charge_limit
+        teilt den Systemwert auf die Geräte auf — der gelesene Systemstand,
+        von dem Guard 1 weiterrechnet, ist entsprechend die Summe.
         """
         values: list[float] = []
         for did in self._device_ids:
             val = self._read_sensor_float(self._ensure_charge_entity(did))
             if val is not None:
                 values.append(val / 1000.0)
-        return min(values) if values else None
+        return sum(values) if values else None
 
     def get_charge_limit_max_kw(self) -> float | None:
-        """Hardware-Maximum des Ladelimits in kW (max-Attribut der Entität).
+        """Hardware-Maximum des Ladelimits in kW — SUMME über alle Geräte.
 
-        Bei mehreren Batterien das MINIMUM: geschrieben wird derselbe Wert
-        auf alle Geräte, und ein Wert über dem kleinsten Entity-Maximum
-        würde dort abgewiesen. Das Minimum je Entität erlaubt trotzdem die
-        volle Summenleistung, weil jedes Gerät bis zu seinem Limit lädt.
+        Das Limit wird auf die Geräte verteilt (async_set_charge_limit),
+        also ist die Systemgrenze die Summe der Einzelmaxima — analog zu
+        get_max_discharge_power_kw.
         """
         values: list[float] = []
         for did in self._device_ids:
@@ -479,7 +510,7 @@ class HuaweiInverter(InverterBase):
             if eid is None or self._hass.states.get(eid) is None:
                 continue
             values.append(self._get_max_charge_power(eid) / 1000.0)
-        return min(values) if values else None
+        return sum(values) if values else None
 
     def get_max_discharge_power_kw(self) -> float | None:
         """Maximale Entladeleistung in kW — SUMME über alle Batteriegeräte.
@@ -528,16 +559,39 @@ class HuaweiInverter(InverterBase):
     # Control
     # ------------------------------------------------------------------
     async def async_set_charge_limit(self, power_kw: float) -> bool:
-        """Set battery max charge power on all devices.
+        """Set the SYSTEM max charge power, split across all devices.
+
+        power_kw ist der Fahrplanwert fürs Gesamtsystem. Bei mehreren Geräten
+        wird er proportional zum freien Batterieplatz aufgeteilt (gedeckelt am
+        Gerätemaximum) — denselben Wert auf jedes Gerät zu schreiben würde die
+        Systemleistung vervielfachen. Fällt auf Gleichverteilung zurück, wenn
+        ein Batteriesensor fehlt.
 
         power_kw=0 blocks charging, any other value sets the limit. A device
         without a resolvable charge entity is skipped (logged); a partial
         failure returns False so the optimizer treats it conservatively.
         """
-        power_w = int(power_kw * 1000)
+        if len(self._device_ids) > 1:
+            distribution = self._compute_charge_distribution(power_kw)
+            if distribution is None:
+                per = power_kw / len(self._device_ids)
+                distribution = {did: per for did in self._device_ids}
+                _LOGGER.info(
+                    "Huawei: Ladelimit gleich verteilt (Sensor-Fallback): "
+                    "%.2f kW × %d", per, len(self._device_ids),
+                )
+            else:
+                _LOGGER.info(
+                    "Huawei: Ladelimit proportional verteilt (gesamt %.2f kW): %s",
+                    power_kw,
+                    {did: f"{kw:.2f}kW" for did, kw in distribution.items()},
+                )
+        else:
+            distribution = {did: power_kw for did in self._device_ids}
         any_ok = False
         all_ok = True
         for did in self._device_ids:
+            power_w = int(distribution.get(did, 0.0) * 1000)
             entity_id = self._ensure_charge_entity(did)
             if entity_id is None:
                 _LOGGER.warning(

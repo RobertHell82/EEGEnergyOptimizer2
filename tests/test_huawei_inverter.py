@@ -437,6 +437,39 @@ class TestMultiDevice:
         }
         assert targets == {_CHARGE_M: 0, _CHARGE_S: 0}
 
+    async def test_charge_limit_is_split_not_duplicated(self, mock_hass):
+        """4 kW Systemlimit auf zwei Geräte: Σ = 4 kW, nicht 4 kW je Gerät.
+
+        Der Feldfall: zwei Wechselrichter bekamen beide 4000 W und luden
+        zusammen ~7 kW, obwohl der Fahrplan 4 kW deckeln wollte.
+        Freier Platz: M 10 kWh × (100−80)% = 2, S 5 kWh × (100−40)% = 3
+        → 1,6 / 2,4 kW. Die vollere Batterie bekommt den kleineren Anteil.
+        """
+        inv = _multi_inverter(mock_hass)
+        with _registry():
+            result = await inv.async_set_charge_limit(4.0)
+        assert result is True
+        targets = {
+            c.args[2]["entity_id"]: c.args[2]["value"]
+            for c in mock_hass.services.async_call.call_args_list
+        }
+        assert sum(targets.values()) == 4000
+        assert targets == {_CHARGE_M: 1600, _CHARGE_S: 2400}
+
+    async def test_charge_limit_equal_split_without_sensors(self, mock_hass):
+        """Fehlt ein Batteriesensor, wird gleich geteilt — nie verdoppelt."""
+        inv = _multi_inverter(mock_hass)
+        with _registry(), patch.object(
+            HuaweiInverter, "_read_battery_soc_pct", return_value=None
+        ):
+            result = await inv.async_set_charge_limit(4.0)
+        assert result is True
+        targets = {
+            c.args[2]["entity_id"]: c.args[2]["value"]
+            for c in mock_hass.services.async_call.call_args_list
+        }
+        assert targets == {_CHARGE_M: 2000, _CHARGE_S: 2000}
+
     async def test_discharge_proportional_split(self, mock_hass):
         """6 kW: usable 8 / 2 kWh → 4.8 / 1.2 kW (beide unter 5-kW-Cap)."""
         inv = _multi_inverter(mock_hass)
@@ -484,18 +517,19 @@ class TestScheduleControlReads:
         assert await inv.async_get_charge_limit_kw() == pytest.approx(2.5)
         assert inv.get_charge_limit_max_kw() == pytest.approx(5.0)
 
-    async def test_charge_limit_read_uses_minimum_across_devices(self, mock_hass):
-        """Master 2,5 kW / Slave 4,0 kW → 2,5 kW: async_set_charge_limit
-        schreibt denselben Wert auf alle, das Minimum ist der wirksame Stand."""
+    async def test_charge_limit_read_is_summed_across_devices(self, mock_hass):
+        """Master 2,5 kW / Slave 4,0 kW → 6,5 kW: Jedes Gerät lädt bis zu
+        seinem eigenen Limit, das System also bis zur Summe. Das Minimum wäre
+        der Stand, von dem Guard 1 weiterrechnet — und würde die reale
+        Ladeleistung um Faktor Gerätezahl unterschätzen."""
         states = dict(_STATES)
         states[_CHARGE_M] = _state("2500", 5000)
         states[_CHARGE_S] = _state("4000", 6000)
         inv = _multi_inverter(mock_hass)
         mock_hass.states.get = MagicMock(side_effect=lambda eid: states.get(eid))
-        assert await inv.async_get_charge_limit_kw() == pytest.approx(2.5)
-        # Auch das Maximum ist das Minimum der Entity-Maxima (5000 < 6000):
-        # ein Schreibwert darüber würde am kleineren Entity abgewiesen.
-        assert inv.get_charge_limit_max_kw() == pytest.approx(5.0)
+        assert await inv.async_get_charge_limit_kw() == pytest.approx(6.5)
+        # Systemgrenze = Summe der Entity-Maxima, analog zur Entladung.
+        assert inv.get_charge_limit_max_kw() == pytest.approx(11.0)
 
     async def test_charge_limit_unreadable_returns_none(self, mock_hass):
         """Kein Ladeleistungs-Entity (degraded mode) → None statt Phantomwert."""

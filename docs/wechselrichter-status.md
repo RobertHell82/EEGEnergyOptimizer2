@@ -186,6 +186,14 @@ Integration, maximal 2 Wechselrichter.
 > oft dabei tatsächlich geschrieben wird und ob die Totbänder das ausreichend
 > begrenzen. Solange nicht gesteuert wird, fallen keine Schreibvorgänge an.
 
+> [!NOTE]
+> **Offen für Multi-Inverter:** `async_set_charge_limit` schreibt
+> `storage_charge_limit` mit demselben Wert an jeden Wechselrichter, das
+> Systemlimit wird also mit der Gerätezahl vervielfacht. Bei Huawei war das
+> der Fehler, den 2.1.1-dev30 behoben hat (Aufteilung nach freiem
+> Batterieplatz über `_distribution.py`); für SolarEdge ist er vor der
+> Freischaltung genauso zu beheben. Ohne Steuerung ist er folgenlos.
+
 Guide: [solaredge.md](guides/solaredge.md)
 
 ### SolaX Gen4+
