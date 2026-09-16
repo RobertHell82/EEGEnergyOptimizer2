@@ -1031,6 +1031,200 @@ async def test_freigabe_wird_nach_fehlschlag_erneut_versucht(mock_hass, mock_inv
     assert ex._active_kind == "release"
 
 
+# ---------------------------------------------------------------------------
+# Fehlgeschlagene Freigabe auf den Pfaden OHNE Fahrplan
+#
+# Auf diesen drei Pfaden setzt kein nachfolgender Planlauf das Gerät neu —
+# bleibt die Freigabe liegen, bleibt unser Limit stehen. Dass der Fehlschlag
+# wiederholt wird, hängt an _release_pending: _active_kind steht danach auf
+# None, und None heißt sonst überall „nie etwas geschrieben".
+# ---------------------------------------------------------------------------
+
+
+async def test_umschalten_wiederholt_fehlgeschlagene_freigabe(mock_hass, mock_inverter):
+    """Ein → Aus mit misslungenem Stopp: der nächste Lauf versucht es erneut.
+
+    Ohne Wiederholung bliebe ein Ladelimit von 0 kW für die ganze Aus-Phase
+    im Gerät stehen — die Batterie lädt dann nie, während die Statuszeile
+    Automatikbetrieb behauptet.
+    """
+    ex = _make_executor(mock_hass, mock_inverter)
+    plan = _state(_slot(0, battery_p=-2.0))
+
+    with _messwerte():
+        await ex.async_guard_cycle(plan, MODE_EIN, now=NOW)
+    assert mock_inverter.async_set_charge_limit.call_count == 1
+
+    mock_inverter.async_stop_forcible.return_value = False
+    with _messwerte():
+        await ex.async_guard_cycle(plan, MODE_AUS, now=NOW + timedelta(seconds=30))
+    assert mock_inverter.async_stop_forcible.call_count == 1
+    assert ex._release_pending is True
+
+    mock_inverter.async_stop_forcible.return_value = True
+    with _messwerte():
+        await ex.async_guard_cycle(plan, MODE_AUS, now=NOW + timedelta(seconds=60))
+    assert mock_inverter.async_stop_forcible.call_count == 2
+    assert ex._release_pending is False
+    assert ex._active_kind == "release"
+
+    # Und danach Ruhe — kein Dauerschreiben in der Aus-Phase.
+    with _messwerte():
+        await ex.async_guard_cycle(plan, MODE_AUS, now=NOW + timedelta(seconds=90))
+    assert mock_inverter.async_stop_forcible.call_count == 2
+
+
+async def test_pause_wiederholt_fehlgeschlagene_freigabe(mock_hass, mock_inverter):
+    """Dieselbe Lage in der Pause — sie ist ein Aus mit Ablaufzeit."""
+    ex = _make_executor(mock_hass, mock_inverter)
+    plan = _state(_slot(0, battery_p=-2.0))
+    pause_bis = NOW + timedelta(hours=4)
+
+    with _messwerte():
+        await ex.async_guard_cycle(plan, MODE_EIN, now=NOW)
+
+    mock_inverter.async_stop_forcible.return_value = False
+    with _messwerte():
+        await ex.async_guard_cycle(
+            plan, MODE_EIN, now=NOW + timedelta(seconds=30),
+            pause_bis=pause_bis, pause_soc_pct=80.0,
+        )
+    assert ex._release_pending is True
+
+    mock_inverter.async_stop_forcible.return_value = True
+    with _messwerte():
+        await ex.async_guard_cycle(
+            plan, MODE_EIN, now=NOW + timedelta(seconds=60),
+            pause_bis=pause_bis, pause_soc_pct=80.0,
+        )
+    assert mock_inverter.async_stop_forcible.call_count == 2
+    assert ex._release_pending is False
+
+
+async def test_fehlgeschlagene_freigabe_meldet_schreibfehler(mock_hass, mock_inverter):
+    """last_write_ok trägt den Fehlschlag — sonst meldet die Statuskarte nichts.
+
+    Die Panel-Zeile „Letzter Steuerbefehl fehlgeschlagen" und das Abzeichen im
+    Aktivitätsprotokoll hängen beide an diesem Flag.
+    """
+    ex = _make_executor(mock_hass, mock_inverter)
+    ex.last_write_ok = True  # vorheriger Schreibvorgang war erfolgreich
+
+    mock_inverter.async_stop_forcible.return_value = False
+    assert await ex.async_release() is False
+    assert ex.last_write_ok is False
+
+    mock_inverter.async_stop_forcible.return_value = True
+    assert await ex.async_release() is True
+    assert ex.last_write_ok is True
+
+
+async def test_failsafe_wiederholt_fehlgeschlagene_freigabe(mock_hass, mock_inverter):
+    """Der Failsafe gilt erst als erledigt, wenn die Freigabe wirklich durchging.
+
+    Er greift genau dann, wenn kein Plan mehr kommt — es gibt also keinen
+    späteren Lauf, der das Limit überschreiben würde.
+    """
+    ex = _make_executor(mock_hass, mock_inverter)
+
+    with _messwerte():
+        await ex.async_guard_cycle(_state(_slot(0, battery_p=-2.0)), MODE_EIN, now=NOW)
+
+    spaeter = NOW + timedelta(minutes=16)
+    mock_inverter.async_stop_forcible.return_value = False
+    with _messwerte():
+        await ex.async_guard_cycle(_state(available=False), MODE_EIN, now=spaeter)
+    assert mock_inverter.async_stop_forcible.call_count == 1
+    assert ex._failsafe_released is False
+    assert "wiederholt" in ex.last_status
+
+    mock_inverter.async_stop_forcible.return_value = True
+    with _messwerte():
+        await ex.async_guard_cycle(
+            _state(available=False), MODE_EIN, now=spaeter + timedelta(seconds=30)
+        )
+    assert mock_inverter.async_stop_forcible.call_count == 2
+    assert ex._failsafe_released is True
+
+    # Jetzt erledigt — kein dritter Versuch.
+    with _messwerte():
+        await ex.async_guard_cycle(
+            _state(available=False), MODE_EIN, now=spaeter + timedelta(seconds=60)
+        )
+    assert mock_inverter.async_stop_forcible.call_count == 2
+
+
+async def test_notaus_ohne_geglueckten_stopp_bleibt_in_ueberwachung(
+    mock_hass, mock_inverter
+):
+    """Misslingt der Stopp, läuft die Entladung weiter — also weiter überwachen.
+
+    Vorher setzte der Not-Aus seine Sperre auch nach einem Fehlschlag. Damit
+    stand _active_kind auf None, die Überwachung oben fiel aus, und eine nie
+    gestoppte Zwangsentladung lief unbeobachtet bis zum Ziel-Ladestand des
+    Geräts weiter.
+    """
+    ex = _make_executor(mock_hass, mock_inverter)
+
+    with _messwerte(haus=0.8):
+        await ex.async_guard_cycle(_state(*_DISCHARGE_SLOTS), MODE_EIN, now=NOW)
+    assert mock_inverter.async_set_discharge.call_count == 1
+
+    mock_inverter.async_stop_forcible.return_value = False
+    for sekunden in (30, 60, 90):
+        with _messwerte(export=-1.5, haus=0.8):
+            await ex.async_guard_cycle(
+                _state(*_DISCHARGE_SLOTS), MODE_EIN,
+                now=NOW + timedelta(seconds=sekunden),
+            )
+    assert mock_inverter.async_stop_forcible.call_count == 1
+    assert ex._active_kind == "discharge"       # Überwachung bleibt an
+    assert ex._emergency_blocked_slot is None   # nicht als erledigt vermerkt
+    assert "wiederholt" in ex.last_status
+
+    # Nächster Lauf mit weiterhin hohem Bezug: erneuter Stoppversuch.
+    mock_inverter.async_stop_forcible.return_value = True
+    with _messwerte(export=-1.5, haus=0.8):
+        await ex.async_guard_cycle(
+            _state(*_DISCHARGE_SLOTS), MODE_EIN, now=NOW + timedelta(seconds=120)
+        )
+    assert mock_inverter.async_stop_forcible.call_count == 2
+    assert ex._emergency_blocked_slot is not None
+    assert "gesperrt" in ex.last_status
+
+
+async def test_ladelimit_wartet_auf_gestoppte_entladung(mock_hass, mock_inverter):
+    """Ein Ladelimit stoppt keine laufende Zwangsentladung.
+
+    Wird das Stopp-Ergebnis ignoriert, steht danach _active_kind auf
+    "charge_limit", während die Entladung weiterläuft — unbeobachtet, weil die
+    Not-Aus-Überwachung nur bei "discharge" greift.
+    """
+    ex = _make_executor(mock_hass, mock_inverter)
+
+    with _messwerte(haus=0.8):
+        await ex.async_guard_cycle(_state(*_DISCHARGE_SLOTS), MODE_EIN, now=NOW)
+    assert ex._active_kind == "discharge"
+
+    # Nächster Slot plant Laden, der Stopp misslingt.
+    laden = _state(_slot(0, battery_p=-2.0))
+    mock_inverter.async_stop_forcible.return_value = False
+    with _messwerte(haus=0.8):
+        await ex.async_guard_cycle(laden, MODE_EIN, now=NOW + timedelta(seconds=30))
+
+    assert mock_inverter.async_set_charge_limit.call_count == 0
+    assert ex._active_kind == "discharge"
+    assert ex.last_write_ok is False
+    assert "wiederholt" in ex.last_status
+
+    # Klappt der Stopp, wird das Limit geschrieben.
+    mock_inverter.async_stop_forcible.return_value = True
+    with _messwerte(haus=0.8):
+        await ex.async_guard_cycle(laden, MODE_EIN, now=NOW + timedelta(seconds=60))
+    assert mock_inverter.async_set_charge_limit.call_count == 1
+    assert ex._active_kind == "charge_limit"
+
+
 async def test_wiederholtes_umschalten_gibt_jedes_mal_frei(mock_hass, mock_inverter):
     """Ein → Aus → Ein → Aus: auch beim zweiten Mal muessen die Steuerwerte
     zurueckgenommen werden.

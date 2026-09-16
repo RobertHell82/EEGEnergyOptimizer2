@@ -249,6 +249,12 @@ class ScheduleExecutor:
         self._last_mode: str | None = None
         # Freigabe im Anzeige-Modus nachholen (Limit aus einer Vorsession).
         self._display_release_pending = False
+        # Eine FEHLGESCHLAGENE Freigabe. Eigenes Merkmal, weil ``_active_kind``
+        # nach einem Fehlschlag ``None`` ist — und ``None`` heißt im Rest der
+        # Datei „nie etwas geschrieben“. Ohne dieses Flag könnte kein Gate
+        # unterscheiden, ob nichts zurückzunehmen ist oder ob der Versuch
+        # misslang, und die Wiederholung unterbliebe (siehe async_release).
+        self._release_pending = False
         # Aktive Pause (Ablaufzeit, ggf. Ziel-Ladestand) — nur für den
         # Statustext; die Wirkung ist dieselbe wie Modus Aus.
         self._pause_bis: datetime | None = None
@@ -300,6 +306,17 @@ class ScheduleExecutor:
         Executor sich trotzdem als freigegeben merken, stiege
         ``_apply_release`` künftig früh aus und die Batterie bliebe dauerhaft
         blockiert.
+
+        Der Fehlschlag wird zusätzlich in ``_release_pending`` festgehalten.
+        ``_active_kind`` allein reicht dafür nicht: es steht danach auf
+        ``None``, und genau dieser Wert bedeutet überall sonst „nie etwas
+        geschrieben". Die Gates im Guard-Lauf konnten den Fehlschlag deshalb
+        nicht von einem unbeschriebenen Gerät unterscheiden und haben die
+        Freigabe nie wiederholt — auf den drei Pfaden, die keinen Fahrplan
+        haben, der sie ohnehin neu setzt (Moduswechsel/Pause, Failsafe,
+        Not-Aus). ``last_write_ok`` wird hier mitgeführt, sonst trägt die
+        Statuskarte nach einer misslungenen Freigabe weiter das ``True`` des
+        letzten erfolgreichen Schreibvorgangs und meldet den Fehler nie.
         """
         if not self._supported:
             return True
@@ -307,6 +324,8 @@ class ScheduleExecutor:
         self._written_charge_limit_kw = None
         self._written_discharge_kw = None
         self._written_target_soc = None
+        self.last_write_ok = ok
+        self._release_pending = not ok
         if ok:
             self._active_kind = "release"
         else:
@@ -374,8 +393,11 @@ class ScheduleExecutor:
         # Wechsel Ein → Test/Aus: einmalig freigeben, sonst bleibt das letzte
         # Ladelimit im Wechselrichter stehen.
         if self._last_mode == MODE_EIN and mode != MODE_EIN:
-            _LOGGER.info("Executor: Modus %s → %s — Wechselrichter freigegeben", self._last_mode, mode)
-            await self.async_release()
+            _LOGGER.info(
+                "Executor: Modus %s → %s — Freigabe angefordert",
+                self._last_mode, mode,
+            )
+            self._release_pending = True
         elif self._last_mode is None and mode != MODE_EIN:
             # Erster Lauf nach einem Neustart, und wir steuern nicht. Ein in
             # der Vorsession geschriebenes Limit steht dann weiter im Gerät —
@@ -438,9 +460,16 @@ class ScheduleExecutor:
             # Optimierung aus ist. Bis 1.5.51 geschah das nur nach einem
             # Neustart (_display_release_pending), nicht beim Umschalten im
             # Betrieb.
-            if self._active_kind not in (None, "release") and getattr(
-                self._inverter, "is_available", False
-            ):
+            # ``_release_pending`` heißt „eine Freigabe steht aus“ — gesetzt
+            # vom Moduswechsel oben und von jedem fehlgeschlagenen Versuch.
+            # Es gehört in dieselbe Bedingung, weil ``_active_kind`` nach
+            # einem Fehlschlag auf ``None`` steht: die Prüfung allein wäre
+            # für den Rest der Aus-Phase falsch, das Limit bliebe im Gerät,
+            # obwohl die Statuszeile Automatikbetrieb behauptet.
+            if (
+                self._active_kind not in (None, "release")
+                or self._release_pending
+            ) and getattr(self._inverter, "is_available", False):
                 if await self.async_release():
                     _LOGGER.info(
                         "Executor: Modus 'Aus' — Steuerwerte zurückgenommen, "
@@ -500,7 +529,19 @@ class ScheduleExecutor:
                     GUARD_EMERGENCY_IMPORT_KW,
                     GUARD_EMERGENCY_IMPORT_RUNS,
                 )
-                await self.async_release()
+                if not await self.async_release():
+                    # Der Stopp ging nicht durch — die Entladung LÄUFT WEITER.
+                    # Weder die Sperre setzen noch den Zähler zurückstellen:
+                    # beides hieße „erledigt". ``_active_kind`` bleibt auf
+                    # Entladung, damit die Überwachung oben im nächsten Lauf
+                    # wieder greift und es erneut versucht. Ohne das stünde
+                    # dort ``None``, die Überwachung fiele aus und eine nie
+                    # gestoppte Zwangsentladung liefe unbeobachtet weiter.
+                    self._active_kind = "discharge"
+                    self.last_status = (
+                        "Not-Aus: Stopp der Entladung fehlgeschlagen — wird wiederholt"
+                    )
+                    return
                 # Zweite Sperre über die Uhr: der Not-Aus überwacht bewusst
                 # auch ohne Fahrplan, dann ist _current_slot_t aber None —
                 # und eine Sperre auf None trifft in der Prüfung unten keinen
@@ -526,12 +567,24 @@ class ScheduleExecutor:
                 or bool((schedule_state or {}).get("available"))  # verfügbar, aber zu alt
             )
             if overdue and not self._failsafe_released:
-                _LOGGER.warning(
-                    "Executor: Failsafe — kein brauchbarer Fahrplan, Wechselrichter freigegeben"
+                # Nur beim ERSTEN Versuch warnen — async_release meldet jeden
+                # Fehlschlag selbst, sonst stünden zwei Warnungen je 30 s im
+                # Log, solange der Runner hängt.
+                if not self._release_pending:
+                    _LOGGER.warning(
+                        "Executor: Failsafe — kein brauchbarer Fahrplan, "
+                        "Wechselrichter freigegeben"
+                    )
+                # Als erledigt gilt der Failsafe erst, wenn die Freigabe
+                # wirklich durchging. Sonst bliebe ein Limit genau in der Lage
+                # stehen, für die es den Failsafe gibt: der Runner hängt, es
+                # kommt kein Plan mehr, der es überschreiben würde.
+                self._failsafe_released = await self.async_release()
+                self.last_status = (
+                    "Failsafe: kein Plan — Wechselrichter freigegeben"
+                    if self._failsafe_released
+                    else "Failsafe: Freigabe fehlgeschlagen — wird wiederholt"
                 )
-                await self.async_release()
-                self._failsafe_released = True
-                self.last_status = "Failsafe: kein Plan — Wechselrichter freigegeben"
             elif self._failsafe_released:
                 self.last_status = "Failsafe aktiv — warte auf neuen Plan"
             else:
@@ -818,8 +871,7 @@ class ScheduleExecutor:
         if self._active_kind == "release":
             self.last_status = status_text
             return
-        ok = await self.async_release()
-        self.last_write_ok = ok
+        ok = await self.async_release()  # setzt last_write_ok selbst
         self.last_status = (
             f"{status_text} — Wechselrichter freigegeben"
             if ok
@@ -831,7 +883,25 @@ class ScheduleExecutor:
         # Entladung zuerst stoppen (stop_forcible stellt bei Huawei auch das
         # Ladelimit auf Maximum zurück; direkt danach wird der Planwert gesetzt).
         if self._active_kind == "discharge":
-            await self._inverter.async_stop_forcible()
+            if not await self._inverter.async_stop_forcible():
+                # Ergebnis nicht ignorieren: sonst wird gleich ein Ladelimit
+                # geschrieben und ``_active_kind`` auf "charge_limit" gesetzt,
+                # während die Zwangsentladung weiterläuft — ein Ladelimit
+                # stoppt sie nicht. Sie liefe dann unbeobachtet bis zum
+                # geräteseitigen Ziel-Ladestand. Also abbrechen, in der
+                # Entladung bleiben und im nächsten Lauf erneut versuchen.
+                self.write_failures += 1
+                self.last_write_ok = False
+                self._notify_failure("release")
+                _LOGGER.warning(
+                    "Executor: Entladung vor dem Ladelimit zu stoppen ist "
+                    "fehlgeschlagen — Ladelimit wird nicht geschrieben"
+                )
+                self.last_status = (
+                    "Schreibfehler: Entladung konnte nicht gestoppt werden — "
+                    "wird wiederholt"
+                )
+                return
             self._written_discharge_kw = None
             self._written_target_soc = None
 
