@@ -10,6 +10,12 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
+## [2.1.1-dev32] - 2026-09-16
+
+### Hinzugefügt
+
+- **Die Legende des Optimierungsplans schaltet jetzt die Kurven.** Das Diagramm trägt bis zu zwölf Verläufe auf drei Skalen — Prognosen, Plan, gemessener Rückblick, Einspeisepreis und je Gemeinschaft eine Bedarfskurve. Wer einen einzelnen davon verfolgen wollte, kam gegen die Überlagerung nicht an. Ein Klick auf einen Legendeneintrag nimmt seine Kurve aus dem Bild, ein zweiter holt sie zurück; der Eintrag bleibt dabei stehen, nur leer und durchgestrichen, damit der Weg zurück sichtbar ist. Laden und Entladen sind getrennt schaltbar, die PV nimmt ihre Fläche mit, und im Rückblick gehört die gemessene Linie zur selben Kennung wie ihre Plankurve — die beiden zu vergleichen ist ja der Zweck des Rückblicks. Die kW-Achse bleibt unverändert: sonst sprängen die verbliebenen Kurven bei jedem Klick auf eine andere Höhe, und die Karte „Optimierungsgewinn" zeigte nicht mehr denselben Maßstab. Nur die Gemeinschaftsachse rechts misst sich neu, sie gehört allein diesen Kurven. Die Auswahl überlebt den Seitenwechsel; sobald etwas fehlt, erscheint am Ende der Legende „alle zeigen". Der Tooltip zeigt weiterhin alle Werte des Slots — Ausblenden räumt das Bild auf, es soll die Zahl nicht unerreichbar machen.
+
 ## [2.1.1-dev31] - 2026-09-15
 
 ### Behoben
