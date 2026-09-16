@@ -194,7 +194,21 @@ three intents. `Fahrplan-Status` shows what actually happened:
 - **API**: Paginated WebSocket endpoint (`get_activity_log` with `offset`/`limit`)
 - **Frontend**: Loads 100 entries initially, "Mehr laden" fetches 100 more per click, live events via subscription
 
-### WebSocket API (30 commands)
+### WebSocket API (33 commands)
+
+Home Assistant hands a `websocket_command` to **every logged-in user** —
+`ActiveConnection.async_handle` checks no permissions. Anything that writes
+config, dials out to a caller-chosen host, drives hardware with no entity
+equivalent, or changes consent therefore carries
+`@websocket_api.require_admin` (topmost decorator, above `websocket_command`
+and `async_response`): `save_config`, `detect_sensors`, the four `probe_*`,
+`ambibox_manual`, `refresh_consumption_profile` and the three `telemetry_*`.
+The read commands stay open so the dashboard works for non-admins, and so do
+`set_override` / `clear_override` / `refresh_schedule` / `tagesbilanz_jetzt`
+— a non-admin reaches those through the `pause` / `aufheben` services and
+`number.set_value` anyway, so gating them would restrict operation without
+protecting anything. `tests/test_websocket_admin.py` pins the classification
+of every single command and fails on a new, unclassified one.
 
 | Command | Description |
 |---------|-------------|

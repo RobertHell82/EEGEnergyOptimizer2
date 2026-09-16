@@ -44,8 +44,22 @@ def _async_response_decorator(func):
     return func
 
 
+def _require_admin_decorator(func):
+    """Pass-through wie die beiden oben.
+
+    In Home Assistant prueft `require_admin` `connection.user.is_admin` und
+    wirft sonst `Unauthorized`; nachstellen laesst sich das hier nicht, denn
+    `connection` ist in den Tests ein MagicMock. Ohne diesen Pass-through
+    waere jede so dekorierte Coroutine wieder ein MagicMock und nicht mehr
+    awaitable. Dass der Decorator an den richtigen Befehlen haengt, prueft
+    tests/test_websocket_admin.py statisch am Quelltext.
+    """
+    return func
+
+
 _ws_module.websocket_command = _websocket_command_decorator
 _ws_module.async_response = _async_response_decorator
+_ws_module.require_admin = _require_admin_decorator
 _ws_module.async_register_command = MagicMock()
 _ws_module.ActiveConnection = MagicMock
 

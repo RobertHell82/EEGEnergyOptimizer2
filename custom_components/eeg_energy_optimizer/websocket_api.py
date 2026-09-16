@@ -589,6 +589,7 @@ async def ws_get_config(
     connection.send_result(msg["id"], config)
 
 
+@websocket_api.require_admin
 @websocket_api.websocket_command(
     {
         vol.Required("type"): "eeg_optimizer/save_config",
@@ -889,6 +890,7 @@ def _first_loaded_entry_host(entries) -> str | None:
     return _source_entry_host(entries[0]) if entries else None
 
 
+@websocket_api.require_admin
 @websocket_api.websocket_command(
     {
         vol.Required("type"): "eeg_optimizer/detect_sensors",
@@ -1485,6 +1487,7 @@ async def _probe_fronius_modbus(host: str, port: int, slave_id: int = 1) -> dict
             pass
 
 
+@websocket_api.require_admin
 @websocket_api.websocket_command(
     {
         vol.Required("type"): "eeg_optimizer/probe_fronius",
@@ -1631,6 +1634,7 @@ async def _probe_kostal_modbus(host: str, port: int) -> dict:
             pass
 
 
+@websocket_api.require_admin
 @websocket_api.websocket_command(
     {
         vol.Required("type"): "eeg_optimizer/probe_kostal",
@@ -1771,6 +1775,7 @@ async def _probe_sma_modbus(host: str, port: int) -> dict:
             pass
 
 
+@websocket_api.require_admin
 @websocket_api.websocket_command(
     {
         vol.Required("type"): "eeg_optimizer/probe_sma",
@@ -2364,6 +2369,7 @@ def _consumption_status_payload(coordinator) -> dict:
     }
 
 
+@websocket_api.require_admin
 @websocket_api.websocket_command(
     {
         vol.Required("type"): "eeg_optimizer/refresh_consumption_profile",
@@ -2466,6 +2472,7 @@ async def ws_telemetry_get_status(
     })
 
 
+@websocket_api.require_admin
 @websocket_api.websocket_command(
     {vol.Required("type"): "eeg_optimizer/telemetry_enable"}
 )
@@ -2556,6 +2563,7 @@ async def ws_telemetry_enable(
     })
 
 
+@websocket_api.require_admin
 @websocket_api.websocket_command(
     {vol.Required("type"): "eeg_optimizer/telemetry_disable"}
 )
@@ -2574,6 +2582,7 @@ async def ws_telemetry_disable(
     connection.send_result(msg["id"], {"success": True})
 
 
+@websocket_api.require_admin
 @websocket_api.websocket_command(
     {vol.Required("type"): "eeg_optimizer/telemetry_forget"}
 )
@@ -3110,6 +3119,7 @@ async def _probe_ambibox_modbus(
             pass
 
 
+@websocket_api.require_admin
 @websocket_api.websocket_command(
     {
         vol.Required("type"): "eeg_optimizer/probe_ambibox",
@@ -3150,6 +3160,7 @@ async def ws_probe_ambibox(
     connection.send_result(msg["id"], result)
 
 
+@websocket_api.require_admin
 @websocket_api.websocket_command(
     {
         vol.Required("type"): "eeg_optimizer/ambibox_manual",
