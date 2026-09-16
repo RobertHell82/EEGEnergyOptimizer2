@@ -10,6 +10,16 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
+## [2.1.1-dev33] - 2026-09-16
+
+### Behoben
+
+- **Eine fehlgeschlagene Freigabe des Wechselrichters wurde auf drei Wegen nie wiederholt.** Beim Umschalten auf „Aus" oder in eine Pause, beim Failsafe und beim Not-Aus wurde die Freigabe genau einmal versucht und das Ergebnis verworfen. Ging sie daneben — ein Modbus-Aussetzer der Huawei-Integration reicht, die kommen mehrmals pro Stunde vor —, blieb unser letzter Steuerwert im Gerät stehen. Am schwersten wog das beim üblichen Fall „Laden blockiert", also Ladelimit 0 kW: Wer eine Pause mit Ziel-Ladestand startet, damit die Batterie vor einem Ausfall volläuft, bekam das Gegenteil. Die Batterie lud nie, die Pause konnte nicht per Ladestand enden und lief in die 48-Stunden-Obergrenze — während die Statuskarte „der Wechselrichter läuft im Automatikmodus" meldete. Gemeldet wurde der Fehlschlag nirgends: die Zeile „Letzter Steuerbefehl fehlgeschlagen" hängt an einem Merker, den die Freigabe gar nicht anfasste, übrig blieb eine Zeile im Systemprotokoll. Ursache war, dass ein misslungener Versuch denselben Zustand hinterließ wie „es wurde nie etwas geschrieben" — jede Prüfung „steht noch etwas im Gerät?" antwortete danach mit Nein. Das ist jetzt ein eigener Merker, und alle drei Wege versuchen es im nächsten Lauf erneut. Der Failsafe gilt erst als erledigt, wenn die Freigabe wirklich durchging; der Not-Aus lässt die Entladung in der Überwachung, solange er sie nicht stoppen konnte. Ebenfalls behoben: Beim Wechsel von einer Entladung auf ein Ladelimit wurde der Stopp der Entladung nicht geprüft — das Ladelimit ging raus, die Zwangsentladung lief unbeobachtet weiter, denn ein Ladelimit stoppt sie nicht.
+
+### Geändert
+
+- **Schreibende WebSocket-Befehle des Panels sind jetzt Admins vorbehalten.** Home Assistant reicht einen WebSocket-Befehl an jeden angemeldeten Benutzer weiter — geprüft wird nichts, wer eine Berechtigung will, muss sie ausdrücklich verlangen. Das Panel ist bewusst auch für Nicht-Admins sichtbar, seine schreibenden Befehle standen damit aber ebenfalls offen: `save_config` mischt die übergebenen Werte ungefiltert in die Konfiguration, darüber ließen sich Wechselrichtertyp, Modbus-Adresse, Mindest-Ladestand und Einspeisegrenze dauerhaft verstellen. Dazu kamen die vier Verbindungstests, die eine Modbus-Verbindung zu einer frei wählbaren Adresse im Heimnetz aufbauen, die Wallbox-Handsteuerung und die Einwilligung in die Datenübermittlung. Home Assistant selbst behandelt Änderungen an einer Integration als Admin-Sache. Elf Befehle sind jetzt entsprechend abgesichert; die lesenden bleiben offen, damit das Dashboard für alle funktioniert. Offen bleiben auch Pause, Neuberechnung und Tagesbilanz — die erreicht ein Nicht-Admin über die Dienste `pause` / `aufheben` und die Entitäten des Wechselrichters ohnehin, eine Sperre dort schränkte nur die Bedienung ein, ohne etwas zu schützen.
+
 ## [2.1.1-dev32] - 2026-09-16
 
 ### Hinzugefügt
