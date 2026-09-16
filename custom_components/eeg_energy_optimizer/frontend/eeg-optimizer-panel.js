@@ -696,6 +696,20 @@ class EegOptimizerPanel extends HTMLElement {
     this._schedHist = null;
     this._schedHistBusy = false;
     this._schedHistError = null;
+    // Welche Kurven des Optimierungsplans NICHT gezeichnet werden. Das
+    // Diagramm trägt bis zu zwölf Verläufe auf drei Skalen; wer einen
+    // einzelnen verfolgen will, kommt gegen die Überlagerung sonst nicht an.
+    // Ein Klick auf die Legende nimmt eine Kurve heraus, ein zweiter holt sie
+    // zurück. Die ACHSEN bleiben dabei unverändert: sonst sprängen die
+    // verbliebenen Kurven bei jedem Klick auf eine andere Höhe, und der
+    // Vergleich mit der Karte „Optimierungsgewinn“ (gleiche kW-Skala) wäre
+    // hin. Ausnahme ist die EEG-Achse rechts — sie gehört nur diesen Kurven
+    // und wird auf die verbliebenen neu gemessen.
+    // Gespeichert als Liste von Kennungen, damit die Wahl den Seitenwechsel
+    // überlebt; _savePref kann nur Zeichenketten.
+    this._schedSerienAus = new Set(
+      String(this._loadPref("sched_serien_aus", "") || "").split(",").filter(Boolean),
+    );
     // Karte „Optimierungsgewinn": Kennzahl + Vergleichschart „ohne
     // Optimierung" (Auf/Zu bleibt gespeichert), die Geld-Details flüchtig.
     this._gewinnOpen = this._loadPref("gewinn_open", "1", ["0", "1"]) === "1";
@@ -1128,6 +1142,25 @@ class EegOptimizerPanel extends HTMLElement {
       this._schedHistError = null;
       if (wert !== "off") this._loadScheduleHistory();
     }
+    this._render();
+  }
+
+  // Eine Kurve des Optimierungsplans aus- oder wieder einblenden.
+  // Gegenstück zu den Legendenknöpfen in _renderSchedule().
+  _schedSerieUmschalten(key) {
+    if (!key) return;
+    if (this._schedSerienAus.has(key)) this._schedSerienAus.delete(key);
+    else this._schedSerienAus.add(key);
+    this._savePref("sched_serien_aus", [...this._schedSerienAus].join(","));
+    this._render();
+  }
+
+  // Alle wieder einblenden — der Weg zurück, ohne jede Kurve einzeln
+  // anzutippen. Der Knopf steht nur da, solange überhaupt etwas fehlt.
+  _schedSerienAlleZeigen() {
+    if (!this._schedSerienAus.size) return;
+    this._schedSerienAus.clear();
+    this._savePref("sched_serien_aus", "");
     this._render();
   }
 
@@ -1764,6 +1797,12 @@ class EegOptimizerPanel extends HTMLElement {
         break;
       case "chart-range":
         this._chartBereichSetzen(dataset?.chart, dataset?.wert);
+        break;
+      case "sched-serie":
+        this._schedSerieUmschalten(dataset?.serie);
+        break;
+      case "sched-serien-alle":
+        this._schedSerienAlleZeigen();
         break;
       case "toggle-settings-feature": {
         const feat = dataset?.feature;
@@ -3409,7 +3448,22 @@ class EegOptimizerPanel extends HTMLElement {
     // Pixeln — und der Bedarf ist die Größe, um die es geht. Die
     // Achsenbeschriftung nennt beide Enden, damit der Maßstabswechsel
     // sichtbar ist.
-    const sichtbareSerien = eegSerien;
+    // Liegt diese Kurve im Bild? Siehe _schedSerienAus im Konstruktor.
+    // Nicht „an“: der Segmentumschalter weiter unten führt schon ein eigenes
+    // `an` und würde diesen Helfer in seinem Block verschatten.
+    const imBild = (key) => !this._schedSerienAus.has(key);
+    // Kennung einer Gemeinschaft aus ihrem NAMEN, nicht aus dem Index:
+    // eegSerien wirft Serien ohne Werte heraus, damit verschiebt sich der
+    // Index, sobald eine Gemeinschaft eine Weile nichts liefert — und der
+    // gespeicherte Schalter träfe plötzlich die andere. Das Komma entfällt
+    // bei der Bereinigung, es trennt die Kennungen im localStorage.
+    const eegKey = (name) =>
+      "eeg_" + String(name || "").replace(/[^A-Za-z0-9]+/g, "_").slice(0, 32);
+    // Ausgeblendete Gemeinschaften fallen hier heraus und damit aus Kurve,
+    // Fläche UND Achsenmessung — anders als bei den kW-Kurven, denn diese
+    // Achse gehört allein ihnen. Die Legende baut weiter auf eegSerien auf,
+    // sonst verschwände mit der Kurve der Knopf, der sie zurückholt.
+    const sichtbareSerien = eegSerien.filter(serie => imBild(eegKey(serie.name)));
     const eegMaxBedarf = Math.max(
       0, ...sichtbareSerien.flatMap(s => s.punkte.filter(p => !p.ueber).map(p => p.v)));
     const eegMaxUeber = Math.max(
@@ -3428,8 +3482,19 @@ class EegOptimizerPanel extends HTMLElement {
     const preise = slots.map(sl => sl.feedin_price).filter(v => v != null);
     const pMin = preise.length ? Math.min(...preise) : 0;
     const pMax = preise.length ? Math.max(...preise) : 0;
-    const preisImFeld = (this._config?.schedule_feedin_source || "manual") === "spot"
-      && preise.length > 0 && pMax - pMin > 0.0005;
+    // Drei Größen, nicht eine. Ob es überhaupt einen Preisverlauf gibt
+    // (steuert den Legendenknopf), und in welcher der beiden Darstellungen er
+    // gerade liegt: als Linie im Leistungsfeld mit eigener ct-Achse, oder als
+    // schmales Band darunter. Die Quelle entscheidet über die Form, der
+    // Legendenknopf über beide — sonst tauscht ein Klick auf „Einspeisepreis“
+    // nur die Darstellung, statt den Verlauf aus dem Bild zu nehmen (der Fall
+    // wurde beim Durchschalten aller Kennungen sichtbar).
+    // Ausgeblendet fällt die rechte Achse an die EEG-Kurven zurück, denen
+    // sie sonst der Preis wegnimmt.
+    const preisVorhanden = preise.length > 0 && pMax - pMin > 0.0005;
+    const preisAusSpot = (this._config?.schedule_feedin_source || "manual") === "spot";
+    const preisImFeld = preisVorhanden && preisAusSpot && imBild("preis");
+    const preisAlsBand = preisVorhanden && !preisAusSpot && imBild("preis");
     const padR = (hasEeg || preisImFeld) ? (schmal ? 34 : 46) : (schmal ? 8 : 16);
     const plotW = W - padL - padR;
     const plotH = schmal ? 150 : 200;        // Leistungsfeld
@@ -3517,6 +3582,9 @@ class EegOptimizerPanel extends HTMLElement {
     const barW = Math.max(1, xw(bucketMs) - 0.6);
     const balken = (t, v, deckkraft) => {
       if (v == null || Math.abs(v) < 0.001) return "";
+      // Das Vorzeichen entscheidet, welcher Legendenknopf diesen Balken
+      // besitzt — gilt für den gültigen Plan wie für den Rückblick.
+      if (!imBild(v > 0 ? "bat_laden" : "bat_entladen")) return "";
       const yTop = v > 0 ? y(v) : y(0);
       const h = Math.abs(y(v) - y(0));
       const colour = v > 0 ? "#1e88e5" : "#ef6c00";   // laden / entladen
@@ -3691,7 +3759,7 @@ class EegOptimizerPanel extends HTMLElement {
         preisPfad += `${preisPfad ? "L" : "M"}${x(slotT[i]).toFixed(1)},${yPreis(s.feedin_price).toFixed(1)}`;
       });
       preisFeld += `<path d="${preisPfad}" fill="none" stroke="#d81b60" stroke-width="1.8"/>`;
-    } else if (preise.length && pMax - pMin > 0.0005) {   // konstanter Preis sagt nichts
+    } else if (preisAlsBand) {
       const bandY = padT + plotH + 4;
       const bandH = schmal ? 6 : 7;
       for (let i = 0; i < slots.length; i += bucket) {
@@ -3713,13 +3781,26 @@ class EegOptimizerPanel extends HTMLElement {
     });
     const socIstPath = hist ? histPath("soc", ys) : "";
     let tempPath = "";
-    if (hatPufferTemp) {
+    if (hatPufferTemp && imBild("temp")) {
       slots.forEach((s, i) => {
         if (s.puffer_temp_c == null) return;
         tempPath += `${tempPath ? "L" : "M"}${x(slotT[i]).toFixed(1)},${ys(s.puffer_temp_c).toFixed(1)}`;
       });
     }
-    const tempIstPath = (hatPufferTemp && hist) ? histPath("heiztemp", ys) : "";
+    const tempIstPath = (hatPufferTemp && imBild("temp") && hist) ? histPath("heiztemp", ys) : "";
+    // Gemessener Verlauf. Jede Linie trägt die Kennung IHRER Plankurve: ein
+    // Legendenknopf schaltet Plan und Messung gemeinsam, denn sie zu
+    // vergleichen ist der Zweck des Rückblicks — getrennte Knöpfe wären
+    // doppelt so viele für nichts. Die gemessene Batterieleistung ist eine
+    // Linie durch beide Richtungen; sie bleibt, solange eine davon im Bild
+    // ist.
+    const histLinien = !hist ? "" : [
+      imBild("grid") ? `<path d="${histPath("planGrid", y)}" fill="none" stroke="#43a047" stroke-width="1.6" stroke-opacity="0.75"/>` : "",
+      imBild("pv") ? `<path d="${histPath("pv", y)}" fill="none" stroke="#fbc02d" stroke-width="1.1" stroke-opacity="0.55"/>` : "",
+      imBild("cons") ? `<path d="${histPath("cons", y)}" fill="none" stroke="#616161" stroke-width="1.1" stroke-opacity="0.5" stroke-dasharray="3 2"/>` : "",
+      imBild("grid") ? `<path d="${histPath("grid", y)}" fill="none" stroke="#43a047" stroke-width="1.2" stroke-opacity="0.55"/>` : "",
+      (imBild("bat_laden") || imBild("bat_entladen")) ? `<path d="${histPath("bat", y)}" fill="none" stroke="#1e88e5" stroke-width="1.2" stroke-opacity="0.55"/>` : "",
+    ].join("");
     const minSoc = Number(d.min_soc_pct ?? 0);
     // Kopfzeile des Ladestandsfeldes. Am Handy steht der Mindestwert hier mit
     // drin — als Beschriftung im Bild lag er quer ueber der Kurve.
@@ -3792,7 +3873,10 @@ class EegOptimizerPanel extends HTMLElement {
       const preisSlot = p && p.feedin_price != null ? p.feedin_price : null;
       // Saldo aller sichtbaren Gemeinschaften zu dieser Viertelstunde — als
       // JSON, weil die Zahl der Serien nicht feststeht.
-      const eegHier = sichtbareSerien
+      // Bewusst eegSerien, nicht sichtbareSerien: Ausblenden räumt das Bild
+      // auf, es soll die Zahl nicht unerreichbar machen. Im Tooltip
+      // überlagert sich nichts — dort stehen alle Werte des Slots.
+      const eegHier = eegSerien
         .map(serie => {
           const e = serie.jeViertel.get(Math.floor(sp.t / 900000));
           return e == null ? null
@@ -3828,27 +3912,58 @@ class EegOptimizerPanel extends HTMLElement {
     // per Definition jetzt, die Slot-Anzahl folgt aus Fenster und Auflösung,
     // der Ladestand steht im Diagramm darunter — und wann gerechnet wurde,
     // zeigt die Statuskarte oben bereits als "Plan HH:MM:SS".
-    const legend = [
-      ["#fbc02d", "PV (Prognose)"],
-      ["#616161", "Verbrauch (Prognose)"],
-      ["#43a047", "Netz geplant"],
-      ...((hatHeizstab || heizstabKonfiguriert) ? [["#c62828", "Heizstab geplant"]] : []),
-      ...(hatPufferTemp ? [["#8e24aa", "Puffertemperatur (Prognose)"]] : []),
-      ...(preisImFeld ? [["#d81b60", "Einspeisepreis (Börse)"]] : []),
-      ["#1e88e5", "Batterie laden"],
-      ["#ef6c00", "Batterie entladen"],
+    // Jeder Eintrag ist ein Schalter: Farbe, Beschriftung, Kennung. Die
+    // Kennungen hängen an _schedSerienAus und müssen stabil bleiben — sie
+    // stehen im localStorage des Nutzers.
+    //
+    // Gezeigt wird ein Knopf, sobald es die Kurve GEBEN könnte
+    // (heizstabKonfiguriert, hatPufferTemp, preisVorhanden, eegSerien),
+    // nicht erst wenn sie im Bild liegt: sonst verschwände mit der Kurve der
+    // Knopf, der sie zurückholt.
+    const legendEintraege = [
+      ["#fbc02d", "PV (Prognose)", "pv"],
+      ["#616161", "Verbrauch (Prognose)", "cons"],
+      ["#43a047", "Netz geplant", "grid"],
+      ...((hatHeizstab || heizstabKonfiguriert) ? [["#c62828", "Heizstab geplant", "heiz"]] : []),
+      ...(hatPufferTemp ? [["#8e24aa", "Puffertemperatur (Prognose)", "temp"]] : []),
+      // Farbe und Beschriftung nach Darstellung: die Börsenlinie ist rot mit
+      // eigener Achse, das Band grün in der Lücke (dunkel = teuer).
+      ...(preisVorhanden
+        ? [[preisAusSpot ? "#d81b60" : "#43a047",
+            preisAusSpot ? "Einspeisepreis (Börse)" : "Einspeisepreis (Band)",
+            "preis"]]
+        : []),
+      ["#1e88e5", "Batterie laden", "bat_laden"],
+      ["#ef6c00", "Batterie entladen", "bat_entladen"],
       // Ein Eintrag je Gemeinschaft: die Farbe sagt, WER gemeint ist. Was
-      // die Richtung bedeutet, sagt die beschriftete Achse rechts.
-      ...sichtbareSerien.map(serie => [serie.farbe, serie.name]),
-    ].map(([c, label]) =>
-      `<span style="display:inline-flex;align-items:center;gap:5px;margin-right:14px;font-size:12px;color:var(--secondary-text-color);white-space:nowrap">
-         <span style="width:11px;height:11px;border-radius:2px;background:${c};display:inline-block;flex-shrink:0"></span>${label}
-       </span>`
-    ).join("")
+      // die Richtung bedeutet, sagt die beschriftete Achse rechts. Der Name
+      // ist im Quotenmodus freier Text aus der Konfiguration.
+      ...eegSerien.map(serie =>
+        [serie.farbe, this._escapeHtml(serie.name), eegKey(serie.name)]),
+    ];
+    // Ausgeblendet bleibt der Eintrag stehen, nur leer und durchgestrichen:
+    // das Bild verliert die Kurve, die Legende behält den Weg zurück.
+    const legend = legendEintraege.map(([c, label, key]) => {
+      const sichtbar = imBild(key);
+      return `<button type="button" class="sched-legend" data-action="sched-serie" data-serie="${key}"
+          aria-pressed="${sichtbar ? "true" : "false"}"
+          title="${sichtbar ? "Ausblenden" : "Einblenden"}"
+          style="${sichtbar ? "" : "opacity:0.5"}">
+         <span style="width:11px;height:11px;border-radius:2px;display:inline-block;flex-shrink:0;
+                      background:${sichtbar ? c : "transparent"};box-shadow:inset 0 0 0 1.5px ${c}"></span>
+         <span style="${sichtbar ? "" : "text-decoration:line-through"}">${label}</span>
+       </button>`;
+    }).join("")
     + (hist
       ? `<span style="display:inline-flex;align-items:center;gap:5px;margin-right:14px;font-size:12px;color:var(--secondary-text-color);white-space:nowrap">
            <span style="width:11px;height:0;border-top:2px solid var(--primary-text-color);opacity:0.45;display:inline-block;flex-shrink:0"></span>dünn und blass = gemessener Verlauf
          </span>`
+      : "")
+    + (this._schedSerienAus.size
+      ? `<button type="button" class="sched-legend" data-action="sched-serien-alle"
+           style="color:var(--primary-color)" title="Alle Kurven wieder einblenden">
+           <ha-icon icon="mdi:eye-outline" style="--mdc-icon-size:15px"></ha-icon>alle zeigen
+         </button>`
       : "");
 
     // --- Ansicht: Ausschnitt des Plans und Rückblick ---------------------
@@ -3943,20 +4058,15 @@ class EegOptimizerPanel extends HTMLElement {
               ${grid}${socTitelText(socTitel)}${socGrid}${xLabels}
               ${eegPfade.filter(p => p.mitFlaeche && p.area).map(p =>
                 `<path d="${p.area}" fill="${p.farbe}" fill-opacity="0.10"/>`).join("")}
-              <path d="${pvArea}" fill="#fbc02d" fill-opacity="0.18"/>
+              ${imBild("pv") ? `<path d="${pvArea}" fill="#fbc02d" fill-opacity="0.18"/>` : ""}
               ${histBars}${bars}
               ${eegPfade.filter(p => p.line).map(p =>
                 `<path d="${p.line}" fill="none" stroke="${p.farbe}" stroke-width="1.4" stroke-dasharray="5 3" stroke-opacity="0.85"/>`).join("")}
-              <path d="${path("PV")}" fill="none" stroke="#fbc02d" stroke-width="1.8"/>
-              <path d="${path("consumption")}" fill="none" stroke="#616161" stroke-width="1.5" stroke-dasharray="4 3"/>
-              <path d="${path("grid_p")}" fill="none" stroke="#43a047" stroke-width="2"/>
-              ${hatHeizstab ? `<path d="${path("heizstab")}" fill="none" stroke="#c62828" stroke-width="1.8" stroke-dasharray="6 3"/>` : ""}
-              ${hist ? `
-              <path d="${histPath("planGrid", y)}" fill="none" stroke="#43a047" stroke-width="1.6" stroke-opacity="0.75"/>
-              <path d="${histPath("pv", y)}" fill="none" stroke="#fbc02d" stroke-width="1.1" stroke-opacity="0.55"/>
-              <path d="${histPath("cons", y)}" fill="none" stroke="#616161" stroke-width="1.1" stroke-opacity="0.5" stroke-dasharray="3 2"/>
-              <path d="${histPath("grid", y)}" fill="none" stroke="#43a047" stroke-width="1.2" stroke-opacity="0.55"/>
-              <path d="${histPath("bat", y)}" fill="none" stroke="#1e88e5" stroke-width="1.2" stroke-opacity="0.55"/>` : ""}
+              ${imBild("pv") ? `<path d="${path("PV")}" fill="none" stroke="#fbc02d" stroke-width="1.8"/>` : ""}
+              ${imBild("cons") ? `<path d="${path("consumption")}" fill="none" stroke="#616161" stroke-width="1.5" stroke-dasharray="4 3"/>` : ""}
+              ${imBild("grid") ? `<path d="${path("grid_p")}" fill="none" stroke="#43a047" stroke-width="2"/>` : ""}
+              ${hatHeizstab && imBild("heiz") ? `<path d="${path("heizstab")}" fill="none" stroke="#c62828" stroke-width="1.8" stroke-dasharray="6 3"/>` : ""}
+              ${histLinien}
               <path d="${socPath}" fill="none" stroke="#7cb342" stroke-width="2"/>
               ${socIstPath ? `<path d="${socIstPath}" fill="none" stroke="#7cb342" stroke-width="1.2" stroke-opacity="0.55"/>` : ""}
               ${tempPath ? `<path d="${tempPath}" fill="none" stroke="#8e24aa" stroke-width="1.6" stroke-dasharray="6 3"/>` : ""}
@@ -10046,6 +10156,21 @@ class EegOptimizerPanel extends HTMLElement {
            Wischen am Rand die Zurück-Geste der App auslöst. */
         .sched-scroll { overflow-x: auto; overscroll-behavior-x: contain; touch-action: pan-x pan-y; }
         .sched-chart-card svg { touch-action: pan-y; }
+        /* Legende des Optimierungsplans: jeder Eintrag schaltet seine Kurve.
+           Kein .btn-tap — dessen 44 px Mindesthöhe würden bei bis zu zwölf
+           Einträgen drei Zeilen Leerraum über das Diagramm legen. Das
+           Tippziel wächst stattdessen über das Innenmaß. */
+        .sched-legend {
+          appearance: none; border: 0; background: none;
+          padding: 6px 4px; margin: 0 10px 0 0; border-radius: 5px;
+          font: inherit; font-size: 12px; color: var(--secondary-text-color);
+          display: inline-flex; align-items: center; gap: 5px;
+          white-space: nowrap; cursor: pointer;
+        }
+        .sched-legend:hover { background: var(--divider-color); }
+        .sched-legend:focus-visible {
+          outline: 2px solid var(--primary-color); outline-offset: 1px;
+        }
         .toast { bottom: calc(32px + var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px))); }
         .dialog-overlay {
           box-sizing: border-box;
