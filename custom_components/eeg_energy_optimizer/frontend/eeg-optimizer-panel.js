@@ -6837,7 +6837,13 @@ class EegOptimizerPanel extends HTMLElement {
     // zum Basistarif an den Energieversorger. Die Summe ist deshalb nach oben
     // begrenzt, aber nicht vorgeschrieben.
     const anteil = (nr) => Number(d[`peakshare_share_pct${nr === 2 ? "_2" : ""}`] ?? 0);
-    const summe = anteil(1) + anteil(2);
+    // Gezählt wird nur, was zu einer gewählten Gemeinschaft gehört. Der
+    // Vorgabewert 50 % der zweiten steht auch dann im Formular, wenn gar keine
+    // zweite Gemeinschaft gewählt ist — mitgezählt ergab das eine Summe von
+    // 150 % samt Warnung „lässt sich nicht speichern", obwohl der Speicher-
+    // Check (und das Backend) einen Eintrag ohne Namen längst verwerfen und
+    // das Speichern funktionierte. Eine Wahrheit: anteilssummePct.
+    const summe = anteilssummePct(d);
 
     // Die Tarifzahlen einer Gemeinschaft an einer Stelle: der Block unten
     // zeigt sie, und die Karte für den Überschussabschlag rechnet mit
