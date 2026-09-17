@@ -10,6 +10,12 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
+## [2.1.1-dev34] - 2026-09-17
+
+### Behoben
+
+- **Die Tarifseite meldete eine Anteilssumme von 150 %, obwohl nur eine Gemeinschaft eingetragen war.** Der Aufteilungsschlüssel darf sich auf zwei Gemeinschaften verteilen, in Summe höchstens 100 % — die Zeile unter den Eingabefeldern zeigt, wie viel davon vergeben ist. Sie addierte aber beide Anteilsfelder blind, und im Feld der zweiten Gemeinschaft steht der Vorgabewert 50 % auch dann, wenn gar keine zweite gewählt ist. Wer wie üblich eine Gemeinschaft mit 100 % einträgt, bekam deshalb „Summe der Anteile: 150 % — mehr als 100 % ist nicht möglich, so lässt sich das nicht speichern" in Rot zu sehen. Der zweite Halbsatz stimmte nicht einmal: Die Prüfung vor dem Speichern zählt nur Einträge mit Gemeinschaftsnamen, genau wie die Auswertung im Fahrplan, die einen namenlosen Eintrag ohnehin verwirft. Für sie waren es 100 %, das Speichern ging durch, und auf die Preisberechnung wirkten die 50 % nie. Es waren zwei Wahrheiten über dieselbe Summe; die Anzeige rechnet jetzt mit derselben Funktion wie die Prüfung.
+
 ## [2.1.1-dev33] - 2026-09-16
 
 ### Behoben
