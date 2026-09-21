@@ -205,6 +205,135 @@ async def test_kapazitaets_sensor_schlaegt_den_fixwert():
     assert inputs.battery_free_kwh == pytest.approx(9.0)
 
 
+def _hass_mit_batteriesensoren():
+    """hass, dessen Batteriesensoren sich zur Laufzeit abschalten lassen.
+
+    Ladestand und Kapazität kommen beide aus Sensoren — an der echten Anlage
+    hängen sie am selben Modbus-Koordinator und fallen deshalb gemeinsam aus.
+    """
+    config = dict(BASE_CONFIG)
+    del config["battery_capacity_kwh"]
+    config["battery_capacity_sensor"] = "sensor.kapazitaet"
+
+    hass = _hass_with(config)
+    schalter = {"lesbar": True}
+
+    def state_for(entity_id):
+        if entity_id not in ("sensor.soc", "sensor.kapazitaet"):
+            return None
+        state = MagicMock()
+        if not schalter["lesbar"]:
+            state.state = "unavailable"
+            state.attributes = {}
+            return state
+        if entity_id == "sensor.soc":
+            state.state = "40"
+            state.attributes = {}
+        else:
+            state.state = "15000"
+            state.attributes = {"unit_of_measurement": "Wh"}
+        return state
+
+    hass.states.get.side_effect = state_for
+    return hass, schalter
+
+
+async def _sammeln(hass, jetzt):
+    with (
+        patch.object(sched, "_now_local", return_value=jetzt),
+        patch.object(
+            sched, "_async_solar_forecast_wh", AsyncMock(return_value=_wh_hours(NOW))
+        ),
+    ):
+        return await sched.async_collect_inputs(hass, "entry1")
+
+
+async def test_puffer_ueberbrueckt_kurzen_ausfall_der_batteriesensoren():
+    """Ein Modbus-Aussetzer darf den Planlauf nicht mehr kosten.
+
+    Anlage Traun, 07.-21.09.2026: 92 Timeouts der huawei_solar-Verbindung,
+    jeder setzte Ladestand UND Kapazität für 30 bis 90 Sekunden auf
+    "unavailable". Jedes Mal fiel der Fahrplan dieser Minute ersatzlos aus
+    und meldete "Batterie-Ladestand oder -Kapazität unbekannt" — obwohl der
+    Ladestand eine Minute zuvor bekannt war und sich seither um Bruchteile
+    eines Prozents bewegt hat.
+    """
+    hass, schalter = _hass_mit_batteriesensoren()
+
+    inputs, problem = await _sammeln(hass, NOW)
+    assert problem is None
+    assert inputs.battery_capacity_kwh == pytest.approx(15.0)
+
+    schalter["lesbar"] = False
+    inputs, problem = await _sammeln(hass, NOW + timedelta(minutes=1))
+
+    assert problem is None
+    assert inputs is not None
+    assert inputs.soc_pct == pytest.approx(40.0)
+    assert inputs.battery_capacity_kwh == pytest.approx(15.0)
+    assert inputs.battery_free_kwh == pytest.approx(9.0)
+
+
+async def test_puffer_laeuft_ab_und_meldet_dann_wieder():
+    """Nach fünf Minuten ist Schluss — ein toter Sensor soll auffallen.
+
+    Der Puffer ist die Überbrückung eines Aussetzers, kein Ersatz für eine
+    Messung: Wer den Wechselrichter dauerhaft verliert, soll das im
+    Aktivitätsprotokoll sehen und nicht stumm auf einem alten Ladestand
+    weiterfahren.
+    """
+    hass, schalter = _hass_mit_batteriesensoren()
+    await _sammeln(hass, NOW)
+
+    schalter["lesbar"] = False
+    _, problem = await _sammeln(hass, NOW + timedelta(seconds=299))
+    assert problem is None
+
+    _, problem = await _sammeln(hass, NOW + timedelta(seconds=301))
+    assert problem == "Batterie-Ladestand oder -Kapazität unbekannt"
+
+
+async def test_ohne_vorherige_messung_kein_puffer():
+    """Beim ersten Lauf nach dem Start gibt es nichts zu überbrücken."""
+    hass, schalter = _hass_mit_batteriesensoren()
+    schalter["lesbar"] = False
+
+    inputs, problem = await _sammeln(hass, NOW)
+
+    assert inputs is None
+    assert problem == "Batterie-Ladestand oder -Kapazität unbekannt"
+
+
+async def test_puffer_ergaenzt_nur_den_fehlenden_wert():
+    """Antwortet die Kapazität noch, gewinnt sie gegen den Puffer.
+
+    Der Puffer ist die zweite Wahl, nicht die erste — sonst würde eine
+    nachträglich erweiterte Batterie fünf Minuten lang mit der alten
+    Kapazität geplant.
+    """
+    hass, _ = _hass_mit_batteriesensoren()
+    await _sammeln(hass, NOW)
+
+    def nur_kapazitaet(entity_id):
+        state = MagicMock()
+        if entity_id == "sensor.kapazitaet":
+            state.state = "20000"
+            state.attributes = {"unit_of_measurement": "Wh"}
+            return state
+        if entity_id == "sensor.soc":
+            state.state = "unavailable"
+            state.attributes = {}
+            return state
+        return None
+
+    hass.states.get.side_effect = nur_kapazitaet
+    inputs, problem = await _sammeln(hass, NOW + timedelta(minutes=1))
+
+    assert problem is None
+    assert inputs.soc_pct == pytest.approx(40.0)          # aus dem Puffer
+    assert inputs.battery_capacity_kwh == pytest.approx(20.0)  # frisch gelesen
+
+
 def _puffer_inputs(**abweichungen):
     """ScheduleInputs mit runden Werten — 10 kWh Kapazität, 5 kWh frei."""
     basis = dict(

@@ -187,6 +187,21 @@ MIN_MAX_SOC_PCT = 70
 # (gemeldet am 14.09.2026 — eingestellt 60 %, angezeigt und wirksam 50 %).
 MAX_MIN_SOC_PCT = MIN_MAX_SOC_PCT - SOC_BAND_MIN_PCT
 
+# Wie lange ein zuletzt gelesenes Paar aus Ladestand und Kapazität einen
+# Sensorausfall überbrücken darf. Die Modbus-Verbindung zum Wechselrichter
+# setzt regelmäßig für eine halbe bis anderthalb Minuten aus (Anlage Traun,
+# 07.-21.09.2026: 92 Timeouts, davon 45 am Batterie-Koordinator) — dabei
+# stehen Ladestand UND Kapazität gleichzeitig auf "unavailable", und ohne
+# Puffer fiel der Planlauf dieser Minute ersatzlos aus.
+#
+# Fünf Minuten sind großzügig genug für jeden beobachteten Aussetzer und
+# trotzdem ehrlich: Die Kapazität ist ohnehin konstant, und der Ladestand
+# bewegt sich in dieser Zeit selbst bei voller Leistung um wenige Prozent —
+# weniger Fehler, als eine ausgefallene Planung anrichtet. Danach greift
+# wieder der Abbruch: Ein dauerhaft toter Sensor soll auffallen und nicht
+# stillschweigend mit einem alten Wert weitergefahren werden.
+BATTERIE_PUFFER_MAX_S = 300
+
 # Slotlänge, bewusst nicht einstellbar: 15 Minuten sind das Abrechnungsraster.
 # Feiner bringt keine bessere Entscheidung, kostet aber Rechenzeit; gröber
 # verwischt kurze Preis- und Lastfenster.
@@ -889,6 +904,50 @@ def _read_float(hass: HomeAssistant, entity_id: str | None) -> float | None:
         return None
 
 
+def _batteriewerte_mit_puffer(
+    data: dict,
+    soc: float | None,
+    capacity: float | None,
+    now: datetime,
+) -> tuple[float | None, float | None, float | None]:
+    """Überbrückt kurze Sensorausfälle mit dem zuletzt gelesenen Paar.
+
+    Rückgabe: ``(soc, capacity, alter_s)`` — ``alter_s`` ist None, solange
+    die Sensoren selbst antworten, und sonst das Alter der benutzten Werte.
+
+    Gepuffert wird nur ein **vollständiges** Paar: Ladestand und Kapazität
+    stammen dann aus demselben Augenblick, und ``battery_free`` (Kapazität ×
+    freier Anteil) bleibt in sich stimmig. Fehlt beim nächsten Lauf nur einer
+    von beiden, wird auch nur dieser ergänzt.
+
+    Der Puffer lebt in ``hass.data`` und stirbt mit dem Neuladen der
+    Integration — nach einem Neustart wird also nicht aus einer alten
+    Sitzung weitergerechnet. Ein Zeitsprung rückwärts (negatives Alter)
+    verwirft ihn ebenfalls.
+    """
+    if soc is not None and capacity:
+        data["batterie_puffer"] = {
+            "soc": float(soc),
+            "capacity": float(capacity),
+            "zeit": now,
+        }
+        return soc, capacity, None
+
+    puffer = data.get("batterie_puffer")
+    if not puffer:
+        return soc, capacity, None
+
+    alter = (now - puffer["zeit"]).total_seconds()
+    if alter < 0 or alter > BATTERIE_PUFFER_MAX_S:
+        return soc, capacity, None
+
+    if soc is None:
+        soc = puffer["soc"]
+    if not capacity:
+        capacity = puffer["capacity"]
+    return soc, capacity, alter
+
+
 def _grid_timestamps(
     start: datetime, hours: int, step_min: int = GRID_STEP_MIN
 ) -> list[datetime]:
@@ -1409,6 +1468,17 @@ async def async_collect_inputs(
         # Setup-Zeitpunkt und veraltet, sobald Module ergänzt werden.
         capacity = resolve_battery_capacity_kwh(hass, config)
         capacity = float(capacity) if capacity else None
+
+    # Kurze Aussetzer der Wechselrichter-Verbindung überbrücken: Ladestand
+    # und Kapazität fallen zusammen aus (beide hängen am selben Modbus-
+    # Koordinator), und ohne Puffer fiel dann der ganze Planlauf aus.
+    soc, capacity, puffer_alter = _batteriewerte_mit_puffer(data, soc, capacity, now)
+    if puffer_alter is not None:
+        _LOGGER.info(
+            "Batteriewerte aus dem Puffer (%.0f s alt) — Ladestand oder "
+            "Kapazität gerade nicht lesbar",
+            puffer_alter,
+        )
 
     if soc is None or not capacity:
         return None, "Batterie-Ladestand oder -Kapazität unbekannt"
