@@ -13,6 +13,16 @@ import pytest
 
 from custom_components.eeg_energy_optimizer.coordinator import ConsumptionCoordinator
 
+
+async def _executor_job(func, *args):
+    """hass.async_add_executor_job-Attrappe: führt synchron aus.
+
+    Der Coordinator baut den Feiertagskalender im Executor (der Import des
+    Länder-Moduls darf den Event Loop nicht blockieren) — ein MagicMock
+    liefert dafür kein awaitbares Ergebnis.
+    """
+    return func(*args)
+
 # CET (UTC+1) wie in test_coordinator.py — Tests patchen _as_local darauf
 CET = timezone(timedelta(hours=1))
 
@@ -71,6 +81,7 @@ def _hass(country=None):
     hass = MagicMock()
     hass.data = {}
     hass.config.country = country
+    hass.async_add_executor_job = _executor_job
     return hass
 
 

@@ -1873,7 +1873,16 @@ async def async_setup_entry(
             vorher=vorher,
         )
 
-    hass.async_create_task(_backfill_then_refresh())
+    # Als Hintergrundaufgabe, nicht als gewöhnlicher Task: Der Backfill
+    # wartet auf den Recorder und läuft damit Minuten. Home Assistant zählt
+    # Tasks aus ``async_create_task`` zur Startphase und wartet auf sie —
+    # der Start lief dadurch regelmäßig in seinen Timeout ("Setup timed out
+    # for bootstrap waiting on _backfill_then_refresh … moving forward",
+    # Anlage Traun 14.09. und 21.09.2026). Am Config-Entry aufgehängt wird
+    # die Aufgabe beim Entladen der Integration sauber abgebrochen.
+    entry.async_create_background_task(
+        hass, _backfill_then_refresh(), "eeg_optimizer_backfill_profil"
+    )
 
     # Create forecast provider
     source = config.get(CONF_FORECAST_SOURCE, FORECAST_SOURCE_SOLCAST)

@@ -208,7 +208,17 @@ class ConsumptionCoordinator:
 
         # Kalender einmal pro Refresh aufbauen — die Einsortierung unten fragt
         # ihn für jeden Statistikeintrag ab.
-        self._holidays = _build_holiday_calendar(self.hass)
+        #
+        # Im Executor, nicht hier: ``country_holidays()`` lädt beim ersten
+        # Aufruf das Länder-Modul nach (``importlib.import_module`` auf
+        # ``holidays.countries.austria``), und ein Import im Event Loop ist
+        # eine blockierende Operation. Home Assistant meldet sie heute als
+        # Warnung und verweigert solche Aufrufe schrittweise ganz. Danach
+        # steht der Kalender im Feld, der Lazy-Pfad in ``_holiday_calendar``
+        # baut also nichts mehr nach.
+        self._holidays = await self.hass.async_add_executor_job(
+            _build_holiday_calendar, self.hass
+        )
         self._holidays_loaded = True
 
         if get_instance is None or statistics_during_period is None:

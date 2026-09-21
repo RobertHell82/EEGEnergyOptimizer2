@@ -5,7 +5,18 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from custom_components.eeg_energy_optimizer import coordinator as coord_mod
 from custom_components.eeg_energy_optimizer.coordinator import ConsumptionCoordinator
+
+
+async def _executor_job(func, *args):
+    """hass.async_add_executor_job-Attrappe: führt synchron aus.
+
+    Der Coordinator baut den Feiertagskalender im Executor (der Import des
+    Länder-Moduls darf den Event Loop nicht blockieren) — ein MagicMock
+    liefert dafür kein awaitbares Ergebnis.
+    """
+    return func(*args)
 
 
 def _make_stat_entry(dt_local, mean_watts):
@@ -47,6 +58,7 @@ def mock_hass():
     hass = MagicMock()
     hass.data = {}
     hass.config.country = None
+    hass.async_add_executor_job = _executor_job
     return hass
 
 
@@ -108,6 +120,33 @@ def _patch_recorder(stats_data):
         mock_stats,
         mock_recorder,
     )
+
+
+@pytest.mark.asyncio
+async def test_feiertagskalender_wird_im_executor_gebaut(mock_hass, two_weeks_stats):
+    """Der Kalender darf den Event Loop nicht blockieren.
+
+    ``country_holidays()`` lädt beim ersten Aufruf das Länder-Modul nach
+    (``importlib.import_module`` auf ``holidays.countries.austria``). Im
+    Event Loop ist das eine blockierende Operation: Home Assistant meldete
+    sie bei jedem Start ("Detected blocking call to import_module … by
+    custom integration 'eeg_energy_optimizer'", Anlage Traun, 21.09.2026)
+    und verweigert solche Aufrufe schrittweise ganz.
+    """
+    im_executor = []
+
+    async def mitschreiben(func, *args):
+        im_executor.append(func)
+        return func(*args)
+
+    mock_hass.async_add_executor_job = mitschreiben
+    coordinator = ConsumptionCoordinator(mock_hass, "sensor.consumption", 8)
+
+    patch_sdp, patch_gi, patch_tz, _stats, _rec = _patch_recorder(two_weeks_stats)
+    with patch_sdp, patch_gi, patch_tz:
+        await coordinator.async_update()
+
+    assert coord_mod._build_holiday_calendar in im_executor
 
 
 class TestBucketGrouping:
