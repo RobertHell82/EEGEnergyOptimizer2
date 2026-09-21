@@ -1421,12 +1421,32 @@ async def async_collect_inputs(
     # ein leerer Fahrplan).
     time_res_min = DEFAULT_TIME_RES_MIN
 
-    # Auf die Minute, nicht auf das Slot-Raster: opt() verlangt, dass
-    # battery_free zu start_time gilt ("nowish"). Bei einem 15-Minuten-Raster
-    # wäre der Ladestand bis zu einer Viertelstunde in der Vergangenheit
-    # verortet — der erste Slot ist aber genau der, den die Steuerung fährt.
+    # Auf das Slot-Raster abgerundet, nicht auf die Minute.
+    #
+    # Bis 2.1.1-dev35 stand hier die laufende Minute, mit der Begründung, der
+    # Ladestand solle "nowish" gelten und nicht bis zu eine Viertelstunde in
+    # der Vergangenheit. Die Absicht war richtig, sie wurde nur nie wirksam:
+    # ``opt()`` resampled alle Reihen auf ``time_res`` (15 min), und ein
+    # Stützpunkt neben diesem Raster fällt dabei heraus. Der erste LP-Slot
+    # bekam seinen Wert dann per Rückwärtsfüllung aus dem nächsten
+    # Rasterpunkt — also aus dem Verbrauchsprofil statt aus der Messung, die
+    # zwanzig Zeilen weiter unten eigens dafür gesetzt wird.
+    #
+    # Getroffen hat es 14 von 15 Läufen: Nur wer zufällig auf :00, :15, :30
+    # oder :45 startete, plante den gefahrenen Slot mit dem gemessenen
+    # Hausverbrauch (Anlage Traun, 20.09.2026: real 9-12 kW am Abend gegen
+    # 2,6 kW aus dem Profil). Sichtbar wurde es daran, dass von 29 Läufen mit
+    # einer Hauslast über der AC-Grenze genau die zwei am Solver scheiterten,
+    # die auf der Viertelstunde lagen.
+    #
+    # Das Raster ist außerdem versionsfest: pandas 3 behält den Stützpunkt
+    # neben dem Raster, pandas 2.3 (der Stand im HA-Container) verwirft ihn.
+    # Liegt start auf dem Raster, rechnen beide gleich — und der erste Slot
+    # des Plans lag ohnehin schon immer auf der Viertelstunde, denn der
+    # Ergebnisindex kommt aus genau diesem Resample.
     now = _now_local()
     start = now.replace(second=0, microsecond=0)
+    start -= timedelta(minutes=start.minute % time_res_min)
 
     source = str(
         config.get(CONF_FORECAST_SOURCE, FORECAST_SOURCE_SOLCAST)

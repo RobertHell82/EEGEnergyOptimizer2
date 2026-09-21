@@ -329,7 +329,14 @@ the event loop is long enough for HA to flag a blocking call.
 - **Fahrplan (Schedule)**: 15-minute slots over a 48-hour horizon, recomputed
   every minute. 15 min is the settlement grid — finer costs time without
   changing decisions, coarser blurs short price and load windows. Neither the
-  slot length nor the horizon is configurable.
+  slot length nor the horizon is configurable. **`start` is rounded down to
+  that grid** (since 2.1.1-dev36): `opt()` resamples every series to
+  `time_res`, and pandas 2.3 — the version in the HA container, unlike
+  pandas 3 on a dev machine — drops a support point that sits beside the
+  grid. With a start on a stray minute the measured house load and PV of the
+  first point (`consumption[0]`, `production[0]`) never reached the slot the
+  executor actually drives; it was planned from the profile instead, in 14 of
+  15 runs.
 - **`HAConfig` is the only lever**: Harald Geyer's `opt()` is used unmodified,
   so every intervention of ours is expressed as a parameter it already
   understands. Verified by diff against his commit `08819a0`.

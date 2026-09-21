@@ -156,9 +156,9 @@ async def test_inputs_werden_vollstaendig_gesammelt():
 
     assert problem is None
     assert inputs is not None
-    # Start ist die aktuelle Minute — der Ladestand gilt jetzt, nicht vor
-    # einer Viertelstunde
-    assert inputs.start == NOW.replace(second=0, microsecond=0)
+    # Start liegt auf dem Slot-Raster — nur dort überlebt der Messwert des
+    # ersten Stützpunkts das Resample in opt()
+    assert inputs.start == NOW.replace(minute=0, second=0, microsecond=0)
     assert inputs.time_res_s == 900
     # SOC 40 % von 12,5 kWh → 7,5 kWh freie Kapazität
     assert inputs.battery_free_kwh == pytest.approx(7.5)
@@ -1573,10 +1573,16 @@ def test_slot_for_uebersteht_kaputte_und_leere_slots():
     assert sched.slot_for(slots, NOW)["nr"] == 99
 
 
-async def test_start_ist_die_aktuelle_minute():
-    """Der Fahrplan wird minütlich gerechnet, also muss er auch minütlich
-    beginnen — sonst gilt der Ladestand für einen Zeitpunkt in der
-    Vergangenheit und der erste Slot rechnet falsch."""
+async def test_start_liegt_auf_dem_slot_raster():
+    """Der erste Stützpunkt muss auf dem Raster liegen, auf das opt() resampled.
+
+    Bis 2.1.1-dev35 begann der Fahrplan auf der laufenden Minute, damit der
+    Ladestand "jetzt" gilt. Wirksam wurde das nie: ``opt()`` resampled auf
+    ``time_res``, und pandas 2.3 (der Stand im HA-Container) verwirft dabei
+    einen Stützpunkt neben dem Raster. Der erste Slot — genau der, den die
+    Steuerung fährt — bekam seinen Verbrauch dann aus dem Profil statt aus
+    der Messung, in 14 von 15 Läufen.
+    """
     krumm = NOW.replace(minute=7, second=41, microsecond=500)
 
     with (
@@ -1587,8 +1593,38 @@ async def test_start_ist_die_aktuelle_minute():
     ):
         inputs, _ = await sched.async_collect_inputs(_hass_with(BASE_CONFIG), "entry1")
 
-    assert inputs.start == krumm.replace(second=0, microsecond=0)
+    assert inputs.start.minute % (inputs.time_res_s // 60) == 0
+    assert inputs.start == krumm.replace(minute=0, second=0, microsecond=0)
     assert inputs.timestamps[0] == inputs.start
+
+
+def test_messwert_erreicht_den_gefahrenen_slot():
+    """Die Messung des ersten Stützpunkts muss im ersten Plan-Slot ankommen.
+
+    Der Gegentest zum Raster: Er prüft nicht die Uhrzeit, sondern die
+    Wirkung — und er ist von der pandas-Version unabhängig, weil ein
+    Stützpunkt auf dem Raster in jeder Version erhalten bleibt.
+    """
+    pytest.importorskip("pandas")
+    pytest.importorskip("highspy")
+
+    start = NOW.replace(minute=0, second=0, microsecond=0)
+    stamps = sched._grid_timestamps(start, hours=12)
+    verbrauch = sched._consumption_from_profile(_profile_coordinator(600), stamps)
+    verbrauch[0] = 9.1          # gemessene Hauslast, weit über dem Profil
+    inputs = dataclasses.replace(
+        _inputs_for_solve(),
+        start=start,
+        timestamps=stamps,
+        consumption_kw=verbrauch,
+        production_kw=sched._production_from_wh(_wh_hours(start, 14), stamps),
+    )
+
+    result = sched.solve(inputs)
+
+    erster = result["slots"][0]
+    assert erster["t"] == start.isoformat()
+    assert erster["consumption"] == pytest.approx(9.1)
 
 
 # ---------------------------------------------------------------------------
