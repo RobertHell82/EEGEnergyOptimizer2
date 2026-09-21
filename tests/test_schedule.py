@@ -532,6 +532,55 @@ def test_solver_ohne_loesung_meldet_den_status(monkeypatch):
         sched.solve(_inputs_for_solve(horizon_hours=4))
 
 
+def test_hauslast_ueber_der_ac_grenze_bricht_den_plan_nicht_ab():
+    """Fronius-Anlage, 18.09.2026: Das Wochenendprofil hatte um 19 Uhr eine
+    23-kW-Stunde (nach zehn Tagen erst zwei Wochenendwerte je Stunde, das
+    getrimmte Mittel greift erst ab fünf), die AC-Grenze lag bei 10 kW. opt()
+    begrenzt die Einspeisung je Slot auf ``ac_limit − consumption`` — die
+    Schranke wurde negativ, der Adapter brach mit "grid_p_pos_84 hat lb=0 >
+    ub=-1.78125" ab, und solange die Stunde im Horizont lag, gab es bei
+    jedem Lauf keinen Plan (Failsafe). Die Hauslast wird jetzt auf die
+    AC-Grenze gekappt: Was darüber liegt, kommt ohnehin aus dem Netz."""
+    pytest.importorskip("pandas")
+    pytest.importorskip("highspy")
+
+    basis = _inputs_for_solve()
+    verbrauch = list(basis.consumption_kw)
+    spitze = 40  # Stützpunkt im Horizont; zwei Halbstunden Spitze
+    verbrauch[spitze] = 23.0
+    verbrauch[spitze + 1] = 23.0
+    inputs = dataclasses.replace(basis, consumption_kw=verbrauch)
+
+    result = sched.solve(inputs)
+
+    slots = result["slots"]
+    assert slots
+    # Kein Slot plant mehr Hauslast als die AC-Grenze …
+    assert max(s["consumption"] for s in slots) <= inputs.ac_limit_kw + 1e-9
+    # … in der Spitzenstunde steht genau die AC-Grenze, und eingespeist wird
+    # dort nichts — mehr als die AC-Grenze geht nicht durch das Gerät.
+    slot = next(s for s in slots if s["t"] == inputs.timestamps[spitze].isoformat())
+    assert slot["consumption"] == pytest.approx(inputs.ac_limit_kw)
+    assert slot["grid_p"] <= 1e-9
+
+
+def test_haconfig_kappt_die_hauslast_auf_die_ac_grenze():
+    """Die Kappung sitzt in HAConfig, nicht in Haralds Modell — und sie
+    lässt alles unter der Grenze unangetastet."""
+    pytest.importorskip("pandas")
+
+    basis = _inputs_for_solve(horizon_hours=4)
+    verbrauch = list(basis.consumption_kw)
+    verbrauch[2] = 23.0
+    config = sched.HAConfig(dataclasses.replace(basis, consumption_kw=verbrauch))
+
+    serie = config.consumption(basis.start)
+
+    assert serie.max() == pytest.approx(basis.ac_limit_kw)
+    assert serie.iloc[0] == pytest.approx(0.6)
+    assert serie.iloc[3] == pytest.approx(0.6)
+
+
 def test_haconfig_bietet_das_api_von_config_dummy():
     """Wenn Harald das Config-API erweitert, soll das hier auffallen."""
     pytest.importorskip("pandas")

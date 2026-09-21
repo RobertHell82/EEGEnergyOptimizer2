@@ -532,10 +532,34 @@ class HAConfig:
         if self._consumption_series is None:
             import pandas as pd
 
-            self._consumption_series = pd.Series(
+            serie = pd.Series(
                 self._inputs.consumption_kw,
                 index=pd.DatetimeIndex(self._inputs.timestamps),
             )
+            # Gekappt auf die AC-Grenze. opt() begrenzt die Einspeisung je
+            # Slot auf ``ac_limit − consumption`` und setzt damit still
+            # voraus, dass die Hauslast unter der AC-Grenzleistung des
+            # Wechselrichters bleibt. Liegt eine Profilstunde darüber — eine
+            # 11-kW-Wallbox an einem 10-kW-Gerät reicht —, wird die Schranke
+            # negativ, und der Adapter bricht vor dem Solver ab: kein Plan,
+            # nach 15 Minuten Failsafe, bei jedem Lauf, solange die Stunde im
+            # Horizont liegt (Fronius-Anlage, 18.09.2026: 23-kW-Stunde im
+            # Wochenendprofil aus zwei Werten, „grid_p_pos_84 hat lb=0 >
+            # ub=-1.78125" — Samstag 18:45, halb zwischen Grundlast und
+            # Spitze interpoliert).
+            #
+            # Die Kappung ist exakt, nicht nur pragmatisch: Was über der
+            # AC-Grenze liegt, kann der Wechselrichter ohnehin nicht liefern,
+            # es kommt in jedem Fall aus dem Netz. Das ist ein konstanter
+            # Kostenanteil, der keine Entscheidung verändert. Und die
+            # Bedeutung der Schranke — Wechselrichterausgang höchstens
+            # AC-Grenze — bleibt erhalten: dc_p·η = Hauslast + Export − Bezug
+            # erreicht auch mit gekappter Hauslast höchstens ac_limit. Die
+            # Referenzsimulation (simuliere_standardbetrieb) schützt dieselbe
+            # Formel schon mit max(0, …); hier ist der Pfad ins LP.
+            if self.ac_limit and self.ac_limit > 0:
+                serie = serie.clip(upper=float(self.ac_limit))
+            self._consumption_series = serie
         return self._consumption_series.loc[start_time:]
 
     def feedin_limit(self, start_time):
