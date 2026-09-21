@@ -187,6 +187,43 @@ MIN_MAX_SOC_PCT = 70
 # (gemeldet am 14.09.2026 — eingestellt 60 %, angezeigt und wirksam 50 %).
 MAX_MIN_SOC_PCT = MIN_MAX_SOC_PCT - SOC_BAND_MIN_PCT
 
+# Deckel und Boden des Einspeisepreises sind Dauerzustände, keine Ereignisse:
+# Greift einer, greift er meist über Tage, denn er hängt an der Konfiguration
+# (Anlage Traun: Basistarif 2 ct gegen Gemeinschaftswerte bis 10,2 ct — der
+# Überschussabschlag ist das Vierfache des Basistarifs). Gemeldet bei jedem
+# Lauf ergab das rund 1.400 Warnungen am Tag, 20.000 in zwei Wochen; die
+# Meldung verlor damit genau die Aufmerksamkeit, für die sie gedacht war.
+#
+# Gemeldet wird deshalb wie im Aktivitätsprotokoll: einmal, wenn der Zustand
+# einsetzt, danach höchstens alle sechs Stunden — und sobald er sich löst,
+# wird der Merker gelöscht, damit ein erneutes Auftreten sofort wieder
+# auffällt.
+PREISHINWEIS_WIEDERHOLUNG_S = 6 * 3600
+_preishinweise: dict[str, float] = {}
+
+
+def _preishinweis_faellig(kennung: str, greift: bool) -> bool:
+    """Steuert, ob ein Dauerhinweis zum Preis jetzt ins Log darf.
+
+    ``greift=False`` meldet den Zustand als beendet und löscht den Merker —
+    der nächste Eintritt wird dann sofort wieder protokolliert.
+
+    Der Zustand ist modulweit, nicht an ``HAConfig`` gebunden: Für jeden
+    Planlauf entsteht eine neue Instanz, ein Gedächtnis auf ihr hätte also
+    nie gegriffen.
+    """
+    if not greift:
+        _preishinweise.pop(kennung, None)
+        return False
+
+    jetzt = time.monotonic()
+    zuletzt = _preishinweise.get(kennung)
+    if zuletzt is not None and jetzt - zuletzt < PREISHINWEIS_WIEDERHOLUNG_S:
+        return False
+    _preishinweise[kennung] = jetzt
+    return True
+
+
 # Wie lange ein zuletzt gelesenes Paar aus Ladestand und Kapazität einen
 # Sensorausfall überbrücken darf. Die Modbus-Verbindung zum Wechselrichter
 # setzt regelmäßig für eine halbe bis anderthalb Minuten aus (Anlage Traun,
@@ -648,7 +685,7 @@ class HAConfig:
                 if wert > grenze:
                     werte[i] = grenze
                     gedeckelt += 1
-            if gedeckelt:
+            if _preishinweis_faellig("deckel", bool(gedeckelt)):
                 # Kein stiller Eingriff: greift der Deckel, ist die
                 # Konfiguration zu erklären und nicht der Fahrplan.
                 _LOGGER.warning(
@@ -662,7 +699,7 @@ class HAConfig:
             # aber schon (dann ist Abregeln richtig, nicht Einspeisen).
             untergrenzen = [min(0.0, b) for b in basis_je_slot]
             werte, angehoben, tiefster = eeg_price.mit_boden(werte, untergrenzen)
-            if angehoben:
+            if _preishinweis_faellig("boden", bool(angehoben)):
                 # Ebenfalls kein stiller Eingriff: unter null wirft das LP die
                 # Energie lieber weg, als sie zu verschenken.
                 _LOGGER.warning(

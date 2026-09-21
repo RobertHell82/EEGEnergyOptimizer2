@@ -7,6 +7,7 @@ Batteriezustand richtig in Haralds ``opt()`` ankommen.
 """
 
 import dataclasses
+import logging
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -203,6 +204,58 @@ async def test_kapazitaets_sensor_schlaegt_den_fixwert():
     assert inputs.battery_capacity_kwh == pytest.approx(15.0)
     # SOC 40 % von 15 kWh -> 9 kWh frei (mit dem Fixwert waeren es 7,5)
     assert inputs.battery_free_kwh == pytest.approx(9.0)
+
+
+def test_preishinweise_wiederholen_sich_nicht_bei_jedem_lauf(caplog):
+    """Deckel und Boden sind Dauerzustände und dürfen das Log nicht fluten.
+
+    Anlage Traun, 07.-21.09.2026: Der Überschussabschlag der Gemeinschaften
+    (Basistarif 2 ct gegen Werte bis 10,2 ct) drückte den Preis in jedem Lauf
+    unter null. Bei minütlicher Planung standen dafür rund 20.000 Warnungen
+    in zwei Wochen im Log — die Meldung verlor genau die Aufmerksamkeit, für
+    die sie gedacht ist. Gemeldet wird jetzt der Eintritt, danach höchstens
+    alle sechs Stunden.
+    """
+    pytest.importorskip("pandas")
+    sched._preishinweise.clear()
+
+    basis = _inputs_for_solve(horizon_hours=4)
+    n = len(basis.timestamps)
+    inputs = dataclasses.replace(
+        basis, feedin_price=0.02, eeg_bonus=[-0.05] * n
+    )
+
+    with caplog.at_level(logging.WARNING, logger=sched._LOGGER.name):
+        for _ in range(5):
+            preise = sched.HAConfig(inputs).feedin_price(inputs.start)
+
+    # Der Eingriff selbst bleibt: kein Preis unter null.
+    assert min(preise) >= 0.0
+    treffer = [r for r in caplog.records if "auf null angehoben" in r.message]
+    assert len(treffer) == 1
+
+
+def test_preishinweis_meldet_nach_erholung_sofort_wieder():
+    """Löst sich der Zustand, zählt der nächste Eintritt wieder als neu.
+
+    Sonst bliebe ein echter Konfigurationsfehler bis zu sechs Stunden lang
+    unsichtbar, nur weil er kurz zuvor schon einmal bestand.
+    """
+    sched._preishinweise.clear()
+
+    assert sched._preishinweis_faellig("boden", True) is True
+    assert sched._preishinweis_faellig("boden", True) is False
+
+    # Sechs Stunden später darf derselbe Dauerzustand erneut erinnern.
+    sched._preishinweise["boden"] -= sched.PREISHINWEIS_WIEDERHOLUNG_S + 1
+    assert sched._preishinweis_faellig("boden", True) is True
+
+    # Erholung löscht den Merker, der nächste Eintritt meldet sofort.
+    assert sched._preishinweis_faellig("boden", False) is False
+    assert sched._preishinweis_faellig("boden", True) is True
+
+    # Deckel und Boden haben getrennte Merker.
+    assert sched._preishinweis_faellig("deckel", True) is True
 
 
 def _hass_mit_batteriesensoren():
