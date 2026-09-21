@@ -344,6 +344,29 @@ def _build_snapshot_payload(
     }
 
 
+def _dedup_pruefen(dedup, unterdrueckt, key, now_ts, fenster_s):
+    """Darf gemeldet werden? Wenn ja: wie viele Vorkommen wurden verschluckt.
+
+    Trennt die Entscheidung von der Closure in ``async_setup_entry``, damit
+    sie prüfbar ist. Zwei Rückgabewerte, weil beides zusammengehört: Die
+    Meldung allein ist irreführend, solange nicht dabeisteht, wie oft
+    dieselbe Störung im geschlossenen Fenster noch auftrat. In Grünbach
+    standen fünf Meldungen für 1258 Fehlversuche (21.09.2026) — an der Zahl
+    hing, ob man den Fall für einen Ausrutscher oder für einen Dauerzustand
+    hielt.
+
+    Seiteneffekt ist Absicht: ``dedup`` und ``unterdrueckt`` werden
+    fortgeschrieben, damit Zähler und Zeitstempel nicht auseinanderlaufen
+    können.
+    """
+    last = dedup.get(key)
+    if last is not None and (now_ts - last).total_seconds() < fenster_s:
+        unterdrueckt[key] = unterdrueckt.get(key, 0) + 1
+        return False, 0
+    dedup[key] = now_ts
+    return True, unterdrueckt.pop(key, 0)
+
+
 def _check_schedule_health(schedule_state, status, mode, config, dedup, emit):
     """Störungsbilder, die es nur mit der Fahrplan-Steuerung gibt.
 
@@ -1530,6 +1553,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         data["telemetry_reporter"] = reporter
         # (category, message_hash) -> last-emit datetime (UTC)
         data["telemetry_failure_dedup"] = {}
+        # Wie oft dieselbe Kennung im laufenden Dedup-Fenster unterdrückt
+        # wurde. Ohne diese Zahl ist die Telemetrie irreführend: Bei einem
+        # Dauerfehler kommt pro Stunde genau eine Meldung an, egal ob er
+        # einmal oder alle 30 s auftrat. In Grünbach standen so fünf
+        # Meldungen für 1258 Fehlversuche (21.09.2026).
+        data["telemetry_failure_suppressed"] = {}
         data["telemetry_forecast_none_streak"] = 0
         # sensor_role -> datetime|None (None = aktuell verfügbar)
         data["telemetry_sensor_unavail_since"] = {}
@@ -1555,11 +1584,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             Lärm. Transiente Fehler behalten das Stundenfenster.
             """
             key = (category, message_hash)
-            last = data["telemetry_failure_dedup"].get(key)
             now_ts = _now_utc()
-            if last is not None and (now_ts - last).total_seconds() < dedup_window_s:
+            senden, verschluckt = _dedup_pruefen(
+                data["telemetry_failure_dedup"],
+                data["telemetry_failure_suppressed"],
+                key, now_ts, dedup_window_s,
+            )
+            if not senden:
                 return
-            data["telemetry_failure_dedup"][key] = now_ts
+            # Die seit der letzten Meldung verschluckten Vorkommen mitgeben —
+            # erst sie machen aus „ist passiert" ein „passiert dauernd".
+            if verschluckt:
+                context = {**context, "unterdrueckt": verschluckt}
             payload = {
                 "ts": now_ts.isoformat(),
                 "category": category,
@@ -1572,20 +1608,29 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             except Exception:  # pragma: no cover — defensive
                 _LOGGER.exception("Telemetry: failed to schedule send_failure")
 
-        def _executor_failure_callback(action):
+        def _executor_failure_callback(action, grund=None):
             """W-4 — Schreibfehler des Fahrplan-Executors → /v1/failure (D-16).
 
             Die Treiber fangen ihre Exceptions selbst und liefern False —
-            deshalb kommt hier nur noch die fehlgeschlagene Aktion an
-            (charge_limit / discharge / release), kein Exception-Objekt.
+            deshalb kommt hier die fehlgeschlagene Aktion an (charge_limit /
+            discharge / release), kein Exception-Objekt. ``grund`` ist der
+            Klartext, den der Treiber in ``last_write_error`` hinterlegt hat;
+            er geht in den ``message_hash`` ein, damit sich zwei Ursachen
+            derselben Aktion nicht gegenseitig wegdedupliziert. Genau das
+            fehlte, als in Grünbach tagelang „executor_discharge" gemeldet
+            wurde und erst das Anlagenlog verriet, dass der Wechselrichter
+            einen Registerwert ablehnte (21.09.2026).
             """
             _emit_failure_dedup(
                 category="inverter_write",
                 severity="error",
-                message_hash=f"executor_{action}",
+                message_hash=(
+                    f"executor_{action}" if not grund else f"executor_{action}: {grund}"
+                ),
                 context={
                     "inverter_type": config.get(CONF_INVERTER_TYPE),
                     "action": action,
+                    "grund": grund,
                 },
             )
 

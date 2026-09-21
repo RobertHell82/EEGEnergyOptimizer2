@@ -22,6 +22,32 @@ class InverterBase(ABC):
         """
         self._hass = hass
         self._config = config
+        self.last_write_error: str | None = None
+
+    def _fehler(self, grund: str) -> bool:
+        """Grund des letzten Fehlschlags merken und ``False`` liefern.
+
+        Die Treiber fangen ihre Ausnahmen selbst und geben nur ``False``
+        zurück — der Executor erfährt dadurch, DASS etwas nicht ging, nie
+        WARUM. In der Telemetrie stand deshalb tagelang nur
+        ``{"action": "discharge"}``, während im Log der Anlage
+        „Illegal Data Value beim Register InWRte" stand (Grünbach,
+        21.09.2026). Der Grund gehört dorthin, wo er entsteht.
+
+        Kurz halten und ohne veränderliche Zahlen formulieren: Der Text
+        wird zum ``message_hash`` der Telemetrie, ein eingebetteter Messwert
+        würde jede Meldung zu einem eigenen Fall machen.
+
+        Gibt ``False`` zurück, damit die Fehlerstellen ``return
+        self._fehler("…")`` schreiben können statt zweier Zeilen.
+        """
+        self.last_write_error = grund
+        return False
+
+    def _erfolg(self) -> bool:
+        """Gemerkten Fehlergrund verwerfen und ``True`` liefern."""
+        self.last_write_error = None
+        return True
 
     @abstractmethod
     async def async_set_charge_limit(self, power_kw: float) -> bool:

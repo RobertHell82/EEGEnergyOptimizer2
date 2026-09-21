@@ -289,7 +289,7 @@ class SMAInverter(InverterBase):
                     "SMA: write error at OpMod register %d (value=%d)",
                     REG_CMPBMS_OPMOD, block.op_mod,
                 )
-                return False
+                return self._fehler("Modbus lehnt OpMod ab")
             await asyncio.sleep(0.2)
 
             result = await self._client.write_registers(
@@ -302,14 +302,14 @@ class SMAInverter(InverterBase):
                     "SMA: write error at power block %d–%d (%s)",
                     REG_BAT_CHA_MIN_W, REG_GRID_W_SPT + 1, block,
                 )
-                return False
+                return self._fehler("Modbus lehnt den Leistungsblock ab")
             await asyncio.sleep(0.2)
             _LOGGER.debug("SMA: wrote CmpBMS block %s", block)
             return True
         except Exception:
             _LOGGER.exception("SMA: exception writing CmpBMS block %s", block)
             self._close_client()
-            return False
+            return self._fehler("Verbindungsfehler beim CmpBMS-Block")
 
     async def _read_u32(self, address: int) -> int | None:
         """Read a U32 holding register pair (None on error or SMA-NaN)."""

@@ -238,7 +238,7 @@ class KostalInverter(InverterBase):
                     "Kostal: write error at register %d (value=%.1f)",
                     address, value,
                 )
-                return False
+                return self._fehler(f"Modbus lehnt Register {address} ab")
             await asyncio.sleep(0.2)
             _LOGGER.debug("Kostal: wrote register %d = %.1f", address, value)
             return True
@@ -248,7 +248,7 @@ class KostalInverter(InverterBase):
                 address, value,
             )
             self._close_client()
-            return False
+            return self._fehler(f"Verbindungsfehler bei Register {address}")
 
     async def _read_float(self, address: int) -> float | None:
         """Read a Float32 (word-swapped) holding register pair."""

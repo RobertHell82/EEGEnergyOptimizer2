@@ -70,12 +70,18 @@ def _make_executor(mock_hass, mock_inverter, config=None):
 
 
 @contextmanager
-def _messwerte(export=None, haus=None, pv=None):
-    """Patcht die drei Messwert-Helfer im Executor-Namensraum."""
+def _messwerte(export=None, haus=None, pv=None, batt=None):
+    """Patcht die Messwert-Helfer im Executor-Namensraum.
+
+    ``batt`` ist die gemessene Batterieleistung (positiv = laden) für
+    Guard 3. Default None heißt „nicht lesbar" — dann ruht die
+    Wirkungskontrolle, was für alle Tests gilt, die sie nicht prüfen.
+    """
     with (
         patch.object(sx, "compute_grid_export_kw", return_value=export),
         patch.object(sx, "compute_house_load_kw", return_value=haus),
         patch.object(sx, "compute_pv_now_kw", return_value=pv),
+        patch.object(sx, "compute_battery_now_kw", return_value=batt),
     ):
         yield
 
@@ -1669,3 +1675,254 @@ async def test_heizstab_plan_nicht_aus_der_batterie(mock_hass, mock_inverter):
     with _messwerte(export=1.5, haus=0.5, pv=4.0):
         await ex.async_guard_cycle(entladung, MODE_EIN, now=NOW)
     assert hz.sollwert_kw == 0.0
+
+
+# ---------------------------------------------------------------------------
+# Guard 3 — Wirkungskontrolle der erzwungenen Entladung
+# ---------------------------------------------------------------------------
+#
+# Ein ``True`` vom Treiber heißt „die Schreibvorgänge wurden quittiert", nicht
+# „das Gerät tut es". In Grünbach (21.09.2026) hat der Executor von 18:15 bis
+# 20:00 durchgehend 1,26 kW Entladung befohlen — teils mit erfolgreicher
+# Rückmeldung —, die Batterie lieferte 0,2–0,6 kW (die Hauslast) und ins Netz
+# ging in eindreiviertel Stunden nichts. Guard 3 merkt das und setzt neu auf.
+
+
+def _entlade_state():
+    """Slot, den plan_action zu einer Entladung von 2,0 kW Einspeisung macht."""
+    return _state(_slot(0, battery_p=2.6, grid_p=2.0, soc=43.0))
+
+
+async def _entladung_starten(ex, batt=None):
+    """Einen erfolgreichen Entladebefehl absetzen (füllt _written_discharge_kw)."""
+    with _messwerte(export=0.1, haus=0.4, pv=0.0, batt=batt):
+        await ex.async_guard_cycle(_entlade_state(), MODE_EIN, now=NOW)
+    return ex._written_discharge_kw
+
+
+async def test_guard3_setzt_wirkungslose_entladung_neu_auf(mock_hass, mock_inverter):
+    """Liefert die Batterie über GUARD_WIRKUNG_RUNS Läufe deutlich weniger als
+    befohlen, wird der erzwungene Modus gestoppt — der nächste Lauf schreibt
+    dann wegen des Zustandswechsels frisch."""
+    ex = _make_executor(mock_hass, mock_inverter)
+    soll = await _entladung_starten(ex)
+    assert soll == pytest.approx(2.4)  # 2,0 kW Plan + 0,4 kW Hauslast
+    assert ex._active_kind == "discharge"
+
+    # Gemessen werden 0,3 kW statt 2,4 — unter 50 % und mehr als 0,3 kW Lücke.
+    for lauf in range(sx.GUARD_WIRKUNG_RUNS - 1):
+        with _messwerte(export=0.1, haus=0.4, pv=0.0, batt=-0.3):
+            await ex.async_guard_cycle(_entlade_state(), MODE_EIN, now=NOW)
+        assert ex._wirkung_runs == lauf + 1, "zählt jeden erfolglosen Lauf"
+        assert mock_inverter.async_stop_forcible.call_count == 0, "noch nicht"
+
+    with _messwerte(export=0.1, haus=0.4, pv=0.0, batt=-0.3):
+        await ex.async_guard_cycle(_entlade_state(), MODE_EIN, now=NOW)
+
+    assert mock_inverter.async_stop_forcible.call_count == 1
+    assert ex._wirkung_neuversuche == 1
+    assert "Guard 3" in ex.last_status and "wirkungslos" in ex.last_status
+    assert ex._active_kind == "release", "freigegeben, der nächste Lauf schreibt neu"
+
+
+async def test_guard3_schweigt_wenn_die_entladung_ankommt(mock_hass, mock_inverter):
+    """Liefert die Batterie, was befohlen wurde, greift Guard 3 nie."""
+    ex = _make_executor(mock_hass, mock_inverter)
+    await _entladung_starten(ex, batt=-2.4)
+
+    for _ in range(sx.GUARD_WIRKUNG_RUNS * 2):
+        with _messwerte(export=0.1, haus=0.4, pv=0.0, batt=-2.4):
+            await ex.async_guard_cycle(_entlade_state(), MODE_EIN, now=NOW)
+
+    assert ex._wirkung_runs == 0
+    assert mock_inverter.async_stop_forcible.call_count == 0
+
+
+async def test_guard3_toleriert_kleine_abweichungen(mock_hass, mock_inverter):
+    """Knapp unter dem Sollwert ist Regelung, kein ausbleibender Befehl.
+
+    Beide Schwellen müssen reißen: Bei 2,2 statt 2,4 kW liegt die Lücke unter
+    GUARD_WIRKUNG_MIN_LUECKE_KW, obwohl der Anteil über 50 % ist.
+    """
+    ex = _make_executor(mock_hass, mock_inverter)
+    await _entladung_starten(ex, batt=-2.2)
+
+    for _ in range(sx.GUARD_WIRKUNG_RUNS + 2):
+        with _messwerte(export=0.1, haus=0.4, pv=0.0, batt=-2.2):
+            await ex.async_guard_cycle(_entlade_state(), MODE_EIN, now=NOW)
+
+    assert ex._wirkung_runs == 0
+    assert mock_inverter.async_stop_forcible.call_count == 0
+
+
+async def test_guard3_schweigt_am_ziel_ladestand(mock_hass, mock_inverter):
+    """Am Ziel-SOC DARF die Batterie nichts mehr liefern — das ist ein
+    erfüllter Befehl, kein ausbleibender."""
+    ex = _make_executor(mock_hass, mock_inverter)
+    await _entladung_starten(ex)
+    assert ex._written_target_soc == 43.0
+
+    # Gemessener Ladestand am Ziel angekommen.
+    with patch.object(ex, "_batterie_soc_pct", return_value=43.2):
+        for _ in range(sx.GUARD_WIRKUNG_RUNS + 2):
+            with _messwerte(export=0.1, haus=0.4, pv=0.0, batt=-0.1):
+                await ex.async_guard_cycle(_entlade_state(), MODE_EIN, now=NOW)
+
+    assert ex._wirkung_runs == 0
+    assert mock_inverter.async_stop_forcible.call_count == 0
+
+
+async def test_guard3_gibt_nach_zwei_neuversuchen_auf(mock_hass, mock_inverter):
+    """Nach GUARD_WIRKUNG_MAX_NEUVERSUCHE bleibt es beim Befehl — weiter
+    zwischen Stopp und Befehl zu flattern hilft dem Gerät nicht."""
+    ex = _make_executor(mock_hass, mock_inverter)
+    await _entladung_starten(ex)
+
+    for _ in range((sx.GUARD_WIRKUNG_MAX_NEUVERSUCHE + 2) * sx.GUARD_WIRKUNG_RUNS):
+        with _messwerte(export=0.1, haus=0.4, pv=0.0, batt=-0.3):
+            await ex.async_guard_cycle(_entlade_state(), MODE_EIN, now=NOW)
+
+    assert (
+        mock_inverter.async_stop_forcible.call_count
+        == sx.GUARD_WIRKUNG_MAX_NEUVERSUCHE
+    )
+    assert ex._wirkung_wirkungslos is True
+
+
+async def test_guard3_zaehlt_je_slot_neu(mock_hass, mock_inverter):
+    """Ein neuer Slot bringt einen neuen Sollwert — der kann ankommen, auch
+    wenn der vorige es nicht tat."""
+    ex = _make_executor(mock_hass, mock_inverter)
+    await _entladung_starten(ex)
+    for _ in range(3):
+        with _messwerte(export=0.1, haus=0.4, pv=0.0, batt=-0.3):
+            await ex.async_guard_cycle(_entlade_state(), MODE_EIN, now=NOW)
+    assert ex._wirkung_runs == 3
+
+    # Nächster Slot (15 min später), sonst alles gleich. Der Zähler beginnt
+    # von vorn — der erste Lauf im neuen Slot war auch erfolglos, also 1,
+    # nicht 4.
+    spaeter = NOW + timedelta(minutes=15)
+    with _messwerte(export=0.1, haus=0.4, pv=0.0, batt=-0.3):
+        await ex.async_guard_cycle(
+            # last_run mitführen: Der Runner rechnet jede Minute neu. Mit dem
+            # alten Zeitstempel wäre der Plan genau SCHEDULE_FAILSAFE_MINUTES
+            # alt, der Failsafe gäbe frei und es käme gar nicht zum Slotwechsel.
+            _state(_slot(15, battery_p=2.6, grid_p=2.0, soc=43.0), last_run=spaeter),
+            MODE_EIN,
+            now=spaeter,
+        )
+    assert ex._wirkung_runs == 1
+
+
+async def test_guard3_misst_beim_netz_sollwert_den_zaehler(mock_hass, mock_inverter):
+    """SMA bekommt die geplante EINSPEISUNG und legt die Hauslast selbst
+    drauf — prüfbar ist dort der Netzzähler, nicht die Batterie."""
+    mock_inverter.discharge_is_grid_setpoint = True
+    ex = _make_executor(mock_hass, mock_inverter)
+    # Netz-Sollwert = Planwert (2,0 kW), die Batterie bleibt außen vor.
+    with _messwerte(export=2.0, haus=0.4, pv=0.0, batt=-0.1):
+        await ex.async_guard_cycle(_entlade_state(), MODE_EIN, now=NOW)
+    assert ex._written_discharge_kw == pytest.approx(2.0)
+
+    # Die Batterie liefert scheinbar nichts — egal, der Zähler stimmt.
+    for _ in range(sx.GUARD_WIRKUNG_RUNS + 2):
+        with _messwerte(export=2.0, haus=0.4, pv=0.0, batt=-0.05):
+            await ex.async_guard_cycle(_entlade_state(), MODE_EIN, now=NOW)
+    assert ex._wirkung_runs == 0
+    assert mock_inverter.async_stop_forcible.call_count == 0
+
+    # Bleibt die Einspeisung aus, schlägt Guard 3 an.
+    for _ in range(sx.GUARD_WIRKUNG_RUNS):
+        with _messwerte(export=0.1, haus=0.4, pv=0.0, batt=-0.05):
+            await ex.async_guard_cycle(_entlade_state(), MODE_EIN, now=NOW)
+    assert mock_inverter.async_stop_forcible.call_count == 1
+
+
+async def test_guard3_ruht_ohne_messwert(mock_hass, mock_inverter):
+    """Kein Batterie-Messwert → keine Aussage, kein Eingriff (fail-open)."""
+    ex = _make_executor(mock_hass, mock_inverter)
+    await _entladung_starten(ex)
+
+    for _ in range(sx.GUARD_WIRKUNG_RUNS + 2):
+        with _messwerte(export=0.1, haus=0.4, pv=0.0, batt=None):
+            await ex.async_guard_cycle(_entlade_state(), MODE_EIN, now=NOW)
+
+    assert ex._wirkung_runs == 0
+    assert mock_inverter.async_stop_forcible.call_count == 0
+
+
+# ---------------------------------------------------------------------------
+# Schreibbremse nach Fehlschlägen
+# ---------------------------------------------------------------------------
+
+
+async def test_bremse_wiederholt_nicht_in_jedem_lauf(mock_hass, mock_inverter):
+    """Nach einem Fehlschlag wandert der Sollwert weiter und läge ohne Bremse
+    dauerhaft über dem Totband — in Grünbach wurden daraus 1258 Fehlversuche
+    an einem Tag. Der Abstand verdoppelt sich mit jedem Fehlschlag."""
+    mock_inverter.async_set_discharge.return_value = False
+    ex = _make_executor(mock_hass, mock_inverter)
+
+    # 1. Lauf: Zustandswechsel → schreibt, scheitert, Wartezeit 1 Lauf.
+    with _messwerte(export=0.1, haus=0.4, pv=0.0):
+        await ex.async_guard_cycle(_entlade_state(), MODE_EIN, now=NOW)
+    assert mock_inverter.async_set_discharge.call_count == 1
+    assert ex._write_retry_wait == 1
+
+    # 2. Lauf: gebremst, kein Schreibversuch.
+    with _messwerte(export=0.1, haus=0.4, pv=0.0):
+        await ex.async_guard_cycle(_entlade_state(), MODE_EIN, now=NOW)
+    assert mock_inverter.async_set_discharge.call_count == 1
+    assert "nächster Versuch" in ex.last_status
+
+    # 3. Lauf: Wartezeit abgelaufen → erneut, scheitert, jetzt 2 Läufe Pause.
+    with _messwerte(export=0.1, haus=0.4, pv=0.0):
+        await ex.async_guard_cycle(_entlade_state(), MODE_EIN, now=NOW)
+    assert mock_inverter.async_set_discharge.call_count == 2
+    assert ex._write_retry_wait == 2
+
+
+async def test_bremse_deckelt_den_abstand(mock_hass, mock_inverter):
+    """Der Abstand wächst nicht über EXECUTOR_WRITE_RETRY_MAX_RUNS hinaus."""
+    mock_inverter.async_set_discharge.return_value = False
+    ex = _make_executor(mock_hass, mock_inverter)
+    for _ in range(60):
+        with _messwerte(export=0.1, haus=0.4, pv=0.0):
+            await ex.async_guard_cycle(_entlade_state(), MODE_EIN, now=NOW)
+    assert ex._write_retry_wait <= sx.EXECUTOR_WRITE_RETRY_MAX_RUNS
+
+
+async def test_bremse_loest_sich_bei_zustandswechsel(mock_hass, mock_inverter):
+    """Eine andere Art des Eingriffs ist eine andere Lage als die
+    gescheiterte — da wird sofort geschrieben."""
+    mock_inverter.async_set_discharge.return_value = False
+    ex = _make_executor(mock_hass, mock_inverter)
+    for _ in range(4):
+        with _messwerte(export=0.1, haus=0.4, pv=0.0):
+            await ex.async_guard_cycle(_entlade_state(), MODE_EIN, now=NOW)
+    assert ex._write_retry_wait > 0
+
+    # Plan wechselt auf Laden → Ladelimit wird trotz Bremse gesetzt.
+    with _messwerte(export=0.1, haus=0.4, pv=0.0):
+        await ex.async_guard_cycle(_state(_slot(0, battery_p=-2.4)), MODE_EIN, now=NOW)
+    assert mock_inverter.async_set_charge_limit.call_count == 1
+
+
+async def test_bremse_erlischt_nach_erfolg(mock_hass, mock_inverter):
+    """Ein gelungener Schreibvorgang stellt den Abstand zurück."""
+    mock_inverter.async_set_discharge.return_value = False
+    ex = _make_executor(mock_hass, mock_inverter)
+    with _messwerte(export=0.1, haus=0.4, pv=0.0):
+        await ex.async_guard_cycle(_entlade_state(), MODE_EIN, now=NOW)
+    assert ex._write_fail_runs == 1
+
+    # Zwei Läufe: der erste ist noch gebremst (Wartezeit 1), der zweite
+    # schreibt und gelingt.
+    mock_inverter.async_set_discharge.return_value = True
+    for _ in range(2):
+        with _messwerte(export=0.1, haus=0.4, pv=0.0):
+            await ex.async_guard_cycle(_entlade_state(), MODE_EIN, now=NOW)
+    assert ex._write_fail_runs == 0
+    assert ex._write_retry_wait == 0
+    assert ex._write_fail_kind is None

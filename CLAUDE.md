@@ -55,8 +55,15 @@ schedule_executor.py: ScheduleExecutor (execution, 30 s)
                   divided by GUARD_DISCHARGE_EFFICIENCY
         Not-Aus  — grid import > 1 kW in 3 consecutive runs blocks discharge
                   until the slot changes (buying power to sell it cheaper)
+        Guard 3 — does the commanded discharge actually happen? Measured
+                  battery output (grid meter for `discharge_is_grid_setpoint`
+                  drivers) below half the setpoint AND more than 0.3 kW short,
+                  over 6 runs → stop the forced mode and set it up again;
+                  at most twice per slot, never at the target SOC
         Failsafe — no fresh plan for 15 min → release the inverter
         Deadbands — 0.2 kW / 1 % SOC, so we don't write on LP noise
+        Write brake — a failed write is not retried every run; the gap
+                  doubles (1, 2, 4 … 10 runs) for the intent that failed
   → writes only via InverterBase, only in mode "Ein", only for drivers with
     supports_schedule_control=True (Fronius, Huawei, Kostal, Sigenergy, SMA, SolaX).
     Guard 2 asks `discharge_is_grid_setpoint`: SMA takes a GRID setpoint
@@ -258,7 +265,9 @@ again (see the handler's docstring).
 
 ```
 InverterBase (ABC)
-  Write path (abstract — every driver implements these):
+  Write path (abstract — every driver implements these; on failure each sets
+  `last_write_error` via the inherited `_fehler("…")`, a short reason without
+  changing numbers since it becomes the telemetry's `message_hash`):
   ├── async_set_charge_limit(power_kw) → bool
   ├── async_set_discharge(power_kw, target_soc) → bool
   ├── async_stop_forcible() → bool
@@ -387,6 +396,29 @@ the event loop is long enough for HA to flag a blocking call.
   the grid sensor misreads or the house load sits permanently above the
   discharge power (buying power to sell it cheaper). Blocks discharge until
   the slot changes.
+- **A driver's `True` is not proof of effect**: it only means the writes were
+  acknowledged. Grünbach, 21.09.2026: from 18:15 to 20:00 the executor
+  commanded 1.26 kW of discharge, partly with successful confirmation — the
+  battery delivered 0.2–0.6 kW (the house load) and nothing reached the grid
+  for 1¾ hours. **Guard 3** (`GUARD_WIRKUNG_*`) asks the question nobody was
+  asking: measured output below half the setpoint *and* more than 0.3 kW
+  short, over 6 runs → `async_release()` and a fresh command on the next run.
+  Both thresholds must break together (the ratio alone trips on noise at small
+  setpoints, the absolute gap alone never trips at large ones), the target SOC
+  is exempt (an emptied battery is a fulfilled command, not a missing one),
+  and after `GUARD_WIRKUNG_MAX_NEUVERSUCHE` per slot it stops and says so
+  instead of flapping between stop and command.
+- **Write failures need a brake and a reason.** After a failed write
+  `_written_*` keeps the last CONFIRMED value while the setpoint drifts on, so
+  the difference clears the deadband and *every* run rewrites — one rejected
+  register value became 1258 failed writes in a day. `EXECUTOR_WRITE_RETRY_MAX_RUNS`
+  caps a doubling backoff, keyed on the intent that failed (**not** on
+  `_active_kind`: that is `None` after a failure, which would look like a state
+  change and disable the brake in the only case it is for). The reason travels
+  via `InverterBase.last_write_error`, set by each driver where it arises
+  (`_fehler()` / `_erfolg()`), and reaches the telemetry both in the context
+  and in the `message_hash` — two causes of the same action must not
+  deduplicate each other away.
 - **PeakShare is an input, not an actor**: the demand forecast feeds the price
   function; it no longer computes a discharge window. Hourly values suffice —
   `opt()` resamples to 15 min itself (hourly means deviate ≤ 5 %, no time

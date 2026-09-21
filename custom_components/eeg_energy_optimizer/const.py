@@ -224,6 +224,46 @@ EXECUTOR_CHARGE_DEADBAND_KW = 0.2
 EXECUTOR_DISCHARGE_DEADBAND_KW = 0.2
 EXECUTOR_TARGET_SOC_DEADBAND_PCT = 1.0
 
+# Bremse für fehlgeschlagene Schreibvorgänge. Nach einem Fehlschlag bleibt
+# der zuletzt BESTÄTIGTE Wert in _written_* stehen, während der Sollwert
+# weiterwandert — ab der ersten verfehlten Schreibung liegt die Differenz
+# über dem Totband und JEDER Guard-Lauf schreibt neu. Aus einem abgelehnten
+# Wert wurden so 1258 Fehlversuche an einem Tag (Grünbach, 21.09.2026), und
+# das Log war nicht mehr lesbar. Der Abstand verdoppelt sich mit jedem
+# Fehlschlag (1, 2, 4, …) bis zu diesem Deckel; ein Zustandswechsel
+# (Slot, Art des Eingriffs) versucht es immer sofort wieder.
+EXECUTOR_WRITE_RETRY_MAX_RUNS = 10
+
+# Guard 3 — Wirkungskontrolle der erzwungenen Entladung.
+#
+# Ein ``True`` vom Treiber heißt nur „die Modbus-Schreibvorgänge wurden
+# quittiert", nicht „das Gerät tut es". In Grünbach (21.09.2026) hat der
+# Executor von 18:15 bis 20:00 durchgehend 1,26 kW Entladung befohlen,
+# teilweise mit erfolgreicher Rückmeldung — die Batterie lieferte 0,2–0,6 kW
+# (die Hauslast), ins Netz ging in 1¾ Stunden nichts. Niemand hat die Frage
+# gestellt, ob der Befehl überhaupt wirkt.
+#
+# Guard 3 stellt sie: Liefert die Batterie über mehrere Läufe deutlich
+# weniger als befohlen, wird der erzwungene Modus einmal gestoppt und frisch
+# aufgesetzt — ein halb angekommener Registersatz ist die wahrscheinlichste
+# Ursache, und dagegen hilft nur ein sauberer Neuanfang.
+#
+# Beide Schwellen müssen zusammen greifen: der Anteil allein schlüge bei
+# kleinen Sollwerten schon auf Messrauschen an, die absolute Lücke allein
+# bei großen Sollwerten nie.
+GUARD_WIRKUNG_MIN_ANTEIL = 0.5
+GUARD_WIRKUNG_MIN_LUECKE_KW = 0.3
+# Sechs Läufe à 30 s = 3 min. Kürzer wäre eine Rampe oder ein träger
+# Sensor, länger bliebe von einem 15-Minuten-Slot nichts mehr übrig.
+GUARD_WIRKUNG_RUNS = 6
+# Mehr als zwei Neuanfänge je Slot sind kein Neuanfang mehr, sondern ein
+# Flattern zwischen Stopp und Befehl. Danach bleibt es beim Befehl, und der
+# Status sagt, dass er wirkungslos ist.
+GUARD_WIRKUNG_MAX_NEUVERSUCHE = 2
+# Am Ziel-Ladestand DARF die Batterie nichts mehr liefern — das ist kein
+# ausbleibender Befehl, sondern ein erfüllter.
+GUARD_WIRKUNG_SOC_ABSTAND_PCT = 1.0
+
 # Failsafe: Fahrplan fehlt, ist fehlerhaft oder älter als diese Spanne →
 # einmalig async_release(), der Wechselrichter läuft im Automatikmodus weiter.
 # Ab diesem Plan-SOC gilt die Batterie als voll. Plant der Fahrplan dann kein

@@ -490,9 +490,9 @@ class SolarEdgeInverter(InverterBase):
                 for prefix in self._extra_prefixes:
                     await self._set_number("storage_charge_limit", power_w, prefix=prefix)
             return True
-        except Exception:
+        except Exception as exc:
             _LOGGER.exception("SolarEdge: Failed to set charge limit")
-            return False
+            return self._fehler(type(exc).__name__)
 
     async def async_set_discharge(
         self, power_kw: float, target_soc: float | None = None
@@ -554,9 +554,9 @@ class SolarEdgeInverter(InverterBase):
                     "storage_command_mode", MODE_DISCHARGE_EXPORT, prefix=prefix
                 )
             return True
-        except Exception:
+        except Exception as exc:
             _LOGGER.exception("SolarEdge: Failed to set discharge")
-            return False
+            return self._fehler(type(exc).__name__)
 
     async def async_stop_forcible(self) -> bool:
         """Return to normal self-consumption mode.
@@ -605,9 +605,9 @@ class SolarEdgeInverter(InverterBase):
                 await self._set_select("storage_control_mode", orig_mode, prefix=prefix)
 
             return True
-        except Exception:
+        except Exception as exc:
             _LOGGER.exception("SolarEdge: Failed to stop forcible mode")
-            return False
+            return self._fehler(type(exc).__name__)
 
     @property
     def is_available(self) -> bool:

@@ -85,7 +85,8 @@ def test_profile_helper_single_source_of_truth():
 #
 # Die Treiber fangen ihre Exceptions selbst und liefern False — der Executor
 # meldet den Fehlschlag deshalb als Aktions-String (charge_limit / discharge /
-# release) an den in __init__.py verdrahteten Callback.
+# release) an den in __init__.py verdrahteten Callback, zusammen mit dem
+# Grund aus ``last_write_error`` des Treibers.
 
 TZ = timezone(timedelta(hours=2))
 NOW = datetime(2026, 8, 24, 19, 0, tzinfo=TZ)
@@ -138,7 +139,7 @@ async def test_executor_failure_callback_on_charge_limit_error(mock_hass, mock_i
     with p1, p2, p3:
         await ex.async_guard_cycle(_plan(_slot(battery_p=-2.0)), MODE_EIN, now=NOW)
 
-    callback.assert_called_once_with("charge_limit")
+    callback.assert_called_once_with("charge_limit", None)
 
 
 async def test_executor_failure_callback_on_discharge_error(mock_hass, mock_inverter):
@@ -152,7 +153,7 @@ async def test_executor_failure_callback_on_discharge_error(mock_hass, mock_inve
             _plan(_slot(battery_p=2.6, grid_p=2.0, soc=43.0)), MODE_EIN, now=NOW
         )
 
-    callback.assert_called_once_with("discharge")
+    callback.assert_called_once_with("discharge", None)
 
 
 async def test_executor_failure_callback_on_release_error(mock_hass, mock_inverter):
@@ -167,7 +168,26 @@ async def test_executor_failure_callback_on_release_error(mock_hass, mock_invert
             _plan(_slot(battery_p=0.5, grid_p=-0.1)), MODE_EIN, now=NOW
         )
 
-    callback.assert_called_once_with("release")
+    callback.assert_called_once_with("release", None)
+
+
+async def test_executor_failure_callback_reicht_grund_durch(mock_hass, mock_inverter):
+    """Der Treiber-Grund landet im Callback — sonst steht in der Telemetrie
+    nur „discharge" und die Ursache bleibt im Anlagenlog (Grünbach 21.09.2026)."""
+    mock_inverter.async_set_discharge.return_value = False
+    mock_inverter.last_write_error = "InWRte: Modbus-Ausnahme 3 (Illegal Data Value)"
+    callback = MagicMock()
+    ex = _executor(mock_hass, mock_inverter, callback)
+
+    p1, p2, p3 = _no_measurements()
+    with p1, p2, p3:
+        await ex.async_guard_cycle(
+            _plan(_slot(battery_p=2.6, grid_p=2.0, soc=43.0)), MODE_EIN, now=NOW
+        )
+
+    callback.assert_called_once_with(
+        "discharge", "InWRte: Modbus-Ausnahme 3 (Illegal Data Value)"
+    )
 
 
 async def test_executor_failure_callback_default_none(mock_hass, mock_inverter):
@@ -620,3 +640,69 @@ def test_schedule_health_schweigt_im_anzeige_modus():
         MODE_TEST, {}, {}, emit,
     )
     assert calls == []
+
+
+# ---------------------------------------------------------------------------
+# Dedup zählt, was es verschluckt
+# ---------------------------------------------------------------------------
+#
+# Eine Meldung pro Fenster hält das Log sauber, macht die Telemetrie aber
+# irreführend: Ein Dauerfehler sieht aus wie ein Ausrutscher. In Grünbach
+# standen fünf Meldungen für 1258 Fehlversuche (21.09.2026).
+
+
+def test_dedup_meldet_den_ersten_und_zaehlt_die_folgenden():
+    from custom_components.eeg_energy_optimizer import _dedup_pruefen
+
+    dedup, unterdrueckt = {}, {}
+    key = ("inverter_write", "executor_discharge")
+    t0 = datetime.now(timezone.utc)
+
+    senden, verschluckt = _dedup_pruefen(dedup, unterdrueckt, key, t0, 3600)
+    assert (senden, verschluckt) == (True, 0)
+
+    # Neun weitere im selben Fenster — alle unterdrückt, alle gezählt.
+    for i in range(1, 10):
+        senden, verschluckt = _dedup_pruefen(
+            dedup, unterdrueckt, key, t0 + timedelta(seconds=30 * i), 3600
+        )
+        assert (senden, verschluckt) == (False, 0)
+    assert unterdrueckt[key] == 9
+
+    # Nach Ablauf des Fensters kommt die Meldung mit der Zahl durch.
+    senden, verschluckt = _dedup_pruefen(
+        dedup, unterdrueckt, key, t0 + timedelta(seconds=3601), 3600
+    )
+    assert (senden, verschluckt) == (True, 9)
+    assert key not in unterdrueckt, "Zähler startet für das neue Fenster bei null"
+
+
+def test_dedup_haelt_kennungen_auseinander():
+    """Zwei Ursachen derselben Aktion dürfen sich nicht gegenseitig
+    wegdeduplizieren — genau daran scheiterte die Ursachensuche."""
+    from custom_components.eeg_energy_optimizer import _dedup_pruefen
+
+    dedup, unterdrueckt = {}, {}
+    t0 = datetime.now(timezone.utc)
+    inwrte = ("inverter_write", "executor_discharge: InWRte: Illegal Data Value")
+    timeout = ("inverter_write", "executor_discharge: Verbindungsfehler")
+
+    assert _dedup_pruefen(dedup, unterdrueckt, inwrte, t0, 3600)[0] is True
+    assert _dedup_pruefen(dedup, unterdrueckt, timeout, t0, 3600)[0] is True
+    assert _dedup_pruefen(dedup, unterdrueckt, inwrte, t0, 3600)[0] is False
+
+
+def test_dedup_zaehlt_ohne_vorkommen_keine_unterdrueckung():
+    """Ein einzelner Fehler je Fenster meldet keine Unterdrückungen — der
+    Kontext bleibt dann frei von einer Null, die nichts aussagt."""
+    from custom_components.eeg_energy_optimizer import _dedup_pruefen
+
+    dedup, unterdrueckt = {}, {}
+    key = ("schedule_solver", "RuntimeError")
+    t0 = datetime.now(timezone.utc)
+
+    assert _dedup_pruefen(dedup, unterdrueckt, key, t0, 3600) == (True, 0)
+    assert _dedup_pruefen(
+        dedup, unterdrueckt, key, t0 + timedelta(seconds=3601), 3600
+    ) == (True, 0)
+    assert unterdrueckt == {}

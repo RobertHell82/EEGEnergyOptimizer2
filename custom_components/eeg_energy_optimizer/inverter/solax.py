@@ -243,9 +243,9 @@ class SolaXInverter(InverterBase):
             # Bestands-Setups, die noch im alten Mode-1-Idle stehen).
             await self._set_select("remotecontrol_power_control", "Disabled")
             return True
-        except Exception:
+        except Exception as exc:
             _LOGGER.exception("SolaX: Failed to set charge limit")
-            return False
+            return self._fehler(type(exc).__name__)
 
     async def _ensure_original_cached(self) -> None:
         """Cache aktuellen battery_charge_max_current in Store, falls > 0 und noch nicht gespeichert."""
@@ -312,7 +312,7 @@ class SolaXInverter(InverterBase):
             await self._press_trigger()
             self._discharge_active = True
             return True
-        except Exception:
+        except Exception as exc:
             _LOGGER.exception("SolaX: Failed to set discharge")
             # Steht unser abgesenkter Boden schon im Gerät, muss er weg:
             # Sonst entlädt der Wechselrichter im Automatikbetrieb tiefer,
@@ -322,7 +322,7 @@ class SolaXInverter(InverterBase):
             except Exception:  # noqa: BLE001 — der Fehlerpfad darf nie werfen
                 _LOGGER.debug("SolaX: Entladeboden nach Fehlschlag nicht "
                               "zurücksetzbar", exc_info=True)
-            return False
+            return self._fehler(type(exc).__name__)
 
     async def async_stop_forcible(self) -> bool:
         """Stop forced charge/discharge, return to automatic mode.
@@ -345,9 +345,9 @@ class SolaXInverter(InverterBase):
             await self._restauriere_entladeboden()
             self._discharge_active = False
             return True
-        except Exception:
+        except Exception as exc:
             _LOGGER.exception("SolaX: Failed to stop forcible mode")
-            return False
+            return self._fehler(type(exc).__name__)
 
     async def _resolve_original_charge_current(self) -> float | None:
         """Liefert gecachten Originalwert; Fallback ist attributes.max des Entities."""

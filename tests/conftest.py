@@ -38,6 +38,10 @@ def mock_inverter():
     inv.get_max_discharge_power_kw = MagicMock(return_value=None)
     inv.get_backup_reserve_soc_pct = MagicMock(return_value=None)
     inv.get_control_entities = MagicMock(return_value=[])
+    # Grund des letzten Schreibfehlers (InverterBase). Als echtes None, nicht
+    # als MagicMock-Attribut: Der Executor reicht den Wert an die Telemetrie
+    # weiter, ein Mock-Objekt landete dort als Kennung.
+    inv.last_write_error = None
     return inv
 
 

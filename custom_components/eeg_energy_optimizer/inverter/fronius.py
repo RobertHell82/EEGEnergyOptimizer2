@@ -586,7 +586,7 @@ class FroniusInverter(InverterBase):
         """
         if self._model124_base is None:
             _LOGGER.error("Fronius: Model 124 base address not discovered")
-            return False
+            return self._fehler("Model 124 nicht gefunden")
 
         address = self._model124_base + offset
         try:
@@ -610,7 +610,13 @@ class FroniusInverter(InverterBase):
                     value - 0x10000 if value > 0x7FFF else value,
                     _modbus_fehlertext(result),
                 )
-                return False
+                # Registername + Modbus-Ausnahme, ohne den Wert: Der Text
+                # wird zum message_hash der Telemetrie, ein eingebetteter
+                # Sollwert machte aus jedem Versuch einen eigenen Fall.
+                return self._fehler(
+                    f"{_REGISTERNAMEN.get(offset, f'Offset +{offset}')}: "
+                    f"{_modbus_fehlertext(result)}"
+                )
             await asyncio.sleep(0.2)
             _LOGGER.debug(
                 "Fronius: wrote register %d = %d", address, value
@@ -621,7 +627,10 @@ class FroniusInverter(InverterBase):
                 "Fronius: exception writing register %d (value=%d)", address, value
             )
             self._close_client()
-            return False
+            return self._fehler(
+                f"Verbindungsfehler beim Schreiben von "
+                f"{_REGISTERNAMEN.get(offset, f'Offset +{offset}')}"
+            )
 
     # ------------------------------------------------------------------
     # Keepalive (feeding the InOutWRte_RvrtTms watchdog)
@@ -797,7 +806,20 @@ class FroniusInverter(InverterBase):
         # angehobener Floor im Gerät, muss er weg. Sonst sperrt eine Reserve
         # die Batterie, die es ohne unseren Eingriff gar nicht gäbe, und der
         # Fahrplan plant um sie herum (Grünbach, 13.09.2026).
-        await self._reserve_zuruecknehmen()
+        #
+        # Nur dann. Läuft bereits eine Entladung (_active_command gesetzt,
+        # vom Keepalive am Leben gehalten), gehört der Floor zu IHR: Diese
+        # Schreibung wollte sie bloß nachjustieren. Ihn hier zurückzunehmen
+        # hieße, einer laufenden Entladung ihren Boden unter den Füßen
+        # wegzuziehen — und das bei jedem einzelnen Fehlversuch, in
+        # Grünbach am 21.09.2026 1258-mal an einem Tag.
+        if self._active_command is None:
+            # Der Rückschreibvorgang läuft über _write_register und setzt
+            # dabei seinen eigenen Fehlergrund. Der eigentliche Grund —
+            # warum die Entladung nicht ankam — ist der interessantere.
+            grund = self.last_write_error
+            await self._reserve_zuruecknehmen()
+            self.last_write_error = grund
         return False
 
     async def _reserve_zuruecknehmen(self) -> None:
@@ -826,12 +848,12 @@ class FroniusInverter(InverterBase):
     ) -> bool:
         try:
             if not await self._ensure_model124():
-                return False
+                return self._fehler("Model 124 nicht erreichbar")
 
             wchamax = await self._read_wchamax()
             if wchamax is None or wchamax == 0:
                 _LOGGER.error("Fronius: cannot set discharge — WChaMax unknown or zero")
-                return False
+                return self._fehler("WChaMax unbekannt oder null")
 
             percent = min(power_kw * 1000 / wchamax, 1.0) * 100.0
 
@@ -931,12 +953,12 @@ class FroniusInverter(InverterBase):
                 "Fronius: discharge set (power_kw=%.2f, percent=%.1f, WChaMax=%d W)",
                 power_kw, percent, wchamax,
             )
-            return True
+            return self._erfolg()
 
         except Exception:
             _LOGGER.exception("Fronius: failed to set discharge")
             self._close_client()
-            return False
+            return self._fehler("Ausnahme beim Setzen der Entladung")
 
     async def async_stop_forcible(self) -> bool:
         """Stop forced charge/discharge, return to automatic mode.

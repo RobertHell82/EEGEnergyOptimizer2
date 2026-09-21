@@ -45,6 +45,7 @@ from .const import (
     EXECUTOR_CHARGE_DEADBAND_KW,
     EXECUTOR_DISCHARGE_DEADBAND_KW,
     EXECUTOR_TARGET_SOC_DEADBAND_PCT,
+    EXECUTOR_WRITE_RETRY_MAX_RUNS,
     GUARD_CHARGE_RELEASE_FACTOR,
     GUARD_CHARGE_STEP_KW,
     GUARD_DISCHARGE_EFFICIENCY,
@@ -53,6 +54,11 @@ from .const import (
     GUARD_EMERGENCY_IMPORT_RUNS,
     GUARD_EXPORT_RELEASE_KW,
     GUARD_EXPORT_STICKY_BAND_KW,
+    GUARD_WIRKUNG_MAX_NEUVERSUCHE,
+    GUARD_WIRKUNG_MIN_ANTEIL,
+    GUARD_WIRKUNG_MIN_LUECKE_KW,
+    GUARD_WIRKUNG_RUNS,
+    GUARD_WIRKUNG_SOC_ABSTAND_PCT,
     HEIZSTAB_EINSCHWING_LAEUFE,
     MODE_AUS,
     MODE_EIN,
@@ -67,6 +73,7 @@ from .const import (
     HEIZSTAB_TEILUNG_SOC_VOLL_PCT,
 )
 from .power_readings import (
+    compute_battery_now_kw,
     compute_grid_export_kw,
     compute_house_load_kw,
     compute_pv_now_kw,
@@ -238,6 +245,20 @@ class ScheduleExecutor:
         self._plan_seen_at: datetime | None = None
         self._failsafe_released = False
 
+        # Schreibbremse: aufeinanderfolgende Fehlschläge und wie viele
+        # Läufe der nächste Versuch noch wartet (siehe _write_quittieren).
+        self._write_fail_runs = 0
+        self._write_retry_wait = 0
+        # Welche Absicht zuletzt scheiterte ("charge_limit" / "discharge").
+        self._write_fail_kind: str | None = None
+
+        # Guard 3 (Wirkungskontrolle): Läufe, in denen die Batterie deutlich
+        # weniger lieferte als befohlen; Neuanfänge im laufenden Slot; und ob
+        # wir aufgegeben haben (nur noch Anzeige).
+        self._wirkung_runs = 0
+        self._wirkung_neuversuche = 0
+        self._wirkung_wirkungslos = False
+
         # Not-Aus (Guard 2): anhaltender Netzbezug während einer Entladung.
         self._emergency_runs = 0
         self._emergency_blocked_slot: str | None = None
@@ -286,13 +307,123 @@ class ScheduleExecutor:
         self._config = config
 
     def _notify_failure(self, action: str) -> None:
-        """Schreibfehler an die Telemetrie melden (fail-safe, nie werfend)."""
+        """Schreibfehler an die Telemetrie melden (fail-safe, nie werfend).
+
+        Der Grund kommt vom Treiber (``last_write_error``), der ihn dort
+        setzt, wo er entsteht. Ohne ihn stand in der Telemetrie monatelang
+        nur ``{"action": "discharge"}`` — dass etwas nicht ging, aber nie
+        was. Ein Treiber ohne diese Angabe meldet ``None``, das ist kein
+        Fehler, nur weniger Information.
+        """
         if self._failure_callback is None:
             return
+        grund = getattr(self._inverter, "last_write_error", None)
         try:
-            self._failure_callback(action)
+            self._failure_callback(action, grund)
         except Exception:  # pragma: no cover — defensiv
             _LOGGER.exception("Executor: failure_callback fehlgeschlagen")
+
+    # ------------------------------------------------------------------
+    # Schreibbremse
+    # ------------------------------------------------------------------
+    def _bremse_greift(self, kind: str) -> bool:
+        """Soll dieser Lauf das Schreiben überspringen?
+
+        Nach einem Fehlschlag bleibt in ``_written_*`` der zuletzt
+        BESTÄTIGTE Wert stehen, während der Sollwert weiterwandert — ab dann
+        liegt die Differenz dauerhaft über dem Totband und jeder Guard-Lauf
+        schreibt erneut. In Grünbach wurden aus einem vom Wechselrichter
+        abgelehnten Registerwert so 1258 Fehlversuche an einem Tag
+        (21.09.2026), das Log war unlesbar und das Gerät unter Dauerbeschuss.
+
+        Gebremst wird nur die Absicht, die zuletzt gescheitert IST. Eine
+        andere Art des Eingriffs beschreibt eine andere Lage und wird sofort
+        versucht. Die Unterscheidung darf dabei nicht über ``_active_kind``
+        laufen: Der steht nach einem Fehlschlag auf ``None``, womit jeder
+        Folgelauf wie ein Zustandswechsel aussähe und die Bremse genau im
+        Dauerfehler — ihrem einzigen Anwendungsfall — nie griffe.
+        """
+        if self._write_fail_kind != kind or self._write_retry_wait <= 0:
+            return False
+        self._write_retry_wait -= 1
+        return True
+
+    def _write_quittieren(self, ok: bool, kind: str) -> None:
+        """Erfolg oder Fehlschlag verbuchen und den Abstand fortschreiben.
+
+        Verdopplung statt fester Wartezeit: Ein einmaliger Modbus-Hänger
+        soll im nächsten Lauf (30 s) wieder versucht werden, ein dauerhaft
+        abgelehnter Wert höchstens alle EXECUTOR_WRITE_RETRY_MAX_RUNS Läufe.
+        """
+        if ok:
+            self._write_fail_runs = 0
+            self._write_retry_wait = 0
+            self._write_fail_kind = None
+            return
+        self._write_fail_runs = (
+            self._write_fail_runs + 1 if self._write_fail_kind == kind else 1
+        )
+        self._write_fail_kind = kind
+        self._write_retry_wait = min(
+            2 ** (self._write_fail_runs - 1), EXECUTOR_WRITE_RETRY_MAX_RUNS
+        )
+
+    # ------------------------------------------------------------------
+    # Guard 3 — Wirkungskontrolle
+    # ------------------------------------------------------------------
+    def _wirkung_soll_ist(self) -> tuple[float, float] | None:
+        """Befohlene und tatsächlich erbrachte Leistung; None = unprüfbar.
+
+        Was gemessen werden muss, hängt davon ab, wie der Treiber den Befehl
+        entgegennimmt: Ein Treiber mit Netz-Sollwert (SMA) bekommt die
+        geplante EINSPEISUNG und legt die Hauslast selbst drauf — prüfbar ist
+        dort der Netzzähler. Alle anderen bekommen die Batterieleistung, und
+        genau die ist zu messen.
+        """
+        soll = self._written_discharge_kw
+        if soll is None or soll <= GUARD_WIRKUNG_MIN_LUECKE_KW:
+            # Unter der Mindestlücke kann die Prüfung nie anschlagen —
+            # dann auch nicht zählen.
+            return None
+        if bool(getattr(self._inverter, "discharge_is_grid_setpoint", False)):
+            ist = compute_grid_export_kw(self._hass, self._config)
+        else:
+            batt = compute_battery_now_kw(self._hass, self._config)
+            # Positiv = Laden. Für die Wirkung zählt nur die Entladerichtung.
+            ist = None if batt is None else max(-batt, 0.0)
+        if ist is None:
+            return None
+        return soll, ist
+
+    def _wirkung_erfuellt(self, soll: float, ist: float) -> bool:
+        """Liefert das Gerät genug, um den Befehl als wirksam zu werten?
+
+        Beide Schwellen müssen gerissen sein. Der Anteil allein schlüge bei
+        kleinen Sollwerten auf Messrauschen an, die absolute Lücke allein bei
+        großen Sollwerten nie.
+        """
+        if ist >= soll * GUARD_WIRKUNG_MIN_ANTEIL:
+            return True
+        return (soll - ist) < GUARD_WIRKUNG_MIN_LUECKE_KW
+
+    def _wirkung_am_ziel(self) -> bool:
+        """Ist der Ziel-Ladestand erreicht? Dann DARF nichts mehr kommen.
+
+        Ohne diese Ausnahme meldete Guard 3 jede sauber zu Ende gelaufene
+        Entladung als wirkungslos — der Befehl steht dann noch, die Batterie
+        ist aber am Boden angekommen.
+        """
+        ziel = self._written_target_soc
+        if ziel is None:
+            return False
+        soc = self._batterie_soc_pct()
+        return soc is not None and soc <= ziel + GUARD_WIRKUNG_SOC_ABSTAND_PCT
+
+    def _wirkung_zuruecksetzen(self) -> None:
+        """Zähler von Guard 3 zurückstellen (Slotwechsel, Ende der Entladung)."""
+        self._wirkung_runs = 0
+        self._wirkung_neuversuche = 0
+        self._wirkung_wirkungslos = False
 
     async def async_release(self) -> bool:
         """Wechselrichter freigeben: erzwungene Modi stoppen, Automatik läuft.
@@ -452,6 +583,10 @@ class ScheduleExecutor:
                 _LOGGER.info("Executor: Slotwechsel — Not-Aus-Sperre aufgehoben")
                 self._emergency_blocked_slot = None
                 self._emergency_blocked_until = None
+            # Guard 3 zählt je Slot: Ein neuer Slot bringt einen neuen
+            # Sollwert, und der kann sehr wohl ankommen, auch wenn der
+            # vorige es nicht tat.
+            self._wirkung_zuruecksetzen()
 
         if mode != MODE_EIN:
             # Umschalten auf „Aus" nimmt die gesetzten Steuerwerte SOFORT
@@ -558,6 +693,66 @@ class ScheduleExecutor:
         else:
             self._emergency_runs = 0
 
+        # Guard 3 — Wirkungskontrolle. Nach dem Not-Aus, weil der Vorrang
+        # hat: dort geht es um Netzbezug, hier nur um verlorene Einspeisung.
+        if self._active_kind == "discharge":
+            soll_ist = self._wirkung_soll_ist()
+            if soll_ist is None or self._wirkung_am_ziel():
+                self._wirkung_runs = 0
+            elif self._wirkung_erfuellt(*soll_ist):
+                self._wirkung_runs = 0
+                # Es kommt wieder an — ein früheres „wirkungslos" gilt nicht
+                # mehr, und die Neuversuche sind wieder frei.
+                self._wirkung_neuversuche = 0
+                self._wirkung_wirkungslos = False
+            else:
+                self._wirkung_runs += 1
+
+            if self._wirkung_runs >= GUARD_WIRKUNG_RUNS:
+                soll, ist = soll_ist  # oben geprüft: hier nie None
+                if self._wirkung_neuversuche >= GUARD_WIRKUNG_MAX_NEUVERSUCHE:
+                    # Aufgeben statt flattern. Der Befehl bleibt stehen (er
+                    # schadet nicht), aber der Status sagt die Wahrheit,
+                    # statt eine Einspeisung zu behaupten, die nicht kommt.
+                    if not self._wirkung_wirkungslos:
+                        _LOGGER.warning(
+                            "Executor: Guard 3 — Entladung bleibt wirkungslos "
+                            "(befohlen %.2f kW, gemessen %.2f kW), %d Neuanfänge "
+                            "ohne Erfolg; keine weiteren bis zum Slotwechsel",
+                            soll, ist, self._wirkung_neuversuche,
+                        )
+                    self._wirkung_wirkungslos = True
+                    self._wirkung_runs = 0
+                else:
+                    _LOGGER.warning(
+                        "Executor: Guard 3 — befohlen %.2f kW, gemessen %.2f kW "
+                        "über %d Läufe; erzwungener Modus wird gestoppt und "
+                        "neu aufgesetzt",
+                        soll, ist, GUARD_WIRKUNG_RUNS,
+                    )
+                    if await self.async_release():
+                        # Freigegeben. Der nächste Lauf sieht den Wechsel
+                        # release → discharge und schreibt frisch — auch die
+                        # Schreibbremse ist damit aus dem Weg.
+                        self._wirkung_neuversuche += 1
+                        self._wirkung_runs = 0
+                        self.last_status = (
+                            f"Guard 3: Entladung wirkungslos ({ist:.2f} statt "
+                            f"{soll:.2f} kW) — neu aufgesetzt"
+                        )
+                        return
+                    # Stopp misslungen. async_release setzt _active_kind
+                    # dann auf None — der nächste Lauf sieht daher ohnehin
+                    # einen Zustandswechsel und schreibt frisch, womit das
+                    # Ziel auch ohne sauberen Stopp erreicht ist. Gemeldet
+                    # hat den Fehlschlag async_release bereits selbst.
+                    self.last_status = (
+                        "Guard 3: Neuaufsetzen fehlgeschlagen — wird wiederholt"
+                    )
+                    return
+        else:
+            self._wirkung_runs = 0
+
         # Failsafe: kein brauchbarer Fahrplan → einmalig freigeben.
         if action is None:
             overdue = (
@@ -639,6 +834,11 @@ class ScheduleExecutor:
             "emergency_blocked_slot": self._emergency_blocked_slot,
             "write_failures": self.write_failures,
             "last_write_ok": self.last_write_ok,
+            "last_write_error": getattr(self._inverter, "last_write_error", None),
+            # Guard 3: läuft die befohlene Entladung auch wirklich?
+            "wirkung_runs": self._wirkung_runs,
+            "wirkung_neuversuche": self._wirkung_neuversuche,
+            "wirkung_wirkungslos": self._wirkung_wirkungslos,
             "heizstab": None if self._heizstab is None else self._heizstab.status(),
         }
 
@@ -918,8 +1118,16 @@ class ScheduleExecutor:
             )
             return
 
+        if self._bremse_greift("charge_limit"):
+            self.last_status = (
+                f"Ladelimit {ziel:.2f} kW nicht gesetzt — nächster Versuch in "
+                f"{self._write_retry_wait + 1} Läufen"
+            )
+            return
+
         ok = await self._inverter.async_set_charge_limit(ziel)
         self.last_write_ok = ok
+        self._write_quittieren(ok, "charge_limit")
         if ok:
             self._active_kind = "charge_limit"
             self._written_charge_limit_kw = ziel
@@ -1078,8 +1286,16 @@ class ScheduleExecutor:
             )
             return
 
+        if self._bremse_greift("discharge"):
+            self.last_status = (
+                f"Entladung {power:.2f} kW nicht gesetzt — nächster Versuch in "
+                f"{self._write_retry_wait + 1} Läufen"
+            )
+            return
+
         ok = await self._inverter.async_set_discharge(power, target_soc=ziel_soc)
         self.last_write_ok = ok
+        self._write_quittieren(ok, "discharge")
         if ok:
             self._active_kind = "discharge"
             self._written_discharge_kw = power

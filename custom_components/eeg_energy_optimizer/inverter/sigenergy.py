@@ -325,9 +325,9 @@ class SigenergyInverter(InverterBase):
             await self._set_number("ess_max_charging_limit", max(0.0, float(power_kw)))
             await self._set_mode(MODE_SELF_CONSUMPTION)
             return True
-        except Exception:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
             _LOGGER.exception("Sigenergy: Ladelimit konnte nicht gesetzt werden")
-            return False
+            return self._fehler(type(exc).__name__)
 
     async def async_set_discharge(
         self, power_kw: float, target_soc: float | None = None
@@ -343,9 +343,9 @@ class SigenergyInverter(InverterBase):
             await self._set_number("ess_max_discharging_limit", max(0.0, abs(float(power_kw))))
             await self._set_mode(MODE_COMMAND_DISCHARGING_ESS_FIRST)
             return True
-        except Exception:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
             _LOGGER.exception("Sigenergy: Entladung konnte nicht gestartet werden")
-            return False
+            return self._fehler(type(exc).__name__)
 
     async def async_stop_forcible(self) -> bool:
         """Freigeben: Eigenverbrauchsmodus setzen, dann Remote EMS ausschalten.
@@ -362,9 +362,9 @@ class SigenergyInverter(InverterBase):
                     await self._set_mode(MODE_SELF_CONSUMPTION)
                 await self._switch(False)
             return True
-        except Exception:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
             _LOGGER.exception("Sigenergy: Freigabe fehlgeschlagen")
-            return False
+            return self._fehler(type(exc).__name__)
 
     @property
     def is_available(self) -> bool:

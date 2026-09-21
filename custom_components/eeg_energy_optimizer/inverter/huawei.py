@@ -644,6 +644,7 @@ class HuaweiInverter(InverterBase):
                     power_kw, did,
                 )
                 all_ok = False
+                self._fehler("Ladeleistungs-Entität nicht auflösbar")
                 continue
             try:
                 await self._hass.services.async_call(
@@ -653,12 +654,13 @@ class HuaweiInverter(InverterBase):
                     blocking=True,
                 )
                 any_ok = True
-            except Exception:
+            except Exception as exc:
                 _LOGGER.exception(
                     "Huawei: Failed to set charge limit via %s", entity_id
                 )
                 all_ok = False
-        return any_ok and all_ok
+                self._fehler(f"number.set_value: {type(exc).__name__}")
+        return self._erfolg() if (any_ok and all_ok) else False
 
     async def async_set_discharge(
         self, power_kw: float, target_soc: float | None = None
@@ -700,10 +702,13 @@ class HuaweiInverter(InverterBase):
                     blocking=True,
                 )
                 any_ok = True
-            except Exception:
+            except Exception as exc:
                 _LOGGER.exception("Huawei: Failed to set discharge on %s", did)
                 all_ok = False
-        return any_ok and all_ok
+                # Nur der Ausnahmetyp, nie die Meldung: Sie trägt die
+                # device_id und machte aus jeder Anlage einen eigenen Fall.
+                self._fehler(f"forcible_discharge_soc: {type(exc).__name__}")
+        return self._erfolg() if (any_ok and all_ok) else False
 
     async def async_stop_forcible(self) -> bool:
         """Stop forced charge/discharge on all devices, return to automatic mode.
@@ -723,6 +728,7 @@ class HuaweiInverter(InverterBase):
                     "Huawei: Ladelimit auf %s nicht zurücksetzbar — Entität nicht auflösbar", did
                 )
                 all_ok = False
+                self._fehler("Ladeleistungs-Entität nicht auflösbar")
             try:
                 # Restore max charge power (skip if the entity is unavailable —
                 # stopping the forcible mode must still go through)
@@ -741,10 +747,11 @@ class HuaweiInverter(InverterBase):
                     {"device_id": did},
                     blocking=True,
                 )
-            except Exception:
+            except Exception as exc:
                 _LOGGER.exception("Huawei: Failed to stop forcible mode on %s", did)
                 all_ok = False
-        return all_ok
+                self._fehler(f"stop_forcible_charge: {type(exc).__name__}")
+        return self._erfolg() if all_ok else False
 
     @property
     def is_available(self) -> bool:

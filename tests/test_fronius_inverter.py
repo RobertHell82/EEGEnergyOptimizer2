@@ -1185,3 +1185,106 @@ class TestReserveNachFehlschlag:
         assert (40070 + 5, 1000) in geschrieben, "Vorwert zurückgeschrieben"
         assert inverter._minrsvpct_pre_discharge is None
         assert inverter.get_backup_reserve_soc_pct() == pytest.approx(10.0)
+
+
+    async def test_laufende_entladung_behaelt_ihre_reserve(
+        self, inverter, mock_modbus_client
+    ):
+        """Scheitert nur die Nachjustierung, bleibt der Floor der laufenden
+        Entladung stehen.
+
+        Der Gegenfall zum Test darüber: Dort war nie eine Entladung aktiv,
+        der angehobene Floor gehörte zu nichts und musste weg. Läuft eine
+        (``_active_command`` gesetzt, vom Keepalive gehalten), gehört er zu
+        ihr — ihn zurückzunehmen zöge ihr den Boden weg. In Grünbach passierte
+        das am 21.09.2026 bei jedem einzelnen der 1258 Fehlversuche.
+        """
+        inverter._minrsvpct_pre_discharge = 1000
+        inverter._active_command = {
+            "kind": "discharge", "power_kw": 1.2, "target_soc": 90.0,
+        }
+
+        geschrieben: list[tuple[int, int]] = []
+
+        async def _write(address, value, **kwargs):
+            geschrieben.append((address, value))
+            ergebnis = MagicMock()
+            # InWRte wird abgelehnt — der Fall aus Grünbach.
+            ergebnis.isError.return_value = address == 40070 + _OFFSET_INWRTE
+            return ergebnis
+
+        mock_modbus_client.write_register = AsyncMock(side_effect=_write)
+
+        ok = await inverter.async_set_discharge(1.3, target_soc=90.0)
+
+        assert ok is False
+        assert (40070 + _OFFSET_MINRSVPCT, 1000) not in geschrieben, (
+            "der Floor der laufenden Entladung bleibt unangetastet"
+        )
+        assert inverter._minrsvpct_pre_discharge == 1000
+
+
+class TestSchreibfehlerGrund:
+    """``last_write_error`` trägt den Grund dorthin, wo er gebraucht wird.
+
+    Die Treiber fangen ihre Ausnahmen selbst und liefern nur ``False``. In
+    der Telemetrie stand deshalb monatelang bloß ``{"action": "discharge"}``,
+    während im Anlagenlog die Ursache stand — in Grünbach am 21.09.2026 ein
+    vom Wechselrichter abgelehnter negativer InWRte-Wert.
+    """
+
+    async def test_abgelehntes_register_nennt_registername_und_ausnahme(
+        self, inverter, mock_modbus_client
+    ):
+        async def _write(address, value, **kwargs):
+            ergebnis = MagicMock()
+            ergebnis.isError.return_value = address == 40070 + _OFFSET_INWRTE
+            ergebnis.exception_code = 3
+            return ergebnis
+
+        mock_modbus_client.write_register = AsyncMock(side_effect=_write)
+
+        ok = await inverter.async_set_discharge(1.3, target_soc=90.0)
+
+        assert ok is False
+        assert inverter.last_write_error is not None
+        assert "InWRte" in inverter.last_write_error
+
+    async def test_der_grund_traegt_keine_veraenderlichen_zahlen(
+        self, inverter, mock_modbus_client
+    ):
+        """Der Text wird zum message_hash — ein eingebetteter Sollwert machte
+        aus jedem Versuch einen eigenen Fall und höhlte das Dedup aus."""
+        async def _write(address, value, **kwargs):
+            ergebnis = MagicMock()
+            ergebnis.isError.return_value = address == 40070 + _OFFSET_INWRTE
+            ergebnis.exception_code = 3
+            return ergebnis
+
+        mock_modbus_client.write_register = AsyncMock(side_effect=_write)
+
+        await inverter.async_set_discharge(1.3, target_soc=90.0)
+        erster = inverter.last_write_error
+        await inverter.async_set_discharge(2.7, target_soc=85.0)
+
+        assert inverter.last_write_error == erster, (
+            "zwei Sollwerte, dieselbe Ursache, derselbe Text"
+        )
+
+    async def test_erfolg_loescht_den_grund(self, inverter, mock_modbus_client):
+        async def _nur_inwrte_scheitert(address, value, **kwargs):
+            ergebnis = MagicMock()
+            ergebnis.isError.return_value = address == 40070 + _OFFSET_INWRTE
+            return ergebnis
+
+        mock_modbus_client.write_register = AsyncMock(
+            side_effect=_nur_inwrte_scheitert
+        )
+        await inverter.async_set_discharge(1.3, target_soc=90.0)
+        assert inverter.last_write_error is not None
+
+        mock_modbus_client.write_register = AsyncMock(return_value=_ok_response())
+        ok = await inverter.async_set_discharge(1.3, target_soc=90.0)
+
+        assert ok is True
+        assert inverter.last_write_error is None
