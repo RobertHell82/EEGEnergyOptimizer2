@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **EEG Energy Optimizer** — a Home Assistant custom integration for grid-friendly battery management, optimized for energy communities (Energiegemeinschaften / EEG) in the DACH region. It computes a 36-hour charge/discharge schedule with a linear program (Harald Geyer's `opt()`, vendored under `chamo/`) and steers the battery so that feed-in lands in the hours the community actually needs it.
 
-This repository is the **chamo prototype** — a clone of the main integration with the same domain, so only one of the two can be installed per HA instance. Harald's code in `chamo/` stays unmodified; every adjustment goes through the parameters `schedule.py` hands to `opt()`.
+This repository is the **chamo prototype** — a clone of the main integration with the same domain, so only one of the two can be installed per HA instance. Adjustments go through the parameters `schedule.py` hands to `opt()`; the two exceptions that touch Harald's code are marked `LOCAL CHANGE` and listed in `chamo/README.md`.
 
 **Language**: Python (async, Home Assistant framework) + plain JS (panel)
 **Distribution**: HACS-compatible repository structure
@@ -91,7 +91,7 @@ schedule_executor.py: ScheduleExecutor (execution, 30 s)
 | `heizstab/ohmpilot_modbus.py` | Fronius Ohmpilot driver via direct Modbus TCP (setpoint 40599 int32 W big-endian, actual power 40800, temperature 40808 in 0.1 °C, unix time 40400; 50-s device watchdog). Taken over from HA_Optimierung_Gruenbach, registers verified on the device there |
 | `schedule_archive.py` | Rolling archive of computed plans (7 days, gzip, ~8 KB each) for after-the-fact debugging |
 | `schedule_archive_view.py` | HTTP view that packs archive + settings + measured history into a downloadable ZIP |
-| `chamo/` | Harald Geyer's LP optimizer (`opt_highs.py`, `timetableopt`) plus a HiGHS adapter. `opt_highs.py` carries two local additions: the heater as a valued sink (`heater_p`, 2.1.1-dev2) and a solver-status check after `optimize()` — everything else is upstream |
+| `chamo/` | Harald Geyer's LP optimizer (`opt_highs.py`, `timetableopt`) plus a HiGHS adapter. `opt_highs.py` carries three local additions, all marked `LOCAL CHANGE` and documented in `chamo/README.md`: the heater as a valued sink (`heater_p`, 2.1.1-dev2), the blackout reserve capped at what is reachable **without buying** and a solver-status check after `optimize()` — everything else is upstream |
 | `sensor.py` | 25 sensors (+4 conditional): consumption profile, forecasts, power flows, plan values, grid discharge energy, register writes, Fahrplan-Status, money balance |
 | `bilanz.py` | Energy balance in money — records 96 quarter-hours per day (energy, SOC, **frozen** prices and community balances), evaluates them with `bewerte_geldfluesse`, and derives the optimiser advantage against a simulated standard operation over the measured series. The balance day runs 04:00–04:00 (night discharge stays in one day; old midnight-based records are migrated on load). Days where the battery behaved like the reference (power deviation ≤ max(1 kWh, 10 % of throughput)) report advantage 0 with `kein_eingriff`; the raw difference stays in `vorteil_roh` |
 | `override.py` | Time-boxed user override — **Pause** (behave like mode Aus) with two end conditions: expiry time (`stunden`, 0.25–48 h) and/or target SOC (`bis_soc_pct`, 50–100 %; ends when the measured SOC reaches it, 48 h cap as safety net). Persisted via `Store` so a restart mid-pause does not resume control. Evaluated in the guard cycle in `__init__.py` (`async_tick(now, soc_pct)`); exposed as HA services `pause` / `aufheben` (`services.yaml`) |
@@ -337,9 +337,20 @@ the event loop is long enough for HA to flag a blocking call.
   first point (`consumption[0]`, `production[0]`) never reached the slot the
   executor actually drives; it was planned from the profile instead, in 14 of
   15 runs.
-- **`HAConfig` is the only lever**: Harald Geyer's `opt()` is used unmodified,
-  so every intervention of ours is expressed as a parameter it already
-  understands. Verified by diff against his commit `08819a0`.
+- **`HAConfig` is the almost-only lever**: every intervention of ours is
+  expressed as a parameter `opt()` already understands — except where the
+  model itself was wrong, and that is exactly twice (heater, blackout
+  reserve; `chamo/README.md`). Reach for a parameter first: a divergence
+  costs on every upstream merge, forever.
+- **The blackout reserve must never force a purchase**: `bor`
+  is capped at the fill level reachable *without buying* — house first,
+  limited at empty and at full. Before that it was capped at "content + all
+  PV", which let it freeze energy the house needed in the same night
+  (Ansfelden 21.09.2026: 5.43 vs. 2.31 kWh grid import, −0.51 € against
+  standard operation, 36 of 119 archived plans negative). The reserve still
+  pushes surplus into the battery instead of the grid; it can no longer hold
+  on to what is already there. Pinned by three tests in
+  `tests/test_schedule.py` against real forecast series.
 - **EEG price function** (`eeg_price.py`): the schedule steers purely on
   prices. Community demand becomes a surcharge on the base tariff —
   `surcharge_i(t) = share_i · (value_i(t) − base_tariff(t)) · demand_i(t) / peak_i`,
@@ -582,9 +593,13 @@ Config entry version: 28 (migrations in `__init__.py`)
 - The plan is computed and displayed in every mode; inverter commands are
   written only in mode "Ein" and only for a driver with
   `supports_schedule_control=True`
-- Do **not** modify anything under `chamo/` — it is Harald Geyer's upstream
-  code, kept byte-identical so his changes stay mergeable (`tests/
-  test_chamo_highs_adapter.py` compares HiGHS against GLPK column by column).
+- Treat `chamo/` as upstream code: it is Harald Geyer's, and every line we
+  change costs on every merge with him. Two divergences exist (heater,
+  blackout reserve) — both marked `LOCAL CHANGE`, both explained in
+  `chamo/README.md`, both reported upstream. A third one needs a reason of
+  the same weight: the model is provably wrong, and no parameter can express
+  the fix. `tests/test_chamo_highs_adapter.py` compares HiGHS against GLPK
+  column by column and stays valid (it loads the same file twice).
   `chamo/opt_test.py` has a syntax error upstream and is never imported
 - Before deleting seemingly unused panel code, check for **dynamic** dispatch:
   `_renderStep0`–`_renderStep6` run through the `RENDERERS` map,

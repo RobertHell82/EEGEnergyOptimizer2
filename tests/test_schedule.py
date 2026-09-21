@@ -7,7 +7,9 @@ Batteriezustand richtig in Haralds ``opt()`` ankommen.
 """
 
 import dataclasses
+import json
 import logging
+import pathlib
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -1909,3 +1911,139 @@ async def test_spotquelle_unsinniger_prozentabschlag_zaehlt_als_null():
         _FakeSpot(0.09),
     )
     assert all(p == pytest.approx(0.09) for p in inputs.feedin_price_series)
+
+
+# ---------------------------------------------------------------------------
+# Notstrom-Reserve: sie darf keinen Stromkauf erzwingen
+# ---------------------------------------------------------------------------
+
+FIXTURES = pathlib.Path(__file__).parent / "fixtures"
+
+
+def _inputs_ansfelden() -> sched.ScheduleInputs:
+    """Echte Prognosereihen der Anlage Ansfelden vom 21.09.2026.
+
+    Synthetische Profile taugen für diesen Fall nicht: Die Reserve kippte
+    dort an einer Differenz von 37 W zwischen Worst-Case-PV und Hauslast in
+    einem einzigen Slot. Solche Grenzlagen entstehen nur in echten Reihen,
+    deshalb liegen sie als Fixture bei.
+    """
+    daten = json.loads((FIXTURES / "fahrplan_ansfelden_2026-09-21.json").read_text())
+    start = datetime.fromisoformat(daten["start"])
+    stunden = len(daten["consumption_kw"])
+    return sched.ScheduleInputs(
+        start=start,
+        time_res_s=900,
+        timestamps=[start + timedelta(hours=i) for i in range(stunden)],
+        consumption_kw=daten["consumption_kw"],
+        production_kw=daten["production_kw"],
+        min_production_kw=None,
+        worst_case_factor=daten["worst_case_factor"],
+        battery_free_kwh=daten["battery_capacity_kwh"] * (1 - daten["soc_pct"] / 100.0),
+        battery_capacity_kwh=daten["battery_capacity_kwh"],
+        battery_power_limit_kw=daten["battery_power_limit_kw"],
+        soc_pct=daten["soc_pct"],
+        ac_limit_kw=daten["ac_limit_kw"],
+        feedin_limit_kw=daten["feedin_limit_kw"],
+        feedin_price=daten["feedin_price"],
+        feedin_price_night=None,
+        night_start_hour=20,
+        night_end_hour=6,
+        consumption_price=daten["consumption_price"],
+        battery_cost=daten["battery_cost"],
+        min_soc_pct=daten["min_soc_pct"],
+        max_soc_pct=daten["max_soc_pct"],
+        forecast_source="solcast_solar",
+    )
+
+
+def _netzbezug_kwh(slots: list[dict], stunden: int = 24) -> float:
+    ende = stunden * 4
+    return sum(max(-s["grid_p"], 0.0) for s in slots[:ende]) * 0.25
+
+
+def test_reserve_verlangt_nie_mehr_als_ohne_netzbezug_erreichbar():
+    """Die Reserve darf nur aus Überschuss wachsen, nie aus dem Bestand.
+
+    Die Schranke in ``opt_highs.py`` deckelte die Reserve auf "Inhalt +
+    gesamte PV" — die PV zählte ungeteilt, obwohl das Haus von derselben
+    Energie lebt, und ein voller Speicher verliert den Rest ohnehin ins
+    Netz. Dadurch ließ sie Forderungen durch, die nur mit ZUKAUF zu halten
+    waren: am 21.09.2026 verlangte sie 4,14 kWh für den nächsten Morgen,
+    ohne Netzbezug erreichbar waren 0,87 kWh.
+
+    Der Test rechnet die erreichbare Füllung unabhängig nach — Batterie
+    zuerst, Rest aus dem Netz, begrenzt bei leer und bei voll — und prüft
+    sie gegen die Forderung, die im Plan steht (``battery_ub``). Bewusst
+    die EIGENSCHAFT und keine Zahl: ein anderer Prognosepfad verschiebt die
+    Werte, die Aussage bleibt.
+    """
+    pytest.importorskip("pandas")
+    pytest.importorskip("highspy")
+
+    inputs = _inputs_ansfelden()
+    plan = sched.solve(inputs)
+    slots = plan["slots"]
+
+    boden = inputs.battery_capacity_kwh * inputs.min_soc_pct / 100.0
+    deckel = inputs.battery_capacity_kwh * inputs.max_soc_pct / 100.0
+    kapazitaet = deckel - boden
+    verluste = 1 - 2 * sched.HAConfig.battery_resistance
+    stand = kapazitaet - inputs.battery_free_kwh
+
+    for slot in slots:
+        gefordert = kapazitaet - slot["battery_ub"]
+        assert gefordert <= stand + 0.01, (
+            f"{slot['t']}: Reserve verlangt {gefordert:.2f} kWh, ohne Netzbezug "
+            f"erreichbar sind {stand:.2f} kWh"
+        )
+        bilanz = slot["PV"] - slot["consumption"] / sched.HAConfig.ac_efficiency
+        schritt = (max(bilanz, 0.0) * verluste + min(bilanz, 0.0) / verluste) * 0.25
+        stand = min(kapazitaet, max(0.0, stand + schritt))
+
+
+def test_fahrplan_kauft_nicht_mehr_als_der_standardbetrieb():
+    """Gegenprobe am Ergebnis, mit echten Reihen.
+
+    Vor der Korrektur kaufte der Fahrplan an diesem Tag 5,43 kWh gegen
+    2,31 kWh im Standardbetrieb und fror den Ladestand bei 30,2 % ein —
+    0,51 EUR schlechter als das Gerät ohne Optimierung. Ein Fahrplan, der
+    mehr zukauft als die Anlage von selbst, ist immer ein Fehler.
+    """
+    pytest.importorskip("pandas")
+    pytest.importorskip("highspy")
+
+    inputs = _inputs_ansfelden()
+    plan = sched.solve(inputs)
+    referenz = sched.simuliere_standardbetrieb(
+        plan["slots"], inputs, ziel_soc_pct=plan["slots"][-1]["soc"]
+    )
+
+    assert _netzbezug_kwh(plan["slots"]) <= _netzbezug_kwh(referenz) + 0.1
+    # Und der Speicher wird auch wirklich genutzt, statt auf Vorrat zu liegen.
+    assert min(s["soc"] for s in plan["slots"][:96]) <= inputs.min_soc_pct + 1.0
+
+
+def test_reserve_bleibt_wirksam():
+    """Die Korrektur senkt die Reserve, sie schaltet sie nicht ab.
+
+    Ohne diesen Test wäre "kein Zukauf" auch dadurch zu erreichen, dass die
+    Reserve gar nichts mehr verlangt. Sie soll aber weiterhin Überschuss in
+    den Speicher zwingen, statt ihn zu verkaufen — an denselben Reihen
+    bindet sie in mehr als zehn Slots.
+    """
+    pytest.importorskip("pandas")
+    pytest.importorskip("highspy")
+
+    inputs = _inputs_ansfelden()
+    slots = sched.solve(inputs)["slots"]
+    kapazitaet = inputs.battery_capacity_kwh * (
+        inputs.max_soc_pct - inputs.min_soc_pct
+    ) / 100.0
+
+    bindend = sum(
+        1
+        for s in slots
+        if abs(s["battery"] - s["battery_ub"]) < 1e-6 and s["battery_ub"] < kapazitaet - 0.01
+    )
+    assert bindend > 10, f"Reserve wirkt nur noch in {bindend} Slots"

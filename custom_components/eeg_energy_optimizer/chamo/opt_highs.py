@@ -73,8 +73,21 @@ def opt(c, start_time):
 
 	# Make sure, that the system remains solveable:
 	bat_content = c.battery_capacity - c.battery_free
-	min_available_energy = parameters.dc_production.shift(fill_value=0).cumsum() * (p2e * (1 - 2 * c.battery_resistance))
-	bor.clip(upper=bat_content + min_available_energy, inplace=True)
+	# LOCAL CHANGE (see README.md): Only surplus can build up the reserve,
+	# and only as much as fits. Summing the full production ignores that the
+	# house lives on the same energy and that a full battery spills the rest,
+	# so the cap admitted reserve levels that were reachable only by buying
+	# the household load from the grid. Tracking the level slot by slot is
+	# what saturation needs - a cumulative sum cannot express it.
+	surplus = parameters.dc_production - parameters.consumption / c.ac_efficiency
+	efficiency = 1 - 2 * c.battery_resistance
+	steps = (surplus.clip(lower=0) * efficiency + surplus.clip(upper=0) / efficiency) * p2e
+	level = bat_content
+	reachable = []
+	for step in steps.values:
+		reachable.append(level)   # level at the START of the slot
+		level = min(c.battery_capacity, max(0.0, level + step))
+	bor.clip(upper=pd.Series(reachable, index=parameters.index), inplace=True)
 
 	battery_free_ub = c.battery_capacity - bor
 	battery_free_ub.index = parameters.i
@@ -111,7 +124,7 @@ def opt(c, start_time):
 
 	dc_p = parameters.dc_production + battery_p_pos - battery_p_neg - discard_p - c.battery_resistance * battery_high1_p - 2 * c.battery_resistance * battery_high2_p
 
-	# --- Heizstab als bewertete Senke -----------------------------------
+	# --- LOCAL CHANGE: Heizstab als bewertete Senke (see README.md) -----
 	#
 	# Ohne ihn ist 'discard' wertlos: Das Modell regelt ab, wenn es muss,
 	# und der Heizstab bekommt den Rest geschenkt. Mit Wärmewert wird daraus
@@ -217,9 +230,10 @@ def opt(c, start_time):
 		ziel = ziel + heater_p.sum() * heizstab_waermewert * c.ac_efficiency * p2e
 	model.objective = Objective(ziel, direction='max')
 	status = model.optimize()
-	# Ohne optimale Lösung stehen in den Variablen keine Werte (primal = None),
-	# und die Tabelle unten scheiterte an "None - None" — eine Fehlermeldung, die
-	# nichts erklärt. Der Status sagt, woran es lag (infeasible, unbounded, …).
+	# LOCAL CHANGE (see README.md): Ohne optimale Lösung stehen in den
+	# Variablen keine Werte (primal = None), und die Tabelle unten scheiterte
+	# an "None - None" — eine Fehlermeldung, die nichts erklärt. Der Status
+	# sagt, woran es lag (infeasible, unbounded, …).
 	if status != 'optimal':
 		raise RuntimeError(f"Optimierung ohne Lösung — Solver-Status: {status}")
 
