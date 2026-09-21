@@ -8,3 +8,5 @@ __pycache__/
 Screenshot.png
 .wrangler/
 .venv/
+# Vortragsunterlagen — reine Präsentationsarbeit, gehört nicht ins Repo.
+vortrag/
