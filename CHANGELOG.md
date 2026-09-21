@@ -10,6 +10,12 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
+## [2.1.1-dev35] - 2026-09-21
+
+### Behoben
+
+- **Eine Profilstunde über der AC-Grenzleistung ließ den Fahrplan bei jedem Lauf abbrechen.** Auf einer Fronius-Anlage stand in der Plankarte „Noch kein Optimierungsplan: ValueError: Variable 'grid_p_pos_84' hat lb=0 > ub=-1.78125", der Failsafe gab den Wechselrichter frei, und nur ein Rückblick von 0 Wochen brachte den Plan zurück. Ursache ist eine stille Annahme im Modell: Die Einspeisung je Slot ist auf „AC-Grenze minus Hauslast" begrenzt, und das setzt voraus, dass die Hauslast unter der AC-Grenzleistung des Wechselrichters bleibt. Das Wochenendprofil dieser Anlage hatte um 19 Uhr eine 23-kW-Stunde bei 10 kW AC-Grenze — nach zehn Tagen Betrieb liegen erst zwei Wochenendwerte je Stunde vor, das getrimmte Mittel greift erst ab fünf, und eine einzelne Stunde prägt die Gruppe voll. Slot 84 war der Samstag 18:45, halb zwischen Grundlast und Spitze interpoliert: 11,78 kW Hauslast, Schranke −1,78. Schon eine 11-kW-Wallbox an einem 10-kW-Gerät reicht dafür; die Samstagslinie liegt im Profildiagramm unsichtbar unter der Sonntagslinie, weil beide Tage dieselbe Gruppe teilen. Die Hauslast wird jetzt auf die AC-Grenze gekappt, bevor sie ins Modell geht. Das ist exakt, nicht nur pragmatisch: Was über der AC-Grenze liegt, kann der Wechselrichter ohnehin nicht liefern, es kommt in jedem Fall aus dem Netz — ein konstanter Kostenanteil, der keine Entscheidung verändert. Im Plan steht in einer solchen Stunde die AC-Grenze als Hauslast und keine Einspeisung; die Referenzsimulation schützte dieselbe Formel schon bisher. Ein Rückblick von 0 Wochen ist kein Ausweg: Er liest gar keine Statistik und plant ohne jede Hauslast.
+
 ## [2.1.1-dev34] - 2026-09-17
 
 ### Behoben
