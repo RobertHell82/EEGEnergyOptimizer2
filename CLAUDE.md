@@ -106,7 +106,7 @@ schedule_executor.py: ScheduleExecutor (execution, 30 s)
 | `forecast_provider.py` | Abstract PV forecast provider — Solcast and Forecast.Solar implementations |
 | `config_flow.py` | Single-click config flow (full setup happens in panel) |
 | `peakshare.py` | PeakShareProvider — fetches + caches community demand forecasts (half-hourly refresh; hourly values, `opt()` resamples to 15 min itself) |
-| `telemetry.py`, `telemetry_buffer.py` | Opt-in reporting — profile + failures only, ring buffer with backoff |
+| `telemetry.py`, `telemetry_buffer.py` | Opt-in reporting — profile + failures only, ring buffer with backoff. Snapshots are taken on the half-hour grid but **offset by `TELEMETRY_SNAPSHOT_OFFSET_MIN`**: `_collect_snapshot()` runs in the same guard cycle *after* the executor wrote, and the plain grid hit exactly the cycle that writes on a slot change (slots turn at :00/:15/:30/:45) — Huawei briefly drops the battery when `forcible_discharge_soc` is rewritten, so the power columns systematically recorded the gap we cause ourselves. Weismann, 21.09.2026: the grid meter read ~0 W at the grid start in 9 of 10 half-hours while the window averaged 271–661 W. `soc_pct` is unaffected; for power questions use the plant's own history, not the snapshots |
 | `websocket_api.py` | 26 WebSocket commands for panel (config, schedule, control state, PeakShare, OeMAG, spot price, aWATTar SUNNY, grid tariffs, feed-in statistics, daily balance, probes, telemetry, activity log) |
 | `inverter/base.py` | Abstract inverter interface (InverterBase ABC) |
 | `inverter/huawei.py` | Huawei SUN2000 implementation via HA services — Single + Master/Slave (multi-device) |
@@ -373,6 +373,18 @@ the event loop is long enough for HA to flag a blocking call.
   invisible in `grid_p`, which only carries the difference. Harmful because
   the battery then discharges *less*, the export limit being occupied by the
   sham trade.
+- **Safety margin on the forecasts** (`schedule_sicherheitspuffer_pct`,
+  0–50 %, default **0**): consumption enters the model raised by that share,
+  PV lowered by it, so the plan charges sooner and discharges more
+  cautiously. Applied to the forecast only — the first support point is
+  overwritten with the measurement right afterwards, and a safety margin on a
+  measurement would be an error, not caution (the running slot is the one
+  thing there is nothing to guess about). Solcast's p10 path drops with it,
+  otherwise the lower bound would sit above its own expected value. The
+  default is 0 on purpose: a fixed markup is not a better estimate, it shifts
+  the expected value and points the wrong way half the time, and it moves
+  feed-in out of the community's demand hours into the battery. Settings
+  only, expert mode only — it has no place in the wizard.
 - **Minimum state of charge** is a **hard floor**, modelled as *missing
   capacity* (`opt()` counts free room up to full, so a smaller capacity cuts
   the bottom off). Capped at 30 %, above which too little usable range is left

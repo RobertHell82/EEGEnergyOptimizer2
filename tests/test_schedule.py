@@ -2047,3 +2047,93 @@ def test_reserve_bleibt_wirksam():
         if abs(s["battery"] - s["battery_ub"]) < 1e-6 and s["battery_ub"] < kapazitaet - 0.01
     )
     assert bindend > 10, f"Reserve wirkt nur noch in {bindend} Slots"
+
+
+# ---------------------------------------------------------------------------
+# Sicherheitspuffer auf die Prognose
+# ---------------------------------------------------------------------------
+#
+# Opt-in, Vorgabe 0: Der Fahrplan rechnet auf Wunsch mit mehr Verbrauch und
+# weniger Sonne, als die Prognose hergibt — er lädt dann eher und entlädt
+# zurückhaltender. Ein Aufschlag ist kein besserer Schätzer, deshalb tut er
+# ohne ausdrückliche Einstellung nichts.
+
+
+def test_puffer_ist_ohne_einstellung_wirkungslos():
+    assert sched._sicherheitspuffer_pct({}) == 0.0
+    assert sched._sicherheitspuffer_pct({"schedule_sicherheitspuffer_pct": ""}) == 0.0
+    assert sched._sicherheitspuffer_pct({"schedule_sicherheitspuffer_pct": None}) == 0.0
+    verbrauch, erzeugung, minimum = sched._puffer_anwenden(
+        0.0, [1.0, 2.0], [3.0, 4.0], [2.0, 3.0]
+    )
+    assert (verbrauch, erzeugung, minimum) == ([1.0, 2.0], [3.0, 4.0], [2.0, 3.0])
+
+
+def test_puffer_wird_auf_null_bis_fuenfzig_geklemmt():
+    assert sched._sicherheitspuffer_pct({"schedule_sicherheitspuffer_pct": -5}) == 0.0
+    assert sched._sicherheitspuffer_pct({"schedule_sicherheitspuffer_pct": 80}) == 50.0
+    assert sched._sicherheitspuffer_pct({"schedule_sicherheitspuffer_pct": 12}) == 12.0
+    # Ein Tippfehler darf den Fahrplan nicht verziehen.
+    assert sched._sicherheitspuffer_pct({"schedule_sicherheitspuffer_pct": "viel"}) == 0.0
+
+
+def test_puffer_hebt_verbrauch_und_senkt_erzeugung():
+    verbrauch, erzeugung, minimum = sched._puffer_anwenden(
+        10.0, [1.0, 2.0], [4.0, 6.0], [3.0, 5.0]
+    )
+    assert verbrauch == [1.1, 2.2]
+    assert erzeugung == [3.6, 5.4]
+    # Der p10-Pfad sinkt mit, sonst läge die Untergrenze der Erzeugung
+    # über ihrem Erwartungswert.
+    assert minimum == [2.7, 4.5]
+
+
+def test_puffer_laesst_fehlenden_p10_pfad_in_ruhe():
+    _, _, minimum = sched._puffer_anwenden(20.0, [1.0], [2.0], None)
+    assert minimum is None
+
+
+async def test_puffer_verschont_den_gemessenen_ersten_stuetzpunkt():
+    """Der laufende Slot ist der einzige, über den es nichts zu mutmaßen
+    gibt — ein Sicherheitsaufschlag auf eine Messung wäre keine Vorsicht,
+    sondern ein Fehler."""
+    config = dict(BASE_CONFIG, schedule_sicherheitspuffer_pct=25)
+    hass = _hass_with(config)
+
+    with (
+        patch.object(sched, "_now_local", return_value=NOW),
+        patch.object(
+            sched, "_async_solar_forecast_wh", AsyncMock(return_value=_wh_hours(NOW))
+        ),
+        patch.object(sched, "compute_pv_now_kw", return_value=3.0),
+        patch.object(sched, "compute_house_load_kw", return_value=0.8),
+    ):
+        mit_puffer, problem = await sched.async_collect_inputs(hass, "entry1")
+    assert problem is None
+
+    with (
+        patch.object(sched, "_now_local", return_value=NOW),
+        patch.object(
+            sched, "_async_solar_forecast_wh", AsyncMock(return_value=_wh_hours(NOW))
+        ),
+        patch.object(sched, "compute_pv_now_kw", return_value=3.0),
+        patch.object(sched, "compute_house_load_kw", return_value=0.8),
+    ):
+        ohne_puffer, _ = await sched.async_collect_inputs(
+            _hass_with(dict(BASE_CONFIG)), "entry1"
+        )
+
+    # Erster Stützpunkt: unverändert die Messung, in beiden Läufen.
+    assert mit_puffer.consumption_kw[0] == pytest.approx(0.8)
+    assert mit_puffer.production_kw[0] == pytest.approx(3.0)
+    assert ohne_puffer.consumption_kw[0] == pytest.approx(0.8)
+
+    # Alle weiteren Punkte tragen den Puffer.
+    for i in range(1, len(mit_puffer.consumption_kw)):
+        assert mit_puffer.consumption_kw[i] == pytest.approx(
+            round(ohne_puffer.consumption_kw[i] * 1.25, 4)
+        ), i
+    for i in range(1, len(mit_puffer.production_kw)):
+        assert mit_puffer.production_kw[i] == pytest.approx(
+            round(ohne_puffer.production_kw[i] * 0.75, 4)
+        ), i

@@ -706,3 +706,80 @@ def test_dedup_zaehlt_ohne_vorkommen_keine_unterdrueckung():
         dedup, unterdrueckt, key, t0 + timedelta(seconds=3601), 3600
     ) == (True, 0)
     assert unterdrueckt == {}
+
+
+# ---------------------------------------------------------------------------
+# Snapshot-Raster: Versatz gegen den Steuerbefehl
+# ---------------------------------------------------------------------------
+#
+# Die Momentaufnahme entsteht im Guard-Lauf NACH dem Steuerbefehl. Ohne
+# Versatz fiel sie in denselben Lauf, in dem der Executor zum Slotwechsel
+# schreibt — und maß den Aussetzer, den dieser Befehl am Wechselrichter
+# auslöst. Bei Weismann stand der Netzzähler am 21.09.2026 in 9 von 10
+# Halbstunden zum Rasterbeginn bei ~0 W, während das Fenstermittel
+# 271–661 W betrug.
+
+
+def _ts(stunde, minute):
+    return datetime(2026, 9, 22, stunde, minute, tzinfo=timezone.utc)
+
+
+def test_snapshot_nicht_im_lauf_des_steuerbefehls():
+    """Die ersten Minuten eines Rasters bleiben frei — dort schreibt der
+    Executor zum Slotwechsel."""
+    from custom_components.eeg_energy_optimizer import _snapshot_slot_faellig
+    from custom_components.eeg_energy_optimizer.const import (
+        TELEMETRY_SNAPSHOT_OFFSET_MIN,
+    )
+
+    for minute in range(TELEMETRY_SNAPSHOT_OFFSET_MIN):
+        assert _snapshot_slot_faellig(_ts(10, minute), None) is None, minute
+        assert _snapshot_slot_faellig(_ts(10, 30 + minute), None) is None, minute
+
+
+def test_snapshot_faellt_im_ersten_lauf_nach_dem_versatz():
+    from custom_components.eeg_energy_optimizer import _snapshot_slot_faellig
+    from custom_components.eeg_energy_optimizer.const import (
+        TELEMETRY_SNAPSHOT_OFFSET_MIN,
+    )
+
+    slot = _snapshot_slot_faellig(_ts(10, TELEMETRY_SNAPSHOT_OFFSET_MIN), None)
+    assert slot == 20, "10:00-Raster = Stunde 10 × 2"
+    assert _snapshot_slot_faellig(_ts(10, 30 + TELEMETRY_SNAPSHOT_OFFSET_MIN), None) == 21
+
+
+def test_snapshot_nur_einmal_je_raster():
+    """Der Guard-Takt kommt alle 30 s — abgelegt wird trotzdem nur eine."""
+    from custom_components.eeg_energy_optimizer import _snapshot_slot_faellig
+
+    slot = _snapshot_slot_faellig(_ts(10, 5), None)
+    assert slot == 20
+    for minute in range(5, 30):
+        assert _snapshot_slot_faellig(_ts(10, minute), slot) is None
+    assert _snapshot_slot_faellig(_ts(10, 35), slot) == 21
+
+
+def test_snapshot_versatz_kostet_keine_aufnahme():
+    """Über einen ganzen Tag entstehen weiterhin 48 Aufnahmen, nur später."""
+    from custom_components.eeg_energy_optimizer import _snapshot_slot_faellig
+
+    letzter, slots, minuten = None, [], set()
+    # Guard-Takt: alle 30 s, hier in Minutenschritten ausreichend abgebildet.
+    for stunde in range(24):
+        for minute in range(60):
+            slot = _snapshot_slot_faellig(_ts(stunde, minute), letzter)
+            if slot is not None:
+                slots.append(slot)
+                minuten.add(minute)
+                letzter = slot
+    assert len(slots) == 48
+    assert len(set(slots)) == 48, "jeder Halbstundenslot genau einmal"
+    assert minuten == {3, 33}, "und immer mit demselben Versatz"
+
+
+def test_snapshot_nach_neustart_mitten_im_raster():
+    """Startet die Integration spät im Raster, wird sofort abgelegt statt
+    eine halbe Stunde zu warten."""
+    from custom_components.eeg_energy_optimizer import _snapshot_slot_faellig
+
+    assert _snapshot_slot_faellig(_ts(10, 25), None) == 20

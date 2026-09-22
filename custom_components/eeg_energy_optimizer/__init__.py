@@ -64,6 +64,7 @@ from .const import (
     TELEMETRY_PROFILE_HEARTBEAT_S,
     TELEMETRY_SETTINGS_KEYS,
     TELEMETRY_SNAPSHOT_INTERVAL_MIN,
+    TELEMETRY_SNAPSHOT_OFFSET_MIN,
     TELEMETRY_STEUERUNG,
 )
 from .heizstab.controller import create_heizstab
@@ -342,6 +343,29 @@ def _build_snapshot_payload(
         "min_soc_dyn": min_soc,
         "hysteresis": None,
     }
+
+
+def _snapshot_slot_faellig(now_ts, letzter_slot):
+    """Nummer des Halbstundenslots, wenn jetzt abzulegen ist — sonst ``None``.
+
+    Zwei Bedingungen. Der Slot muss neu sein, sonst läge bei einem Guard-Takt
+    von 30 s alle halbe Stunde ein Dutzend Aufnahmen vor. Und die Minute muss
+    mindestens ``TELEMETRY_SNAPSHOT_OFFSET_MIN`` hinter dem Rasterbeginn
+    liegen: Ohne diesen Versatz fiel die Aufnahme in denselben Guard-Lauf wie
+    der Steuerbefehl zum Slotwechsel und maß den Aussetzer, den dieser Befehl
+    am Wechselrichter auslöst (Begründung und Messwerte an der Konstante).
+
+    Der Versatz kostet keine Aufnahme: Der Guard-Takt kommt alle 30 s vorbei,
+    und wer zu früh dran ist, bekommt im selben Raster einfach den nächsten
+    Lauf. Nur ein Neustart mitten im Raster kann eine überspringen, und das
+    tat er vorher auch.
+    """
+    slot = now_ts.hour * 2 + now_ts.minute // TELEMETRY_SNAPSHOT_INTERVAL_MIN
+    if slot == letzter_slot:
+        return None
+    if now_ts.minute % TELEMETRY_SNAPSHOT_INTERVAL_MIN < TELEMETRY_SNAPSHOT_OFFSET_MIN:
+        return None
+    return slot
 
 
 def _dedup_pruefen(dedup, unterdrueckt, key, now_ts, fenster_s):
@@ -1703,11 +1727,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
             Kein eigener Timer: der Guard-Takt kommt ohnehin alle 30 Sekunden
             vorbei, und das Halbstunden-Raster hält die Zeitpunkte über alle
-            Anlagen vergleichbar — auch über einen Neustart hinweg.
+            Anlagen vergleichbar — auch über einen Neustart hinweg. Das
+            Raster beginnt bewusst einige Minuten nach der vollen und halben
+            Stunde, siehe ``_snapshot_slot_faellig``.
             """
             now_ts = _now_utc()
-            slot = now_ts.hour * 2 + now_ts.minute // TELEMETRY_SNAPSHOT_INTERVAL_MIN
-            if slot == data.get("telemetry_snapshot_slot"):
+            slot = _snapshot_slot_faellig(now_ts, data.get("telemetry_snapshot_slot"))
+            if slot is None:
                 return
             data["telemetry_snapshot_slot"] = slot
             mode_str = "ein" if mode == MODE_EIN else "test"

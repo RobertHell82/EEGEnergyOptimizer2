@@ -176,6 +176,22 @@ SOC_BAND_MIN_PCT = 20
 # ``schedule_max_soc_enabled`` ist entfallen (Migration v27): der Zustand
 # steckt allein im Wert, 100 ist der Aus-Zustand.
 CONF_SCHEDULE_MAX_SOC_PCT = "schedule_max_soc_pct"
+# Sicherheitspuffer in Prozent auf die PROGNOSEN: Der Verbrauch geht um
+# diesen Anteil erhöht ins Modell, die PV-Erzeugung um denselben Anteil
+# verringert. Der Fahrplan rechnet damit mit einem knapperen Tag, als die
+# Prognose hergibt — er lädt eher und entlädt zurückhaltender.
+#
+# Vorgabe 0: Ein Aufschlag ist kein besserer Schätzer, sondern eine
+# Verschiebung des Erwartungswerts, die in der Hälfte der Fälle in die
+# falsche Richtung zeigt, und er verschiebt Einspeisung aus den
+# Bedarfsstunden der Gemeinschaft in die Batterie — genau gegen den Zweck
+# der Optimierung. Wer bewusst konservativer fahren will, stellt ihn ein;
+# von allein tut das niemandem etwas.
+CONF_SCHEDULE_SICHERHEITSPUFFER_PCT = "schedule_sicherheitspuffer_pct"
+DEFAULT_SICHERHEITSPUFFER_PCT = 0.0
+# Obergrenze. Darüber hätte die Prognose keine Aussagekraft mehr: Bei 50 %
+# plant das Modell mit der halben Sonne und dem anderthalbfachen Verbrauch.
+MAX_SICHERHEITSPUFFER_PCT = 50.0
 # Untergrenze der Einstellung. Zusammen mit SOC_BAND_MIN_PCT bleiben immer
 # mindestens 20 Prozentpunkte nutzbarer Bereich — Boden und Deckel können
 # sich also nie kreuzen, egal wie beides eingestellt ist.
@@ -894,6 +910,50 @@ def _min_soc_pct(config: dict) -> float:
         return DEFAULT_MIN_SOC_PCT
 
 
+def _sicherheitspuffer_pct(config: dict) -> float:
+    """Sicherheitspuffer in Prozent — 0 heißt „Prognose unverändert".
+
+    Gekappt bei ``MAX_SICHERHEITSPUFFER_PCT``; ein unlesbarer Wert nimmt die
+    Vorgabe, damit ein Tippfehler in der Konfiguration nicht den ganzen
+    Fahrplan verzieht.
+    """
+    raw = config.get(CONF_SCHEDULE_SICHERHEITSPUFFER_PCT)
+    if raw is None or raw == "":
+        return DEFAULT_SICHERHEITSPUFFER_PCT
+    try:
+        return max(0.0, min(MAX_SICHERHEITSPUFFER_PCT, float(raw)))
+    except (TypeError, ValueError):
+        return DEFAULT_SICHERHEITSPUFFER_PCT
+
+
+def _puffer_anwenden(
+    puffer_pct: float,
+    consumption: list[float],
+    production: list[float],
+    min_production: list[float] | None,
+) -> tuple[list[float], list[float], list[float] | None]:
+    """Verbrauch anheben, Erzeugung absenken — beides um denselben Anteil.
+
+    Wirkt ausschließlich auf die PROGNOSE. Der erste Stützpunkt wird beim
+    Aufrufer anschließend mit den Messwerten überschrieben und bleibt damit
+    unangetastet: Ein Sicherheitsaufschlag auf eine Messung wäre keine
+    Vorsicht, sondern ein Fehler — der gefahrene Slot ist der einzige, über
+    den es nichts zu mutmaßen gibt.
+
+    ``min_production`` (Solcasts p10-Pfad) sinkt mit. Bliebe er stehen,
+    läge die Untergrenze der Erzeugung über ihrem Erwartungswert.
+    """
+    if puffer_pct <= 0:
+        return consumption, production, min_production
+    hoch = 1.0 + puffer_pct / 100.0
+    runter = 1.0 - puffer_pct / 100.0
+    return (
+        [round(v * hoch, 4) for v in consumption],
+        [round(v * runter, 4) for v in production],
+        None if min_production is None else [round(v * runter, 4) for v in min_production],
+    )
+
+
 def _max_soc_pct(config: dict) -> float:
     """Maximum-Ladestand in Prozent — 100 heißt „bis voll laden".
 
@@ -1489,6 +1549,14 @@ async def async_collect_inputs(
     else:
         production = _production_from_wh(wh_hours, stamps)
         min_production = None
+
+    # Sicherheitspuffer auf die Prognose, bevor die Messung den ersten
+    # Stützpunkt übernimmt: Verbrauch hoch, Erzeugung runter. Vorgabe 0,
+    # dann passiert hier nichts (siehe CONF_SCHEDULE_SICHERHEITSPUFFER_PCT).
+    puffer_pct = _sicherheitspuffer_pct(config)
+    consumption, production, min_production = _puffer_anwenden(
+        puffer_pct, consumption, production, min_production
+    )
 
     # Erster Stützpunkt: Messwerte statt Prognose. Für die nächsten Minuten
     # ist die aktuelle Messung der beste Schätzer, und nur der erste Slot wird

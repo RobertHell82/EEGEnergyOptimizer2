@@ -270,6 +270,7 @@ const WIZARD_DEFAULTS = {
   discharge_power_kw: 5.0,
   // Mindest-Ladestand: derselbe Wert wie DEFAULT_MIN_SOC_PCT im Backend.
   schedule_min_soc_pct: 10,
+  schedule_sicherheitspuffer_pct: 0,
   // Maximum-Ladestand: 100 heisst bis voll laden (kein eigener Schalter,
   // der Zustand steckt allein im Wert — Migration v27).
   schedule_max_soc_pct: 100,
@@ -6754,6 +6755,18 @@ class EegOptimizerPanel extends HTMLElement {
 
   _batterieOptFields(d, prefix) {
     const maxSocFeld = this._maxSocFeld(d, prefix);
+    // Sicherheitspuffer: nur in den Einstellungen und nur im Expertenmodus.
+    // Er ist kein Gerätedatum und keine Notwendigkeit, sondern eine bewusste
+    // Abweichung von der Prognose — im Wizard hätte er nichts verloren.
+    const pufferWert = Number(d.schedule_sicherheitspuffer_pct ?? 0) || 0;
+    const puffer = (prefix && d.expert_mode) ? `
+      <div class="field-group">
+        <label>Sicherheitspuffer auf die Prognose (%)</label>
+        <input type="number" data-field="${prefix}schedule_sicherheitspuffer_pct"
+               value="${pufferWert}" min="0" max="50" step="1">
+        <div class="help-text">Der Fahrplan rechnet mit ${fmtDe(pufferWert, 0)} % mehr Verbrauch und ${fmtDe(pufferWert, 0)} % weniger PV-Ertrag, als die Prognose sagt. Er lädt dadurch eher und entlädt zurückhaltender — die Batterie ist abends wahrscheinlicher voll und nachts seltener leer.</div>
+        <div class="help-text">0 % heißt: Prognose unverändert, so ist es vorgesehen. Ein Aufschlag macht die Vorhersage nicht besser, er verschiebt sie nur — und weil er Einspeisung aus den Bedarfsstunden der Gemeinschaft in den Speicher verlagert, kostet er Ertrag. Der laufende Slot bleibt immer bei den Messwerten, der Puffer wirkt nur auf die Vorausschau.</div>
+      </div>` : "";
     const { deckel, boden, maxBoden } = this._socGrenzen(d);
     // Grenzen der Batterie für die Optimierung. Die frühere Notstromreserve
     // mit eigener kWh-Angabe und Überbrückungsdauer ist entfallen: sie folgt
@@ -6779,6 +6792,7 @@ class EegOptimizerPanel extends HTMLElement {
         <div class="help-text">Höchstens <strong>${fmtDe(maxBoden, 0)} %</strong> — 20 Prozentpunkte unter dem Maximum-Ladestand von ${fmtDe(deckel, 0)} %, damit der Optimierung ein nutzbarer Bereich bleibt. Ein höherer Wert wird auf diese Grenze gesetzt.</div>
       </div>
       ${maxSocFeld}
+      ${puffer}
 `;
   }
 

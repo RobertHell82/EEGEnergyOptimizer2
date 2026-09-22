@@ -592,6 +592,21 @@ FAILURE_PERSISTENT_DEDUP_WINDOW_S = 21600
 # Flush-Timers — 48 Zeilen pro Tag, wie in der produktiven Integration, damit
 # die Auswertung über beide Varianten dieselbe Auflösung hat.
 TELEMETRY_SNAPSHOT_INTERVAL_MIN = 30
+# Versatz gegen den Rasterbeginn. Die Momentaufnahme entsteht im Guard-Lauf
+# NACH dem Steuerbefehl — und das Halbstundenraster traf genau den Lauf, in
+# dem der Executor zum Slotwechsel neu schreibt (Slots wechseln zu :00, :15,
+# :30, :45, das Raster liegt auf :00 und :30). Huawei setzt die Batterie
+# beim Neuschreiben von forcible_discharge_soc kurz aus, also maß die
+# Telemetrie systematisch den Aussetzer, den wir selbst verursachen: Bei
+# Weismann stand der Netzzähler am 21.09.2026 in 9 von 10 Halbstunden zum
+# Rasterbeginn bei ~0 W, während das Fenstermittel 271–661 W betrug. Drei
+# Wochen Leistungsdaten der Flotte behaupten deshalb, dass Entladungen nie
+# ins Netz gelangen.
+#
+# Drei Minuten sind sechs Guard-Läufe Abstand zum Schreibvorgang und immer
+# noch zwölf Minuten vor dem nächsten Slotwechsel; das Raster bleibt über
+# alle Anlagen vergleichbar, es beginnt nur später.
+TELEMETRY_SNAPSHOT_OFFSET_MIN = 3
 # Herzschlag: ohne regelmäßiges authentifiziertes Ereignis bleibt
 # ``installations.last_seen_at`` im Backend auf dem letzten Neustart stehen —
 # und der Cron-Job dort löscht Installationen, die 90 Tage nichts gesendet
