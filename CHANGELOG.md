@@ -10,6 +10,13 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
+## [2.1.3] - 2026-09-22
+
+### Behoben
+
+- **Eine Notstrom-Reserve, die niemand erreichen kann, verhinderte den ganzen Fahrplan.** Die Reserve verlangt für jeden Zeitpunkt einen Mindest-Ladestand, und damit sie nichts Unmögliches fordert, wird sie seit 2.1.2 auf das gedeckelt, was ohne Stromkauf erreichbar ist. Dieser Deckel rechnete allerdings nur die Energiebilanz: Er nahm an, jede überschüssige Kilowattstunde lande im selben Augenblick im Speicher. Wie schnell die Batterie sie aufnehmen kann, kam in der Rechnung nicht vor. Auf einer Anlage in Ansfelden mit 16,5 kWp, deren Speicher am kleineren der beiden Wechselrichter hängt und 4,1 kW aufnimmt, eilte der gedachte Füllstand dem wirklichen um das Dreifache davon: Für 13:45 Uhr verlangte die Reserve 14,94 kWh, erreichbar waren bis dahin 9,58 kWh. Zwischen diesen beiden Zahlen liegt kein zulässiger Punkt, der Solver meldete `infeasible`, und statt eines schlechteren Plans gab es gar keinen — am 21. und am 22. September jeweils stundenlang, immer um die Mittagszeit, mit Failsafe und ungesteuerter Anlage als Folge. Der Deckel begrenzt den Zuwachs jetzt auf das, was die Batterie in einer Viertelstunde wirklich aufnimmt, und zwar nur nach oben: Ein Entladeschritt, der schneller fällt, als das Gerät kann, senkt den gerechneten Stand und macht die Schranke damit vorsichtiger, nie großzügiger. Über 336 durchgerechnete Konstellationen aus Startzeit, Ladestand, PV-Spitze und Nachtlast hatten 39 keine Lösung; nach der Korrektur lösen alle 336, und zwar mit dem vollen Vorschaufenster von 18 Stunden. Die Reserve verliert dabei nichts.
+- **Der Grund eines gescheiterten Fahrplans war in der Telemetrie nicht mehr zu erkennen.** Gemeldet wurde nur der Name der Ausnahme, also `RuntimeError` — ein Wort, das eine unlösbare Optimierung, ein unbeschränktes Modell und ein Zeitlimit gleichermaßen abdeckt, obwohl die drei nichts miteinander zu tun haben. Der Ausfall in Ansfelden stand einen halben Tag lang mit genau diesem Wort in den Daten, und erst das Nachstellen des Modells zeigte, woran es lag. Der Solver-Status bleibt jetzt erhalten, aus `RuntimeError` wird `RuntimeError: infeasible`. Er ist ein festes Wort aus dem Solver und enthält nichts, was die Anlage nicht verlassen dürfte; für fremde Ausnahmen bleibt es bei der bisherigen Kürzung auf den Namen, weil dort ein Dateipfad folgen kann. Drei verschiedene Status ergeben damit auch drei verschiedene Kennungen und verdrängen einander nicht mehr gegenseitig aus der Meldungsunterdrückung.
+
 ## [2.1.2] - 2026-09-22
 
 ### Behoben
