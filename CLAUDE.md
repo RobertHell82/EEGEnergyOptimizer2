@@ -360,6 +360,25 @@ the event loop is long enough for HA to flag a blocking call.
   pushes surplus into the battery instead of the grid; it can no longer hold
   on to what is already there. Pinned by three tests in
   `tests/test_schedule.py` against real forecast series.
+- **The blackout reserve must never prevent a schedule** either. The same cap
+  asked whether the energy *exists*, not whether it *fits in time*: every
+  surplus kWh counted as instantly stored. With a lot of PV and little
+  charging power the imagined fill level outruns the real one, the reserve
+  demands a state of charge the battery cannot reach, and the LP has **no
+  solution** — no plan at all, not a worse one (Ansfelden 22.09.2026: 14.94
+  kWh demanded for 13:45, 9.58 kWh reachable at 4.1 kW; two days of hours
+  without a schedule, failsafe, plant uncontrolled). `steps` is therefore
+  clamped to `battery_power_limit · p2e`, upwards only — a discharge step
+  that falls too fast only lowers the level and makes the cap more
+  conservative. Over 336 scenarios, 39 had no solution before; afterwards
+  **all 336 solve with the full 18 h window**, so the reserve loses nothing.
+  Same `LOCAL CHANGE` block, `chamo/README.md` § 2a.
+  A retry cascade over a shortened lookahead was built as a safety net and
+  **deliberately dropped again**: it would have caught the symptom of every
+  future cause too, which is exactly the problem — a plan that quietly holds
+  less in reserve looks healthy, and nobody goes looking. `infeasible` is
+  supposed to be loud. What stayed from that attempt is the solver status in
+  the failure report (below).
 - **EEG price function** (`eeg_price.py`): the schedule steers purely on
   prices. Community demand becomes a surcharge on the base tariff —
   `surcharge_i(t) = share_i · (value_i(t) − base_tariff(t)) · demand_i(t) / peak_i`,

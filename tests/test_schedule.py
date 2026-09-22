@@ -9,6 +9,7 @@ Batteriezustand richtig in Haralds ``opt()`` ankommen.
 import dataclasses
 import json
 import logging
+import math
 import pathlib
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -2137,3 +2138,112 @@ async def test_puffer_verschont_den_gemessenen_ersten_stuetzpunkt():
         assert mit_puffer.production_kw[i] == pytest.approx(
             round(ohne_puffer.production_kw[i] * 0.75, 4)
         ), i
+
+
+# ---------------------------------------------------------------------------
+# Notstrom-Reserve: sie darf keinen Fahrplan verhindern
+# ---------------------------------------------------------------------------
+
+
+def _inputs_viel_pv_wenig_ladeleistung(
+    start_h: int = 12, soc: float = 15.0, pv_peak: float = 10.0, nachtlast: float = 3.0
+) -> sched.ScheduleInputs:
+    """Die Konstellation, an der die Reserve Unerfüllbares verlangt.
+
+    Nachgebaut nach der Anlage Ansfelden (22.09.2026): 16,5 kWp PV, aber die
+    Batterie hängt am kleineren der beiden Wechselrichter und nimmt nur
+    ~4 kW auf. Mittags eilt der aus der Energiebilanz gerechnete Füllstand
+    dem wirklichen um das Dreifache davon, und die Reserve fordert einen
+    Ladestand, den die Batterie bis dahin nicht erreichen kann.
+    """
+    stunden = 49
+    consumption, production = [], []
+    for i in range(stunden):
+        h = (start_h + i) % 24
+        consumption.append(nachtlast if (18 <= h or h < 6) else 0.6)
+        production.append(
+            round(pv_peak * max(0.0, math.sin(math.pi * (h - 6) / 13)) ** 1.3, 3)
+            if 6 <= h <= 19
+            else 0.0
+        )
+    start = datetime(2026, 9, 22, start_h, 0)
+    kapazitaet = 16.6
+    return sched.ScheduleInputs(
+        start=start,
+        time_res_s=900,
+        timestamps=[start + timedelta(hours=i) for i in range(stunden)],
+        consumption_kw=consumption,
+        production_kw=production,
+        min_production_kw=None,
+        worst_case_factor=0.6,
+        battery_free_kwh=kapazitaet * (1 - soc / 100.0),
+        battery_capacity_kwh=kapazitaet,
+        battery_power_limit_kw=5.0,
+        soc_pct=soc,
+        ac_limit_kw=16.5,
+        feedin_limit_kw=16.0,
+        feedin_price=0.039,
+        feedin_price_night=None,
+        night_start_hour=20,
+        night_end_hour=6,
+        consumption_price=0.21046,
+        battery_cost=0.01,
+        min_soc_pct=10.0,
+        max_soc_pct=100.0,
+        forecast_source="solcast_solar",
+    )
+
+
+def test_viel_pv_wenig_ladeleistung_ergibt_einen_plan():
+    """Die Konstellation, die zwei Tage lang gar keinen Fahrplan ergab.
+
+    Die Anlage stand am 21. und 22.09.2026 stundenlang ungesteuert da: kein
+    Plan, nach 15 Minuten Failsafe, und das bei jedem Lauf aufs Neue — der
+    Solver meldete ``infeasible``, weil die Reserve einen Ladestand verlangte,
+    den die Batterie mit ihrer Ladeleistung nicht rechtzeitig erreicht. Seit
+    der Deckel in ``opt_highs.py`` die Ladeleistung kennt, löst dieselbe
+    Konstellation mit dem vollen Vorschaufenster.
+    """
+    pytest.importorskip("pandas")
+    pytest.importorskip("highspy")
+
+    plan = sched.solve(_inputs_viel_pv_wenig_ladeleistung())
+    assert plan["slots"], "kein Fahrplan"
+
+
+def test_reserve_verlangt_nie_mehr_als_die_ladeleistung_schafft():
+    """Die Eigenschaft hinter dem Ausfall, unabhängig nachgerechnet.
+
+    Der Deckel prüfte nur die Energiebilanz: Er nahm an, jede überschüssige
+    Kilowattstunde lande sofort im Speicher. Bei 16,5 kWp PV und einer
+    Batterie, die 4 kW aufnimmt, eilte der gedachte Füllstand dem wirklichen
+    um das Dreifache davon — und die Reserve forderte einen Ladestand, den
+    die Batterie nicht rechtzeitig erreichen kann. Für 13:45 verlangte sie
+    14,94 kWh, erreichbar waren 9,58 kWh.
+
+    Bewusst die EIGENSCHAFT und keine Zahl: Der Test rechnet den erreichbaren
+    Stand mit Leistungsgrenze nach und hält ihn gegen die Forderung im Plan.
+    """
+    pytest.importorskip("pandas")
+    pytest.importorskip("highspy")
+
+    inputs = _inputs_viel_pv_wenig_ladeleistung()
+    slots = sched.solve(inputs)["slots"]
+
+    boden = inputs.battery_capacity_kwh * inputs.min_soc_pct / 100.0
+    deckel = inputs.battery_capacity_kwh * inputs.max_soc_pct / 100.0
+    kapazitaet = deckel - boden
+    verluste = 1 - 2 * sched.HAConfig.battery_resistance
+    max_schritt = inputs.battery_power_limit_kw * 0.25
+    stand = kapazitaet - inputs.battery_free_kwh
+
+    for slot in slots:
+        gefordert = kapazitaet - slot["battery_ub"]
+        assert gefordert <= stand + 0.01, (
+            f"{slot['t']}: Reserve verlangt {gefordert:.2f} kWh, mit "
+            f"{inputs.battery_power_limit_kw:.1f} kW erreichbar sind "
+            f"{stand:.2f} kWh"
+        )
+        bilanz = slot["PV"] - slot["consumption"] / sched.HAConfig.ac_efficiency
+        schritt = (max(bilanz, 0.0) * verluste + min(bilanz, 0.0) / verluste) * 0.25
+        stand = min(kapazitaet, max(0.0, stand + min(schritt, max_schritt)))

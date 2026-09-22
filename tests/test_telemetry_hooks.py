@@ -783,3 +783,60 @@ def test_snapshot_nach_neustart_mitten_im_raster():
     from custom_components.eeg_energy_optimizer import _snapshot_slot_faellig
 
     assert _snapshot_slot_faellig(_ts(10, 25), None) == 20
+
+
+def test_schedule_health_behaelt_den_solver_status():
+    """Der Name der Ausnahme allein erklärt einen Solver-Ausfall nicht.
+
+    ``RuntimeError`` deckt infeasible, unbounded und ein Zeitlimit gleich-
+    ermaßen ab — drei Ursachen ohne Zusammenhang. Am 22.09.2026 stand in der
+    Telemetrie einer stundenlang ungesteuerten Anlage nur das Wort
+    ``RuntimeError``, und erst das Nachstellen des Modells zeigte, dass die
+    Notstrom-Reserve Unerfüllbares verlangte. Der Status ist ein festes Wort
+    aus HiGHS und enthält nichts, was das Gerät nicht verlassen dürfte.
+    """
+    from custom_components.eeg_energy_optimizer import _check_schedule_health
+
+    calls, emit = _sammler()
+    _check_schedule_health(
+        {"error": "RuntimeError: Optimierung ohne Lösung — Solver-Status: infeasible"},
+        {"supported": True}, MODE_EIN, {CONF_INVERTER_TYPE: "kostal_plenticore"},
+        {}, emit,
+    )
+    assert len(calls) == 1
+    assert calls[0]["message_hash"] == "RuntimeError: infeasible"
+    assert calls[0]["context"]["grund"] == "RuntimeError: infeasible"
+
+
+def test_schedule_health_trennt_die_solver_status_voneinander():
+    """Zwei Status müssen zwei Meldungen sein, nicht eine.
+
+    Sie teilen sich sonst einen ``message_hash`` und damit das Dedup-Fenster
+    — die zweite Ursache verschwände hinter der ersten.
+    """
+    from custom_components.eeg_energy_optimizer import _check_schedule_health
+
+    hashes = set()
+    for status in ("infeasible", "unbounded", "time_limit"):
+        calls, emit = _sammler()
+        _check_schedule_health(
+            {"error": f"RuntimeError: Optimierung ohne Lösung — Solver-Status: {status}"},
+            {"supported": True}, MODE_EIN, {CONF_INVERTER_TYPE: "kostal_plenticore"},
+            {}, emit,
+        )
+        hashes.add(calls[0]["message_hash"])
+    assert len(hashes) == 3
+
+
+def test_schedule_health_fremde_ausnahme_bleibt_gekuerzt():
+    """Ohne Solver-Status bleibt es beim Namen — der Rest kann ein Pfad sein."""
+    from custom_components.eeg_energy_optimizer import _check_schedule_health
+
+    calls, emit = _sammler()
+    _check_schedule_health(
+        {"error": "OSError: [Errno 2] /config/geheim/pfad.json"},
+        {"supported": True}, MODE_EIN, {CONF_INVERTER_TYPE: "kostal_plenticore"},
+        {}, emit,
+    )
+    assert calls[0]["message_hash"] == "OSError"
+    assert "/config/" not in str(calls[0]["context"])

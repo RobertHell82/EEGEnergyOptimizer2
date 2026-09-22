@@ -79,14 +79,27 @@ def opt(c, start_time):
 	# so the cap admitted reserve levels that were reachable only by buying
 	# the household load from the grid. Tracking the level slot by slot is
 	# what saturation needs - a cumulative sum cannot express it.
+	#
+	# The step is capped at what the battery can actually take in one slot.
+	# Energy alone is not enough: with a lot of PV and little charging power
+	# the imagined level outruns the real one, and the reserve then demands a
+	# state of charge that cannot be reached in time - leaving the model with
+	# no solution at all, which means no schedule rather than a worse one
+	# (Ansfelden 22.09.2026: 14.94 kWh demanded for 13:45, 9.58 kWh reachable
+	# at 4.1 kW; hours without any schedule on two consecutive days).
+	#
+	# Upwards only, on purpose. A discharge step that falls faster than the
+	# battery really can only lowers the level, which makes the cap more
+	# conservative - it can never admit a demand that is out of reach.
 	surplus = parameters.dc_production - parameters.consumption / c.ac_efficiency
 	efficiency = 1 - 2 * c.battery_resistance
 	steps = (surplus.clip(lower=0) * efficiency + surplus.clip(upper=0) / efficiency) * p2e
+	max_step = c.battery_power_limit * p2e
 	level = bat_content
 	reachable = []
 	for step in steps.values:
 		reachable.append(level)   # level at the START of the slot
-		level = min(c.battery_capacity, max(0.0, level + step))
+		level = min(c.battery_capacity, max(0.0, level + min(step, max_step)))
 	bor.clip(upper=pd.Series(reachable, index=parameters.index), inplace=True)
 
 	battery_free_ub = c.battery_capacity - bor

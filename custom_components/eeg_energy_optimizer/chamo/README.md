@@ -96,10 +96,44 @@ Worst-Case-Pfad **37 W** über der Hauslast — hätte er 37 W darunter gelegen,
 wäre der Deckel 0 statt 14,94 kWh gewesen. Nach der Korrektur ist das
 folgenlos, weil die Schranke dahinter greift; gemeldet ist es trotzdem.
 
+### 2a. Die Schranke rechnet auch die Ladeleistung (22.09.2026)
+
+Dieselbe Schranke, ein zweiter Durchgang. Sie prüfte, ob die geforderte
+Energie **da** ist, nicht ob sie **rechtzeitig hineinpasst**: Jede
+überschüssige Kilowattstunde galt als sofort im Speicher. Bei viel PV und
+wenig Ladeleistung eilt der gedachte Füllstand dem wirklichen davon, und die
+Reserve fordert einen Ladestand, den die Batterie bis dahin nicht erreichen
+kann. Anders als beim ersten Fall bekommt man dann keinen teuren Plan,
+sondern **gar keinen**: Das Modell ist unlösbar.
+
+Anlage Ansfelden, 16,5 kWp PV — die Batterie hängt am kleineren der beiden
+Wechselrichter und nimmt 4,1 kW auf:
+
+| | |
+|---|---|
+| Reserve-Forderung für 13:45 | 14,94 kWh |
+| mit 4,1 kW bis dahin erreichbar | 9,58 kWh |
+| Folge | `Solver-Status: infeasible`, kein Fahrplan |
+
+Am 21. und 22.09.2026 stand die Anlage deshalb stundenlang ungesteuert, an
+beiden Tagen um die Mittagszeit — nur dann läuft der gedachte Füllstand
+schnell nach oben, und nur dann ist die Nacht weit genug weg, dass die
+Reserve das ganze Nachtdefizit verlangt.
+
+`steps` wird jetzt nach oben auf `battery_power_limit · p2e` geklemmt.
+Bewusst nur nach oben: Ein Entladeschritt, der schneller fällt, als die
+Batterie kann, senkt den Stand und macht die Schranke damit konservativer —
+er kann nie eine unerreichbare Forderung durchlassen.
+
+Gemessen über 336 Szenarien (Startzeit × Ladestand × PV-Spitze × Nachtlast):
+39 hatten keine Lösung, nach der Korrektur lösen **alle 336 mit vollem
+18-Stunden-Fenster**. Die Reserve verliert nichts.
+
 Tests: `test_reserve_verlangt_nie_mehr_als_ohne_netzbezug_erreichbar`,
-`test_fahrplan_kauft_nicht_mehr_als_der_standardbetrieb` und
-`test_reserve_bleibt_wirksam` in `tests/test_schedule.py`, mit den echten
-Prognosereihen der Anlage als Fixture.
+`test_fahrplan_kauft_nicht_mehr_als_der_standardbetrieb`,
+`test_reserve_bleibt_wirksam`, `test_viel_pv_wenig_ladeleistung_ergibt_einen_plan`
+und `test_reserve_verlangt_nie_mehr_als_die_ladeleistung_schafft` in
+`tests/test_schedule.py`, mit den echten Prognosereihen der Anlage als Fixture.
 
 ## Was von uns ist
 

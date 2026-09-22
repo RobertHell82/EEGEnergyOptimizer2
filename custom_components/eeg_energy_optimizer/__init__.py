@@ -424,6 +424,14 @@ def _check_schedule_health(schedule_state, status, mode, config, dedup, emit):
     error = (schedule_state or {}).get("error")
     if error:
         grund = str(error).split(":")[0][:80]
+        # Beim Solver reicht der Name der Ausnahme nicht: "RuntimeError"
+        # deckt infeasible, unbounded und ein Zeitlimit gleichermaßen ab, und
+        # die drei haben nichts miteinander zu tun. Am 22.09.2026 kostete
+        # genau das einen halben Tag Suche. Der Status ist ein festes Wort
+        # aus HiGHS — kein Pfad, kein Anlagenname, nichts Schützenswertes.
+        if "Solver-Status:" in str(error):
+            status_wort = str(error).split("Solver-Status:")[-1].strip()[:30]
+            grund = f"{grund}: {status_wort}"[:80]
         emit(
             category="schedule_solver",
             severity="error",
