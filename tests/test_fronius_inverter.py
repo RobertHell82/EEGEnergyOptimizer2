@@ -213,10 +213,15 @@ class TestAsyncSetDischarge:
         damit der Optimizer die Entladung an seiner Austrittsschwelle beendet
         und der Fronius nicht vorher am Floor einfriert ("Minimum SOC").
         """
-        # Pre-discharge MinRsvPct read returns 500 (5%)
-        mock_modbus_client.read_holding_registers = AsyncMock(
-            return_value=_ok_response([500])
-        )
+        # Pre-discharge MinRsvPct read returns 500 (5%); OutWRte steht auf
+        # 100 % (Automatik) — dann senkt der Befehl die Obergrenze, und
+        # InWRte kommt zuerst.
+        async def _read(address, count, **kwargs):
+            if address == inverter._model124_base + _OFFSET_OUTWRTE:
+                return _ok_response([10000])
+            return _ok_response([500])
+
+        mock_modbus_client.read_holding_registers = AsyncMock(side_effect=_read)
         result = await inverter.async_set_discharge(2.5, target_soc=15)
         assert result is True
 
@@ -255,8 +260,9 @@ class TestAsyncSetDischarge:
         result = await inverter.async_set_discharge(10.0)  # WChaMax=5kW
         assert result is True
         calls = mock_modbus_client.write_register.call_args_list
-        # OutWRte is the second write
-        assert calls[1].kwargs["value"] == 10000
+        base = inverter._model124_base
+        out = [c for c in calls if c.kwargs["address"] == base + _OFFSET_OUTWRTE]
+        assert out[0].kwargs["value"] == 10000
 
     async def test_storctl_mod_written_last(self, inverter, mock_modbus_client):
         """Mode bit must flip on AFTER all rate registers are in place."""
@@ -345,9 +351,14 @@ class TestMinRsvPctStorePersistence:
         noop = _install_noop_store(inverter)
         noop._data = {"minrsvpct_original": 500}
         await inverter.async_set_discharge(2.5, target_soc=15)
-        # Vorwert aus dem Store übernommen, kein Register-Read nötig
+        # Vorwert aus dem Store übernommen, kein Register-Read nötig — gelesen
+        # wird nur OutWRte, für die Schreibreihenfolge.
         assert inverter._minrsvpct_pre_discharge == 500
-        mock_modbus_client.read_holding_registers.assert_not_called()
+        gelesen = [
+            c.kwargs["address"]
+            for c in mock_modbus_client.read_holding_registers.call_args_list
+        ]
+        assert gelesen == [inverter._model124_base + _OFFSET_OUTWRTE]
 
     async def test_stop_forcible_restores_from_store_after_restart(
         self, inverter, mock_modbus_client
@@ -1358,3 +1369,67 @@ class TestDiagnoseNachAblehnung:
         assert "ChaSt=DISCHARGING" in diagnose[0]
         # Die Diagnose ändert nicht den Grund, der in die Telemetrie geht.
         assert inverter.last_write_error == "InWRte: Modbus-Ausnahme 3 (Illegal Data Value)"
+
+
+class TestSchreibreihenfolgeEntladung:
+    """Grünbach, 23.09.2026 14:23: Der Gen24 lehnt jeden Einzelschritt ab,
+    nach dem das Fenster [−OutWRte, InWRte] leer wäre. Bei OutWRte = 3,49 %
+    scheiterte InWRte = −5,17 % — jede Erhöhung der Entladung, nie eine
+    Senkung. Die Reihenfolge richtet sich deshalb nach der Richtung."""
+
+    @staticmethod
+    def _geraet(inverter, mock_modbus_client, out_pct, in_pct):
+        """Ein Gen24, der das Fenster nach jedem Schreibschritt prüft."""
+        base = inverter._model124_base
+        stand = {"out": round(out_pct * 100), "in": round(in_pct * 100)}
+
+        def _signed(v):
+            return v - 0x10000 if v > 0x7FFF else v
+
+        async def _read(address, count, **kwargs):
+            if address == base + _OFFSET_OUTWRTE:
+                return _ok_response([stand["out"] & 0xFFFF])
+            return _ok_response([500])
+
+        async def _write(address, value, **kwargs):
+            neu = dict(stand)
+            if address == base + _OFFSET_OUTWRTE:
+                neu["out"] = _signed(value)
+            elif address == base + _OFFSET_INWRTE:
+                neu["in"] = _signed(value)
+            ergebnis = MagicMock()
+            leer = -neu["out"] > neu["in"]
+            ergebnis.isError.return_value = leer
+            ergebnis.exception_code = 3
+            if not leer:
+                stand.update(neu)
+            return ergebnis
+
+        mock_modbus_client.read_holding_registers = AsyncMock(side_effect=_read)
+        mock_modbus_client.write_register = AsyncMock(side_effect=_write)
+        return stand
+
+    async def test_erhoehung_weitet_erst_outwrte(self, inverter, mock_modbus_client):
+        # WChaMax 5 kW: 0,5 kW = 10 %, 1,0 kW = 20 %
+        stand = self._geraet(inverter, mock_modbus_client, 10.0, -10.0)
+
+        ok = await inverter.async_set_discharge(1.0)
+
+        assert ok is True, inverter.last_write_error
+        assert stand == {"out": 2000, "in": -2000}
+
+    async def test_senkung_hebt_erst_inwrte(self, inverter, mock_modbus_client):
+        stand = self._geraet(inverter, mock_modbus_client, 20.0, -20.0)
+
+        ok = await inverter.async_set_discharge(0.5)
+
+        assert ok is True, inverter.last_write_error
+        assert stand == {"out": 1000, "in": -1000}
+
+    async def test_aus_dem_automatikmodus(self, inverter, mock_modbus_client):
+        stand = self._geraet(inverter, mock_modbus_client, 100.0, 100.0)
+
+        ok = await inverter.async_set_discharge(1.0)
+
+        assert ok is True, inverter.last_write_error
+        assert stand == {"out": 2000, "in": -2000}

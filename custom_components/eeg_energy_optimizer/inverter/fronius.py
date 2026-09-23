@@ -699,6 +699,31 @@ class FroniusInverter(InverterBase):
                 f"{_REGISTERNAMEN.get(offset, f'Offset +{offset}')}"
             )
 
+    async def _entladung_steigt(self, percent: float) -> bool:
+        """Liegt der neue Entladewert über dem OutWRte, das gerade gilt?
+
+        Liest OutWRte vom Gerät statt aus dem eigenen Gedächtnis — nach einem
+        Neustart, einer Fremdänderung oder einem halb gescheiterten Befehl
+        wäre das eigene falsch. Unlesbar: die bisherige Reihenfolge (InWRte
+        zuerst), die bei jeder Senkung und aus dem Automatikmodus heraus
+        funktioniert.
+        """
+        try:
+            antwort = await self._client.read_holding_registers(
+                address=self._model124_base + _OFFSET_OUTWRTE,
+                count=1,
+                **_slave_kw(self._client, self._slave_id),
+            )
+            if antwort.isError():
+                return False
+            roh = antwort.registers[0]
+            if roh > 0x7FFF:
+                roh -= 0x10000
+            aktuell = roh * 10 ** self._sf_inoutwrte
+        except Exception:
+            return False
+        return percent > aktuell
+
     async def _diagnose_model124(self, offset: int, value: int) -> None:
         """Nach einem „Illegal Data Value" den ganzen Model-124-Block loggen.
 
@@ -971,18 +996,28 @@ class FroniusInverter(InverterBase):
             # _rate_register() applies InOutWRte_SF and encodes the negative
             # lower bound as two's complement (Modbus holding registers are
             # unsigned 16-bit).
-            if not await self._write_register(
-                _OFFSET_INWRTE, self._rate_register(-percent)
-            ):
-                return False
-
-            # OutWRte = +percent (upper discharge bound, mirrors InWRte's
-            # absolute value so the [InWRte, OutWRte] window collapses onto
-            # the desired forced discharge point)
-            if not await self._write_register(
-                _OFFSET_OUTWRTE, self._rate_register(percent)
-            ):
-                return False
+            #
+            # OutWRte = +percent mirrors InWRte's absolute value, so the
+            # [InWRte, OutWRte] window collapses onto the discharge point.
+            #
+            # Die REIHENFOLGE hängt an der Richtung: Der Gen24 lehnt jeden
+            # Einzelschritt ab, nach dem das Fenster leer wäre (−OutWRte >
+            # InWRte). Steht OutWRte auf 3,49 % und kommt InWRte = −5,17 %
+            # zuerst, wäre es das — „Illegal Data Value", gemessen in
+            # Grünbach am 23.09.2026 14:23 (Diagnose: OutWRte=3.49,
+            # InWRte=-3.49, abgelehnt -5.17 und -10.03). Jede ERHÖHUNG der
+            # Entladung scheiterte so, jede Senkung ging durch; nachts blieb
+            # die Nachführung dadurch bei 0,66 kW statt 0,93. Deshalb: beim
+            # Erhöhen erst OutWRte weiten, beim Senken erst InWRte anheben.
+            erst_out = await self._entladung_steigt(percent)
+            reihenfolge = (
+                ((_OFFSET_OUTWRTE, percent), (_OFFSET_INWRTE, -percent))
+                if erst_out
+                else ((_OFFSET_INWRTE, -percent), (_OFFSET_OUTWRTE, percent))
+            )
+            for offset, wert in reihenfolge:
+                if not await self._write_register(offset, self._rate_register(wert)):
+                    return False
 
             # Optional: set MinRsvPct for SOC floor (SF -2, e.g. 1500 = 15%)
             if target_soc is not None:
