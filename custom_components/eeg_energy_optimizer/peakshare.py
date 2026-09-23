@@ -172,6 +172,47 @@ def _normalisieren(data: dict) -> dict:
     }
 
 
+def _laufende_uebernehmen(neu: dict, alt: dict | None, now: datetime) -> dict:
+    """Die laufende Viertelstunde aus dem alten Cache in den neuen retten.
+
+    Das Fenster der API beginnt mit der NÄCHSTEN Viertelstunde: ein Abruf um
+    08:56 liefert ab 09:00, die Viertelstunde ab 08:45 fehlt. Der Fahrplan
+    beginnt aber auf dem Raster, sein erster Slot IST diese Viertelstunde —
+    ohne Saldo bekam sie keinen Aufschlag, ihr Preis fiel auf den Basistarif,
+    und das LP lud für die restlichen Minuten, um dieselbe Energie im
+    nächsten Slot teurer zu verkaufen (af4bbda0, 23.09.2026: 1,7 kW Laden
+    nach jedem Abruf, gefolgt von Entladung zum Slotwechsel).
+
+    Übernommen wird nur, was noch nicht vorbei ist und vor dem ersten neuen
+    Intervall liegt — nie ein Wert, den die neue Antwort selbst trägt.
+    """
+    if not alt or not isinstance(alt, dict):
+        return neu
+    viertel = int(now.timestamp() // 900) * 900
+    alte = {
+        c.get("name"): c.get("intervals") or []
+        for c in alt.get("communities", [])
+        if isinstance(c, dict)
+    }
+    for community in neu.get("communities", []):
+        intervalle = community.get("intervals") or []
+        if not intervalle:
+            continue
+        erster = _parse_stamp(intervalle[0].get("timestamp"))
+        if erster is None:
+            continue
+        gerettet = []
+        for eintrag in alte.get(community.get("name"), []):
+            stempel = _parse_stamp(eintrag.get("timestamp"))
+            if stempel is None:
+                continue
+            if viertel <= stempel.timestamp() < erster.timestamp():
+                gerettet.append(eintrag)
+        if gerettet:
+            community["intervals"] = gerettet + intervalle
+    return neu
+
+
 def _ist_normalisiert(data: Any) -> bool:
     """Erkennt den eigenen Cache — alte V1-Persistate fallen hier durch."""
     if not isinstance(data, dict):
@@ -267,7 +308,9 @@ class PeakShareProvider:
                                 "verwende Cache"
                             )
                         else:
-                            normalisiert = _normalisieren(data)
+                            normalisiert = _laufende_uebernehmen(
+                                _normalisieren(data), self._cache, now
+                            )
                             self._warnungen_melden(normalisiert)
                             self._cache = normalisiert
                             self._cache_time = now

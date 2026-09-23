@@ -223,3 +223,86 @@ def test_eigener_cache_wird_erkannt():
 )
 def test_kaputte_persistate_werden_verworfen(kaputt):
     assert ps._ist_normalisiert(kaputt) is False
+
+
+# ---------------------------------------------------------------------------
+# Laufende Viertelstunde über einen Abruf hinweg retten
+# ---------------------------------------------------------------------------
+
+
+def _cache_ab(start, werte, name="BEG Musterregion"):
+    """Normalisierter Cache ab ``start``; ``werte`` sind Salden in kWh."""
+    return {
+        "communities": [
+            {
+                "name": name,
+                "intervals": [
+                    {
+                        "timestamp": ps._format_stamp(start + timedelta(minutes=15 * i)),
+                        "saldoKwh": w,
+                    }
+                    for i, w in enumerate(werte)
+                ],
+            }
+        ]
+    }
+
+
+def test_laufende_viertelstunde_bleibt_nach_dem_abruf_erhalten():
+    """af4bbda0, 23.09.2026: Abruf um 08:56 liefert ab 09:00.
+
+    Ohne Übernahme fehlte der Slot ab 08:45 — sein Einspeisepreis fiel auf
+    den Basistarif, und das LP lud für vier Minuten mit 1,7 kW, um dieselbe
+    Energie ab 09:00 teurer zu verkaufen.
+    """
+    alt = _cache_ab(datetime(2026, 9, 23, 6, 30, tzinfo=timezone.utc), [20.0, 24.4, 16.5])
+    neu = _cache_ab(datetime(2026, 9, 23, 7, 0, tzinfo=timezone.utc), [24.4, 16.5])
+    now = datetime(2026, 9, 23, 6, 56, tzinfo=timezone.utc)
+
+    ergebnis = ps._laufende_uebernehmen(neu, alt, now)
+
+    werte = ergebnis["communities"][0]["intervals"]
+    assert [e["timestamp"] for e in werte] == [
+        "2026-09-23T06:45:00.000Z",
+        "2026-09-23T07:00:00.000Z",
+        "2026-09-23T07:15:00.000Z",
+    ]
+    assert werte[0]["saldoKwh"] == 24.4
+    # Der Fahrplan greift über die Epochen-Viertelstunde zu — genau dort
+    # muss der Wert jetzt liegen.
+    from custom_components.eeg_energy_optimizer import eeg_price
+
+    slot = datetime(2026, 9, 23, 8, 45, tzinfo=timezone(timedelta(hours=2)))
+    assert eeg_price.saldo_je_intervall(werte)[int(slot.timestamp() // 900)] == 24.4
+
+
+def test_vergangene_viertelstunden_werden_nicht_uebernommen():
+    """Nur die laufende — was schon vorbei ist, braucht niemand mehr."""
+    alt = _cache_ab(datetime(2026, 9, 23, 6, 0, tzinfo=timezone.utc), [1.0, 2.0, 3.0, 4.0])
+    neu = _cache_ab(datetime(2026, 9, 23, 7, 0, tzinfo=timezone.utc), [5.0])
+    now = datetime(2026, 9, 23, 6, 50, tzinfo=timezone.utc)
+
+    werte = ps._laufende_uebernehmen(neu, alt, now)["communities"][0]["intervals"]
+
+    assert [e["saldoKwh"] for e in werte] == [4.0, 5.0]
+
+
+def test_neue_antwort_hat_vorrang():
+    """Deckt die neue Antwort die laufende Viertelstunde selbst, gilt sie."""
+    alt = _cache_ab(datetime(2026, 9, 23, 6, 45, tzinfo=timezone.utc), [9.9, 9.9])
+    neu = _cache_ab(datetime(2026, 9, 23, 6, 45, tzinfo=timezone.utc), [1.0, 2.0])
+    now = datetime(2026, 9, 23, 6, 50, tzinfo=timezone.utc)
+
+    werte = ps._laufende_uebernehmen(neu, alt, now)["communities"][0]["intervals"]
+
+    assert [e["saldoKwh"] for e in werte] == [1.0, 2.0]
+
+
+def test_ohne_alten_cache_oder_fremde_gemeinschaft_bleibt_alles_wie_es_ist():
+    neu = _cache_ab(datetime(2026, 9, 23, 7, 0, tzinfo=timezone.utc), [5.0])
+    now = datetime(2026, 9, 23, 6, 56, tzinfo=timezone.utc)
+    assert ps._laufende_uebernehmen(neu, None, now) is neu
+
+    alt = _cache_ab(datetime(2026, 9, 23, 6, 45, tzinfo=timezone.utc), [7.0], name="Andere")
+    werte = ps._laufende_uebernehmen(neu, alt, now)["communities"][0]["intervals"]
+    assert [e["saldoKwh"] for e in werte] == [5.0]
