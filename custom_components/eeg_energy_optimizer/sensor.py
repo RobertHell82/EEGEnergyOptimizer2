@@ -1864,7 +1864,7 @@ async def async_setup_entry(
         # Recorder gewartet und danach gezielt nachgeladen, statt auf gut
         # Glück zu pollen (siehe profil_nachladen).
         vorher = profil_fingerabdruck(coordinator)
-        await async_backfill_hausverbrauch_stats(hass, config)
+        await async_backfill_hausverbrauch_stats(hass, config, entry.entry_id)
         queue_durch = await warte_auf_recorder(hass)
         await profil_nachladen(
             coordinator,

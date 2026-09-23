@@ -513,6 +513,15 @@ the event loop is long enough for HA to flag a blocking call.
   limit, not a measurement. Any new value on that card belongs in the same
   attribute set.
 - **Consumption Profile**: Hourly averages from recorder, split by 7 individual weekdays (mo–so), rolling window (default 4 weeks), with weekday fallback chain for missing data.
+- **The Hausverbrauch backfill must compute exactly what the live sensor
+  computes, and it fills gaps only.** It runs on every start and rebuilds
+  hourly statistics from the source sensors (`power_readings.backfill_stunden`).
+  Until 23.09.2026 it overwrote the whole lookback window — and it had
+  forgotten the heater: the sensor measured 0.69 kW, the statistic said
+  4.48 kW (Grünbach 15.09., 13–14 h), the profile learned 23.5 instead of
+  10–13 kWh/day. The EMMA sign bug was the same pattern. Hours that already
+  have a statistic now stay; a formula change bumps `BACKFILL_FORMEL`, which
+  rewrites the window once per entry (Store `…_backfill`).
 - **Dual Update Timers**: Slow sensors (profile) every 15min, fast sensors (forecasts, battery, Hausverbrauch) every 1min. Hard-wired since v26 — the former config keys `update_interval_fast_min`/`update_interval_slow_min` are removed by migration.
 
 ### Wallbox / Ambibox (read-only, step 1)

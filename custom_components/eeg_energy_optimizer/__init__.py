@@ -10,6 +10,8 @@ from typing import TYPE_CHECKING, Any
 import logging
 
 from .power_readings import (
+    BACKFILL_FORMEL,
+    backfill_stunden,
     compute_battery_now_kw,
     compute_grid_export_kw,
     compute_house_load_kw,
@@ -67,7 +69,7 @@ from .const import (
     TELEMETRY_SNAPSHOT_OFFSET_MIN,
     TELEMETRY_STEUERUNG,
 )
-from .heizstab.controller import create_heizstab
+from .heizstab.controller import create_heizstab, heizstab_enabled
 from .ambibox import create_ambibox
 from .inverter import create_inverter
 from .schedule_executor import ScheduleExecutor
@@ -481,17 +483,20 @@ def _check_schedule_health(schedule_state, status, mode, config, dedup, emit):
 PLATFORMS: list[str] = ["sensor", "select"]
 
 async def async_backfill_hausverbrauch_stats(
-    hass: HomeAssistant, config: dict
+    hass: HomeAssistant, config: dict, entry_id: str | None = None
 ) -> None:
     """Backfill Hausverbrauch statistics from source sensors on every startup.
 
-    Calculates historical Hausverbrauch = max(PV - Battery - Grid, 0) per hour
-    from the 3 source sensors and imports them into the HA recorder so that the
-    ConsumptionCoordinator can build a consumption profile immediately.
+    Calculates historical Hausverbrauch = max(PV - Battery - Grid - Heizstab, 0)
+    per hour from the source sensors and imports them into the HA recorder so
+    that the ConsumptionCoordinator can build a consumption profile
+    immediately.
 
-    Runs on every startup — async_import_statistics overwrites existing data
-    for the same timestamps, so config changes (e.g. adding a second PV sensor)
-    are automatically reflected without manual intervention.
+    Fills only hours that have no statistic yet — the sensor's own hourly
+    means are measurements and win over a reconstruction
+    (``power_readings.backfill_stunden``). Once per formula change
+    (``BACKFILL_FORMEL``, remembered per entry) the whole lookback window is
+    rewritten, which repairs what an older formula wrote.
 
     Silently returns on any error to never block integration startup.
     """
@@ -581,8 +586,20 @@ async def async_backfill_hausverbrauch_stats(
                     return 0.001
             return 1.0
 
+        # Heizstab: dieselbe Entität, aus der die Energiebilanz liest (über
+        # die unique_id, nicht über einen geratenen Namen). Ohne Heizstab
+        # oder ohne Entität bleibt die Reihe leer und zählt als 0.
+        heiz_id = ""
+        if entry_id and heizstab_enabled(config):
+            from homeassistant.helpers import entity_registry as er
+
+            heiz_id = er.async_get(hass).async_get_entity_id(
+                "sensor", DOMAIN, f"{DOMAIN}_{entry_id}_heizstab_leistung"
+            ) or ""
+
         pv_factor = _unit_factor(pv_id)
         pv2_factor = _unit_factor(pv2_id) if pv2_id else 1.0
+        heiz_factor = _unit_factor(heiz_id) if heiz_id else 1.0
         battery_factors = {eid: _unit_factor(eid) for eid in battery_source_ids}
         grid_factors = {eid: _unit_factor(eid) for eid in grid_source_ids}
 
@@ -595,13 +612,15 @@ async def async_backfill_hausverbrauch_stats(
         sensor_ids = {pv_id, *battery_source_ids, *grid_source_ids}
         if pv2_id:
             sensor_ids.add(pv2_id)
+        if heiz_id:
+            sensor_ids.add(heiz_id)
 
         result = await recorder_instance.async_add_executor_job(
             statistics_during_period,
             hass,
             start_time,
             now,
-            sensor_ids,
+            sensor_ids | {CONSUMPTION_SENSOR},
             "hour",
             None,
             {"mean"},
@@ -609,6 +628,15 @@ async def async_backfill_hausverbrauch_stats(
 
         pv_entries = result.get(pv_id, [])
         pv2_entries = result.get(pv2_id, []) if pv2_id else []
+        heiz_entries = result.get(heiz_id, []) if heiz_id else []
+
+        # Formelstand je Entry: nach einem Wechsel einmal alles neu schreiben,
+        # sonst nur Lücken füllen (Begründung in backfill_stunden).
+        from homeassistant.helpers.storage import Store
+
+        formel_store = Store(hass, 1, f"{DOMAIN}_{entry_id or 'default'}_backfill")
+        gespeichert = await formel_store.async_load() or {}
+        alles_neu = int(gespeichert.get("formel", 0) or 0) < BACKFILL_FORMEL
 
         # --- Index entries by start timestamp, converting to kW ---
         def _index_by_start(entries: list[dict], factor: float = 1.0) -> dict[float, float]:
@@ -703,6 +731,9 @@ async def async_backfill_hausverbrauch_stats(
 
             pv_by_ts = _apply_factor(pv_by_ts, pv_factor)
             pv2_by_ts = _apply_factor(pv2_by_ts, pv2_factor) if pv2_by_ts else {}
+            heiz_by_ts = _apply_factor(
+                _history_to_hourly_means(history.get(heiz_id, [])), heiz_factor
+            ) if heiz_id else {}
 
             if has_battery_pair:
                 pos_h = _apply_factor(
@@ -762,6 +793,7 @@ async def async_backfill_hausverbrauch_stats(
         else:
             pv_by_ts = _index_by_start(pv_entries, pv_factor)
             pv2_by_ts = _index_by_start(pv2_entries, pv2_factor) if pv2_entries else {}
+            heiz_by_ts = _index_by_start(heiz_entries, heiz_factor) if heiz_entries else {}
 
             if has_battery_pair:
                 battery_by_ts = _combine_pair_signed(
@@ -794,33 +826,27 @@ async def async_backfill_hausverbrauch_stats(
                 )
 
         # --- Calculate Hausverbrauch for each hour where all 3 have data ---
-        common_timestamps = sorted(
-            set(pv_by_ts.keys()) & set(battery_by_ts.keys()) & set(grid_by_ts.keys())
-        )
-
-        if not common_timestamps:
+        if not set(pv_by_ts) & set(battery_by_ts) & set(grid_by_ts):
             _LOGGER.warning("Hausverbrauch backfill skipped — no overlapping timestamps")
             return
 
+        # Stunden, für die der Sensor schon eine Statistik hat — sie bleiben
+        # stehen, außer nach einem Formelwechsel.
+        vorhanden = set(_index_by_start(result.get(CONSUMPTION_SENSOR, [])))
+
         # battery_by_ts / grid_by_ts are already in canonical signed kW
         # (positive = charging / positive = export). No further sign flip.
+        stunden, skipped = backfill_stunden(
+            pv_by_ts, pv2_by_ts, battery_by_ts, grid_by_ts, heiz_by_ts,
+            pv_includes_battery=pv_includes_battery,
+            vorhanden=vorhanden,
+            alles_neu=alles_neu,
+        )
+        common_timestamps = [ts for ts, *_ in stunden]
         statistics: list[StatisticData] = []
         battery_stats: list[StatisticData] = []
         grid_stats: list[StatisticData] = []
-        skipped = 0
-        for ts in common_timestamps:
-            pv = pv_by_ts[ts] + pv2_by_ts.get(ts, 0.0)
-            bat = battery_by_ts[ts]
-            # SolarEdge: PV sensor includes battery discharge → correct
-            # Don't clamp — negative from conversion losses needed for accuracy
-            if pv_includes_battery:
-                pv = pv + bat
-            grid = grid_by_ts[ts]
-            hausverbrauch = max(pv - bat - grid, 0.0)
-            # Discard unrealistic values (wrong signs in historical data)
-            if hausverbrauch > 50.0:
-                skipped += 1
-                continue
+        for ts, hausverbrauch, bat, grid in stunden:
             value = round(hausverbrauch, 3)
             hour_dt = datetime.fromtimestamp(ts, tz=timezone.utc)
             statistics.append(
@@ -898,6 +924,15 @@ async def async_backfill_hausverbrauch_stats(
                 grid_stats,
             )
 
+        # Erst NACH dem Import merken: bricht er ab, schreibt der nächste
+        # Start das Fenster noch einmal ganz neu.
+        if alles_neu:
+            await formel_store.async_save({"formel": BACKFILL_FORMEL})
+
+        if not common_timestamps:
+            _LOGGER.debug("Hausverbrauch backfill: keine Lücken zu füllen")
+            return
+
         start_date = datetime.fromtimestamp(
             common_timestamps[0], tz=timezone.utc
         ).strftime("%Y-%m-%d")
@@ -911,11 +946,12 @@ async def async_backfill_hausverbrauch_stats(
                 "synthetic statistics)"
             )
         _LOGGER.info(
-            "Backfilled %d hourly statistics for Hausverbrauch from %s to %s%s",
+            "Backfilled %d hourly statistics for Hausverbrauch from %s to %s%s%s",
             len(statistics),
             start_date,
             end_date,
             extra,
+            " — Formelwechsel, Fenster komplett neu" if alles_neu else "",
         )
 
     except Exception:

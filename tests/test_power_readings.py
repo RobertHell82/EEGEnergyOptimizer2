@@ -739,3 +739,72 @@ class TestHeizstabInDerHauslast:
         hass, cfg_a, _cfg_e = self._zwei_entries()
         del hass.data[DOMAIN]["entry_a"]["heizstab"]
         assert compute_heizstab_kw(hass, cfg_a) == 0.0
+
+
+# ---------------------------------------------------------------------------
+# backfill_stunden — Stundenstatistik wie der Live-Sensor
+# ---------------------------------------------------------------------------
+
+from custom_components.eeg_energy_optimizer.power_readings import backfill_stunden
+
+# Nach Grünbach, 15.09.2026 13–14 Uhr: PV 7,77 und Heizstab 4,17 kW sind die
+# Stundenmittel der Statistik, Batterie und Netz so gewählt, dass
+# PV − Batterie − Netz die 4,48 kW ergibt, die der alte Backfill schrieb.
+_TS = 1789470000.0
+
+
+def test_backfill_zieht_den_heizstab_ab():
+    stunden, zu_hoch = backfill_stunden(
+        {_TS: 7.77}, {}, {_TS: 1.31}, {_TS: 1.98}, {_TS: 4.17},
+    )
+    assert zu_hoch == 0
+    [(ts, haus, bat, netz)] = stunden
+    assert ts == _TS
+    assert haus == pytest.approx(0.31, abs=1e-9)
+    assert (bat, netz) == (1.31, 1.98)
+
+
+def test_backfill_ohne_heizstabstunde_rechnet_wie_bisher():
+    """Vor der Einrichtung des Heizstabs gibt es keine Statistik — zählt als 0."""
+    stunden, _ = backfill_stunden({_TS: 3.0}, {}, {_TS: 1.0}, {_TS: 0.5}, {})
+    assert stunden[0][1] == pytest.approx(1.5)
+
+
+def test_backfill_ueberschreibt_keine_gemessenen_stunden():
+    """Der Sensor hat die Stunde schon gemessen — seine Zahl bleibt stehen."""
+    frei = _TS + 3600
+    stunden, _ = backfill_stunden(
+        {_TS: 3.0, frei: 3.0}, {}, {_TS: 1.0, frei: 1.0}, {_TS: 0.5, frei: 0.5}, {},
+        vorhanden={_TS},
+        alles_neu=False,
+    )
+    assert [ts for ts, *_ in stunden] == [frei]
+
+
+def test_backfill_nach_formelwechsel_schreibt_alles_neu():
+    stunden, _ = backfill_stunden(
+        {_TS: 3.0}, {}, {_TS: 1.0}, {_TS: 0.5}, {},
+        vorhanden={_TS},
+        alles_neu=True,
+    )
+    assert [ts for ts, *_ in stunden] == [_TS]
+
+
+def test_backfill_klemmt_auf_null_und_verwirft_unrealistisches():
+    hoch = _TS + 3600
+    stunden, zu_hoch = backfill_stunden(
+        {_TS: 1.0, hoch: 80.0}, {}, {_TS: 0.0, hoch: 0.0}, {_TS: 0.0, hoch: 0.0},
+        {_TS: 3.0},
+    )
+    assert zu_hoch == 1
+    assert stunden == [(_TS, 0.0, 0.0, 0.0)]
+
+
+def test_backfill_solaredge_und_zweiter_pv_sensor():
+    """PV2 wird addiert, bei SolarEdge die Batterie in die PV zurückgerechnet."""
+    stunden, _ = backfill_stunden(
+        {_TS: 2.0}, {_TS: 1.0}, {_TS: -1.0}, {_TS: 0.5}, {},
+        pv_includes_battery=True,
+    )
+    # pv = 2 + 1 + (−1) = 2; haus = 2 − (−1) − 0,5 = 2,5
+    assert stunden[0][1] == pytest.approx(2.5)

@@ -142,6 +142,63 @@ def resolve_backfill_signs(config: dict) -> tuple[int, int]:
     return battery_sign, grid_sign
 
 
+# Stand der Backfill-Formel. Steigt er, schreibt der nächste Start das ganze
+# Rückblickfenster EINMAL neu — sonst füllt der Backfill nur Stunden, die
+# noch keine Statistik haben. 2 = Heizstab wird abgezogen (23.09.2026).
+BACKFILL_FORMEL = 2
+
+
+def backfill_stunden(
+    pv_by_ts: dict[float, float],
+    pv2_by_ts: dict[float, float],
+    battery_by_ts: dict[float, float],
+    grid_by_ts: dict[float, float],
+    heizstab_by_ts: dict[float, float],
+    *,
+    pv_includes_battery: bool = False,
+    vorhanden: set[float] | frozenset[float] = frozenset(),
+    alles_neu: bool = True,
+) -> tuple[list[tuple[float, float, float, float]], int]:
+    """Stündlicher Hausverbrauch aus den Quellstatistiken, wie der Live-Sensor.
+
+    Rückgabe: ``([(ts, haus, batterie, netz), …], übersprungen > 50 kW)``.
+
+    **Der Heizstab wird abgezogen** — dieselbe Formel wie
+    ``compute_house_load_kw``. Bis 23.09.2026 fehlte er hier: Der Live-Sensor
+    rechnete richtig, aber jeder Start überschrieb die Stundenwerte des
+    Rückblicks mit PV − Batterie − Netz, also MIT Heizstab. In Grünbach stand
+    dadurch am 15.09. 13–14 Uhr 4,48 kW Hausverbrauch in der Statistik, der
+    Sensor selbst hatte 0,69 kW gemessen; das Profil lernte 23,5 kWh pro Tag
+    statt 10–13.
+
+    **Gemessene Stunden bleiben stehen** (``vorhanden``), außer ``alles_neu``
+    (einmalig nach einem Formelwechsel, ``BACKFILL_FORMEL``). Eine
+    Rekonstruktion aus Stundenmitteln soll keinen Messwert ersetzen — zweimal
+    schon (EMMA-Vorzeichen, Heizstab) rechnete der Backfill anders als der
+    Sensor, und beide Male machte das Überschreiben aus richtigen Daten
+    falsche. Fehlt eine Heizstab-Stunde, zählt sie als 0: vor der Einrichtung
+    gab es keinen.
+    """
+    stunden: list[tuple[float, float, float, float]] = []
+    zu_hoch = 0
+    gemeinsam = sorted(set(pv_by_ts) & set(battery_by_ts) & set(grid_by_ts))
+    for ts in gemeinsam:
+        if not alles_neu and ts in vorhanden:
+            continue
+        pv = pv_by_ts[ts] + pv2_by_ts.get(ts, 0.0)
+        bat = battery_by_ts[ts]
+        if pv_includes_battery:
+            pv = pv + bat
+        grid = grid_by_ts[ts]
+        haus = max(pv - bat - grid - heizstab_by_ts.get(ts, 0.0), 0.0)
+        # Unrealistische Werte (falsche Vorzeichen in Altdaten) verwerfen.
+        if haus > 50.0:
+            zu_hoch += 1
+            continue
+        stunden.append((ts, haus, bat, grid))
+    return stunden, zu_hoch
+
+
 # Bekannte Einheiten-Aliase, alle in der KEY in lowercase. Deckt die in HA-
 # Sensoren beobachteten Schreibweisen ab — bewusst defensiv, weil HA-Custom-
 # Integrationen selten den `homeassistant.const.UnitOfPower`-Constraint nutzen.
