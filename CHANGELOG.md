@@ -10,6 +10,12 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
+## [2.1.5] - 2026-09-23
+
+### Behoben
+
+- **Ein Fronius Gen24 ließ sich eine laufende Entladung nicht erhöhen.** Eine erzwungene Entladung besteht aus zwei Grenzen, der unteren (InWRte, negativ) und der oberen (OutWRte), die beide auf denselben Wert gelegt werden. Der Treiber schrieb immer zuerst die untere, und der Wechselrichter prüft nach jedem einzelnen Schritt, ob zwischen beiden Grenzen noch Platz ist. Beim Senken ist das so, beim Erhöhen nicht: Stand die obere Grenze auf 3,49 Prozent und kam die untere mit 5,17, verlangte das Gerät für einen Augenblick mehr Entladung, als es erlaubte, und wies den Wert als „Illegal Data Value" zurück. Gezeigt hat das die Diagnose aus 2.1.4 gleich beim ersten Mal, heute um 14:23 in Grünbach. Damit ist auch das Muster seit Mitte September erklärt: Jede Senkung ging durch, jede Erhöhung scheiterte, und das Gerät behielt den alten Wert — in der Nacht auf heute blieb die Entladung von 22:01 bis 22:27 bei 0,66 kW stehen, während die Nachführung für die gestiegene Hauslast bis 0,93 kW wollte. Der Treiber liest jetzt vor dem Schreiben die geltende obere Grenze und weitet sie beim Erhöhen zuerst; beim Senken und aus dem Automatikmodus heraus bleibt es bei der bisherigen Reihenfolge.
+
 ## [2.1.4] - 2026-09-23
 
 ### Behoben
