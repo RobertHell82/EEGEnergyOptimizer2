@@ -101,6 +101,71 @@ _REGISTERNAMEN = {
 }
 
 
+# Der vollständige Model-124-Block (SunSpec, 24 Register nach dem Header) —
+# für die Diagnose nach einem abgelehnten Schreibversuch.
+_MODEL124_FELDER = (
+    "WChaMax", "WChaGra", "WDisChaGra", "StorCtl_Mod", "VAChaMax",
+    "MinRsvPct", "ChaState", "StorAval", "InBatV", "ChaSt", "OutWRte",
+    "InWRte", "InOutWRte_WinTms", "InOutWRte_RvrtTms", "InOutWRte_RmpTms",
+    "ChaGriSet", "WChaMax_SF", "WChaDisChaGra_SF", "VAChaMax_SF",
+    "MinRsvPct_SF", "ChaState_SF", "StorAval_SF", "InBatV_SF", "InOutWRte_SF",
+)
+# Welcher Skalierungsfaktor zu welchem Feld gehört.
+_MODEL124_SF = {
+    "WChaMax": "WChaMax_SF",
+    "WChaGra": "WChaDisChaGra_SF",
+    "WDisChaGra": "WChaDisChaGra_SF",
+    "VAChaMax": "VAChaMax_SF",
+    "MinRsvPct": "MinRsvPct_SF",
+    "ChaState": "ChaState_SF",
+    "StorAval": "StorAval_SF",
+    "InBatV": "InBatV_SF",
+    "OutWRte": "InOutWRte_SF",
+    "InWRte": "InOutWRte_SF",
+}
+_MODEL124_VORZEICHEN = {"OutWRte", "InWRte"}
+_CHAST = {
+    1: "OFF", 2: "EMPTY", 3: "DISCHARGING", 4: "CHARGING",
+    5: "FULL", 6: "HOLDING", 7: "TESTING",
+}
+
+
+def model124_klartext(register: list[int]) -> str:
+    """Rohregister des Model-124-Blocks als eine lesbare Zeile.
+
+    Skaliert mit den Faktoren aus demselben Block, Vorzeichen für die beiden
+    Raten, ChaSt und ChaGriSet als Name. 0xFFFF/0x8000 sind SunSpecs
+    „nicht implementiert" und erscheinen als ``n/a``.
+    """
+    roh = dict(zip(_MODEL124_FELDER, register))
+
+    def _sf(name: str) -> int:
+        wert = roh.get(name, 0)
+        return wert - 0x10000 if wert > 0x7FFF else wert
+
+    teile = []
+    for name in _MODEL124_FELDER:
+        if name.endswith("_SF") or name not in roh:
+            continue
+        wert = roh[name]
+        if wert in (0xFFFF, 0x8000) and name not in _MODEL124_VORZEICHEN | {"StorCtl_Mod"}:
+            teile.append(f"{name}=n/a")
+            continue
+        if name in _MODEL124_VORZEICHEN and wert > 0x7FFF:
+            wert -= 0x10000
+        if name == "ChaSt":
+            teile.append(f"ChaSt={_CHAST.get(wert, wert)}")
+        elif name == "ChaGriSet":
+            teile.append(f"ChaGriSet={'GRID' if wert == 1 else 'PV' if wert == 0 else wert}")
+        elif name == "StorCtl_Mod":
+            teile.append(f"StorCtl_Mod={wert}")
+        elif name in _MODEL124_SF:
+            teile.append(f"{name}={wert * 10 ** _sf(_MODEL124_SF[name]):g}")
+        else:
+            teile.append(f"{name}={wert}")
+    return ", ".join(teile)
+
+
 def _modbus_fehlertext(result: Any) -> str:
     """Die Modbus-Ausnahme eines Schreibversuchs als lesbarer Text."""
     code = getattr(result, "exception_code", None)
@@ -610,6 +675,8 @@ class FroniusInverter(InverterBase):
                     value - 0x10000 if value > 0x7FFF else value,
                     _modbus_fehlertext(result),
                 )
+                if getattr(result, "exception_code", None) == 3:
+                    await self._diagnose_model124(offset, value)
                 # Registername + Modbus-Ausnahme, ohne den Wert: Der Text
                 # wird zum message_hash der Telemetrie, ein eingebetteter
                 # Sollwert machte aus jedem Versuch einen eigenen Fall.
@@ -631,6 +698,37 @@ class FroniusInverter(InverterBase):
                 f"Verbindungsfehler beim Schreiben von "
                 f"{_REGISTERNAMEN.get(offset, f'Offset +{offset}')}"
             )
+
+    async def _diagnose_model124(self, offset: int, value: int) -> None:
+        """Nach einem „Illegal Data Value" den ganzen Model-124-Block loggen.
+
+        Grünbach, 22./23.09.2026: Das Gerät nimmt ein negatives InWRte an und
+        lehnt denselben Wert wenige Minuten später ab — beim Keepalive wie
+        beim Nachführen, bis ein neuer Befehl kommt. Am Wert liegt es also
+        nicht, sondern an einem Zustand im Gerät, und den sieht man nur im
+        Moment der Ablehnung. Deshalb hier, nicht im Nachhinein. Nur lesend;
+        ein Fehler beim Lesen ändert nichts am Ergebnis des Schreibversuchs.
+        """
+        try:
+            antwort = await self._client.read_holding_registers(
+                address=self._model124_base,
+                count=len(_MODEL124_FELDER),
+                **_slave_kw(self._client, self._slave_id),
+            )
+            if antwort.isError():
+                _LOGGER.warning(
+                    "Fronius-Diagnose: Model 124 nicht lesbar (%s)",
+                    _modbus_fehlertext(antwort),
+                )
+                return
+            _LOGGER.warning(
+                "Fronius-Diagnose nach abgelehntem %s=%d: %s",
+                _REGISTERNAMEN.get(offset, f"Offset +{offset}"),
+                value - 0x10000 if value > 0x7FFF else value,
+                model124_klartext(antwort.registers),
+            )
+        except Exception:  # pragma: no cover - Diagnose darf nie stören
+            _LOGGER.debug("Fronius-Diagnose fehlgeschlagen", exc_info=True)
 
     # ------------------------------------------------------------------
     # Keepalive (feeding the InOutWRte_RvrtTms watchdog)

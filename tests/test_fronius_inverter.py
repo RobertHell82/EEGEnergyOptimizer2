@@ -1288,3 +1288,73 @@ class TestSchreibfehlerGrund:
 
         assert ok is True
         assert inverter.last_write_error is None
+
+
+class TestDiagnoseNachAblehnung:
+    """Grünbach, 22./23.09.2026: Das Gerät nimmt ein negatives InWRte an und
+    lehnt denselben Wert Minuten später ab. Der Zustand, der das auslöst, ist
+    nur im Moment der Ablehnung zu sehen — deshalb liest der Treiber dann den
+    ganzen Model-124-Block und schreibt ihn ins Log."""
+
+    # WChaMax 15360 W (SF 0), MinRsvPct 86 % (SF −2), ChaState 91,4 % (SF −1),
+    # ChaSt DISCHARGING, OutWRte +8,2 %, InWRte −8,2 % (SF −2), RvrtTms 300.
+    _BLOCK = [
+        15360, 0xFFFF, 0xFFFF, 3, 0xFFFF, 8600, 914, 0xFFFF, 0xFFFF, 3,
+        820, 0x10000 - 820, 0, 300, 0xFFFF, 1,
+        0, 0xFFFF, 0xFFFF, 0x10000 - 2, 0x10000 - 1, 0xFFFF, 0xFFFF, 0x10000 - 2,
+    ]
+
+    def test_klartext_skaliert_und_benennt(self):
+        from custom_components.eeg_energy_optimizer.inverter.fronius import (
+            model124_klartext,
+        )
+
+        text = model124_klartext(self._BLOCK)
+
+        assert "WChaMax=15360" in text
+        assert "StorCtl_Mod=3" in text
+        assert "MinRsvPct=86" in text
+        assert "ChaState=91.4" in text
+        assert "ChaSt=DISCHARGING" in text
+        assert "OutWRte=8.2" in text
+        assert "InWRte=-8.2" in text
+        assert "InOutWRte_RvrtTms=300" in text
+        assert "ChaGriSet=GRID" in text
+        assert "WChaGra=n/a" in text
+        assert "_SF" not in text
+
+    async def test_ablehnung_loest_diagnose_aus(
+        self, inverter, mock_modbus_client, caplog
+    ):
+        async def _write(address, value, **kwargs):
+            ergebnis = MagicMock()
+            ergebnis.isError.return_value = address == 40070 + _OFFSET_INWRTE
+            ergebnis.exception_code = 3
+            return ergebnis
+
+        mock_modbus_client.write_register = AsyncMock(side_effect=_write)
+        normal = mock_modbus_client.read_holding_registers.side_effect
+        normal_rv = mock_modbus_client.read_holding_registers.return_value
+
+        async def _read(address, count, **kwargs):
+            if count == 24:
+                antwort = MagicMock()
+                antwort.isError.return_value = False
+                antwort.registers = list(self._BLOCK)
+                return antwort
+            if normal is not None:
+                return await normal(address=address, count=count, **kwargs)
+            return normal_rv
+
+        mock_modbus_client.read_holding_registers = AsyncMock(side_effect=_read)
+
+        with caplog.at_level("WARNING"):
+            ok = await inverter.async_set_discharge(1.3, target_soc=90.0)
+
+        assert ok is False
+        diagnose = [r.getMessage() for r in caplog.records if "Diagnose" in r.getMessage()]
+        assert diagnose, "nach einem Illegal Data Value gehört der Block ins Log"
+        assert "abgelehntem InWRte" in diagnose[0]
+        assert "ChaSt=DISCHARGING" in diagnose[0]
+        # Die Diagnose ändert nicht den Grund, der in die Telemetrie geht.
+        assert inverter.last_write_error == "InWRte: Modbus-Ausnahme 3 (Illegal Data Value)"
