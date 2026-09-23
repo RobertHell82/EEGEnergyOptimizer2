@@ -10,6 +10,17 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
+## [2.1.4] - 2026-09-23
+
+### Behoben
+
+- **Das Verbrauchsprofil lernte den Heizstab als Hausverbrauch.** Der Sensor „Hausverbrauch" zieht den Heizstab seit seiner Einführung ab, die Langzeitstatistik, aus der das Profil lernt, aber nicht. Bei jedem Start rechnet ein Nachtrag die Stundenwerte des ganzen Rückblicks aus PV, Batterie und Netz neu und überschrieb dabei die gemessenen — und in dieser Rechnung fehlte der Heizstab. In Grünbach hatte der Sensor am 15.09. zwischen 13 und 14 Uhr 0,69 kW gemessen, in der Statistik stand für dieselbe Stunde 4,48 kW, weil der Heizstab 4,17 kW zog. Das Profil kam so auf 23,5 kWh am Tag und mittags auf fast 3 kW, tatsächlich verbraucht das Haus 10 bis 13 kWh; die Prognose lag seit Mitte September jeden Tag beim Doppelten. Dass die Werte seit dem Abend des 22.09. wieder stimmten, war kein Zeichen der Besserung: Es waren nur die Stunden seit dem letzten Neustart, die der nächste wieder überschrieben hätte. Der Nachtrag zieht den Heizstab jetzt ab, und er ersetzt keine gemessenen Stunden mehr, sondern füllt nur noch Lücken — zum zweiten Mal hatte er anders gerechnet als der Sensor, nach den Vorzeichen der Huawei-EMMA, und beide Male machte das Überschreiben aus richtigen Daten falsche. Einmal nach diesem Update schreibt er den Rückblick noch vollständig neu, damit die falschen Stunden verschwinden; danach bleibt, was gemessen ist.
+- **Nach jedem Abruf der Gemeinschaftsprognose lud die Batterie für ein paar Minuten, um dieselbe Energie gleich darauf zu verkaufen.** Die PeakShare-Prognose wird alle 30 Minuten neu geholt, und ihre Antwort beginnt mit der nächsten Viertelstunde — die laufende fehlt. Der Fahrplan beginnt aber genau mit ihr, und ohne Bedarfswert fiel ihr Einspeisepreis auf den Basistarif, während der nächste Slot den Aufschlag behielt. Auf einer Anlage in Linz waren das 4,5 gegen 7,2 Cent, und das Modell tat, was man bei so einem Preissprung tut: Es lud den Rest der Viertelstunde mit 1,7 kW und entlud zum Slotwechsel wieder, heute Morgen um 07:26, 07:59, 08:26 und 08:56, jedes Mal zur Abrufzeit. Abends hätte derselbe Fehler eine laufende Entladung für den Rest des Slots angehalten. Der Abruf übernimmt die laufende Viertelstunde jetzt aus dem bisherigen Stand, solange sie nicht vorbei ist und die neue Antwort sie nicht selbst enthält.
+
+### Hinzugefügt
+
+- **Lehnt ein Fronius einen Entladebefehl ab, steht jetzt im Log, in welchem Zustand er das tat.** Ein Gen24 in Grünbach weist den negativen Ladegrenzwert, mit dem eine Entladung befohlen wird, seit Mitte September jede Nacht zeitweise zurück. Dabei nimmt er denselben Wert an und lehnt ihn wenige Minuten später ab, beim Auffrischen wie beim Nachführen, bis ein neuer Befehl kommt. Am Wert liegt es also nicht, sondern an einem Zustand im Gerät, und den sieht man nur im Moment der Ablehnung. Die Folge ist spürbar: Das Gerät behält den zuletzt angenommenen Wert, und von 22:01 bis 22:27 blieb die Entladung bei 0,66 kW, während der Plan bis 0,93 kW wollte. Nach jedem „Illegal Data Value" liest der Treiber jetzt den ganzen Speicherblock aus — Betriebsmodus, beide Raten, Mindestreserve, Ladezustand, Batteriestatus, Rückfallzeit — und schreibt ihn in eine Zeile. Er liest dabei nur, und der Grund, der in die Telemetrie geht, bleibt unverändert.
+
 ## [2.1.3] - 2026-09-22
 
 ### Behoben
