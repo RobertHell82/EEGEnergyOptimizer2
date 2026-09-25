@@ -10,6 +10,12 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
+## [2.1.8] - 2026-09-25
+
+### Geändert
+
+- **Die Bezugsspitze in der Statuskarte ist auf eine kurze Zeile geschrumpft.** In 2.1.7 stand dort ein ganzer Satz: Monatsspitze, Zeitpunkt, laufende Viertelstunde, Hochrechnung. Das war für eine Karte, die auf einen Blick lesbar sein soll, zu viel. Jetzt steht nur noch „Bezugsspitze September" und der Wert. Die Einzelheiten — wann die Spitze gemessen wurde, wie die laufende Viertelstunde steht und wohin sie läuft, die letzte abgeschlossene Viertelstunde und die Vormonate — liegen hinter einem ⓘ daneben. Am Computer reicht es, mit der Maus darüberzufahren, am Handy tippt man darauf und bekommt die Details als Blatt am unteren Rand, wie bei den anderen Info-Symbolen im Panel. Ein Tipp auf den Rest der Zeile öffnet weiterhin den Sensor mit seinem Verlauf. Setzt die laufende Viertelstunde gerade eine neue Monatsspitze, wird der Wert orange.
+
 ## [2.1.7] - 2026-09-25
 
 ### Hinzugefügt
