@@ -5419,7 +5419,7 @@ class EegOptimizerPanel extends HTMLElement {
       <h3 style="margin-bottom:8px">Was du brauchst</h3>
       <ul style="line-height:1.8;margin-bottom:20px;padding-left:20px">
         <li>Einen Wechselrichter mit Batteriespeicher: Fronius Gen24, Huawei SUN2000,
-            Kostal Plenticore (Beta), Sigenergy SigenStor, SMA Smart Energy (Beta)
+            Kostal Plenticore, Sigenergy SigenStor, SMA Smart Energy
             oder SolaX Gen4+</li>
         <li>Eine PV-Prognose-Integration (Solcast Solar oder Forecast.Solar)</li>
       </ul>
@@ -5427,12 +5427,11 @@ class EegOptimizerPanel extends HTMLElement {
       <ul style="line-height:1.8;padding-left:20px">
         <li>Fronius Gen24 mit BYD Batteriespeicher</li>
         <li>Huawei SUN2000 mit LUNA2000 Batteriespeicher</li>
+        <li>Kostal Plenticore mit Batteriespeicher</li>
         <li>Sigenergy SigenStor</li>
+        <li>SMA Smart Energy mit Batteriespeicher</li>
         <li>SolaX Gen4+ mit Triple Power Batteriespeicher</li>
-      </ul>
-      <p style="line-height:1.6;margin-top:12px;color:var(--secondary-text-color);font-size:13px">
-        Kostal Plenticore und SMA Smart Energy werden gesteuert, sind aber noch im Feldtest.
-      </p>`;
+      </ul>`;
   }
 
   /* ── Schritt: Wechselrichter (Typ + Sensoren) ──── */
@@ -5514,13 +5513,13 @@ class EegOptimizerPanel extends HTMLElement {
         logo: `<img src="https://brands.home-assistant.io/huawei_solar/logo.png" alt="Huawei" style="max-width:120px;max-height:60px;height:auto" onerror="this.style.display='none'">` },
       { key: "solax_gen4", label: "SolaX Gen4+", subtitle: "Gen4, Gen5, Gen6", detected: solaxOk, badge: solaxBadge, dialog: "solax",
         logo: `<span style="font-size:32px">SolaX</span>` },
-      { key: "sigenergy_sigenstor", label: "Sigenergy SigenStor", subtitle: "SigenStor mit Batteriespeicher · Feldtest", detected: sigenOk, badge: sigenBadge, dialog: "sigenergy",
+      { key: "sigenergy_sigenstor", label: "Sigenergy SigenStor", subtitle: "SigenStor mit Batteriespeicher", detected: sigenOk, badge: sigenBadge, dialog: "sigenergy",
         logo: `<img src="https://brands.home-assistant.io/_/sigen/logo.png" alt="Sigenergy" style="max-width:120px;max-height:60px;height:auto" onerror="this.outerHTML='<span style=font-size:26px>Sigenergy</span>'">` },
       { key: "fronius_gen24", label: "Fronius Gen24", subtitle: "mit BYD Batteriespeicher", detected: froniusOk, badge: froniusBadge, dialog: "fronius",
         logo: `<img src="https://brands.home-assistant.io/fronius/logo.png" alt="Fronius" style="max-width:120px;max-height:60px;height:auto" onerror="this.outerHTML='<span style=font-size:32px>Fronius</span>'">` },
-      { key: "kostal_plenticore", label: "Kostal Plenticore", subtitle: "mit Batteriespeicher · Steuerung über Modbus TCP (Beta)", detected: kostalOk, badge: kostalBadge, dialog: "kostal",
+      { key: "kostal_plenticore", label: "Kostal Plenticore", subtitle: "mit Batteriespeicher · Steuerung über Modbus TCP", detected: kostalOk, badge: kostalBadge, dialog: "kostal",
         logo: `<img src="https://brands.home-assistant.io/kostal_plenticore/logo.png" alt="Kostal" style="max-width:120px;max-height:60px;height:auto" onerror="this.outerHTML='<span style=font-size:32px>Kostal</span>'">` },
-      { key: "sma_smart_energy", label: "SMA Smart Energy", subtitle: "Tripower/Sunny Boy mit Batteriespeicher · Steuerung über Modbus TCP (Beta)", detected: smaOk, badge: smaBadge, dialog: "sma",
+      { key: "sma_smart_energy", label: "SMA Smart Energy", subtitle: "Tripower/Sunny Boy mit Batteriespeicher · Steuerung über Modbus TCP", detected: smaOk, badge: smaBadge, dialog: "sma",
         logo: `<img src="https://brands.home-assistant.io/sma/logo.png" alt="SMA" style="max-width:120px;max-height:60px;height:auto" onerror="this.outerHTML='<span style=font-size:32px>SMA</span>'">` },
     ].filter(inv =>
       istWaehlbarerWr(inv.key) || inv.key === selected
