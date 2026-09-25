@@ -48,6 +48,9 @@ const SENSOR_SUFFIXES = {
   auto_status: "auto_status",
   auto_ladestand: "auto_ladestand",
   auto_ladeleistung: "auto_ladeleistung",
+  // Leistungspreis ab 2027 (leistungsspitze.py) — immer vorhanden.
+  netzbezug_viertelstunde: "netzbezug_viertelstunde",
+  bezugsspitze_monat: "bezugsspitze_monat",
 };
 const SELECT_SUFFIX = "optimizer";
 
@@ -8202,6 +8205,64 @@ class EegOptimizerPanel extends HTMLElement {
     );
   }
 
+  _renderSpitzeZeile() {
+    // Bezugsspitze des Monats — die Bemessungsgrundlage des Leistungspreises
+    // ab 2027 (leistungsspitze.py). Daneben die laufende Viertelstunde, weil
+    // sie das Einzige ist, worauf man jetzt noch Einfluss hat: Liegt ihre
+    // Hochrechnung über der Monatsspitze, wird gerade eine neue gesetzt.
+    const spitzeState = this._readState(this._entityIds?.bezugsspitze_monat);
+    if (!spitzeState) return "";
+    const vsState = this._readState(this._entityIds?.netzbezug_viertelstunde);
+    const a = spitzeState.attributes || {};
+    const v = vsState?.attributes || {};
+    const spitze = parseFloat(spitzeState.state);
+    const spitzeBekannt = Number.isFinite(spitze);
+
+    let monat = "Monat";
+    if (a.monat) {
+      const [j, m] = String(a.monat).split("-").map(Number);
+      if (j && m) monat = new Date(j, m - 1, 1).toLocaleString("de-AT", { month: "long" });
+    }
+    const wann = (iso) => {
+      const d = iso ? new Date(iso) : null;
+      if (!d || isNaN(d)) return "";
+      const tag = d.toLocaleDateString("de-AT", { day: "2-digit", month: "2-digit" });
+      const zeit = d.toLocaleTimeString("de-AT", { hour: "2-digit", minute: "2-digit" });
+      return `${tag} um ${zeit}`;
+    };
+
+    const teile = [];
+    if (spitzeBekannt) {
+      const zeitpunkt = wann(a.zeitpunkt);
+      teile.push(`Bezugsspitze ${this._escapeHtml(monat)}: <strong>${fmtDe(spitze, 2)} kW</strong>`
+        + (zeitpunkt ? ` <span style="color:var(--secondary-text-color)">(${zeitpunkt}${a.vollstaendig === false ? ", unvollständig gemessen" : ""})</span>` : ""));
+    } else {
+      teile.push(`Bezugsspitze ${this._escapeHtml(monat)}: <span style="color:var(--secondary-text-color)">noch keine Viertelstunde gemessen</span>`);
+    }
+
+    const bisher = Number(v.laufend_bisher_kw);
+    const hoch = Number(v.laufend_hochrechnung_kw);
+    const droht = spitzeBekannt && Number.isFinite(hoch) && hoch > spitze;
+    let laufend = "";
+    if (Number.isFinite(bisher)) {
+      laufend = `laufende Viertelstunde ${fmtDe(bisher, 2)} kW`
+        + (Number.isFinite(hoch) ? `, hochgerechnet ${fmtDe(hoch, 2)} kW` : "");
+      teile.push(droht
+        ? `<span style="color:var(--warning-color,#ff9800)">${laufend} — neue Monatsspitze</span>`
+        : `<span style="color:var(--secondary-text-color)">${laufend}</span>`);
+    }
+
+    const farbe = droht ? "var(--warning-color,#ff9800)" : "var(--secondary-text-color)";
+    const entity = this._entityIds?.bezugsspitze_monat;
+    return `
+      <div data-action="show-entity" data-entity="${entity}" title="Verlauf anzeigen"
+           style="display:flex;align-items:center;gap:10px;margin-top:10px;padding:8px 12px;border-radius:6px;cursor:pointer;
+                  background:var(--secondary-background-color,#f5f5f5);border-left:3px solid ${farbe};font-size:13px">
+        <ha-icon icon="mdi:transmission-tower-import" style="--mdc-icon-size:18px;color:${farbe};flex-shrink:0"></ha-icon>
+        <div style="flex:1;min-width:0">${teile.join(" · ")}</div>
+      </div>`;
+  }
+
   // Laden und Entladen von Hand. Nur im Expertenmodus: Es ist ein Testweg,
   // kein Alltagsknopf — der Fahrplan steuert die Wallbox nicht, und was die
   // Box aus einem Sollwert macht, ist noch nicht abschließend geklärt.
@@ -9395,6 +9456,7 @@ class EegOptimizerPanel extends HTMLElement {
             <span class="status-indicator ${zustandBadgeClass}" style="display:inline-block">${zustandSymbol}${zustand}</span>
             ${this._renderSteuerungZeilen(decisionState)}
             ${this._renderAutoZeile()}
+            ${this._renderSpitzeZeile()}
           </div>
           ${this._istStartphase(decisionState) ? "" : this._renderJobStatusLine(decisionState, profilState)}
         </div>

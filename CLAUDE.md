@@ -649,7 +649,12 @@ opt-in, schedule archive, and (expert) balance card + profile lookback. In the
 settings, device-datasheet values (AC limit, PV peak, battery power limit) are
 expert-only; in the wizard they are always visible.
 
-Dashboard notes: during the executor's startup grace period (status
+Dashboard notes: the status card ends with the capacity-charge line
+(`_renderSpitzeZeile`, below `_renderAutoZeile`): month peak with time, plus
+the running quarter-hour (`laufend_bisher_kw` / `laufend_hochrechnung_kw`);
+orange when the projection exceeds the month peak. It reads the two
+leistungsspitze sensors, not the Hausverbrauch attributes — it is not part of
+the one-point-in-time power set. During the executor's startup grace period (status
 "Startphase — …") the status card shows only that hint — no setpoints,
 reasons, warnings, or job line. The "Gesetzte Steuerwerte" transparency view
 is its own always-expanded card below the Optimierungsplan card (expert mode
