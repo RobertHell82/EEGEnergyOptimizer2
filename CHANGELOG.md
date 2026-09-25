@@ -10,6 +10,14 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
+## [2.1.9] - 2026-09-25
+
+### Behoben
+
+- **Kostal: Die Batterie lädt wieder, wenn der Fahrplan ein Ladelimit setzt.** Nach einem kurzen „Normalbetrieb" hielt der Wechselrichter einen 0-W-Sollwert fest, weil ihn das Ladelimit am Leben hielt. In Ansfelden stand die Batterie so einen ganzen Vormittag, obwohl 4,2 kW erlaubt waren.
+- **Heizstab: Er regelt zurück, sobald die Batterie für ihn einspringt.** Bei einem PV-Einbruch deckte bisher die Batterie den Heizstab, und am Netzzähler war nichts zu sehen. In Grünbach flossen so 5 Minuten lang 3–3,8 kW aus der Batterie in den Puffer.
+- **Bezugsspitze: Die Sensoren werden wieder genau zum Viertelstundenwechsel aktualisiert.**
+
 ## [2.1.8] - 2026-09-25
 
 ### Geändert
