@@ -392,6 +392,7 @@ class Leistungsspitze:
     def async_start(self, entry: Any) -> None:
         """Netzsensor, Abtastung und Viertelstunden-Zeitgeber abonnieren."""
         try:
+            from homeassistant.core import callback
             from homeassistant.helpers.event import (
                 async_track_state_change_event,
                 async_track_time_change,
@@ -405,10 +406,17 @@ class Leistungsspitze:
             _LOGGER.debug("Leistungsspitze: kein Netzsensor konfiguriert")
             return
 
+        # @callback ist Pflicht: Eine schlichte Funktion führt HA im
+        # Executor-Thread aus. Dort liefen Store-Speichern und der
+        # Viertelstunden-Push der Sensoren (hass.async_create_task) aus einem
+        # fremden Thread — HA wies ihn ab, „Beobachter fehlgeschlagen" bei
+        # jedem Viertelstunden-Abschluss (Grünbach, 25.09.2026).
+        @callback
         def _stuetzpunkt(_arg: Any = None) -> None:
             jetzt = _jetzt_utc()
             self.messwert(jetzt, self._bezug_jetzt_kw(jetzt))
 
+        @callback
         def _takt(_now: Any) -> None:
             self.grenze(_jetzt_utc())
 
