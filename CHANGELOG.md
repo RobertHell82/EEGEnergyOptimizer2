@@ -10,6 +10,12 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
+## [2.1.6] - 2026-09-25
+
+### Hinzugefügt
+
+- **Die Integration misst jetzt den Netzbezug je Viertelstunde und die Bezugsspitze des Monats.** Ab 1. Jänner 2027 zahlt jeder Haushalt auf Netzebene 7 neben dem Arbeitspreis einen Leistungspreis, und der richtet sich nicht nach dem Verbrauch, sondern nach einer einzigen Zahl: dem höchsten Viertelstunden-Mittelwert des Netzbezugs im Kalendermonat. Laut Begutachtungsentwurf der Grundsatzverordnung kostet in der Endstufe jedes Kilowatt bis 10 kW im Österreich-Schnitt 33,82 Euro im Jahr und jedes weitere 67,64 Euro; eine Monatsspitze von 4 statt 8 kW macht damit rund 135 Euro im Jahr aus. Bevor der Fahrplan darauf Rücksicht nehmen kann, muss man sehen, wann die Spitzen entstehen. Dafür gibt es zwei neue Sensoren. „Netzbezug Viertelstunde" zeigt den Mittelwert der zuletzt abgeschlossenen Viertelstunde — die abgeschlossene und nicht die laufende, weil sie sich so eins zu eins mit dem Smart-Meter-Portal des Netzbetreibers vergleichen lässt; wie die laufende steht und wohin sie läuft, steht in den Attributen. „Bezugsspitze Monat" hält das Maximum samt Zeitpunkt fest, beginnt mit jedem Monat neu und führt die Vormonate im Verlauf. Gezählt wird nur Bezug: Der Zähler führt beide Richtungen getrennt, zehn Minuten Einspeisung rechnen eine Kochspitze in derselben Viertelstunde nicht glatt. Jede Änderung des Netzsensors ist ein Messpunkt, dazu wird alle zehn Sekunden abgelesen, und ein Wert zählt nur, solange ihn die Quelle frisch schreibt — eine hängende Modbus-Verbindung lässt ihren letzten Wert stehen, ohne sich abzumelden, und ohne diese Grenze würde eine eingefrorene Kochspitze zur Monatsspitze. Viertelstunden mit Lücken zählen als Untergrenze mit und sind als unvollständig markiert. Die Sensoren messen nur, gesteuert wird damit noch nichts.
+
 ## [2.1.5] - 2026-09-23
 
 ### Behoben
