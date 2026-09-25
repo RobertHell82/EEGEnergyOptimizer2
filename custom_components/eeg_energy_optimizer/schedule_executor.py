@@ -59,6 +59,7 @@ from .const import (
     GUARD_WIRKUNG_MIN_LUECKE_KW,
     GUARD_WIRKUNG_RUNS,
     GUARD_WIRKUNG_SOC_ABSTAND_PCT,
+    HEIZSTAB_BATTERIE_ENTLADUNG_TOLERANZ_KW,
     HEIZSTAB_EINSCHWING_LAEUFE,
     MODE_AUS,
     MODE_EIN,
@@ -1027,6 +1028,17 @@ class ScheduleExecutor:
                 self.last_action is not None and self.last_action.kind == "discharge"
             )
             export = compute_grid_export_kw(self._hass, self._config)
+            # Die Batterie speist den Heizstab nie — auch nicht in der
+            # Messung. Entlädt sie, fehlt dem Heizstab genau so viel PV,
+            # und das zählt wie Netzbezug (HEIZSTAB_BATTERIE_ENTLADUNG_*).
+            # Laden zählt NICHT als Überschuss: Das ist der Anteil der
+            # Batterie, die Aufteilung regeln Plan und Deckel.
+            batterie = compute_battery_now_kw(self._hass, self._config)
+            entladung_kw = 0.0
+            if batterie is not None and -batterie > HEIZSTAB_BATTERIE_ENTLADUNG_TOLERANZ_KW:
+                entladung_kw = -batterie
+            if export is not None and entladung_kw > 0.0:
+                export -= entladung_kw
             plan_kw = self._heizstab_plan_kw(schedule_state, now)
             soll, grund = hz.regeln(
                 entladung=entladung,
@@ -1036,6 +1048,8 @@ class ScheduleExecutor:
                 deckel_kw=self._heizstab_deckel_kw(),
                 plan_kw=plan_kw,
             )
+            if entladung_kw > 0.0 and export is not None:
+                grund = f"{grund} (Batterie entlädt {entladung_kw:.1f} kW)"
             await hz.async_set_sollwert(soll, grund)
         except Exception:  # noqa: BLE001 — der Heizstab darf den Takt nie kippen
             _LOGGER.exception("Executor: Heizstab-Schritt fehlgeschlagen")

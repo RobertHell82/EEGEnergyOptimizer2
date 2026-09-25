@@ -427,6 +427,13 @@ HEIZSTAB_KOMFORT_EXPORT_ZIEL_KW = 0.3
 HEIZSTAB_PLAN_EXPORT_ZIEL_KW = 0.3
 # Ab diesem Abstand zum Maximum gilt der Heizstab als gesättigt.
 HEIZSTAB_SATT_TOLERANZ_KW = 0.05
+# Batterieentladung zählt für den Heizstab wie Netzbezug: Die Batterie deckt
+# eine Lücke so schnell, dass der Netzzähler bei ≈ 0 bleibt, und die Regel
+# auf „Einspeisung ≈ 0" sieht dann nichts. Grünbach, 25.09.2026: PV von 11,5
+# auf 3,2 kW, Heizstab 5,4–5,9 kW, Batterie 3–3,8 kW Entladung über fünf
+# Minuten, Netz 0,0 kW — der Sollwert stand im toten Band. Darunter ist es
+# Standby-Rauschen des Batteriesensors (gemessen bis ~0,06 kW).
+HEIZSTAB_BATTERIE_ENTLADUNG_TOLERANZ_KW = 0.1
 # Fremdsteuerung: Zieht der Heizstab dauerhaft mehr, als vorgegeben ist,
 # schreibt jemand anderes auf dasselbe Modbus-Register — an einer Anlage war
 # es die Vorgänger-Integration, deren Keepalive den Sollwert im Sekundentakt

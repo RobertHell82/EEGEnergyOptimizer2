@@ -1369,6 +1369,37 @@ async def test_heizstab_folgt_dem_fahrplan_unter_der_einspeisegrenze(mock_hass, 
     treiber.async_set_power.assert_awaited_with(1000)
 
 
+async def test_heizstab_weicht_der_batterieentladung(mock_hass, mock_inverter):
+    """Grünbach 25.09.2026: PV bricht ein, die Batterie springt für den
+    Heizstab ein, das Netz bleibt bei ≈ 0. Auf den Netzzähler allein
+    geregelt stand der Sollwert im toten Band, fünf Minuten lang 3–3,8 kW
+    aus der Batterie. Die Entladung zählt wie Bezug: volle Lücke, sofort."""
+    cfg = _cfg_heizstab()
+    ex, hz, _ = _make_executor_mit_heizstab(mock_hass, mock_inverter, cfg)
+    hz.sollwert_kw = 5.4
+    with _messwerte(export=0.02, haus=0.4, pv=3.2, batt=-3.3):
+        await ex.async_guard_cycle(
+            _state(_slot(0, battery_p=-1.5, heizstab=6.0)), MODE_EIN, now=NOW
+        )
+    # Lücke = Ziel 0,3 − (0,02 − 3,3) = 3,58 kW
+    assert hz.sollwert_kw == pytest.approx(5.4 - 3.58, abs=0.01)
+    assert "Batterie entlädt 3.3 kW" in hz.grund
+
+
+async def test_heizstab_standby_der_batterie_ist_keine_entladung(mock_hass, mock_inverter):
+    """Einige 10 W Standby am Batteriesensor dürfen den Heizstab nicht
+    Takt für Takt zurückziehen."""
+    cfg = _cfg_heizstab()
+    ex, hz, _ = _make_executor_mit_heizstab(mock_hass, mock_inverter, cfg)
+    hz.sollwert_kw = 4.0
+    with _messwerte(export=0.1, haus=0.4, pv=5.0, batt=-0.06):
+        await ex.async_guard_cycle(
+            _state(_slot(0, battery_p=-0.5, heizstab=6.0)), MODE_EIN, now=NOW
+        )
+    assert hz.sollwert_kw == pytest.approx(4.0)
+    assert "Batterie" not in hz.grund
+
+
 async def test_heizstab_plan_nur_aus_einem_frischen_plan(mock_hass, mock_inverter):
     """Eingefrorener Runner: die Slots reichen noch weit, sind aber alt.
 

@@ -476,7 +476,13 @@ the event loop is long enough for HA to flag a blocking call.
   every second run (Grünbach 14.09.2026, fixed 2.1.1-dev26); at the export
   limit the fixed step stays (curtailment hides the surplus). A single missing
   grid reading holds the last setpoint for one run
-  (`HEIZSTAB_NETZ_FEHLT_HALTEN_LAEUFE`), the second in a row means 0. Actual
+  (`HEIZSTAB_NETZ_FEHLT_HALTEN_LAEUFE`), the second in a row means 0. **Measured battery
+  discharge (> 0.1 kW) counts as grid import** for the heater
+  (`HEIZSTAB_BATTERIE_ENTLADUNG_TOLERANZ_KW`): the battery covers a PV drop
+  so fast that the grid meter stays at ≈ 0 and the "export ≈ 0" rule sees
+  nothing — Grünbach 25.09.2026, 5 min of 3–3.8 kW discharge into the heater
+  with the setpoint parked in the dead band. Battery *charging* does not count
+  as surplus (that share belongs to plan and cap). Actual
   power > 2 × `heizstab_max_kw` counts as no reading (int32 read error).
   `compute_heizstab_kw` resolves the entry's OWN controller — by config-dict
   identity, else by Ohmpilot host (two entries on one instance). Only a release
