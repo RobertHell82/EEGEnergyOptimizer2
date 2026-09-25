@@ -155,7 +155,6 @@ def backfill_stunden(
     grid_by_ts: dict[float, float],
     heizstab_by_ts: dict[float, float],
     *,
-    pv_includes_battery: bool = False,
     vorhanden: set[float] | frozenset[float] = frozenset(),
     alles_neu: bool = True,
 ) -> tuple[list[tuple[float, float, float, float]], int]:
@@ -187,8 +186,6 @@ def backfill_stunden(
             continue
         pv = pv_by_ts[ts] + pv2_by_ts.get(ts, 0.0)
         bat = battery_by_ts[ts]
-        if pv_includes_battery:
-            pv = pv + bat
         grid = grid_by_ts[ts]
         haus = max(pv - bat - grid - heizstab_by_ts.get(ts, 0.0), 0.0)
         # Unrealistische Werte (falsche Vorzeichen in Altdaten) verwerfen.
@@ -258,16 +255,11 @@ def read_power_kw(hass: Any, entity_id: str) -> float | None:
 def compute_pv_now_kw(hass: Any, config: dict) -> float | None:
     """Live-PV-Leistung in kW — identisch zu sensor.PVLeistungSensor.
 
-    Wendet dieselben drei Korrekturen an, die das HA-Integration-Dashboard
+    Wendet dieselben zwei Korrekturen an, die das HA-Integration-Dashboard
     verwendet:
       1. Optionalen zweiten PV-Sensor summieren (Multi-Inverter-Setups,
-         z.B. SolaX-Generator über Meter 2 oder zweiter SolarEdge-Inverter).
-      2. ``pv_includes_battery``-Korrektur: bei SolarEdge enthält
-         ``ac_power`` bereits die Batterie-Entladung. Echte PV =
-         ac_power + battery_raw  (Entladung ist negativ → wird subtrahiert,
-         Ladung ist positiv → wird zur PV addiert, da der Inverter die
-         Batterie aus PV speist).
-      3. Clipping auf ``>= 0`` — kleine negative Werte aus
+         z.B. SolaX-Generator über Meter 2).
+      2. Clipping auf ``>= 0`` — kleine negative Werte aus
          Wandlungsverlusten / Inverter-Eigenverbrauch werden zu 0, statt
          als Phantom-Negativ-Erzeugung ans Backend zu gehen.
 
@@ -275,10 +267,6 @@ def compute_pv_now_kw(hass: Any, config: dict) -> float | None:
     PV-Sensor lesbar ist — andernfalls wird die jeweilige fehlende Quelle
     als 0 behandelt (Konsistenz mit ``PVLeistungSensor.async_update``).
     """
-    inv_type = config.get(CONF_INVERTER_TYPE, "")
-    signs = INVERTER_SIGN_CONVENTIONS.get(inv_type, {})
-    pv_includes_battery = signs.get("pv_includes_battery", False)
-
     pv_id = config.get(CONF_PV_POWER_SENSOR, "")
     pv_2_id = config.get(CONF_PV_POWER_SENSOR_2, "")
 
@@ -290,20 +278,6 @@ def compute_pv_now_kw(hass: Any, config: dict) -> float | None:
         return None
 
     pv_combined = (pv_raw or 0.0) + (pv_2_raw or 0.0)
-
-    if pv_includes_battery:
-        bat_id = config.get(CONF_BATTERY_POWER_SENSOR, "")
-        if bat_id:
-            bat_raw = read_power_kw(hass, bat_id)
-            if bat_raw is not None:
-                pv_combined += bat_raw
-        # Multi-Inverter SolarEdge: zweiter PV-Sensor implizierte zweite Batterie
-        # (gleiche Heuristik wie PVLeistungSensor.__init__: ac_power → b1_dc_power).
-        if pv_2_id and "ac_power" in pv_2_id:
-            bat_2_id = pv_2_id.replace("ac_power", "b1_dc_power")
-            bat_2_raw = read_power_kw(hass, bat_2_id)
-            if bat_2_raw is not None:
-                pv_combined += bat_2_raw
 
     return max(pv_combined, 0.0)
 
@@ -331,13 +305,8 @@ def compute_battery_now_kw(hass: Any, config: dict) -> float | None:
     (Huawei Master/Slave), danach ``resolve_sign``. Liefert ``None``, wenn der
     Batterie-Sensor nicht lesbar ist.
 
-    Bewusst eine eigene Funktion und kein Aufruf aus ``compute_house_load_kw``:
-    dort ist der *rohe* Batteriewert zwischen zwei Schritten eingeklemmt — er
-    rekonstruiert bei SolarEdge zuerst die echte PV-Leistung
-    (``pv_includes_battery``) und wird erst danach um die zweite Batterie
-    ergänzt und mit dem Vorzeichen multipliziert. Diese Verschränkung
-    aufzulösen hieße, den Rechenweg der Steuerung anzufassen; die sechs Zeilen
-    doppelt zu halten ist das kleinere Übel. Wer eines ändert, ändert beides.
+    Dieselben Zeilen stehen in ``compute_house_load_kw`` — wer eines ändert,
+    ändert beides.
     """
     inv_type = config.get(CONF_INVERTER_TYPE, "")
     bat_id = config.get(CONF_BATTERY_POWER_SENSOR, "")
@@ -422,7 +391,6 @@ def compute_house_load_kw(hass: Any, config: dict) -> float | None:
     ist nachts schlicht offline.
     """
     inv_type = config.get(CONF_INVERTER_TYPE, "")
-    signs = INVERTER_SIGN_CONVENTIONS.get(inv_type, {})
 
     pv_id = config.get(CONF_PV_POWER_SENSOR, "")
     pv_2_id = config.get(CONF_PV_POWER_SENSOR_2, "")
@@ -446,12 +414,8 @@ def compute_house_load_kw(hass: Any, config: dict) -> float | None:
         if pv2 is not None:
             pv_power += pv2
 
-    # SolarEdge: ac_power enthält die Batterie-Entladung → echte PV rekonstruieren
-    if signs.get("pv_includes_battery", False):
-        pv_power += battery_power
-
-    # Zweite Batterie (Huawei Master/Slave): roher, vorzeichenbehafteter Wert —
-    # nach der SolarEdge-Korrektur addiert, exakt wie im HausverbrauchSensor.
+    # Zweite Batterie (Huawei Master/Slave): roher, vorzeichenbehafteter Wert,
+    # exakt wie im HausverbrauchSensor.
     if bat_2_id:
         bat2 = read_power_kw(hass, bat_2_id)
         if bat2 is not None:

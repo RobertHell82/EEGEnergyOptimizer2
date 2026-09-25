@@ -104,7 +104,6 @@ const INVERTER_LABELS = {
   huawei_sun2000: "Huawei SUN2000",
   sigenergy_sigenstor: "Sigenergy SigenStor",
   solax_gen4: "SolaX Gen4+",
-  solaredge_storedge: "SolarEdge StorEdge",
   fronius_gen24: "Fronius Gen24",
   kostal_plenticore: "Kostal Plenticore",
   sma_smart_energy: "SMA Smart Energy",
@@ -189,11 +188,6 @@ const WIZARD_DEFAULTS = {
   sigen_ess_max_discharging_limit: "",
   sigen_ess_discharge_cut_off_soc: "",
   sigen_ess_backup_soc: "",
-  solaredge_storage_control_mode: "",
-  solaredge_storage_command_mode: "",
-  solaredge_storage_charge_limit: "",
-  solaredge_storage_discharge_limit: "",
-  solaredge_storage_backup_reserve: "",
   fronius_modbus_host: "",
   fronius_modbus_port: 502,
   kostal_modbus_host: "",
@@ -333,7 +327,6 @@ const DIALOG_CONTENT = {
   capacity_sensor: { file: "capacity_sensor.html" },
   sigenergy: { file: "sigenergy.html" },
   solax: { file: "solax.html" },
-  solaredge: { file: "solaredge.html" },
   fronius: { file: "fronius.html" },
   kostal: { file: "kostal.html" },
   sma: { file: "sma.html" },
@@ -2525,10 +2518,6 @@ class EegOptimizerPanel extends HTMLElement {
             return false;
           }
         }
-        if (invType === "solaredge_storedge" && invP && !invP.solaredge_modbus_multi) {
-          this._showValidationError("SolarEdge Modbus Multi Integration muss zuerst installiert werden.");
-          return false;
-        }
         if (invType === "fronius_gen24" && invP && !invP.fronius) {
           this._showValidationError("Fronius Integration nicht gefunden. Diese wird f\u00fcr die Sensoren ben\u00f6tigt. Klicke auf 'Anleitung' f\u00fcr Hilfe.");
           return false;
@@ -2581,13 +2570,7 @@ class EegOptimizerPanel extends HTMLElement {
         return true;
       }
       case "Batterie":
-        // SolarEdge: SOC + Kapazität werden vom Driver kombiniert über alle
-        // i1/i2/...-Inverter berechnet — Pflichtfelder entfallen, der Save-
-        // Handler setzt die Combined-Sensor-IDs automatisch ein.
-        if (this._wizardData.inverter_type === "solaredge_storedge") {
-          return true;
-        }
-        // Huawei Master/Slave (≥2 Batterien): SOC läuft wie bei SolarEdge über
+        // Huawei Master/Slave (≥2 Batterien): SOC läuft über
         // den Combined-Sensor (beim Abschluss gesetzt) — daher kein SOC-Feld.
         // Stattdessen die Einzelkapazitäten je Batterie prüfen.
         {
@@ -2711,18 +2694,7 @@ class EegOptimizerPanel extends HTMLElement {
 
     try {
       this._wizardData.setup_complete = true;
-      // SolarEdge: SOC + Kapazität laufen über die Driver-Combined-Sensoren.
-      // Wir tragen die pinned IDs explizit ein, damit das Frontend (Energy-
-      // Flow-Diagramm liest battery_soc_sensor direkt) und der Optimizer-
-      // Snapshot konsistent denselben Wert sehen.
-      if (this._wizardData.inverter_type === "solaredge_storedge") {
-        this._wizardData.battery_soc_sensor = "sensor.eeg_energy_optimizer_combined_soc";
-        this._wizardData.battery_capacity_sensor = "sensor.eeg_energy_optimizer_combined_capacity";
-        // Manueller Capacity-Fallback wird nicht mehr genutzt — Driver liefert
-        // die Summe direkt. Bewusst nicht gelöscht, damit der User seine
-        // ursprüngliche Eingabe in der Config nachvollziehen kann.
-      }
-      // Huawei Master/Slave (≥2 Batterien): SOC + Kapazität ebenfalls über die
+      // Huawei Master/Slave (≥2 Batterien): SOC + Kapazität über die
       // Driver-Combined-Sensoren — Dashboard und Optimizer sehen denselben
       // kapazitätsgewichteten Wert. Single-Huawei bleibt beim eigenen Sensor.
       if (
@@ -4791,7 +4763,6 @@ class EegOptimizerPanel extends HTMLElement {
         p.huawei_solar && { key: "huawei_sun2000", label: "Huawei" },
         p.kostal_plenticore && { key: "kostal_plenticore", label: "Kostal" },
         p.sma && { key: "sma_smart_energy", label: "SMA" },
-        p.solaredge_modbus_multi && { key: "solaredge_storedge", label: "SolarEdge" },
         p.sigen && { key: "sigenergy_sigenstor", label: "Sigenergy" },
         p.solax_modbus && { key: "solax_gen4", label: "SolaX" },
       ].filter(Boolean)
@@ -4824,16 +4795,12 @@ class EegOptimizerPanel extends HTMLElement {
       if (this._detectedSensors.detected && this._detectedSensors.sensors) {
         // Pre-fill detected sensors only if user hasn't already chosen values
         const sensors = this._detectedSensors.sensors;
-        // SolarEdge: SOC + Kapazität laufen über die Driver-Combined-Sensoren —
-        // Auto-Detection darf hier nicht den einzelnen i1-Sensor eintragen
-        // (das würde den Wizard-Save-Pfad untergraben).
-        const isSolarEdge = this._wizardData.inverter_type === "solaredge_storedge";
         // Huawei Master/Slave (≥2 Batteriegeräte): SOC + Kapazität laufen über
-        // die Driver-Combined-Sensoren — wie bei SolarEdge den i1-Einzelsensor
-        // nicht eintragen, sonst untergräbt das den Combined-Save-Pfad.
+        // die Driver-Combined-Sensoren — den Einzelsensor nicht eintragen,
+        // sonst untergräbt das den Combined-Save-Pfad.
         const huaweiDevices = this._detectedSensors.huawei_device_ids || [];
         const isHuaweiMulti = huaweiDevices.length >= 2;
-        const skipKeys = (isSolarEdge || isHuaweiMulti)
+        const skipKeys = isHuaweiMulti
           ? new Set(["battery_soc_sensor", "battery_capacity_sensor"])
           : new Set();
         for (const [key, val] of Object.entries(sensors)) {
@@ -4894,21 +4861,6 @@ class EegOptimizerPanel extends HTMLElement {
           "sigen_ess_discharge_cut_off_soc", "sigen_ess_backup_soc"]) {
           if (this._detectedSensors[key] && !this._wizardData[key]) {
             this._wizardData[key] = this._detectedSensors[key];
-          }
-        }
-        // SolarEdge control entity detection
-        if (this._detectedSensors.solaredge_prefix) {
-          const solaredgeKeys = [
-            "solaredge_storage_control_mode",
-            "solaredge_storage_command_mode",
-            "solaredge_storage_charge_limit",
-            "solaredge_storage_discharge_limit",
-            "solaredge_storage_backup_reserve",
-          ];
-          for (const key of solaredgeKeys) {
-            if (this._detectedSensors[key] && !this._wizardData[key]) {
-              this._wizardData[key] = this._detectedSensors[key];
-            }
           }
         }
       }
@@ -5394,7 +5346,7 @@ class EegOptimizerPanel extends HTMLElement {
     // installiert ist oder Hausverbrauch-Sensoren fehlen.
     if (name === "Wechselrichter") {
       const p = this._prerequisites;
-      if (p && !p.huawei_solar && !p.solax_modbus && !p.solaredge_modbus_multi && !p.fronius && !p.kostal_plenticore && !p.sma && !p.sigen) return true;
+      if (p && !p.huawei_solar && !p.solax_modbus && !p.fronius && !p.kostal_plenticore && !p.sma && !p.sigen) return true;
       const d = this._wizardData;
       if (!d.inverter_type) return true;
       if (!d.pv_power_sensor) return true;
@@ -5480,7 +5432,6 @@ class EegOptimizerPanel extends HTMLElement {
       </ul>
       <p style="line-height:1.6;margin-top:12px;color:var(--secondary-text-color);font-size:13px">
         Kostal Plenticore und SMA Smart Energy werden gesteuert, sind aber noch im Feldtest.
-        SolarEdge StorEdge wird nur angezeigt, nicht gesteuert.
       </p>`;
   }
 
@@ -5490,7 +5441,6 @@ class EegOptimizerPanel extends HTMLElement {
     const p = this._prerequisites;
     const huaweiOk = p && p.huawei_solar;
     const solaxOk = p && p.solax_modbus;
-    const solaredgeOk = p && p.solaredge_modbus_multi;
     const froniusOk = p && p.fronius;
     const kostalOk = p && p.kostal_plenticore;
     const smaOk = p && p.sma;
@@ -5498,7 +5448,6 @@ class EegOptimizerPanel extends HTMLElement {
     const selected = this._wizardData.inverter_type || "";
     const huaweiSelected = selected === "huawei_sun2000";
     const solaxSelected = selected === "solax_gen4";
-    const solaredgeSelected = selected === "solaredge_storedge";
     const froniusSelected = selected === "fronius_gen24";
     const kostalSelected = selected === "kostal_plenticore";
     const smaSelected = selected === "sma_smart_energy";
@@ -5509,10 +5458,6 @@ class EegOptimizerPanel extends HTMLElement {
       : '<span class="status-badge missing">Nicht installiert</span>';
 
     const solaxBadge = solaxOk
-      ? '<span class="status-badge installed">Installiert</span>'
-      : '<span class="status-badge missing">Nicht installiert</span>';
-
-    const solaredgeBadge = solaredgeOk
       ? '<span class="status-badge installed">Installiert</span>'
       : '<span class="status-badge missing">Nicht installiert</span>';
 
@@ -5535,8 +5480,6 @@ class EegOptimizerPanel extends HTMLElement {
 
     const pvHelp = huaweiSelected
       ? "Aktuelle PV-Produktion in W oder kW (Huawei: sensor.inverter_eingangsleistung)."
-      : solaredgeSelected
-      ? "Aktuelle PV-Produktion in W (SolarEdge: sensor.solaredge_[i1_]ac_power)."
       : froniusSelected
       ? "Aktuelle PV-Produktion in W (Fronius: sensor.*_power_photovoltaics oder *_pv_leistung)."
       : kostalSelected
@@ -5548,8 +5491,6 @@ class EegOptimizerPanel extends HTMLElement {
       : "Aktuelle PV-Produktion in W (SolaX: sensor.solax_energy_dashboard_solax_solar_power).";
     const batteryHelp = huaweiSelected
       ? "Lade- und Entladeleistung der Batterie in W oder kW (Huawei: sensor.batteries_lade_entladeleistung)."
-      : solaredgeSelected
-      ? "Lade- und Entladeleistung der Batterie in W (SolarEdge: sensor.solaredge_[i1_]b1_dc_power)."
       : froniusSelected
       ? "Lade- und Entladeleistung der Batterie in W (Fronius: sensor.*_power_battery oder *_leistung_batterie). Bei Fronius-Installationen mit getrennten Lade-/Entladesensoren bitte den signed Sensor wählen."
       : kostalSelected
@@ -5559,8 +5500,6 @@ class EegOptimizerPanel extends HTMLElement {
       : "Lade- und Entladeleistung der Batterie in W (SolaX: sensor.solax_energy_dashboard_solax_battery_power).";
     const gridHelp = huaweiSelected
       ? "Wirkleistung am Netzanschluss in W oder kW (Huawei: sensor.power_meter_wirkleistung)."
-      : solaredgeSelected
-      ? "Wirkleistung am Netzanschluss in W (SolarEdge: sensor.solaredge_[i1_]m1_ac_power)."
       : froniusSelected
       ? "Wirkleistung am Netzanschluss in W (Fronius: sensor.*_power_grid oder *_leistung_netz). Bei Fronius-Installationen mit getrennten Bezugs-/Einspeisesensoren bitte den signed Sensor wählen."
       : kostalSelected
@@ -5577,8 +5516,6 @@ class EegOptimizerPanel extends HTMLElement {
         logo: `<span style="font-size:32px">SolaX</span>` },
       { key: "sigenergy_sigenstor", label: "Sigenergy SigenStor", subtitle: "SigenStor mit Batteriespeicher · Feldtest", detected: sigenOk, badge: sigenBadge, dialog: "sigenergy",
         logo: `<img src="https://brands.home-assistant.io/_/sigen/logo.png" alt="Sigenergy" style="max-width:120px;max-height:60px;height:auto" onerror="this.outerHTML='<span style=font-size:26px>Sigenergy</span>'">` },
-      { key: "solaredge_storedge", label: "SolarEdge", subtitle: "StorEdge Batteriespeicher · nur Anzeige — Steuerung derzeit nur Fronius, Huawei, Kostal, Sigenergy, SMA und SolaX", detected: solaredgeOk, badge: solaredgeBadge, dialog: "solaredge",
-        logo: `<img src="https://brands.home-assistant.io/_/solaredge/logo.png" alt="SolarEdge" style="max-width:120px;max-height:60px;height:auto" onerror="this.outerHTML='<span style=font-size:32px>SolarEdge</span>'">` },
       { key: "fronius_gen24", label: "Fronius Gen24", subtitle: "mit BYD Batteriespeicher", detected: froniusOk, badge: froniusBadge, dialog: "fronius",
         logo: `<img src="https://brands.home-assistant.io/fronius/logo.png" alt="Fronius" style="max-width:120px;max-height:60px;height:auto" onerror="this.outerHTML='<span style=font-size:32px>Fronius</span>'">` },
       { key: "kostal_plenticore", label: "Kostal Plenticore", subtitle: "mit Batteriespeicher · Steuerung über Modbus TCP (Beta)", detected: kostalOk, badge: kostalBadge, dialog: "kostal",
@@ -5609,7 +5546,7 @@ class EegOptimizerPanel extends HTMLElement {
       <div class="prereq-cards" style="display:grid;grid-template-columns:repeat(auto-fit, minmax(150px, 1fr));gap:16px;margin-bottom:16px">
         ${inverterCards}
       </div>
-      ${huaweiSelected || solaxSelected || solaredgeSelected || froniusSelected || kostalSelected || smaSelected || sigenSelected ? `
+      ${huaweiSelected || solaxSelected || froniusSelected || kostalSelected || smaSelected || sigenSelected ? `
       <div class="card" style="padding:16px;margin-bottom:16px">
         <h3 style="margin:0 0 4px">Hausverbrauch-Sensoren</h3>
         <p style="font-size:13px;color:var(--secondary-text-color);margin:0 0 12px">
@@ -6057,39 +5994,7 @@ class EegOptimizerPanel extends HTMLElement {
         </div>`;
     }
 
-    // SolarEdge: Driver berechnet SOC + Kapazität kapazitätsgewichtet über
-    // alle Inverter (i1, i2, ...). Wizard zeigt nur einen Info-Block; die
-    // Combined-Sensor-IDs werden beim Save automatisch eingetragen.
-    if (this._wizardData.inverter_type === "solaredge_storedge") {
-      const detectedPrefixes = [];
-      if (this._wizardData.pv_power_sensor) detectedPrefixes.push("i1");
-      if (this._wizardData.pv_power_sensor_2) detectedPrefixes.push("i2");
-      const prefixInfo = detectedPrefixes.length > 0
-        ? `Erkannte Inverter: <strong>${detectedPrefixes.join(", ")}</strong>`
-        : "Inverter-Erkennung läuft …";
-      return `
-        <div style="display:flex;gap:12px;padding:14px;border-left:3px solid var(--primary-color);background:var(--secondary-background-color);border-radius:6px">
-          <ha-icon icon="mdi:battery-sync" style="--mdc-icon-size:28px;color:var(--primary-color);flex-shrink:0"></ha-icon>
-          <div>
-            <strong>SOC und Kapazität werden automatisch ermittelt.</strong>
-            <div class="help-text" style="margin-top:6px">
-              Bei SolarEdge liest die Integration die Werte pro Inverter
-              direkt aus den b1-Sensoren der <code>solaredge_modbus_multi</code>-
-              Integration und kombiniert sie:
-              <ul style="margin:6px 0 4px 18px">
-                <li>SOC = Σ(SOC<sub>i</sub> × Kapazität<sub>i</sub>) / Σ(Kapazität<sub>i</sub>)</li>
-                <li>Kapazität = Σ(Kapazität<sub>i</sub>)</li>
-              </ul>
-              ${prefixInfo}.
-              <br>Es werden zwei neue Sensoren angelegt:
-              <code>sensor.eeg_energy_optimizer_combined_soc</code> und
-              <code>sensor.eeg_energy_optimizer_combined_capacity</code>.
-            </div>
-          </div>
-        </div>`;
-    }
-
-    // Huawei Master/Slave: SOC wird treiberseitig kombiniert (wie SolarEdge).
+    // Huawei Master/Slave: SOC wird treiberseitig kombiniert.
     // Da die Anlage keinen Kapazitäts-Sensor liefert, wird die Kapazität je
     // Batterie manuell eingetragen → gewichteter SOC + korrekte Gesamtkapazität.
     const huaweiDevs = (this._detectedSensors && this._detectedSensors.huawei_battery_devices) || [];
@@ -6153,8 +6058,6 @@ class EegOptimizerPanel extends HTMLElement {
           ? "z.B. 10 für LUNA2000-10, 15 für LUNA2000-15"
           : this._wizardData.inverter_type === "solax_gen4"
           ? "z.B. 5.8 für Triple Power T58, 11.6 für zwei Module"
-          : this._wizardData.inverter_type === "solaredge_storedge"
-          ? "z.B. 9.8 für LG RESU10H, 4.8 für BYD LVS 4.0"
           : this._wizardData.inverter_type === "sma_smart_energy"
           ? "z.B. 10.2 für BYD Battery-Box Premium HVS 10.2 (SMA liefert keinen Kapazitätssensor)"
           : this._wizardData.inverter_type === "sigenergy_sigenstor"

@@ -179,7 +179,7 @@ class InverterBase(ABC):
     # ------------------------------------------------------------------
     # Optional: combined battery state for multi-inverter setups.
     # ------------------------------------------------------------------
-    # Bei Multi-Inverter-Setups (aktuell nur SolarEdge mit i1+i2+…) liefert
+    # Bei Multi-Inverter-Setups (Huawei Master/Slave) liefert
     # jede Modbus-Integration nur den SOC einer einzelnen Batterie. Der
     # Optimizer braucht aber den kapazitätsgewichteten Gesamt-SOC und die
     # Gesamtkapazität — sonst entlädt er gegen einen falschen Maßstab
@@ -192,7 +192,7 @@ class InverterBase(ABC):
     def get_combined_battery_state(self) -> tuple[float | None, float | None]:
         """Return (combined_soc_pct, combined_capacity_kwh) or (None, None).
 
-        Override in Multi-Battery-Drivers (z. B. SolarEdge) to provide a
+        Override in Multi-Battery-Drivers (z. B. Huawei Master/Slave) to provide a
         capacity-weighted SOC and the summed nominal capacity. Default
         (None, None) signals: no driver-side combination available — caller
         falls back to the configured battery_soc_sensor / battery_capacity_kwh.

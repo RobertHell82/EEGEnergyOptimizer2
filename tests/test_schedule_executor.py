@@ -904,7 +904,7 @@ def test_volle_batterie_wandert_mit_dem_ladedeckel():
     Der Regressionsfall: eine feste 99-%-Schwelle bliebe bei einem Deckel von
     90 % dauerhaft unerreicht. Die Anlage stünde immer unter „Ladelimit 0"
     statt im Automatikmodus, mit entsprechend vielen Registerschreibvorgängen
-    (bei SolarEdge zählt genau die der Register-Writes-Sensor).
+    (die zählt der Register-Writes-Sensor).
     """
     plan = {"slots": [_slot(0, battery_p=0.0, grid_p=3.0, soc=90.0)], "max_soc_pct": 90.0}
     action = plan_action(plan, NOW)

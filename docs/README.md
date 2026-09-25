@@ -31,8 +31,6 @@ Unterstützt werden derzeit **Fronius Gen24, Huawei SUN2000, Kostal Plenticore, 
 | **SMA Smart Energy** | [SMA einrichten](guides/sma.md) |
 | **SolaX Gen4+** | [SolaX Modbus einrichten](guides/solax.md) |
 
-> SolarEdge wird **derzeit nicht** unterstützt — der Treiber ist enthalten, aber stillgelegt. Welcher Wechselrichter wann dazukommt und was dafür noch fehlt: **[Stand der Unterstützung](wechselrichter-status.md)**.
-
 ## ☀️ PV-Prognose einrichten
 
 Eine der beiden Prognose-Quellen wird benötigt:

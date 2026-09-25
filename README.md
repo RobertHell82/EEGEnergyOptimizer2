@@ -60,8 +60,6 @@ Alle sechs werden vom Fahrplan **gesteuert** (Ladelimit und erzwungene Entladung
 
 **Beta** heißt: Die Steuerung ist an einer echten Anlage nachgewiesen, aber noch nicht so breit erprobt wie die übrigen. Den genauen Stand je Gerät führt [docs/wechselrichter-status.md](docs/wechselrichter-status.md).
 
-> **SolarEdge wird derzeit nicht unterstützt.** Der Treiber ist vollständig enthalten, aber stillgelegt: Er steht nicht zur Auswahl und wird nicht gesteuert. Er wird wieder freigeschaltet, sobald die Fahrplan-Steuerung an einer echten Anlage des jeweiligen Typs nachgewiesen ist — Stand, offene Punkte und Freischaltweg: **[docs/wechselrichter-status.md](docs/wechselrichter-status.md)**.
-
 ## Installation
 
 1. HACS in Home Assistant öffnen

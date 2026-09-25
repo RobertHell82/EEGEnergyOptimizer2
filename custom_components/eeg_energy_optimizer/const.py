@@ -39,7 +39,6 @@ CONF_HUAWEI_DEVICE_IDS = "huawei_device_ids"
 
 INVERTER_TYPE_HUAWEI = "huawei_sun2000"
 INVERTER_TYPE_SOLAX = "solax_gen4"
-INVERTER_TYPE_SOLAREDGE = "solaredge_storedge"
 INVERTER_TYPE_FRONIUS = "fronius_gen24"
 INVERTER_TYPE_KOSTAL = "kostal_plenticore"
 INVERTER_TYPE_SMA = "sma_smart_energy"
@@ -48,12 +47,9 @@ INVERTER_TYPE_SIGENERGY = "sigenergy_sigenstor"
 # Sign conventions per inverter type for battery and grid power sensors.
 # battery_sign: +1 = positive means charging (Huawei), -1 = positive means discharging (SolaX)
 # grid_sign:    +1 = positive means export (Huawei),   -1 = positive means import (SolaX)
-# pv_includes_battery: True = PV sensor includes battery discharge power (SolarEdge ac_power)
-#   → real PV = pv_raw + battery_raw (before sign normalization)
 INVERTER_SIGN_CONVENTIONS = {
     "huawei_sun2000": {"battery_sign": 1, "grid_sign": 1},
     "solax_gen4":     {"battery_sign": -1, "grid_sign": -1},
-    "solaredge_storedge": {"battery_sign": 1, "grid_sign": 1, "pv_includes_battery": True},
     # Fronius exposes only directional sensors (charging/discharging,
     # netzeinspeisung/netzbezug) — never a single signed value. The setup
     # therefore creates synthetic combined sensors that are *already canonical*
@@ -91,7 +87,7 @@ EMMA_SENSOR_PREFIX = "sensor.emma"
 # wizard, backfill, and sensor platform agree on the names.
 COMBINED_BATTERY_POWER_SENSOR_ID = "sensor.eeg_energy_optimizer_battery_power"
 COMBINED_GRID_POWER_SENSOR_ID = "sensor.eeg_energy_optimizer_grid_power"
-# Multi-battery driver-side combined sensors (currently SolarEdge i1+i2+…).
+# Multi-battery driver-side combined sensors (currently Huawei Master/Slave).
 # Pinned so Wizard, Optimizer-Snapshot, and frontend dashboard agree on the
 # entity names without depending on HA's slugify rules.
 COMBINED_BATTERY_SOC_SENSOR_ID = "sensor.eeg_energy_optimizer_combined_soc"
@@ -219,7 +215,7 @@ GUARD_EMERGENCY_BLOCK_MINUTES = 15
 
 # Totbänder: Schreiben nur bei relevanter Änderung — der Guard-Lauf kommt
 # alle 30 s, geschrieben werden soll aber nur, was den Wechselrichter
-# wirklich bewegen würde (SolarEdge-NVRAM-Lektion aus der Hauptintegration).
+# wirklich bewegen würde (NVRAM-Verschleiß-Lektion aus der Hauptintegration).
 EXECUTOR_CHARGE_DEADBAND_KW = 0.2
 EXECUTOR_DISCHARGE_DEADBAND_KW = 0.2
 EXECUTOR_TARGET_SOC_DEADBAND_PCT = 1.0

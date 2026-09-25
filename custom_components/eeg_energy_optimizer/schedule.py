@@ -1576,7 +1576,7 @@ async def async_collect_inputs(
     # ``has_combined_battery_state`` ist eine PROPERTY (inverter/base.py) —
     # das getattr liefert also bereits den Wahrheitswert. Bis 1.5.50 stand
     # hier ein zusätzlicher Aufruf mit Klammern: bei genau den Treibern, die
-    # True melden (SolarEdge, Huawei Master/Slave), warf das
+    # True melden (Huawei Master/Slave), warf das
     # "'bool' object is not callable", der except-Zweig schluckte es, und der
     # kapazitätsgewichtete Zustand erreichte den Fahrplan nie. sensor.py
     # (_hat_kombinierten_batteriezustand) macht es seit jeher richtig.

@@ -49,9 +49,7 @@ from .const import (
     CONF_HEIZSTAB_PORT,
     CONF_LOOKBACK_WEEKS,
     CONF_TELEMETRY_ENABLED,
-    COMBINED_BATTERY_CAPACITY_SENSOR_ID,
     COMBINED_BATTERY_POWER_SENSOR_ID,
-    COMBINED_BATTERY_SOC_SENSOR_ID,
     COMBINED_GRID_POWER_SENSOR_ID,
     CONSUMPTION_SENSOR,
     DEFAULT_LOOKBACK_WEEKS,
@@ -61,7 +59,6 @@ from .const import (
     HEIZSTAB_READ_INTERVAL_S,
     HEIZSTAB_TIMESYNC_INTERVAL_H,
     HEIZSTAB_WRITE_INTERVAL_S,
-    INVERTER_SIGN_CONVENTIONS,
     SENSOR_UNAVAIL_THRESHOLD_S,
     TELEMETRY_PROFILE_HEARTBEAT_S,
     TELEMETRY_SETTINGS_KEYS,
@@ -566,10 +563,7 @@ async def async_backfill_hausverbrauch_stats(
         # sonst überschreibt der Backfill bei jedem Start die korrekt
         # aufgezeichnete Statistik mit falsch berechneten Werten.
         from .power_readings import resolve_backfill_signs
-        inv_type = config.get(CONF_INVERTER_TYPE, "")
-        signs = INVERTER_SIGN_CONVENTIONS.get(inv_type, {})
         battery_sign, grid_sign = resolve_backfill_signs(config)
-        pv_includes_battery = signs.get("pv_includes_battery", False)
 
         lookback_weeks = config.get(CONF_LOOKBACK_WEEKS, DEFAULT_LOOKBACK_WEEKS)
         start_time = now - timedelta(weeks=lookback_weeks)
@@ -838,7 +832,6 @@ async def async_backfill_hausverbrauch_stats(
         # (positive = charging / positive = export). No further sign flip.
         stunden, skipped = backfill_stunden(
             pv_by_ts, pv2_by_ts, battery_by_ts, grid_by_ts, heiz_by_ts,
-            pv_includes_battery=pv_includes_battery,
             vorhanden=vorhanden,
             alles_neu=alles_neu,
         )
@@ -1024,7 +1017,7 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # v11 only bumps the schema version to mark Fronius support — no
         # data backfill needed because fronius_modbus_host/port are written
         # by the wizard when (and only when) the user actually selects
-        # Fronius. Existing Huawei/SolaX/SolarEdge entries get the bump
+        # Fronius. Existing Huawei/SolaX entries get the bump
         # without their data dict being touched.
         hass.config_entries.async_update_entry(entry, data=entry.data, version=11)
 
@@ -1064,27 +1057,16 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if entry.version < 15:
         # v15 — Phase 11: Dual-Window-Entladung
         # Additive Migration: setzt neue Slot-Konfigurations-Keys mit Defaults.
-        # Default-Wechsel (D-04, intendiert) — Bestands-Anlagen (nicht
-        # SolarEdge) erhalten Dual-Window automatisch beim Update. Mitigation:
-        # Pro-Slot-Hysterese und PV-Tomorrow-Garantie verhindern aggressive
-        # Erstaktivierung; CHANGELOG dokumentiert die Verhaltensänderung
-        # prominent ("Verhaltensänderung beim Update").
-        # SolarEdge-Sonderfall (D-03): NVRAM-Verschleiß erlaubt nur einen
-        # Slot pro Tag → enable_dual_discharge=False, enable_slot_a=True,
-        # enable_slot_b=False. Defense-in-depth in 11-03 (Save-Path) und
-        # 11-02 (Runtime-Erzwingung).
+        # Default-Wechsel (D-04, intendiert) — Bestands-Anlagen erhalten
+        # Dual-Window automatisch beim Update. Mitigation: Pro-Slot-Hysterese
+        # und PV-Tomorrow-Garantie verhindern aggressive Erstaktivierung;
+        # CHANGELOG dokumentiert die Verhaltensänderung prominent
+        # ("Verhaltensänderung beim Update").
         # setdefault statt Hard-Set respektiert vorhandene User-Werte (T-11-01-01).
         new_data = {**entry.data}
-        inverter_type = new_data.get("inverter_type", "")
-        is_solaredge = inverter_type == "solaredge_storedge"
-        if is_solaredge:
-            new_data.setdefault("enable_dual_discharge", False)
-            new_data.setdefault("enable_slot_a", True)
-            new_data.setdefault("enable_slot_b", False)
-        else:
-            new_data.setdefault("enable_dual_discharge", True)
-            new_data.setdefault("enable_slot_a", True)
-            new_data.setdefault("enable_slot_b", True)
+        new_data.setdefault("enable_dual_discharge", True)
+        new_data.setdefault("enable_slot_a", True)
+        new_data.setdefault("enable_slot_b", True)
         new_data.setdefault("discharge_a_start_time", "20:00")
         new_data.setdefault("discharge_b_start_time", "03:00")
         new_data.setdefault("discharge_b_end_cap", "07:00")
@@ -1094,26 +1076,7 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # v16 — Phase 12: Dual-Window-Master-Toggle entfernt, Slot-A/B sind
         # die einzige Discharge-Logik. discharge_start_time + enable_dual_discharge
         # werden aus der Config entfernt (Optimizer-Code liest sie nicht mehr).
-        # SolarEdge-Sonderfall: bisheriger discharge_start_time wird auf den
-        # passenden Slot übertragen, damit das gewohnte Zeitfenster erhalten
-        # bleibt. start < 12:00 → Slot B (Morgen-Entladung), sonst Slot A.
         new_data = {**entry.data}
-        inv_type = new_data.get("inverter_type", "")
-        is_solaredge = inv_type == "solaredge_storedge"
-        old_start = new_data.get("discharge_start_time", "")
-        if is_solaredge and old_start:
-            try:
-                old_h = int(str(old_start).split(":")[0])
-                if old_h < 12:
-                    new_data["enable_slot_a"] = False
-                    new_data["enable_slot_b"] = True
-                    new_data["discharge_b_start_time"] = old_start
-                else:
-                    new_data["enable_slot_a"] = True
-                    new_data["enable_slot_b"] = False
-                    new_data["discharge_a_start_time"] = old_start
-            except (ValueError, AttributeError):
-                pass
         new_data.pop("discharge_start_time", None)
         new_data.pop("enable_dual_discharge", None)
         hass.config_entries.async_update_entry(entry, data=new_data, version=16)
@@ -1139,23 +1102,9 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass.config_entries.async_update_entry(entry, data=new_data, version=18)
 
     if entry.version < 19:
-        # v19 — SolarEdge: Auto-Switch auf Driver-side Combined-SOC/Capacity.
-        # Bei SolarEdge liefert jeder Modbus-Inverter nur den SOC seiner
-        # eigenen Batterie. Der Optimizer-Snapshot überstimmt das jetzt via
-        # InverterBase.get_combined_battery_state(), aber das Frontend liest
-        # den SOC weiterhin direkt aus battery_soc_sensor. Diese Migration
-        # zeigt beide Sensor-Felder auf die neuen synthetischen Combined-
-        # Entities um, sodass UI und Optimizer denselben Wert sehen — auch
-        # bei Single-Inverter-SolarEdge (Combined liefert dann nur i1's SOC).
-        # Andere Inverter (Huawei, Fronius, SolaX): unverändert.
-        new_data = {**entry.data}
-        if new_data.get("inverter_type") == "solaredge_storedge":
-            new_data["battery_soc_sensor"] = COMBINED_BATTERY_SOC_SENSOR_ID
-            new_data["battery_capacity_sensor"] = COMBINED_BATTERY_CAPACITY_SENSOR_ID
-            # Manueller Capacity-Fallback ist nicht mehr nötig — Driver
-            # summiert die echten Sensorwerte. Setze ihn aber nicht zurück,
-            # damit der User seine Konfiguration nachvollziehen kann.
-        hass.config_entries.async_update_entry(entry, data=new_data, version=19)
+        # v19 — betraf nur einen inzwischen entfernten Treiber (Combined-SOC).
+        # Bleibt als reiner Versionssprung stehen.
+        hass.config_entries.async_update_entry(entry, data=entry.data, version=19)
 
     if entry.version < 20:
         # v20 — Feature "Einspeisebegrenzung optimieren" (Huawei/Fronius).
@@ -2491,7 +2440,7 @@ _RELOAD_CONFIG_KEYS = frozenset({
 # Präfixe decken Inverter-Anbindung (Modbus-Hosts/Ports, Geräte-IDs,
 # Steuer-Entities) und Forecast-Quellen ab, ohne jeden Key einzeln zu pflegen.
 _RELOAD_CONFIG_PREFIXES = (
-    "fronius_", "huawei_", "kostal_", "sigen_", "sma_", "solaredge_", "solax_",
+    "fronius_", "huawei_", "kostal_", "sigen_", "sma_", "solax_",
     "forecast_",
 )
 

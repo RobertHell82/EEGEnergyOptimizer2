@@ -12,7 +12,6 @@ from custom_components.eeg_energy_optimizer.inverter.huawei import HuaweiInverte
 from custom_components.eeg_energy_optimizer.inverter.kostal import KostalInverter
 from custom_components.eeg_energy_optimizer.inverter.sigenergy import SigenergyInverter
 from custom_components.eeg_energy_optimizer.inverter.sma import SMAInverter
-from custom_components.eeg_energy_optimizer.inverter.solaredge import SolarEdgeInverter
 from custom_components.eeg_energy_optimizer.inverter.solax import SolaXInverter
 
 
@@ -63,9 +62,6 @@ class TestRegisteredInverterTypes:
 
     def test_solax_registered(self):
         assert INVERTER_TYPES.get("solax_gen4") is SolaXInverter
-
-    def test_solaredge_registered(self):
-        assert INVERTER_TYPES.get("solaredge_storedge") is SolarEdgeInverter
 
     def test_fronius_registered(self):
         assert INVERTER_TYPES.get("fronius_gen24") is FroniusInverter

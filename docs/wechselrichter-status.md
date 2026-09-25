@@ -20,13 +20,7 @@ führen.
 | **Kostal Plenticore** | vorhanden | **ja** (Beta) | **ja** |
 | **Sigenergy SigenStor** | vorhanden | **ja** (Feldtest) | **ja** |
 | **SMA Smart Energy** | vorhanden | **ja** (Beta) | **ja** |
-| SolarEdge StorEdge | vorhanden | nein | nein |
 | **SolaX Gen4+** | vorhanden | **ja** (Feldtest) | **ja** |
-
-Die Treiber der übrigen Wechselrichter sind **vollständig erhalten und nur
-stillgelegt** — nichts davon wurde entfernt. Sie werden Schritt für Schritt
-wieder freigeschaltet, sobald die Steuerung an einer echten Anlage des
-jeweiligen Typs nachgewiesen ist.
 
 ## Warum stillgelegt?
 
@@ -34,9 +28,7 @@ Die 2.0 hat die Steuerung vollständig ersetzt: Statt Zuständen und Zeitfenster
 setzt ein Executor alle 30 Sekunden einen 48-Stunden-Fahrplan durch — mit
 Ladelimit-Nachführung, Entlade-Nachführung, Not-Aus und Failsafe. Dieser Weg
 ist für Huawei nachgewiesen, für Fronius, Kostal, Sigenergy, SMA und SolaX
-im Feldtest. Für SolarEdge stammt die Steuerverifikation aus der 1.x-Reihe
-und galt der alten Zustandslogik; sie überträgt sich nicht automatisch auf
-die minütliche Nachführung.
+im Feldtest.
 
 Ein Treiber, der nur anzeigt, aber nicht steuert, ist für den Anwender
 irreführend — deshalb steht er gar nicht erst zur Auswahl.
@@ -178,30 +170,6 @@ Steuerung hier die geplante Einspeisung vor statt der Batterieleistung
 (`discharge_is_grid_setpoint`). Offen: Feldtest der Fahrplan-Nachführung
 über mehrere Tage, Koexistenz mit dem SHM 2.0 im Dauerbetrieb.
 Guide: [sma.md](guides/sma.md)
-
-### SolarEdge StorEdge
-
-Steuerung über die
-[SolarEdge Modbus Multi](https://github.com/WillCodeForCats/solaredge-modbus-multi)
-Integration, maximal 2 Wechselrichter.
-
-> [!WARNING]
-> **Der kritische Punkt für die 2.0:** SolarEdge persistiert die
-> Steuerregister im Flash-Speicher (NVRAM) des Wechselrichters, und Flash hat
-> eine begrenzte Zahl an Schreibzyklen (typisch 100.000+). Der Fahrplan führt
-> minütlich nach — bevor SolarEdge freigegeben wird, muss geklärt sein, wie
-> oft dabei tatsächlich geschrieben wird und ob die Totbänder das ausreichend
-> begrenzen. Solange nicht gesteuert wird, fallen keine Schreibvorgänge an.
-
-> [!NOTE]
-> **Offen für Multi-Inverter:** `async_set_charge_limit` schreibt
-> `storage_charge_limit` mit demselben Wert an jeden Wechselrichter, das
-> Systemlimit wird also mit der Gerätezahl vervielfacht. Bei Huawei war das
-> der Fehler, den 2.1.1-dev30 behoben hat (Aufteilung nach freiem
-> Batterieplatz über `_distribution.py`); für SolarEdge ist er vor der
-> Freischaltung genauso zu beheben. Ohne Steuerung ist er folgenlos.
-
-Guide: [solaredge.md](guides/solaredge.md)
 
 ### SolaX Gen4+
 

@@ -9,9 +9,7 @@ Der Fahrplan ist der **einzige Aktor**: Jede Minute rechnet der
 **Steuerung** (`ScheduleExecutor`) den zuletzt gerechneten Plan gegen die
 Messwerte und setzt ihn am Wechselrichter durch — bei **Fronius Gen24**,
 **Huawei SUN2000**, **Kostal Plenticore**, **Sigenergy SigenStor**,
-**SMA Smart Energy** und **SolaX Gen4+**. Allein SolarEdge ist stillgelegt
-(`supports_schedule_control = False`), bis die Steuerung an einer echten
-Anlage dieses Typs nachgewiesen ist. Eine Zustands-Heuristik (Morgen-
+**SMA Smart Energy** und **SolaX Gen4+**. Eine Zustands-Heuristik (Morgen-
 Einspeisung, Nacht-Entladung, Einspeisebegrenzung) gibt es nicht — diese
 Verhalten entstehen im Fahrplan von selbst aus den Tarifen. Rechnen und Steuern sind strikt getrennt: Der Optimierer schreibt nie
 selbst, nur die Steuerung.
@@ -419,8 +417,7 @@ letzten Stunde auseinander.
   Vorzeichen den Fehler verdoppelte, bleibt es wie es ist.
 * ~~**Weitere Treiber steuern**~~ — **kein offener Punkt, sondern der
   bekannte Stand.** Gesteuert wird nur Huawei (`supports_schedule_control`).
-  Fronius, Kostal, SMA und SolaX hätten stufenlose Steuerwege, SolarEdge nur
-  eine grobe Modusumschaltung. Sie rechnen und zeigen an; das ist bewusst so
+  Fronius, Kostal, SMA und SolaX hätten stufenlose Steuerwege. Sie rechnen und zeigen an; das ist bewusst so
   und wartet auf Zeit und Geräte, nicht auf eine Erkenntnis.
 * ~~**Entlade-Nachführung oberhalb 2 kW**~~ — **geschlossen** (Entscheidung
   26.08.2026). Gemessen ist die Nachführung nur zwischen 0,47 und 1,86 kW;

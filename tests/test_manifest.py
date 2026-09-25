@@ -32,7 +32,6 @@ class TestManifest:
         for dep in (
             "huawei_solar",
             "solax_modbus",
-            "solaredge_modbus_multi",
             "fronius",
             "sigen",
         ):

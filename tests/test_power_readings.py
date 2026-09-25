@@ -5,10 +5,9 @@ Pinned das Verhalten des zentralen Power-Sensor-Helpers:
   - compute_pv_now_kw: Dashboard-Parität — der Wert, der ans Telemetrie-
     Backend geht, ist IDENTISCH zu dem, was sensor.PVLeistungSensor anzeigt.
 
-Hintergrund: Bei SolarEdge weicht der Telemetrie-Wert vom HA-Dashboard-
-Wert ab, wenn der Reporter den rohen ac_power-Sensor sendet, statt die
-``pv_includes_battery``-Korrektur anzuwenden. Backend ist unschuldig — es
-speichert pv_now_kw 1:1.
+Hintergrund: Weicht der Rechenweg des Reporters von dem des Sensors ab,
+zeigt die Telemetrie einen anderen Wert als das HA-Dashboard. Backend ist
+unschuldig — es speichert pv_now_kw 1:1.
 """
 from __future__ import annotations
 
@@ -130,38 +129,6 @@ class TestComputePvNowKw:
         })
         assert compute_pv_now_kw(hass, cfg) == 3.5
 
-    def test_solaredge_subtracts_battery_discharge_from_ac_power(self):
-        """SolarEdge: ac_power 6.0 + battery_raw -1.8 (Entladung) → echte PV 4.2.
-
-        Genau dieses Szenario erklärt die Diskrepanz, die der User berichtet:
-        ohne Korrektur sendet der Reporter 6.0 kW, das Dashboard zeigt 4.2.
-        """
-        cfg = {
-            CONF_INVERTER_TYPE: "solaredge_storedge",
-            CONF_PV_POWER_SENSOR: "sensor.solaredge_i1_ac_power",
-            CONF_BATTERY_POWER_SENSOR: "sensor.solaredge_i1_b1_dc_power",
-        }
-        hass = _make_hass({
-            "sensor.solaredge_i1_ac_power": _make_state("6000", "W"),
-            "sensor.solaredge_i1_b1_dc_power": _make_state("-1800", "W"),
-        })
-        assert compute_pv_now_kw(hass, cfg) == pytest.approx(4.2)
-
-    def test_solaredge_adds_battery_charge_to_ac_power(self):
-        """Beim Laden: ac_power 4.0 + battery_raw +2.0 → echte PV 6.0
-        (Inverter speist 2 kW von PV in die Batterie, ac_power zeigt nur den
-        Anteil der ans Hausnetz/Grid geht)."""
-        cfg = {
-            CONF_INVERTER_TYPE: "solaredge_storedge",
-            CONF_PV_POWER_SENSOR: "sensor.solaredge_i1_ac_power",
-            CONF_BATTERY_POWER_SENSOR: "sensor.solaredge_i1_b1_dc_power",
-        }
-        hass = _make_hass({
-            "sensor.solaredge_i1_ac_power": _make_state("4.0", "kW"),
-            "sensor.solaredge_i1_b1_dc_power": _make_state("2.0", "kW"),
-        })
-        assert compute_pv_now_kw(hass, cfg) == pytest.approx(6.0)
-
     def test_clips_negative_pv_to_zero(self):
         """Inverter-Eigenverbrauch in der Nacht ergibt -0.005 kW → Dashboard zeigt 0."""
         cfg = {
@@ -182,25 +149,6 @@ class TestComputePvNowKw:
             "sensor.pv2": _make_state("2.5", "kW"),
         })
         assert compute_pv_now_kw(hass, cfg) == pytest.approx(5.5)
-
-    def test_multi_inverter_solaredge_uses_both_batteries(self):
-        """Multi-Inverter SolarEdge: zweiter Inverter hat eigene b1_dc_power-Quelle.
-        Heuristik: pv2 endet auf 'ac_power' → ersetze durch 'b1_dc_power'.
-        """
-        cfg = {
-            CONF_INVERTER_TYPE: "solaredge_storedge",
-            CONF_PV_POWER_SENSOR: "sensor.solaredge_i1_ac_power",
-            CONF_PV_POWER_SENSOR_2: "sensor.solaredge_i2_ac_power",
-            CONF_BATTERY_POWER_SENSOR: "sensor.solaredge_i1_b1_dc_power",
-        }
-        hass = _make_hass({
-            "sensor.solaredge_i1_ac_power": _make_state("3.0", "kW"),
-            "sensor.solaredge_i2_ac_power": _make_state("2.0", "kW"),
-            "sensor.solaredge_i1_b1_dc_power": _make_state("-1.0", "kW"),
-            "sensor.solaredge_i2_b1_dc_power": _make_state("-0.5", "kW"),
-        })
-        # PV = (3.0 + 2.0) + (-1.0) + (-0.5) = 3.5
-        assert compute_pv_now_kw(hass, cfg) == pytest.approx(3.5)
 
     def test_returns_none_when_both_pv_sensors_unavailable(self):
         """Komplett dunkel: Backend bekommt None, nicht 0 (analytische Differenz)."""
@@ -227,30 +175,6 @@ class TestComputePvNowKw:
             "sensor.pv2": _make_state("2.0", "kW"),
         })
         assert compute_pv_now_kw(hass, cfg) == pytest.approx(2.0)
-
-    def test_unit_normalization_propagates_through_correction(self):
-        """Wenn primärer Sensor in W, Batterie in kW: beide werden korrekt normalisiert."""
-        cfg = {
-            CONF_INVERTER_TYPE: "solaredge_storedge",
-            CONF_PV_POWER_SENSOR: "sensor.solaredge_ac_power",
-            CONF_BATTERY_POWER_SENSOR: "sensor.solaredge_battery",
-        }
-        hass = _make_hass({
-            "sensor.solaredge_ac_power": _make_state("6000", "W"),     # 6.0 kW
-            "sensor.solaredge_battery": _make_state("-1.8", "kW"),     # -1.8 kW
-        })
-        assert compute_pv_now_kw(hass, cfg) == pytest.approx(4.2)
-
-    def test_solaredge_without_battery_sensor_is_uncorrected(self):
-        """Wenn pv_includes_battery=True aber kein Batterie-Sensor konfiguriert,
-        gibt es nichts zu subtrahieren — primärer Wert geht durch (geclamped)."""
-        cfg = {
-            CONF_INVERTER_TYPE: "solaredge_storedge",
-            CONF_PV_POWER_SENSOR: "sensor.solaredge_ac_power",
-            # kein CONF_BATTERY_POWER_SENSOR
-        }
-        hass = _make_hass({"sensor.solaredge_ac_power": _make_state("4.5", "kW")})
-        assert compute_pv_now_kw(hass, cfg) == 4.5
 
 
 # ---------------------------------------------------------------------------
@@ -360,16 +284,6 @@ class TestComputeHouseLoadKw:
         })
         cfg = self._cfg(**{CONF_GRID_POWER_SENSOR: "sensor.emma_einspeiseleistung"})
         assert compute_house_load_kw(hass, cfg) == pytest.approx(1.5)
-
-    def test_solaredge_rekonstruiert_echte_pv(self):
-        """ac_power 4.0 + Ladung 2.0 → echte PV 6.0; minus Laden 2.0, Export 1.0 → 3.0."""
-        hass = _make_hass({
-            "sensor.pv": _make_state("4.0", "kW"),
-            "sensor.bat": _make_state("2.0", "kW"),
-            "sensor.grid": _make_state("1.0", "kW"),
-        })
-        cfg = self._cfg(inv_type="solaredge_storedge")
-        assert compute_house_load_kw(hass, cfg) == pytest.approx(3.0)
 
     def test_zweite_batterie_wird_mitgerechnet(self):
         """Huawei Master/Slave: beide Ladeleistungen mindern den Hausanteil."""
@@ -800,11 +714,10 @@ def test_backfill_klemmt_auf_null_und_verwirft_unrealistisches():
     assert stunden == [(_TS, 0.0, 0.0, 0.0)]
 
 
-def test_backfill_solaredge_und_zweiter_pv_sensor():
-    """PV2 wird addiert, bei SolarEdge die Batterie in die PV zurückgerechnet."""
+def test_backfill_zweiter_pv_sensor():
+    """PV2 wird addiert."""
     stunden, _ = backfill_stunden(
         {_TS: 2.0}, {_TS: 1.0}, {_TS: -1.0}, {_TS: 0.5}, {},
-        pv_includes_battery=True,
     )
-    # pv = 2 + 1 + (−1) = 2; haus = 2 − (−1) − 0,5 = 2,5
-    assert stunden[0][1] == pytest.approx(2.5)
+    # pv = 2 + 1 = 3; haus = 3 − (−1) − 0,5 = 3,5
+    assert stunden[0][1] == pytest.approx(3.5)

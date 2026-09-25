@@ -51,7 +51,6 @@ from .const import (
     DEFAULT_UPDATE_INTERVAL_SLOW,
     DOMAIN,
     FORECAST_SOURCE_SOLCAST,
-    INVERTER_SIGN_CONVENTIONS,
     WEEKDAY_KEYS,
 )
 from .coordinator import ConsumptionCoordinator
@@ -464,10 +463,8 @@ class HausverbrauchSensor(SensorEntity):
         # resolve_sign berücksichtigt zusätzlich Huawei-EMMA-Sensoren.
         from .power_readings import resolve_sign
         inv_type = config.get(CONF_INVERTER_TYPE, "")
-        signs = INVERTER_SIGN_CONVENTIONS.get(inv_type, {})
         self._battery_sign = resolve_sign(inv_type, self._battery_power_sensor_id, "battery_sign")
         self._grid_sign = resolve_sign(inv_type, self._grid_sensor_id, "grid_sign")
-        self._pv_includes_battery = signs.get("pv_includes_battery", False)
         self._attr_unique_id = f"{DOMAIN}_{entry.entry_id}_hausverbrauch"
         self._attr_device_info = _device_info(entry.entry_id)
         self._attr_native_value: float | None = None
@@ -500,17 +497,8 @@ class HausverbrauchSensor(SensorEntity):
             if pv2 is not None:
                 pv_power += pv2
 
-        # SolarEdge: ac_power includes battery discharge → correct to get real PV
-        # PV_real = ac_power + battery_raw (positive=charge, negative=discharge)
-        # Don't clamp here — small negative from conversion losses is expected
-        # and needed for accurate Hausverbrauch (formula simplifies to ac_power - grid)
-        if self._pv_includes_battery and battery_power is not None:
-            pv_power = pv_power + battery_power
-
         # Second battery (Huawei Master/Slave): add the raw signed power of the
-        # slave battery so PV − Battery − Grid reflects the whole system. Done
-        # after the SolarEdge correction so it never affects that path (the key
-        # is only set for Huawei multi-inverter setups).
+        # slave battery so PV − Battery − Grid reflects the whole system.
         if self._battery_power_2_sensor_id:
             bat2 = _read_power_kw(self.hass, self._battery_power_2_sensor_id)
             if bat2 is not None:
@@ -568,10 +556,7 @@ class HausverbrauchSensor(SensorEntity):
 class PVLeistungSensor(SensorEntity):
     """Total PV production from all inverters, normalized to real PV output.
 
-    Sums pv_power_sensor + optional pv_power_sensor_2 and applies the
-    pv_includes_battery correction per inverter (SolarEdge: ac_power includes
-    battery discharge, so we must subtract each inverter's battery to get real PV).
-    Result clamped to >= 0.
+    Sums pv_power_sensor + optional pv_power_sensor_2. Result clamped to >= 0.
     """
 
     _attr_has_entity_name = True
@@ -644,8 +629,7 @@ class BatterieleistungSensor(SensorEntity):
     """Normalized total battery power: positive = charging, negative = discharging.
 
     Sums battery power from all inverters and applies the inverter-specific
-    battery_sign convention. For multi-inverter SolarEdge, the second battery
-    is derived from the second PV sensor prefix.
+    battery_sign convention.
     """
 
     _attr_has_entity_name = True
@@ -662,15 +646,8 @@ class BatterieleistungSensor(SensorEntity):
         from .power_readings import resolve_sign
         inv_type = config.get(CONF_INVERTER_TYPE, "")
         self._battery_sign = resolve_sign(inv_type, self._battery_sensor_id, "battery_sign")
-        # Second battery (multi-inverter). Explicit config wins (e.g. Huawei
-        # Master/Slave, where the second battery has its own signed sensor);
-        # otherwise derive it from the second PV sensor prefix (SolarEdge:
-        # ac_power → b1_dc_power).
+        # Second battery (Huawei Master/Slave, own signed sensor).
         self._battery_2_sensor_id = config.get(CONF_BATTERY_POWER_SENSOR_2, "")
-        if not self._battery_2_sensor_id:
-            pv2_id = config.get(CONF_PV_POWER_SENSOR_2, "")
-            if pv2_id and "ac_power" in pv2_id:
-                self._battery_2_sensor_id = pv2_id.replace("ac_power", "b1_dc_power")
         self._attr_unique_id = f"{DOMAIN}_{entry.entry_id}_batterieleistung"
         self._attr_device_info = _device_info(entry.entry_id)
         self._attr_native_value: float | None = None
@@ -883,7 +860,7 @@ class CombinedBatterySocSensor(SensorEntity):
     """Capacity-weighted SOC across all batteries managed by the inverter.
 
     Wird nur registriert, wenn der Driver get_combined_battery_state() einen
-    Wert liefert (aktuell: SolarEdge mit ≥ 2 Invertern). Spiegelt exakt den
+    Wert liefert (aktuell: Huawei Master/Slave). Spiegelt exakt den
     Wert, den der Optimizer intern nutzt — damit das UI nicht "44 %" zeigt,
     während der Optimizer mit "34.6 %" rechnet.
     """
@@ -2013,8 +1990,8 @@ async def async_setup_entry(
     batterieleistung_sensor = BatterieleistungSensor(hass, entry, config)
 
     # Combined-pair sensors (Fronius and similar). Created only when both
-    # pair config keys are present, so single-sensor setups (Huawei, SolaX,
-    # SolarEdge) get no extra entities.
+    # pair config keys are present, so single-sensor setups (Huawei, SolaX)
+    # get no extra entities.
     combined_battery_sensor = (
         BatteryPowerCombinedSensor(hass, entry, config)
         if _has_battery_pair(config) else None
@@ -2027,7 +2004,7 @@ async def async_setup_entry(
     inverter = data.get("inverter")
 
     # Combined SOC/Capacity sensors — only created when the driver actually
-    # provides them (multi-battery setups, currently only SolarEdge i1+i2+…).
+    # provides them (multi-battery setups, currently Huawei Master/Slave).
     # Single-battery drivers (Huawei, Fronius, SolaX) return (None, None)
     # from get_combined_battery_state() → no extra entities.
     if _inverter_has_combined_state(inverter):

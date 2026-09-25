@@ -64,8 +64,7 @@ doppelten Zeitstempeln), hier ist es unkritisch.
 
 **Die Messwerte kommen aus den Sensoren der Integration**, nicht aus den
 Rohsensoren des Wechselrichters. Der Hausverbrauch-Sensor trägt bereits die
-Vorzeichen-Normalisierung, die SolarEdge-Korrektur (ac_power enthält die
-Batterieentladung) und die Summe über mehrere Batterien. Ein zweiter Nachbau
+Vorzeichen-Normalisierung und die Summe über mehrere Batterien. Ein zweiter Nachbau
 hier wäre die klassische zweite Wahrheit.
 """
 
@@ -118,7 +117,7 @@ KEIN_EINGRIFF_MIN_KWH = 1.0
 KEIN_EINGRIFF_ANTEIL = 0.10
 
 # Unique-ID-Endungen der Sensoren, aus denen die Bilanz liest. Sie sind
-# bereits normalisiert (Vorzeichen, Multi-Batterie, SolarEdge).
+# bereits normalisiert (Vorzeichen, Multi-Batterie).
 _QUELLEN = {
     "pv": "pv_leistung",
     "netz": "netzleistung",

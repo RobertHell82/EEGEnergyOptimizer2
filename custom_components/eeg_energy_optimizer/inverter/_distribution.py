@@ -5,8 +5,7 @@ ihrer nutzbaren Energie ((SOC − Reserve) × Kapazität), gedeckelt an der
 maximalen Entladeleistung je Einheit. Überschuss von gedeckelten Einheiten
 wird iterativ auf die verbleibenden mit Headroom umverteilt.
 
-Wird von SolarEdge (i1+i2+…) und Huawei (Master/Slave) genutzt — eine Quelle
-der Wahrheit, damit beide Treiber dieselbe erprobte Logik teilen.
+Wird von Huawei (Master/Slave) genutzt.
 """
 
 from __future__ import annotations
@@ -22,8 +21,7 @@ def distribute_proportional(
         units: Liste von Dicts mit den Schlüsseln ``id_key`` (eindeutige ID
             der Einheit), ``usable_kwh`` (nutzbare Energie) und ``max_kw``
             (maximale Entladeleistung der Einheit).
-        id_key: Name des ID-Felds in den Dicts (SolarEdge: "prefix",
-            Huawei: "device_id").
+        id_key: Name des ID-Felds in den Dicts (Huawei: "device_id").
 
     Returns:
         Dict ``{id: power_kw}`` mit Σ power ≈ total_kw (begrenzt durch die

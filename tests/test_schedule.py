@@ -1117,7 +1117,7 @@ async def test_kombinierter_batteriezustand_wird_wirklich_gelesen():
     """``has_combined_battery_state`` ist eine PROPERTY, keine Methode.
 
     Bis 1.5.50 stand in async_collect_inputs ein Aufruf mit Klammern. Bei
-    genau den Treibern, die True melden (SolarEdge, Huawei Master/Slave),
+    genau den Treibern, die True melden (Huawei Master/Slave),
     warf das „'bool' object is not callable"; der except-Zweig schluckte den
     Fehler still, und statt des kapazitätsgewichteten Zustands landete immer
     der Sensor-Fallback im Fahrplan. Der Test baut die Attrappe deshalb wie

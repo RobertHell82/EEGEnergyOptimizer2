@@ -20,7 +20,6 @@
   "after_dependencies": [
     "huawei_solar",
     "solax_modbus",
-    "solaredge_modbus_multi",
     "fronius",
     "kostal_plenticore",
     "sma",

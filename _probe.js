@@ -30,39 +30,7 @@ class X {
         </div>`;
     }
 
-    // SolarEdge: Driver berechnet SOC + Kapazität kapazitätsgewichtet über
-    // alle Inverter (i1, i2, ...). Wizard zeigt nur einen Info-Block; die
-    // Combined-Sensor-IDs werden beim Save automatisch eingetragen.
-    if (this._wizardData.inverter_type === "solaredge_storedge") {
-      const detectedPrefixes = [];
-      if (this._wizardData.pv_power_sensor) detectedPrefixes.push("i1");
-      if (this._wizardData.pv_power_sensor_2) detectedPrefixes.push("i2");
-      const prefixInfo = detectedPrefixes.length > 0
-        ? `Erkannte Inverter: <strong>${detectedPrefixes.join(", ")}</strong>`
-        : "Inverter-Erkennung läuft …";
-      return `
-        <div style="display:flex;gap:12px;padding:14px;border-left:3px solid var(--primary-color);background:var(--secondary-background-color);border-radius:6px">
-          <ha-icon icon="mdi:battery-sync" style="--mdc-icon-size:28px;color:var(--primary-color);flex-shrink:0"></ha-icon>
-          <div>
-            <strong>SOC und Kapazität werden automatisch ermittelt.</strong>
-            <div class="help-text" style="margin-top:6px">
-              Bei SolarEdge liest die Integration die Werte pro Inverter
-              direkt aus den b1-Sensoren der <code>solaredge_modbus_multi</code>-
-              Integration und kombiniert sie:
-              <ul style="margin:6px 0 4px 18px">
-                <li>SOC = Σ(SOC<sub>i</sub> × Kapazität<sub>i</sub>) / Σ(Kapazität<sub>i</sub>)</li>
-                <li>Kapazität = Σ(Kapazität<sub>i</sub>)</li>
-              </ul>
-              ${prefixInfo}.
-              <br>Es werden zwei neue Sensoren angelegt:
-              <code>sensor.eeg_energy_optimizer_combined_soc</code> und
-              <code>sensor.eeg_energy_optimizer_combined_capacity</code>.
-            </div>
-          </div>
-        </div>`;
-    }
-
-    // Huawei Master/Slave: SOC wird treiberseitig kombiniert (wie SolarEdge).
+    // Huawei Master/Slave: SOC wird treiberseitig kombiniert.
     // Da die Anlage keinen Kapazitäts-Sensor liefert, wird die Kapazität je
     // Batterie manuell eingetragen → gewichteter SOC + korrekte Gesamtkapazität.
     const huaweiDevs = (this._detectedSensors && this._detectedSensors.huawei_battery_devices) || [];
@@ -129,8 +97,6 @@ class X {
           ? "z.B. 10 für LUNA2000-10, 15 für LUNA2000-15"
           : this._wizardData.inverter_type === "solax_gen4"
           ? "z.B. 5.8 für Triple Power T58, 11.6 für zwei Module"
-          : this._wizardData.inverter_type === "solaredge_storedge"
-          ? "z.B. 9.8 für LG RESU10H, 4.8 für BYD LVS 4.0"
           : this._wizardData.inverter_type === "sma_smart_energy"
           ? "z.B. 10.2 für BYD Battery-Box Premium HVS 10.2 (SMA liefert keinen Kapazitätssensor)"
           : "Nutzbare Gesamtkapazität deines Batteriespeichers in kWh"}</div>

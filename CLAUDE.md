@@ -111,12 +111,11 @@ schedule_executor.py: ScheduleExecutor (execution, 30 s)
 | `websocket_api.py` | 26 WebSocket commands for panel (config, schedule, control state, PeakShare, OeMAG, spot price, aWATTar SUNNY, grid tariffs, feed-in statistics, daily balance, probes, telemetry, activity log) |
 | `inverter/base.py` | Abstract inverter interface (InverterBase ABC) |
 | `inverter/huawei.py` | Huawei SUN2000 implementation via HA services — Single + Master/Slave (multi-device) |
-| `inverter/_distribution.py` | Shared proportional discharge distribution (SolarEdge + Huawei multi-battery) |
+| `inverter/_distribution.py` | Shared proportional discharge distribution (Huawei multi-battery) |
 | `inverter/fronius.py` | Fronius Gen24 implementation via direct Modbus TCP (SunSpec Model 124, device-read scale factors, RvrtTms watchdog + keepalive task) |
 | `inverter/kostal.py` | Kostal Plenticore implementation via direct Modbus TCP (proprietary registers 1034/1038, watchdog keepalive task) |
 | `inverter/sma.py` | SMA Smart Energy / Sunny Boy Storage implementation via direct Modbus TCP (CmpBMS 6-parameter method, complete-block writes, watchdog keepalive task; `discharge_is_grid_setpoint=True`, charge limit read from the active block) |
 | `inverter/solax.py` | SolaX Gen4+ implementation via solax_modbus Mode 1 |
-| `inverter/solaredge.py` | SolarEdge StorEdge implementation via solaredge-modbus-multi |
 | `inverter/__init__.py` | Factory function `create_inverter()` |
 | `select.py` | Mode select entity (Ein/Test), restores state across restarts |
 | `const.py` | All constants, defaults, mode enums, state names |
@@ -293,17 +292,14 @@ Implementations:
   ├── FroniusInverter — via direct Modbus TCP (SunSpec Model 124, pymodbus; scale factors read from the device; InOutWRte_RvrtTms armed at 300s as the inverter-side failsafe, fed by a 60s keepalive)
   ├── KostalInverter — via direct Modbus TCP (proprietary registers, port 1502, unit 71; cyclic keepalive feeds the inverter watchdog, timeout = failsafe fallback to internal automatic)
   ├── SMAInverter — via direct Modbus TCP (CmpBMS external battery management, port 502, unit 3; every command writes the complete 6-register block, 60s keepalive, 300s watchdog fallback; discharge = grid-exchange setpoint GridWSpt → house load auto-compensated, so the executor hands over the planned export (`discharge_is_grid_setpoint`))
-  ├── SolarEdgeInverter — via HA solaredge_modbus_multi StorEdge
   └── SolaXInverter — via HA solax_modbus Mode 1
 ```
 
-**Multi-Inverter / Multi-Battery (Master/Slave):** Both SolarEdge and Huawei
-support setups with multiple inverters + batteries. Each battery is a separate
+**Multi-Inverter / Multi-Battery (Master/Slave):** Huawei supports setups
+with multiple inverters + batteries. Each battery is a separate
 device in the source integration (no cross-device summing), so the driver must
 read **and** control every battery:
 
-- **SolarEdge** addresses extra units via entity prefix (`solaredge_i2_`),
-  derived from `pv_power_sensor_2`.
 - **Huawei** addresses each battery via its `device_id` (services
   `forcible_discharge_soc` / `stop_forcible_charge`) and resolves per-device
   entities (charge-limit number, SOC, capacity) through the HA **entity
@@ -316,7 +312,7 @@ read **and** control every battery:
   shared `inverter/_distribution.py` helper (equal-split fallback when a sensor
   is unavailable). On save, `ws_save_config` points `battery_soc_sensor` /
   `battery_capacity_sensor` at the synthetic combined sensors for multi-battery
-  Huawei (same as SolarEdge).
+  Huawei.
 
 ### Dependencies
 
@@ -328,7 +324,6 @@ read **and** control every battery:
 - **kostal_plenticore** (after_dependency) — Kostal sensor data via REST
 - **sma** (after_dependency) — SMA sensor data via WebConnect (directional pairs → synthetic combined sensors)
 - **solax_modbus** (after_dependency) — SolaX inverter control
-- **solaredge_modbus_multi** (after_dependency) — SolarEdge inverter control
 - **solcast_solar**, **forecast_solar** (after_dependency) — PV forecasts
 
 Python requirements (`manifest.json`): `pymodbus>=3.6.0` for the direct-Modbus
@@ -419,7 +414,7 @@ the event loop is long enough for HA to flag a blocking call.
   SOC handed to the inverter comes from the plan; there is no independent
   interlock, the protection lives in the plan alone.
 - **Huawei is the only supported inverter for now**: `supports_schedule_control`
-  gates writing, and `NUR_HUAWEI_WAEHLBAR` in the panel hides the other five
+  gates writing, and `NUR_HUAWEI_WAEHLBAR` in the panel hides the others
   from the wizard (already-configured foreign drivers stay visible). The other
   drivers stay in the tree, fully intact, for mergeability with the main
   integration. Status, open points per driver and the three-step release path:

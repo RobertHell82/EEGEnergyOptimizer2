@@ -71,7 +71,7 @@ SUN2000, Sigenergy SigenStor und SolaX Gen4+**:
 | **Sigenergy SigenStor** | [Sigenergy einrichten](../guides/sigenergy.md) |
 | **SolaX Gen4+** | [SolaX Modbus einrichten](../guides/solax.md) |
 
-> Andere Wechselrichter (Kostal, SMA, SolarEdge) werden derzeit
+> Andere Wechselrichter (Kostal, SMA) werden derzeit
 > nicht unterstützt — siehe [Stand der Unterstützung](../wechselrichter-status.md).
 
 ---

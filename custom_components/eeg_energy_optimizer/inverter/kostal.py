@@ -29,7 +29,7 @@ setpoint every KEEPALIVE_INTERVAL seconds, decoupled from the optimizer's
 "only write on state change" deduplication.
 
 The control registers are volatile (RAM, spec ch. 3.3) — cyclic writing is
-harmless (no NVRAM wear, unlike SolarEdge). There is no hardware target-SOC
+harmless (no NVRAM wear). There is no hardware target-SOC
 register: the optimizer supervises the SOC every 30 s and stops the
 discharge itself; the watchdog covers the HA-crash case.
 
