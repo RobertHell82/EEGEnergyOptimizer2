@@ -116,7 +116,14 @@ zurück. Die Steuerregister sind flüchtig (RAM) — kein NVRAM-Verschleiß.
 **Fahrplan-Steuerung seit 2.1.1-dev9 (Beta):** Ladeblockierung, Entladung und
 Stopp sind am Gerät verifiziert (1.x-Reihe, 19.08.2026). Die Kodierung von
 Register 1038 für Teil-Ladelimits prüft der Treiber beim ersten Wert selbst
-nach und meldet eine Abweichung im Protokoll. Offen: Feldtest der
+nach und meldet eine Abweichung im Protokoll. **Feldbefund Ansfelden
+(22./25.09.2026):** Ein 1034-Sollwert von 0 W hält, solange *irgendein*
+Steuerregister geschrieben wird — auch der 1038-Keepalive eines Ladelimits.
+Folgte auf „Normalbetrieb“ ein Ladelimit, stand die Batterie stundenlang.
+Seitdem schreibt der Treiber 1034 nur nach einer echten Entladung und
+danach kein Steuerregister, bis die gemessene Batterieleistung den Rückfall
+zur internen Automatik zeigt (höchstens 15 min) — der Watchdog-Timeout ist
+per Modbus nicht lesbar und je Anlage verschieden. Offen: Feldtest der
 Fahrplan-Nachführung über mehrere Tage.
 Guide: [kostal.md](guides/kostal.md)
 

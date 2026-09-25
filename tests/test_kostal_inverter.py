@@ -293,6 +293,152 @@ class TestStopForcible:
         assert ok is True
 
 
+class TestWatchdogRueckfall:
+    """Ein 1034-Sollwert haelt, solange irgendein Steuerregister geschrieben
+    wird — auch der 1038-Keepalive eines Ladelimits fuettert den Watchdog.
+    Ansfelden 25.09.2026: nach 2 min Normalbetrieb stand die Batterie trotz
+    Ladelimit 4,2 kW den ganzen Vormittag auf 30 W."""
+
+    SENSOR = "sensor.kostal_battery_power"
+
+    @pytest.fixture
+    def uhr(self, monkeypatch):
+        from datetime import datetime, timezone
+        t = {"jetzt": datetime(2026, 9, 25, 9, 0, tzinfo=timezone.utc)}
+        monkeypatch.setattr(
+            "custom_components.eeg_energy_optimizer.inverter.kostal._jetzt",
+            lambda: t["jetzt"],
+        )
+        return t
+
+    @pytest.fixture
+    def inv(self, mock_hass, kostal_config, mock_modbus_client, uhr):
+        mock_hass.states.get = MagicMock(return_value=None)
+        inv = KostalInverter(
+            mock_hass, {**kostal_config, "battery_power_sensor": self.SENSOR}
+        )
+        inv._client = mock_modbus_client
+        return inv
+
+    def _messung(self, inv, watt, um):
+        state = MagicMock()
+        state.state = str(watt)
+        state.attributes = {"unit_of_measurement": "W"}
+        state.last_reported = um
+        state.last_updated = um
+        inv._hass.states.get = MagicMock(return_value=state)
+
+    async def test_freigabe_ohne_entladung_schreibt_keinen_sollwert(
+        self, inv, mock_modbus_client
+    ):
+        await inv.async_set_charge_limit(1.0)
+        await inv.async_stop_forcible()
+        assert _written(mock_modbus_client, REG_BATTERY_SETPOINT) == []
+        assert inv._sollwert_seit is None
+
+    async def test_ladelimit_nach_kurzer_freigabe_wird_geschrieben(
+        self, inv, mock_modbus_client
+    ):
+        """Der Ablauf vom 25.09.: Limit → 2 min Normalbetrieb → Limit."""
+        await inv.async_set_charge_limit(2.0)
+        await inv.async_stop_forcible()
+        mock_modbus_client.write_registers.reset_mock()
+        await inv.async_set_charge_limit(4.2)
+        assert _written(mock_modbus_client, REG_MAX_CHARGE_POWER) == [
+            float_to_registers(4200.0)
+        ]
+        await inv.async_disconnect()
+
+    async def test_ladelimit_nach_entladung_wartet(
+        self, inv, mock_modbus_client, uhr
+    ):
+        await inv.async_set_discharge(3.0)
+        await inv.async_stop_forcible()
+        mock_modbus_client.write_registers.reset_mock()
+
+        ok = await inv.async_set_charge_limit(4.2)
+        assert ok is True
+        assert inv._active == ("charge_limit", 4200.0)
+        assert mock_modbus_client.write_registers.await_count == 0
+        await inv.async_disconnect()
+
+    async def test_bewegung_gibt_die_register_frei(self, inv, uhr):
+        from datetime import timedelta
+        await inv.async_set_discharge(3.0)
+        await inv.async_stop_forcible()
+        start = uhr["jetzt"]
+
+        # Gehaltener 0-W-Sollwert: 30 W sind keine Bewegung.
+        uhr["jetzt"] = start + timedelta(seconds=60)
+        self._messung(inv, 30, uhr["jetzt"])
+        assert inv._rueckfall_offen() is True
+
+        # Interne Automatik laedt: frei.
+        self._messung(inv, -2100, uhr["jetzt"])
+        assert inv._rueckfall_offen() is False
+        assert inv._sollwert_seit is None
+
+    async def test_messung_kurz_nach_dem_schreiben_zaehlt_nicht(self, inv, uhr):
+        """Direkt nach dem 0-W-Befehl zeigt der Sensor noch die Entladung."""
+        from datetime import timedelta
+        await inv.async_set_discharge(3.0)
+        await inv.async_stop_forcible()
+        uhr["jetzt"] += timedelta(seconds=60)
+        self._messung(inv, 3000, inv._sollwert_seit + timedelta(seconds=5))
+        assert inv._rueckfall_offen() is True
+
+    async def test_ohne_sensor_nach_hoechstdauer_frei(self, inv, uhr):
+        from datetime import timedelta
+        from custom_components.eeg_energy_optimizer.inverter.kostal import (
+            RUECKFALL_MAX_S,
+        )
+        await inv.async_set_discharge(3.0)
+        await inv.async_stop_forcible()
+        uhr["jetzt"] += timedelta(seconds=RUECKFALL_MAX_S - 1)
+        assert inv._rueckfall_offen() is True
+        uhr["jetzt"] += timedelta(seconds=2)
+        assert inv._rueckfall_offen() is False
+
+    async def test_keepalive_schreibt_vorgemerktes_limit_nach_rueckfall(
+        self, inv, mock_modbus_client, uhr, monkeypatch
+    ):
+        from datetime import timedelta
+        monkeypatch.setattr(
+            "custom_components.eeg_energy_optimizer.inverter.kostal.RUECKFALL_ABFRAGE_S",
+            0.01,
+        )
+        await inv.async_set_discharge(3.0)
+        await inv.async_set_charge_limit(4.2)
+        mock_modbus_client.write_registers.reset_mock()
+
+        await asyncio.sleep(0.1)
+        assert _written(mock_modbus_client, REG_MAX_CHARGE_POWER) == []
+
+        uhr["jetzt"] += timedelta(seconds=60)
+        self._messung(inv, -1500, uhr["jetzt"])
+        await asyncio.sleep(0.5)
+        await inv.async_disconnect()
+        werte = {
+            round(registers_to_float(w))
+            for w in _written(mock_modbus_client, REG_MAX_CHARGE_POWER)
+        }
+        assert werte and werte <= {4200, 4201}
+        # Der Sollwert wird dabei nicht angefasst.
+        assert _written(mock_modbus_client, REG_BATTERY_SETPOINT) == []
+
+    async def test_entladung_ist_waehrend_des_wartens_erlaubt(
+        self, inv, mock_modbus_client
+    ):
+        await inv.async_set_discharge(3.0)
+        await inv.async_stop_forcible()
+        mock_modbus_client.write_registers.reset_mock()
+        assert await inv.async_set_discharge(2.0) is True
+        assert _written(mock_modbus_client, REG_BATTERY_SETPOINT) == [
+            float_to_registers(2000.0)
+        ]
+        await inv.async_disconnect()
+
+
 class TestKeepalive:
     async def test_keepalive_rewrites_with_jitter(self, inverter, mock_modbus_client, monkeypatch):
         """The keepalive rewrites the active setpoint, alternating ±1 W."""

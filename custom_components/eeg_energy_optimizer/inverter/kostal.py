@@ -51,8 +51,11 @@ from __future__ import annotations
 import asyncio
 import logging
 import struct
+from datetime import datetime, timezone
 from typing import Any
 
+from ..const import CONF_BATTERY_POWER_SENSOR
+from ..power_readings import read_power_kw
 from .base import InverterBase
 
 _LOGGER = logging.getLogger(__name__)
@@ -102,6 +105,26 @@ KEEPALIVE_INTERVAL = 25.0
 # Alternate the written value by ±1 W between keepalive cycles — electrically
 # irrelevant, but guarantees every write is a register change.
 _JITTER_W = 1.0
+
+# Watchdog-Rueckfall nach einem 1034-Sollwert (Ansfelden, 22. + 25.09.2026).
+# 1034 ist ein Sollwert, kein Limit: 0 W heisst "Batterie steht", und es gibt
+# keinen Wert, der "zurueck zur Automatik" bedeutet — das tut nur Schweigen
+# bis zum Watchdog-Timeout. Jeder Schreibzugriff auf die Steuerregister
+# fuettert diesen Watchdog aber, auch der 1038-Keepalive eines Ladelimits.
+# Folgte auf einen 0-W-Sollwert ein Ladelimit, hielt der Kostal den 0-W-
+# Sollwert daher stundenlang fest: 1038 = 4031 W, Batterie 30 W, 9 kW
+# Einspeisung. Der Timeout ist im Service-Menue einstellbar und ueber Modbus
+# nicht lesbar, also wird der Rueckfall GEMESSEN statt abgewartet: Die
+# Batterie bewegt sich wieder, sobald die interne Automatik uebernimmt.
+# Bis dahin schreibt der Treiber kein Steuerregister ausser einer Entladung.
+RUECKFALL_BEWEGUNG_KW = 0.15   # gehaltener 0-W-Sollwert: gemessen 20–45 W
+RUECKFALL_BERUHIGUNG_S = 20.0  # Messwerte davor zeigen noch den alten Befehl
+RUECKFALL_MAX_S = 900.0        # Sicherheitsnetz, falls der Sensor ausfaellt
+RUECKFALL_ABFRAGE_S = 10.0     # Abfragetakt, solange ein Ladelimit wartet
+
+
+def _jetzt() -> datetime:
+    return datetime.now(timezone.utc)
 
 
 def float_to_registers(value: float) -> list[int]:
@@ -164,6 +187,10 @@ class KostalInverter(InverterBase):
         # Einmalige Rueckleseprobe beim ersten Teil-Ladelimit, siehe
         # _pruefe_encoding().
         self._encoding_geprueft: bool = False
+        # Zeitpunkt des letzten 1034-Schreibens, solange der Sollwert noch
+        # gelten kann; None = interne Automatik. Siehe RUECKFALL_*.
+        self._sollwert_seit: datetime | None = None
+        self._batterie_sensor: str = config.get(CONF_BATTERY_POWER_SENSOR, "")
         # Serializes Modbus operations between the 30-second optimizer
         # cycle, manual WebSocket commands, and the keepalive task. Same
         # rationale as the Fronius driver: the direct Modbus TCP path has
@@ -266,6 +293,54 @@ class KostalInverter(InverterBase):
             self._close_client()
             return None
 
+    async def _schreibe_sollwert(self, watts: float) -> bool:
+        """1034 schreiben und merken, dass ab jetzt ein Sollwert gilt.
+
+        Gemerkt wird schon vor dem Ergebnis: Bei einem Verbindungsabbruch ist
+        unklar, ob der Wert angekommen ist, und ein irrtuemlich angenommener
+        Sollwert kostet nur die Rueckfall-Messung, ein uebersehener dagegen
+        eine stehende Batterie.
+        """
+        self._sollwert_seit = _jetzt()
+        return await self._write_float(REG_BATTERY_SETPOINT, watts)
+
+    def _rueckfall_offen(self) -> bool:
+        """Haelt der Kostal womoeglich noch einen 1034-Sollwert fest?
+
+        Solange ja, darf kein Steuerregister geschrieben werden — jeder
+        Schreibzugriff verlaengert den Watchdog und damit den Sollwert.
+        Beendet wird das Warten durch eine Batterieleistung, die erst nach
+        dem Schreiben gemessen wurde und nicht zum gehaltenen 0-W-Sollwert
+        passt, oder nach RUECKFALL_MAX_S. Bewegt sich bis dahin nichts
+        (Nacht, Batterie leer), macht der Sollwert auch keinen Unterschied.
+        """
+        seit = self._sollwert_seit
+        if seit is None:
+            return False
+        dauer = (_jetzt() - seit).total_seconds()
+        if dauer >= RUECKFALL_MAX_S:
+            _LOGGER.info(
+                "Kostal: nach %.0f s ohne Messbeleg Rueckfall zur internen "
+                "Automatik angenommen", dauer,
+            )
+            self._sollwert_seit = None
+            return False
+        state = self._hass.states.get(self._batterie_sensor) if self._batterie_sensor else None
+        gemessen = getattr(state, "last_reported", None) or getattr(state, "last_updated", None)
+        if not isinstance(gemessen, datetime):
+            return True
+        if (gemessen - seit).total_seconds() < RUECKFALL_BERUHIGUNG_S:
+            return True
+        leistung = read_power_kw(self._hass, self._batterie_sensor)
+        if leistung is None or abs(leistung) < RUECKFALL_BEWEGUNG_KW:
+            return True
+        _LOGGER.info(
+            "Kostal: interne Automatik hat nach %.0f s uebernommen "
+            "(Batterie %.2f kW) — Steuerregister wieder frei", dauer, leistung,
+        )
+        self._sollwert_seit = None
+        return False
+
     # ------------------------------------------------------------------
     # Keepalive (watchdog feeding)
     # ------------------------------------------------------------------
@@ -289,11 +364,23 @@ class KostalInverter(InverterBase):
         """
         try:
             while True:
-                await asyncio.sleep(KEEPALIVE_INTERVAL)
+                active = self._active
+                wartet = (
+                    active is not None and active[0] == "charge_limit"
+                    and self._sollwert_seit is not None
+                )
+                await asyncio.sleep(
+                    min(RUECKFALL_ABFRAGE_S, KEEPALIVE_INTERVAL) if wartet
+                    else KEEPALIVE_INTERVAL
+                )
                 async with self._lock:
                     active = self._active
                     if active is None:
                         return
+                    # Ein vorgemerktes Ladelimit erst schreiben, wenn der
+                    # Kostal den alten 1034-Sollwert losgelassen hat.
+                    if active[0] == "charge_limit" and self._rueckfall_offen():
+                        continue
                     if not await self._ensure_connected():
                         _LOGGER.warning(
                             "Kostal: keepalive write skipped — not connected"
@@ -303,9 +390,7 @@ class KostalInverter(InverterBase):
                     self._jitter_toggle = not self._jitter_toggle
                     jittered = watts + (_JITTER_W if self._jitter_toggle else 0.0)
                     if kind == "discharge":
-                        ok = await self._write_float(
-                            REG_BATTERY_SETPOINT, jittered
-                        )
+                        ok = await self._schreibe_sollwert(jittered)
                     else:  # charge_limit
                         ok = await self._write_float(
                             REG_MAX_CHARGE_POWER, jittered
@@ -345,10 +430,12 @@ class KostalInverter(InverterBase):
             # Stuck-register guard: when switching from a discharge, reset
             # the setpoint explicitly instead of trusting the watchdog
             # timeout (community-reported bug: old setpoints survive a mode
-            # change on some firmwares).
+            # change on some firmwares). Damit gilt ab jetzt 0 W — das
+            # Ladelimit wartet auf den Watchdog-Rueckfall (RUECKFALL_*).
             if self._active is not None and self._active[0] == "discharge":
-                if not await self._write_float(REG_BATTERY_SETPOINT, 0.0):
+                if not await self._schreibe_sollwert(0.0):
                     return False
+                self._active = None
 
             # Snapshot the pre-block max charge power once, so stop can
             # restore it. Read failure is non-critical: without a snapshot
@@ -364,6 +451,20 @@ class KostalInverter(InverterBase):
                     )
 
             watts = max(power_kw, 0.0) * 1000.0
+            if self._rueckfall_offen():
+                # Jetzt 1038 zu schreiben hielte den 0-W-Sollwert am Leben.
+                # Der Keepalive schreibt das Limit, sobald der Kostal wieder
+                # selbst regelt; bis dahin steht die Batterie ohnehin.
+                self._active = ("charge_limit", watts)
+                # Neu starten: Ein laufender Entlade-Keepalive schliefe noch
+                # bis zu KEEPALIVE_INTERVAL, bevor er im Abfragetakt misst.
+                self._cancel_keepalive()
+                self._start_keepalive()
+                _LOGGER.info(
+                    "Kostal: Ladelimit %.2f kW vorgemerkt — warte auf den "
+                    "Watchdog-Rueckfall des Batterie-Sollwerts", power_kw,
+                )
+                return True
             if not await self._write_float(REG_MAX_CHARGE_POWER, watts):
                 return False
             if watts > 0:
@@ -415,7 +516,7 @@ class KostalInverter(InverterBase):
                     self._max_charge_pre_block = None
 
             watts = max(power_kw, 0.0) * 1000.0
-            if not await self._write_float(REG_BATTERY_SETPOINT, watts):
+            if not await self._schreibe_sollwert(watts):
                 return False
 
             self._active = ("discharge", watts)
@@ -443,16 +544,26 @@ class KostalInverter(InverterBase):
     async def _stop_forcible_locked(self) -> bool:
         # Clear the active command FIRST so a failed write below cannot
         # race with a concurrent keepalive rewrite of the old setpoint.
+        vorher = self._active
         self._active = None
         self._cancel_keepalive()
         try:
             if not await self._ensure_connected():
                 return False
 
-            if not await self._write_float(REG_BATTERY_SETPOINT, 0.0):
-                return False
+            # 1034 nur zuruecksetzen, wenn wirklich entladen wurde. Ein
+            # 0-W-Sollwert "zur Sicherheit" ist kein Freigeben, sondern ein
+            # Befehl, die Batterie anzuhalten — und das nachfolgende
+            # Ladelimit hielte ihn am Leben (Ansfelden 25.09.2026).
+            if vorher is not None and vorher[0] == "discharge":
+                if not await self._schreibe_sollwert(0.0):
+                    # Beim naechsten Stop-Versuch erneut zuruecksetzen.
+                    self._active = vorher
+                    return False
 
-            if self._max_charge_pre_block is not None:
+            # Waehrend des Rueckfalls nichts schreiben; der Schnappschuss
+            # bleibt fuer den naechsten Schreibpfad erhalten.
+            if self._max_charge_pre_block is not None and not self._rueckfall_offen():
                 if await self._write_float(
                     REG_MAX_CHARGE_POWER, self._max_charge_pre_block
                 ):
@@ -611,6 +722,11 @@ class KostalInverter(InverterBase):
                 richtung = " (entladen)"
             elif setpoint < -1.0:
                 richtung = " (laden)"
+        if (
+            self._sollwert_seit is not None
+            and not (self._active is not None and self._active[0] == "discharge")
+        ):
+            richtung += " — warte auf Watchdog-Rückfall"
         return [
             {
                 "label": f"Batterie-Sollwert (Register {REG_BATTERY_SETPOINT}){richtung}",
