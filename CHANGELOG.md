@@ -10,6 +10,12 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
+## [2.1.7] - 2026-09-25
+
+### Hinzugefügt
+
+- **Die Bezugsspitze des Monats steht jetzt in der Statuskarte.** Seit 2.1.6 misst die Integration den Netzbezug je Viertelstunde und das Monatsmaximum, zu sehen war beides aber nur in den Sensoren. Die Statuskarte zeigt jetzt ganz unten eine eigene Zeile mit der Spitze des laufenden Monats und ihrem Zeitpunkt, daneben die laufende Viertelstunde: was sie bisher sicher zählt und wohin sie läuft, wenn der Bezug so bleibt. Das ist die einzige Zahl, auf die man im Moment noch Einfluss hat — liegt die Hochrechnung über der Monatsspitze, färbt sich die Zeile orange und sagt, dass gerade eine neue gesetzt wird. Ein Klick öffnet den Verlauf. Die Zeile ist ohne Expertenmodus sichtbar.
+
 ## [2.1.6] - 2026-09-25
 
 ### Hinzugefügt
