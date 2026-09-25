@@ -1586,6 +1586,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     except Exception:
         _LOGGER.exception("Combined-sensor entity_id migration failed (non-fatal)")
 
+    # Netzbezug je Viertelstunde und Bezugsspitze des Monats — die
+    # Bemessungsgrundlage des Leistungspreises ab 2027. Misst nur, steuert
+    # nichts; Einzelheiten in leistungsspitze.py. Vor den Plattformen, damit
+    # die beiden Sensoren sich beim Anlegen als Beobachter eintragen können.
+    from .leistungsspitze import Leistungsspitze
+
+    leistungsspitze = Leistungsspitze(hass, entry.entry_id, config)
+    await leistungsspitze.async_load()
+    leistungsspitze.async_start(entry)
+    hass.data[DOMAIN][entry.entry_id]["leistungsspitze"] = leistungsspitze
+
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     hass.data[DOMAIN][entry.entry_id]["platforms_loaded"] = True
 
@@ -2635,6 +2646,15 @@ async def async_unload_entry(
                 await bilanz.async_flush()
             except Exception:
                 _LOGGER.exception("EEG Energy Optimizer: error flushing bilanz")
+        # Und die angebrochene Viertelstunde der Bezugsspitze.
+        leistungsspitze = data.get("leistungsspitze")
+        if leistungsspitze is not None:
+            try:
+                await leistungsspitze.async_flush()
+            except Exception:
+                _LOGGER.exception(
+                    "EEG Energy Optimizer: error flushing Leistungsspitze"
+                )
         # Fahrplan-Steuerung freigeben: erzwungene Entladung stoppen und das
         # Ladelimit zurücksetzen — sonst bleibt das letzte geschriebene Limit
         # im Wechselrichter stehen (Risiko 2 des Umbauplans).

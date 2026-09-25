@@ -96,6 +96,7 @@ schedule_executor.py: ScheduleExecutor (execution, 30 s)
 | `power_readings.py` | Shared sensor reads — house load (minus heater), PV now, grid export, heater power, battery capacity resolution |
 | `heizstab/controller.py` | Heater control — `HeizstabController` (`regeln()`: comfort → discharge → max temperature → plan (`plan_kw`) → surplus rule `naechster_sollwert`; temperature hysteresis, saturation, `puffer_budget_kwh` for the LP, 20-s watchdog write (plus an immediate rewrite when the device reads 0 W under a standing setpoint), 10-s read, 6-h time sync, detection of both foreign control and a device that does not follow), `create_heizstab()` factory |
 | `heizstab/ohmpilot_modbus.py` | Fronius Ohmpilot driver via direct Modbus TCP (setpoint 40599 int32 W big-endian, actual power 40800, temperature 40808 in 0.1 °C, unix time 40400; 50-s device watchdog). Taken over from HA_Optimierung_Gruenbach, registers verified on the device there |
+| `leistungsspitze.py` | Measures the basis of the 2027 capacity charge (SNE-G-V § 6): grid **import** energy per fixed quarter-hour (UTC-floored, :00/:15/:30/:45) ÷ 0.25 h, commercially rounded, and the month's maximum (local calendar month, 24 months of history, `Store`). Integrates `max(0, −grid)` — export never offsets import. Sample points = every state change of the grid sensor plus a 10-s sampling; a value counts only while the source's `last_reported` is younger than `HALTEN_MAX_S` (a hung Modbus link keeps its last state without going `unavailable`). A quarter with gaps is a lower bound, still counted, flagged `vollstaendig=False`. Measures only, steers nothing. Created in `async_setup_entry` **before** the platforms so the sensors can subscribe |
 | `schedule_archive.py` | Rolling archive of computed plans (7 days, gzip, ~8 KB each) for after-the-fact debugging |
 | `schedule_archive_view.py` | HTTP view that packs archive + settings + measured history into a downloadable ZIP |
 | `chamo/` | Harald Geyer's LP optimizer (`opt_highs.py`, `timetableopt`) plus a HiGHS adapter. `opt_highs.py` carries three local additions, all marked `LOCAL CHANGE` and documented in `chamo/README.md`: the heater as a valued sink (`heater_p`, 2.1.1-dev2), the blackout reserve capped at what is reachable **without buying** and a solver-status check after `optimize()` — everything else is upstream |
@@ -123,7 +124,7 @@ schedule_executor.py: ScheduleExecutor (execution, 30 s)
 | `ambibox/controller.py` | Interprets those registers into an `AutoZustand`, polls every 15 s, pushes to sensors/panel; owns the manual charge/discharge test (keepalive, time limit, stop) |
 | `frontend/eeg-optimizer-panel.js` | Dashboard + onboarding panel (plain HTMLElement, Shadow DOM) |
 
-### Sensors (24 always + up to 8 conditional)
+### Sensors (26 always + up to 8 conditional)
 
 | # | Sensor | Update | Description |
 |---|--------|--------|-------------|
@@ -141,6 +142,8 @@ schedule_executor.py: ScheduleExecutor (execution, 30 s)
 | 18 | Fahrplan-Status | 30s | Executor state ("Laden begrenzt auf 2,0 kW", "Entladung 2,8 kW bis 43 %", "Normalbetrieb", "Anzeige-Modus") + plan/written-value attributes |
 | 19–21 | Ersparnis durch PV — heute / Monat / Jahr | fast | Avoided grid purchase + feed-in revenue (MONETARY, TOTAL). A **measurement**: every kWh is metered, prices come frozen per quarter-hour from `bilanz.py` |
 | 22–24 | Ersparnis durch Optimierung — heute / Monat / Jahr | fast | Actual vs. simulated standard operation over the **measured** PV/load series (MONETARY, TOTAL). A **model**, not a measurement — `None` when the day's starting SOC is unknown |
+| 25 | Netzbezug Viertelstunde | quarter-hour close + fast | Mean grid import of the last **completed** quarter-hour (comparable 1:1 with the grid operator's smart-meter portal); running quarter in unrecorded attributes `laufend_bisher_kw` / `laufend_hochrechnung_kw` |
+| 26 | Bezugsspitze Monat | quarter-hour close + fast | Highest quarter-hour import this month — the capacity-charge basis; without the 2 kW billing minimum (a billing rule, not a measurement); previous months in `verlauf` |
 
 > **Never add sensors 19–21 and 22–24 together.** The optimiser advantage is
 > already contained in the PV saving — it is the share of it that stems from

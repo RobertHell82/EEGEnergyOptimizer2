@@ -15,6 +15,8 @@ Sensoren:
        konfiguriertem Heizstab; Push aus dem 10-s-Lesetakt des Controllers)
   +    Auto Status / Ladestand / Ladeleistung / Energie der Ladesitzung
        (nur mit konfigurierter Ambibox; Push aus deren Lesetakt)
+  +    Netzbezug Viertelstunde / Bezugsspitze Monat (leistungsspitze.py;
+       Push beim Abschluss jeder Viertelstunde)
 """
 
 from __future__ import annotations
@@ -1044,6 +1046,103 @@ class EntladungInsNetzSensor(SensorEntity):
 
 
 # ---------------------------------------------------------------------------
+# Leistungspreis ab 2027: Netzbezug je Viertelstunde + Bezugsspitze des Monats
+# ---------------------------------------------------------------------------
+
+
+def _lokal_iso(iso_utc: str | None) -> str | None:
+    if not iso_utc:
+        return None
+    try:
+        return _as_local(datetime.fromisoformat(iso_utc)).isoformat()
+    except (TypeError, ValueError):
+        return iso_utc
+
+
+class NetzbezugViertelstundeSensor(SensorEntity):
+    """Mittlerer Netzbezug der zuletzt ABGESCHLOSSENEN Viertelstunde.
+
+    Der abgeschlossene Wert, nicht der laufende: Er ist das, was der
+    Netzbetreiber verrechnet, und damit direkt mit seinem Smart-Meter-Portal
+    vergleichbar. Die laufende Viertelstunde steht in den Attributen — die
+    ändern sich jede Minute und werden deshalb nicht aufgezeichnet.
+    """
+
+    _attr_has_entity_name = True
+    _attr_name = "Netzbezug Viertelstunde"
+    _attr_icon = "mdi:transmission-tower-import"
+    _attr_native_unit_of_measurement = "kW"
+    _attr_device_class = SensorDeviceClass.POWER
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_suggested_display_precision = 2
+    _unrecorded_attributes = frozenset(
+        {"laufend_seit", "laufend_bisher_kw", "laufend_hochrechnung_kw"}
+    )
+
+    def __init__(self, hass: Any, entry: Any, spitze: Any) -> None:
+        self.hass = hass
+        self._spitze = spitze
+        self._attr_unique_id = f"{DOMAIN}_{entry.entry_id}_netzbezug_viertelstunde"
+        self._attr_device_info = _device_info(entry.entry_id)
+        self._attr_native_value: float | None = None
+        self._attr_extra_state_attributes: dict[str, Any] = {}
+
+    async def async_update(self) -> None:
+        letzte = self._spitze.letzte_viertelstunde
+        self._attr_native_value = letzte["kw"] if letzte else None
+        attrs: dict[str, Any] = {}
+        if letzte:
+            attrs["viertelstunde"] = _lokal_iso(letzte.get("start"))
+            attrs["vollstaendig"] = letzte.get("vollstaendig")
+            attrs["abdeckung_pct"] = round(100 * (letzte.get("abdeckung") or 0), 1)
+        laufend = self._spitze.laufend(_now())
+        if laufend:
+            attrs["laufend_seit"] = _lokal_iso(laufend["start"])
+            attrs["laufend_bisher_kw"] = laufend["bisher_kw"]
+            attrs["laufend_hochrechnung_kw"] = laufend["hochrechnung_kw"]
+        self._attr_extra_state_attributes = attrs
+
+
+class BezugsspitzeMonatSensor(SensorEntity):
+    """Höchster Viertelstunden-Netzbezug im laufenden Kalendermonat.
+
+    Die Bemessungsgrundlage des Leistungspreises (SNE-G-V § 6). Bewusst die
+    GEMESSENE Spitze, ohne die Mindestbemessung von 2 kW: Die ist eine Regel
+    der Abrechnung, keine Messung, und gehört dorthin, wo einmal Geld
+    gerechnet wird. Die Vormonate stehen in ``verlauf``.
+    """
+
+    _attr_has_entity_name = True
+    _attr_name = "Bezugsspitze Monat"
+    _attr_icon = "mdi:chart-bell-curve-cumulative"
+    _attr_native_unit_of_measurement = "kW"
+    _attr_device_class = SensorDeviceClass.POWER
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_suggested_display_precision = 2
+
+    def __init__(self, hass: Any, entry: Any, spitze: Any) -> None:
+        self.hass = hass
+        self._spitze = spitze
+        self._attr_unique_id = f"{DOMAIN}_{entry.entry_id}_bezugsspitze_monat"
+        self._attr_device_info = _device_info(entry.entry_id)
+        self._attr_native_value: float | None = None
+        self._attr_extra_state_attributes: dict[str, Any] = {}
+
+    async def async_update(self) -> None:
+        spitze = self._spitze.spitze
+        self._attr_native_value = spitze["kw"] if spitze else None
+        attrs: dict[str, Any] = {"monat": self._spitze.monat}
+        if spitze:
+            attrs["zeitpunkt"] = _lokal_iso(spitze.get("start"))
+            attrs["vollstaendig"] = spitze.get("vollstaendig")
+        attrs["verlauf"] = {
+            monat: eintrag.get("kw")
+            for monat, eintrag in sorted(self._spitze.verlauf.items())
+        }
+        self._attr_extra_state_attributes = attrs
+
+
+# ---------------------------------------------------------------------------
 # Heizstab (heizstab/): Ist-Leistung, Temperatur, Sollwert, Energie heute
 # ---------------------------------------------------------------------------
 
@@ -1986,6 +2085,28 @@ async def async_setup_entry(
 
         entry.async_on_unload(ambibox.add_listener(_auto_push))
 
+    # Bezugsspitze: Push beim Abschluss jeder Viertelstunde, damit der Wert
+    # mit seinem echten Zeitpunkt in die Historie geht und nicht bis zu einer
+    # Minute später; der fast-Takt hält die laufenden Attribute aktuell.
+    leistungsspitze = data.get("leistungsspitze")
+    spitze_sensors: list[SensorEntity] = []
+    if leistungsspitze is not None:
+        spitze_sensors = [
+            NetzbezugViertelstundeSensor(hass, entry, leistungsspitze),
+            BezugsspitzeMonatSensor(hass, entry, leistungsspitze),
+        ]
+
+        def _spitze_push() -> None:
+            for sensor in spitze_sensors:
+                if getattr(sensor, "hass", None) is not None and getattr(sensor, "entity_id", None):
+                    hass.async_create_task(_spitze_aktualisieren(sensor))
+
+        async def _spitze_aktualisieren(sensor: SensorEntity) -> None:
+            await sensor.async_update()
+            sensor.async_write_ha_state()
+
+        entry.async_on_unload(leistungsspitze.add_listener(_spitze_push))
+
     slow_sensors: list[SensorEntity] = [profil_sensor]
     fast_sensors: list[SensorEntity] = (
         daily_sensors
@@ -2015,6 +2136,7 @@ async def async_setup_entry(
         ]
         + heizstab_sensors
         + auto_sensors
+        + spitze_sensors
     )
 
     async_add_entities(slow_sensors + fast_sensors + [decision_sensor], False)
