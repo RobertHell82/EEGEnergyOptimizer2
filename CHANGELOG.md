@@ -10,6 +10,16 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
+## [2.1.10] - 2026-09-25
+
+### Geändert
+
+- **Wechselrichter ohne Beta- und Feldtest-Vermerk.** Sigenergy, Kostal und SMA laufen seit Wochen im Betrieb, zusammen mit Fronius, Huawei und SolaX. Die Karten im Einrichtungsassistenten zeigen deshalb keinen Zusatz „Beta“ oder „Feldtest“ mehr. Die Willkommensseite führt Kostal und SMA jetzt unter den getesteten Setups.
+
+### Entfernt
+
+- **SolarEdge StorEdge.** Den Treiber gibt es nicht mehr. Er war seit der 2.0 stillgelegt: Er stand nicht zur Auswahl und wurde nicht gesteuert. Entfernt sind der Treiber, die Erkennung im Assistenten, die PV-Korrektur für `ac_power` und die Anleitung.
+
 ## [2.1.9] - 2026-09-25
 
 ### Behoben
