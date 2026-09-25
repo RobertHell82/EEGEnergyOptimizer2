@@ -8207,9 +8207,12 @@ class EegOptimizerPanel extends HTMLElement {
 
   _renderSpitzeZeile() {
     // Bezugsspitze des Monats — die Bemessungsgrundlage des Leistungspreises
-    // ab 2027 (leistungsspitze.py). Daneben die laufende Viertelstunde, weil
-    // sie das Einzige ist, worauf man jetzt noch Einfluss hat: Liegt ihre
-    // Hochrechnung über der Monatsspitze, wird gerade eine neue gesetzt.
+    // ab 2027 (leistungsspitze.py). In der Zeile nur Monat und Wert; alles
+    // Weitere steht im ⓘ (.info-popup-trigger: Hover am Desktop, Tippen am
+    // Handy, dort als Blatt am unteren Rand). Ein Tipp auf den Rest der Zeile
+    // öffnet den Sensor. Orange wird der Wert, wenn die Hochrechnung der
+    // laufenden Viertelstunde über der Monatsspitze liegt — dann entsteht
+    // gerade eine neue.
     const spitzeState = this._readState(this._entityIds?.bezugsspitze_monat);
     if (!spitzeState) return "";
     const vsState = this._readState(this._entityIds?.netzbezug_viertelstunde);
@@ -8231,35 +8234,52 @@ class EegOptimizerPanel extends HTMLElement {
       return `${tag} um ${zeit}`;
     };
 
-    const teile = [];
-    if (spitzeBekannt) {
-      const zeitpunkt = wann(a.zeitpunkt);
-      teile.push(`Bezugsspitze ${this._escapeHtml(monat)}: <strong>${fmtDe(spitze, 2)} kW</strong>`
-        + (zeitpunkt ? ` <span style="color:var(--secondary-text-color)">(${zeitpunkt}${a.vollstaendig === false ? ", unvollständig gemessen" : ""})</span>` : ""));
-    } else {
-      teile.push(`Bezugsspitze ${this._escapeHtml(monat)}: <span style="color:var(--secondary-text-color)">noch keine Viertelstunde gemessen</span>`);
-    }
-
     const bisher = Number(v.laufend_bisher_kw);
     const hoch = Number(v.laufend_hochrechnung_kw);
     const droht = spitzeBekannt && Number.isFinite(hoch) && hoch > spitze;
-    let laufend = "";
-    if (Number.isFinite(bisher)) {
-      laufend = `laufende Viertelstunde ${fmtDe(bisher, 2)} kW`
-        + (Number.isFinite(hoch) ? `, hochgerechnet ${fmtDe(hoch, 2)} kW` : "");
-      teile.push(droht
-        ? `<span style="color:var(--warning-color,#ff9800)">${laufend} — neue Monatsspitze</span>`
-        : `<span style="color:var(--secondary-text-color)">${laufend}</span>`);
-    }
+    const wertFarbe = droht ? "var(--warning-color,#ff9800)" : "var(--primary-text-color)";
 
-    const farbe = droht ? "var(--warning-color,#ff9800)" : "var(--secondary-text-color)";
+    const details = [];
+    if (spitzeBekannt) {
+      const zeitpunkt = wann(a.zeitpunkt);
+      if (zeitpunkt) {
+        details.push(`<p>Gemessen am ${zeitpunkt}${a.vollstaendig === false ? " — die Viertelstunde hatte Messlücken, der Wert ist eine Untergrenze" : ""}.</p>`);
+      }
+    } else {
+      details.push("<p>In diesem Monat ist noch keine Viertelstunde abgeschlossen.</p>");
+    }
+    if (Number.isFinite(bisher)) {
+      details.push(`<p>Laufende Viertelstunde: bisher ${fmtDe(bisher, 2)} kW`
+        + (Number.isFinite(hoch) ? `, hochgerechnet ${fmtDe(hoch, 2)} kW` : "")
+        + (droht ? ` — <span style="color:var(--warning-color,#ff9800)">sie setzt gerade eine neue Monatsspitze</span>` : "")
+        + ".</p>");
+    }
+    const letzte = parseFloat(vsState?.state);
+    if (Number.isFinite(letzte)) {
+      details.push(`<p>Letzte abgeschlossene Viertelstunde: ${fmtDe(letzte, 2)} kW.</p>`);
+    }
+    const vormonate = Object.entries(a.verlauf || {}).slice(-3).reverse()
+      .filter(([, kw]) => Number.isFinite(Number(kw)))
+      .map(([mon, kw]) => {
+        const [j, m] = String(mon).split("-").map(Number);
+        const name = j && m ? new Date(j, m - 1, 1).toLocaleString("de-AT", { month: "long", year: "numeric" }) : mon;
+        return `<li>${this._escapeHtml(name)}: ${fmtDe(Number(kw), 2)} kW</li>`;
+      });
+    if (vormonate.length) details.push(`<p>Vormonate:</p><ul>${vormonate.join("")}</ul>`);
+    details.push(`<p style="color:var(--secondary-text-color)">Ab 2027 richtet sich der Leistungspreis des Netzentgelts nach diesem Wert: dem höchsten Viertelstunden-Mittel des Netzbezugs im Monat.</p>`);
+
     const entity = this._entityIds?.bezugsspitze_monat;
     return `
-      <div data-action="show-entity" data-entity="${entity}" title="Verlauf anzeigen"
-           style="display:flex;align-items:center;gap:10px;margin-top:10px;padding:8px 12px;border-radius:6px;cursor:pointer;
-                  background:var(--secondary-background-color,#f5f5f5);border-left:3px solid ${farbe};font-size:13px">
-        <ha-icon icon="mdi:transmission-tower-import" style="--mdc-icon-size:18px;color:${farbe};flex-shrink:0"></ha-icon>
-        <div style="flex:1;min-width:0">${teile.join(" · ")}</div>
+      <div data-action="show-entity" data-entity="${entity}"
+           style="display:flex;align-items:center;gap:8px;margin-top:10px;padding:6px 12px;border-radius:6px;cursor:pointer;
+                  background:var(--secondary-background-color,#f5f5f5);font-size:13px">
+        <ha-icon icon="mdi:transmission-tower-import" style="--mdc-icon-size:18px;color:var(--secondary-text-color);flex-shrink:0"></ha-icon>
+        <span>Bezugsspitze ${this._escapeHtml(monat)}</span>
+        <strong style="color:${wertFarbe}">${spitzeBekannt ? `${fmtDe(spitze, 2)} kW` : "—"}</strong>
+        <span class="info-popup-trigger">
+          <ha-icon icon="mdi:information-outline" style="--mdc-icon-size:16px;color:var(--secondary-text-color);cursor:pointer"></ha-icon>
+          <div class="info-popup"><strong>Bezugsspitze ${this._escapeHtml(monat)}</strong>${details.join("")}</div>
+        </span>
       </div>`;
   }
 

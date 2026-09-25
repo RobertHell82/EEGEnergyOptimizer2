@@ -650,9 +650,11 @@ settings, device-datasheet values (AC limit, PV peak, battery power limit) are
 expert-only; in the wizard they are always visible.
 
 Dashboard notes: the status card ends with the capacity-charge line
-(`_renderSpitzeZeile`, below `_renderAutoZeile`): month peak with time, plus
-the running quarter-hour (`laufend_bisher_kw` / `laufend_hochrechnung_kw`);
-orange when the projection exceeds the month peak. It reads the two
+(`_renderSpitzeZeile`, below `_renderAutoZeile`): only "Bezugsspitze <Monat>"
+and the value — details (time, running quarter-hour, last quarter, previous
+months) live in the ⓘ `.info-popup-trigger` (hover on desktop, tap on touch,
+bottom sheet on phones); a tap on the rest of the row opens the sensor. The
+value turns orange when the running quarter's projection exceeds the peak. It reads the two
 leistungsspitze sensors, not the Hausverbrauch attributes — it is not part of
 the one-point-in-time power set. During the executor's startup grace period (status
 "Startphase — …") the status card shows only that hint — no setpoints,
