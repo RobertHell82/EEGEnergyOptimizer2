@@ -11,6 +11,7 @@ import logging
 
 from .power_readings import (
     BACKFILL_FORMEL,
+    backfill_faktor_kw,
     backfill_stunden,
     compute_battery_now_kw,
     compute_grid_export_kw,
@@ -583,16 +584,16 @@ async def async_backfill_hausverbrauch_stats(
         start_time = now - timedelta(weeks=lookback_weeks)
 
         # --- Determine unit conversion factors for source sensors ---
-        # Statistics are stored in the sensor's native unit.
-        # If a sensor reports in W, we must divide by 1000 to get kW.
-        def _unit_factor(entity_id: str) -> float:
-            """Return 0.001 if sensor reports in W, else 1.0 (assumes kW)."""
+        # Statistics are stored in the unit they were recorded in; that unit
+        # lives in their metadata. The live state is only a fallback — right
+        # after an HA start a sensor may have none yet (backfill_faktor_kw).
+        from homeassistant.components.recorder.statistics import get_metadata
+
+        def _zustand_einheit(entity_id: str) -> str | None:
             state = hass.states.get(entity_id)
-            if state and hasattr(state, "attributes"):
-                unit = (state.attributes.get("unit_of_measurement") or "").strip()
-                if unit == "W":
-                    return 0.001
-            return 1.0
+            if state is None or not hasattr(state, "attributes"):
+                return None
+            return state.attributes.get("unit_of_measurement") or ""
 
         # Heizstab: dieselbe Entität, aus der die Energiebilanz liest (über
         # die unique_id, nicht über einen geratenen Namen). Ohne Heizstab
@@ -605,11 +606,36 @@ async def async_backfill_hausverbrauch_stats(
                 "sensor", DOMAIN, f"{DOMAIN}_{entry_id}_heizstab_leistung"
             ) or ""
 
-        pv_factor = _unit_factor(pv_id)
-        pv2_factor = _unit_factor(pv2_id) if pv2_id else 1.0
-        heiz_factor = _unit_factor(heiz_id) if heiz_id else 1.0
-        battery_factors = {eid: _unit_factor(eid) for eid in battery_source_ids}
-        grid_factors = {eid: _unit_factor(eid) for eid in grid_source_ids}
+        # Der Heizstab-Sensor ist unser eigener und immer kW — er hat beim
+        # ersten Start weder Zustand noch Statistik, das darf nicht abbrechen.
+        faktor_ids = {pv_id, *battery_source_ids, *grid_source_ids}
+        if pv2_id:
+            faktor_ids.add(pv2_id)
+        metadaten = await recorder_instance.async_add_executor_job(
+            lambda: get_metadata(hass, statistic_ids=faktor_ids)
+        )
+        faktoren: dict[str, float] = {}
+        for eid in faktor_ids:
+            meta = metadaten.get(eid)
+            statistik_einheit = (
+                (meta[1].get("unit_of_measurement") or "") if meta else None
+            )
+            faktor = backfill_faktor_kw(statistik_einheit, _zustand_einheit(eid))
+            if faktor is None:
+                # Raten hat 45 Stunden mit bis zu 46 kW erzeugt — lieber
+                # beim nächsten Start noch einmal (Formelstand bleibt alt).
+                _LOGGER.warning(
+                    "Hausverbrauch backfill skipped — unit of %s unknown "
+                    "(no statistics metadata, no state yet)", eid,
+                )
+                return
+            faktoren[eid] = faktor
+
+        pv_factor = faktoren[pv_id]
+        pv2_factor = faktoren[pv2_id] if pv2_id else 1.0
+        heiz_factor = 1.0
+        battery_factors = {eid: faktoren[eid] for eid in battery_source_ids}
+        grid_factors = {eid: faktoren[eid] for eid in grid_source_ids}
 
         _LOGGER.debug(
             "Backfill unit factors: PV=%.3f, PV2=%.3f, Battery=%s, Grid=%s",
@@ -617,9 +643,7 @@ async def async_backfill_hausverbrauch_stats(
         )
 
         # --- Load mean statistics for all source sensors ---
-        sensor_ids = {pv_id, *battery_source_ids, *grid_source_ids}
-        if pv2_id:
-            sensor_ids.add(pv2_id)
+        sensor_ids = set(faktor_ids)
         if heiz_id:
             sensor_ids.add(heiz_id)
 

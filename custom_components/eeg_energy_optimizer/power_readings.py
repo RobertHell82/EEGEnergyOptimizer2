@@ -145,7 +145,35 @@ def resolve_backfill_signs(config: dict) -> tuple[int, int]:
 # Stand der Backfill-Formel. Steigt er, schreibt der nächste Start das ganze
 # Rückblickfenster EINMAL neu — sonst füllt der Backfill nur Stunden, die
 # noch keine Statistik haben. 2 = Heizstab wird abgezogen (23.09.2026).
-BACKFILL_FORMEL = 2
+# 3 = Einheit aus den Statistik-Metadaten statt aus dem Live-Zustand
+# (27.09.2026, siehe ``backfill_faktor_kw``).
+BACKFILL_FORMEL = 3
+
+
+def backfill_faktor_kw(
+    statistik_einheit: str | None, zustand_einheit: str | None
+) -> float | None:
+    """Umrechnungsfaktor auf kW für eine Quellstatistik des Backfills.
+
+    Die Statistik liegt in der Einheit, in der sie aufgezeichnet wurde —
+    diese Einheit steht in ihren Metadaten und gewinnt. Nur ohne Metadaten
+    zählt die Einheit des Live-Zustands. ``None`` heißt: nicht vorhanden
+    (Sensor ohne Zustand, keine Metadaten), ``""`` heißt: ohne Einheit.
+
+    Bis 27.09.2026 las der Backfill nur den Live-Zustand und nahm ohne ihn kW
+    an. In Ansfelden war der zweite Kostal beim HA-Start noch nicht geladen:
+    seine W wurden als kW gerechnet. Mittags ergab das Tausende kW (vom
+    50-kW-Filter verworfen), in der Dämmerung aber 10–45 W → 10–45 „kW“ —
+    45 Stunden mit bis zu 46 kW Hausverbrauch, ein Profil mit 8,5 kW um 19 Uhr
+    und ein Plan, der jeden Abend 8 kW Netzbezug vorsah.
+
+    Rückgabe ``None`` = Einheit unbekannt → der Aufrufer bricht ab, statt zu
+    raten. Leere Einheit = kW, wie in ``read_power_kw``.
+    """
+    einheit = statistik_einheit if statistik_einheit is not None else zustand_einheit
+    if einheit is None:
+        return None
+    return _UNIT_FACTORS_TO_KW.get(einheit.strip().lower(), 1.0)
 
 
 def backfill_stunden(

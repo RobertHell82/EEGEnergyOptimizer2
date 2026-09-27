@@ -721,3 +721,41 @@ def test_backfill_zweiter_pv_sensor():
     )
     # pv = 2 + 1 = 3; haus = 3 − (−1) − 0,5 = 3,5
     assert stunden[0][1] == pytest.approx(3.5)
+
+
+# ---------------------------------------------------------------------------
+# backfill_faktor_kw — Einheit der Quellstatistik
+# ---------------------------------------------------------------------------
+
+from custom_components.eeg_energy_optimizer.power_readings import (  # noqa: E402
+    backfill_faktor_kw,
+)
+
+
+def test_backfill_faktor_ohne_zustand_nimmt_die_statistik_einheit():
+    """Ansfelden, 06.09.2026 19 Uhr: der zweite Kostal war beim Start noch
+    nicht geladen. Seine 41,9 W wurden als kW gerechnet → 45,8 kW Haus."""
+    assert backfill_faktor_kw("W", None) == 0.001
+
+
+def test_backfill_faktor_statistik_gewinnt_gegen_den_zustand():
+    """Die Statistik liegt in der Einheit, in der sie aufgezeichnet wurde."""
+    assert backfill_faktor_kw("W", "kW") == 0.001
+    assert backfill_faktor_kw("kW", "W") == 1.0
+
+
+def test_backfill_faktor_ohne_metadaten_nimmt_den_zustand():
+    assert backfill_faktor_kw(None, "W") == 0.001
+    assert backfill_faktor_kw(None, "kW") == 1.0
+
+
+def test_backfill_faktor_unbekannt_raet_nicht():
+    """Weder Metadaten noch Zustand → None, der Backfill bricht ab."""
+    assert backfill_faktor_kw(None, None) is None
+
+
+def test_backfill_faktor_leere_einheit_ist_kw():
+    """Wie read_power_kw: ohne Einheit gilt kW."""
+    assert backfill_faktor_kw("", None) == 1.0
+    assert backfill_faktor_kw(None, "") == 1.0
+    assert backfill_faktor_kw(" watt ", None) == 0.001
