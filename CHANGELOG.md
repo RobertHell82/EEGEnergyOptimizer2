@@ -10,6 +10,12 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
+## [2.1.17] - 2026-09-27
+
+### Behoben
+
+- **Der Hausverbrauch-Backfill rechnete Watt als Kilowatt, wenn ein Sensor beim Start noch keinen Zustand hatte.** Die Einheit kam aus dem Live-Zustand; fehlte der, galt kW. In Ansfelden ist der zweite Kostal beim HA-Start noch nicht geladen, seine Watt wurden zu Kilowatt. Mittags verwarf der 50-kW-Filter das, in der Dämmerung aber nicht: 10–45 W PV wurden zu 10–45 kW Hausverbrauch. Zwischen 29.08. und 22.09. standen so 45 Stunden mit 13 bis 46 kW in der Statistik, gemessen waren 0,6 bis 5,5 kW. Das Profil lernte daraus 6,8 kW um 6 Uhr und 8,5 kW um 19 Uhr, der Plan sah jeden Tag zweimal 8 bis 10 kW Netzbezug vor und nahm an, die Batterie werde nachts ohnehin leer. Die Einheit kommt jetzt aus den Metadaten der Statistik, in der sie gespeichert ist; fehlt beides, bricht der Backfill ab und versucht es beim nächsten Start wieder. Der erste Start nach dem Update schreibt das Rückblickfenster einmal neu und entfernt die falschen Stunden.
+
 ## [2.1.16] - 2026-09-27
 
 ### Hinzugefügt
