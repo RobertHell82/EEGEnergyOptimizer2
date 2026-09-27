@@ -10,6 +10,19 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
+## [2.1.11] - 2026-09-27
+
+### Hinzugefügt
+
+- **Eigene PV-Prognose, ganz ohne Zusatz-Integration.** Neben Solcast und Forecast.Solar gibt es jetzt eine dritte Quelle: Die Integration rechnet die Prognose selbst. Das Wetter kommt von Open-Meteo, kostenlos, ohne Konto und ohne Schlüssel. Die Anlage trägst du im Panel ein, als Tabelle mit bis zu acht Flächen: Leistung, Neigung und Himmelsrichtung, bei Bedarf auch die Grenze des Wechselrichters, an dem die Fläche hängt. Ein Ost-West-Dach sind zwei Zeilen, und ein Süddach mit 10 kWp an einem 8-kW-Gerät wird für sich bei 8 kW abgeschnitten. Die AC-Grenze der ganzen Anlage deckelt zusätzlich die Summe. „Prognose berechnen" zeigt schon vor dem Speichern die Tagessummen der nächsten sieben Tage. Aufgefrischt wird alle 30 Minuten. Fällt Open-Meteo aus, rechnet der Fahrplan mit den letzten Werten weiter, erst nach 48 Stunden gibt es keinen Plan mehr. Ist weder Solcast noch Forecast.Solar installiert, ist die eigene Berechnung im Assistenten vorausgewählt.
+- **Prognosevergleich.** Ein Schalter im Assistenten und in den Einstellungen lässt die jeweils andere Quelle mitlaufen, ohne dass sie steuert. Jeden Morgen ab 5 Uhr werden beide Prognosen für den Tag festgehalten, über den Tag kommt die gemessene PV-Leistung dazu. Die neue Dashboard-Karte zeigt für einen wählbaren Tag drei Linien: Solcast, eigene Berechnung und Messung. Darunter stehen die letzten Tage mit Tagessumme, Abweichung und welche Quelle näher lag, dazu mittlere Abweichung und Fehler über alle vollständigen Tage. Aufgehoben werden 30 Tage. Lief Home Assistant am Morgen nicht und wurde erst nach 8 Uhr festgehalten, ist der Tag markiert und zählt nicht in die Auswertung.
+- **Worst-Case-Pfad für die eigene Prognose.** Die Notstrom-Reserve rechnet mit einem p10. Mit eingeschaltetem Vergleich leiht sich die eigene Berechnung Solcasts Verhältnis von p10 zu Erwartung je Halbstunde. Ohne Solcast kommt der p10 nach 14 vollständigen Vergleichstagen aus der eigenen Historie. Bis dahin bleibt es bei 60 % der Erwartung, wie bei Forecast.Solar.
+
+### Geändert
+
+- **Die Prognosequelle lässt sich in den Einstellungen wechseln.** Die Karte „PV-Prognose" unter „Anlage" hat eine Auswahl für die steuernde Quelle. Beim Wechsel auf Solcast oder Forecast.Solar werden die beiden Sensoren vorbelegt und sind dort wählbar. Bisher ging das nur über „Einrichtung erneut durchlaufen".
+- **Die Telemetrie meldet die Prognosequelle genauer:** ob der Vergleich läuft, die Systemverluste und Anzahl und Leistung der Flächen. Die Flächenliste selbst und der Standort gehen nicht mit.
+
 ## [2.1.10] - 2026-09-25
 
 ### Geändert
