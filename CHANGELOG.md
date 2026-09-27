@@ -10,6 +10,13 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
+## [2.1.14] - 2026-09-27
+
+### Geändert
+
+- **Der Prognosevergleich sagt oben, welche Prognose genauer war.** Ein farbiger Kasten ganz oben in der Karte nennt die genauere Quelle und wie weit beide im Mittel danebenlagen, gemessen am tatsächlichen Tagesertrag. Dazu steht, an wie vielen Tagen welche näher lag. Ab drei vollständigen Tagen gibt es ein vorläufiges Urteil, ab 14 ein festes. Liegen beide weniger als einen Prozentpunkt auseinander, heißt es „Gleichauf".
+- **Der Vergleich rechnet gleich nach dem Start.** Bisher kam der erste Lauf erst nach 30 Minuten, und die Karte zeigte nach jedem Update eine halbe Stunde lang „Noch keine Aufzeichnung". Jetzt läuft er zwei Minuten nach dem Start.
+
 ## [2.1.13] - 2026-09-27
 
 ### Hinzugefügt
