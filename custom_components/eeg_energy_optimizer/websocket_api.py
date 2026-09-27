@@ -469,6 +469,13 @@ def async_register_websocket_commands(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_get_awattar_sunny)
     websocket_api.async_register_command(hass, ws_get_energie_ag)
     websocket_api.async_register_command(hass, ws_refresh_consumption_profile)
+    # Eigene PV-Prognose (pvprognose/) und Prognosevergleich. Fehlten in
+    # 2.1.11 — geschrieben, aber nicht angemeldet: „Prognose berechnen"
+    # meldete „Unknown command" (Grünbach, 27.09.2026). Seitdem prüft
+    # test_websocket_admin.py, dass jeder Befehl der Datei hier steht.
+    websocket_api.async_register_command(hass, ws_get_pvprognose)
+    websocket_api.async_register_command(hass, ws_probe_pvprognose)
+    websocket_api.async_register_command(hass, ws_get_prognosevergleich)
     # Phase 8 — Telemetry-Steuerung (D-32 / D-33)
     websocket_api.async_register_command(hass, ws_telemetry_get_status)
     websocket_api.async_register_command(hass, ws_telemetry_enable)

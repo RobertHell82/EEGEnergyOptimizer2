@@ -186,3 +186,29 @@ def test_save_config_ist_gesichert():
     dauerhaft verstellen.
     """
     assert _befehle()["eeg_optimizer/save_config"] is True
+
+
+def test_jeder_befehl_ist_angemeldet():
+    """Jede Funktion mit `@websocket_command` muss auch in
+    `async_register_websocket_commands` stehen. In 2.1.11 fehlten die drei
+    Prognose-Befehle dort: geschrieben, eingestuft, getestet — und für Home
+    Assistant trotzdem unbekannt („Unknown command", Grünbach 27.09.2026).
+    Die Handler-Tests rufen die Funktionen direkt auf und merken das nicht."""
+    baum = ast.parse(QUELLE.read_text(encoding="utf-8"))
+    handler: set[str] = set()
+    angemeldet: set[str] = set()
+    for knoten in ast.walk(baum):
+        if isinstance(knoten, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if any(_kommando_aus_dekorator(d) for d in knoten.decorator_list):
+                handler.add(knoten.name)
+            if knoten.name == "async_register_websocket_commands":
+                for aufruf in ast.walk(knoten):
+                    if (
+                        isinstance(aufruf, ast.Call)
+                        and getattr(aufruf.func, "attr", None) == "async_register_command"
+                        and len(aufruf.args) >= 2
+                        and isinstance(aufruf.args[1], ast.Name)
+                    ):
+                        angemeldet.add(aufruf.args[1].id)
+    assert len(handler) >= 30
+    assert handler - angemeldet == set(), f"nicht angemeldet: {sorted(handler - angemeldet)}"

@@ -397,6 +397,17 @@ const FORECAST_LABELS = {
   eigen: "Eigene Berechnung (Open-Meteo)",
 };
 
+// Erklärungen zur Flächentabelle der eigenen PV-Prognose — einmal über der
+// Tabelle, dieselben Texte als Tooltip an jedem Feld. Kein HTML, keine
+// Anführungszeichen: sie landen auch in title-Attributen.
+const FLAECHE_HILFE = {
+  name: "Frei wählbar, nur zur Übersicht, z. B. Dach Süd oder Garage.",
+  kwp: "Summe der Modulleistung dieser Fläche laut Datenblatt, z. B. 20 Module à 450 Wp = 9 kWp.",
+  neigung: "Winkel der Module gegen die Waagrechte: 0° liegt flach, 90° steht senkrecht an der Fassade. Übliche Schrägdächer haben 30–35°, aufgeständerte Module am Flachdach 10–15°.",
+  azimut: "Himmelsrichtung, in die die Module zeigen, als Kompasswert: 0° Nord, 90° Ost, 180° Süd, 270° West. Die Abkürzung daneben zeigt, ob der Wert stimmt.",
+  max_kw: "Nur bei mehreren Wechselrichtern nötig: die AC-Leistung des Geräts, an dem diese Fläche hängt. Beispiel: 10 kWp an einem 8-kW-Wechselrichter, dann 8 eintragen. Leer lassen, wenn alle Flächen an einem Wechselrichter hängen — dann deckelt die AC-Grenzleistung der Anlage die Summe.",
+};
+
 // Kompass-Azimut (0 = Nord, 90 = Ost, 180 = Süd, 270 = West) → Himmelsrichtung,
 // als Lesehilfe neben dem Gradwert. Dieselbe Konvention wie sun.sun.
 const himmelsrichtung = (azimut) => {
@@ -7290,23 +7301,23 @@ class EegOptimizerPanel extends HTMLElement {
       <div class="flaeche-zeile" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px;align-items:end;margin-bottom:8px;padding:8px;border:1px solid var(--divider-color);border-radius:6px">
         <div class="field-group" style="margin:0">
           <label>Name</label>
-          <input type="text" data-flaeche="${i}" data-key="name" data-scope="${prefix}" value="${esc(f.name)}" placeholder="z.B. Dach Süd" maxlength="40">
+          <input type="text" data-flaeche="${i}" data-key="name" data-scope="${prefix}" value="${esc(f.name)}" placeholder="z.B. Dach Süd" maxlength="40" title="${FLAECHE_HILFE.name}">
         </div>
         <div class="field-group" style="margin:0">
           <label>Leistung (kWp) *</label>
-          <input type="number" data-flaeche="${i}" data-key="kwp" data-scope="${prefix}" value="${esc(f.kwp)}" min="0.05" max="500" step="0.01" placeholder="z.B. 5.5">
+          <input type="number" data-flaeche="${i}" data-key="kwp" data-scope="${prefix}" value="${esc(f.kwp)}" min="0.05" max="500" step="0.01" placeholder="z.B. 5.5" title="${FLAECHE_HILFE.kwp}">
         </div>
         <div class="field-group" style="margin:0">
           <label>Neigung (°)</label>
-          <input type="number" data-flaeche="${i}" data-key="neigung" data-scope="${prefix}" value="${esc(f.neigung ?? 30)}" min="0" max="90" step="1">
+          <input type="number" data-flaeche="${i}" data-key="neigung" data-scope="${prefix}" value="${esc(f.neigung ?? 30)}" min="0" max="90" step="1" title="${FLAECHE_HILFE.neigung}">
         </div>
         <div class="field-group" style="margin:0">
           <label>Azimut (°) <span style="color:var(--secondary-text-color)">— <span data-richtung="${prefix}${i}">${himmelsrichtung(f.azimut ?? 180)}</span></span></label>
-          <input type="number" data-flaeche="${i}" data-key="azimut" data-scope="${prefix}" value="${esc(f.azimut ?? 180)}" min="0" max="360" step="1">
+          <input type="number" data-flaeche="${i}" data-key="azimut" data-scope="${prefix}" value="${esc(f.azimut ?? 180)}" min="0" max="360" step="1" title="${FLAECHE_HILFE.azimut}">
         </div>
         <div class="field-group" style="margin:0">
           <label>Grenze (kW)</label>
-          <input type="number" data-flaeche="${i}" data-key="max_kw" data-scope="${prefix}" value="${esc(f.max_kw ?? "")}" min="0.1" max="500" step="0.1" placeholder="keine" title="AC-Grenze dieser Fläche: eigener Wechselrichter oder MPP-Tracker. Leer = nur die Summe wird gedeckelt.">
+          <input type="number" data-flaeche="${i}" data-key="max_kw" data-scope="${prefix}" value="${esc(f.max_kw ?? "")}" min="0.1" max="500" step="0.1" placeholder="keine" title="${FLAECHE_HILFE.max_kw}">
         </div>
         <button class="btn-secondary" data-action="remove-flaeche" data-index="${i}" data-scope="${prefix}" title="Fläche entfernen" ${liste.length <= 1 ? "disabled" : ""} style="padding:8px 12px">
           <ha-icon icon="mdi:close" style="--mdc-icon-size:18px"></ha-icon>
@@ -7314,9 +7325,19 @@ class EegOptimizerPanel extends HTMLElement {
       </div>`).join("");
     const summe = this._flaechenSummeKwp(d);
     return `
+      <div class="help-text" style="margin-bottom:8px">
+        Eine Zeile je Modulfläche mit gleicher Ausrichtung — ein Süddach ist
+        eine Zeile, ein Ost-West-Dach sind zwei. Der Standort kommt
+        automatisch aus Home Assistant.
+      </div>
+      <dl class="help-text flaechen-hilfe" style="display:grid;grid-template-columns:max-content 1fr;gap:4px 12px;margin:0 0 12px">
+        <dt style="font-weight:600">Name</dt><dd style="margin:0">${FLAECHE_HILFE.name}</dd>
+        <dt style="font-weight:600">Leistung (kWp)</dt><dd style="margin:0">${FLAECHE_HILFE.kwp}</dd>
+        <dt style="font-weight:600">Neigung (°)</dt><dd style="margin:0">${FLAECHE_HILFE.neigung}</dd>
+        <dt style="font-weight:600">Azimut (°)</dt><dd style="margin:0">${FLAECHE_HILFE.azimut}</dd>
+        <dt style="font-weight:600">Grenze (kW)</dt><dd style="margin:0">${FLAECHE_HILFE.max_kw}</dd>
+      </dl>
       <div class="help-text" style="margin-bottom:12px">
-        Eine Zeile je Modulfläche mit gleicher Ausrichtung. Azimut als Kompasswert:
-        0° = Nord, 90° = Ost, <strong>180° = Süd</strong>, 270° = West. Neigung 0° = flach.
         <button class="btn-link btn-tap" data-action="show-dialog" data-dialog="prognose_eigen">Anleitung: Eigene Prognose</button>
       </div>
       ${zeilen}
@@ -7330,7 +7351,7 @@ class EegOptimizerPanel extends HTMLElement {
         <label>Systemverluste (%)</label>
         <input type="number" data-field="${prefix}pv_verluste_pct"
                value="${d.pv_verluste_pct ?? 14}" min="0" max="60" step="1" placeholder="14">
-        <div class="help-text">Pauschal für Verschmutzung, Leitung, Mismatch, Wechselrichter und Alterung. 14 % ist der übliche Richtwert; die AC-Grenzleistung des Wechselrichters deckelt zusätzlich.</div>
+        <div class="help-text">Was zwischen Modul und Netz verloren geht: Verschmutzung, Kabel, ungleiche Module, Wechselrichter und Alterung. 14 % ist der übliche Richtwert. Neue, saubere Anlage eher 10 %, ältere oder verschattete eher 18 %. Liegt die Prognose im Vergleich dauerhaft zu hoch oder zu niedrig, lässt sich hier nachjustieren.</div>
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
         <button class="btn-secondary" data-action="probe-pvprognose" data-scope="${prefix}" ${this._pvProbe.busy ? "disabled" : ""}>
