@@ -7659,6 +7659,32 @@ class EegOptimizerPanel extends HTMLElement {
       <div style="margin-top:8px">${this._vergleichFeature(d, "settings_")}</div>`;
   }
 
+  _vergleichUrteil(z, fremdKurz) {
+    // Die Antwort auf „welche war richtiger?" ganz oben, in einem Satz.
+    // Maßstab ist der mittlere Tagesfehler in Prozent der Messung — er sagt,
+    // wie weit eine Prognose im Schnitt danebenlag, egal in welche Richtung.
+    // Unter drei Tagen gibt es kein Urteil, unter 14 nur ein vorläufiges.
+    const n = z?.tage || 0;
+    const kasten = (text, farbe) => `<div style="margin:4px 0 12px;padding:10px 12px;border-radius:6px;border-left:4px solid ${farbe};background:${farbe}1f;font-size:14px">${text}</div>`;
+    const f = z?.quellen?.fremd;
+    const e = z?.quellen?.eigen;
+    if (n < 3 || !f || !e || f.mae_pct == null || e.mae_pct == null) {
+      return kasten(`<strong>Noch kein Urteil</strong> — nach drei vollständigen Tagen steht hier, welche Prognose genauer war (bisher ${n}).`, "var(--secondary-text-color,#888)");
+    }
+    const fehler = (q) => `${fmtDe(q.mae_pct, 0)} %`;
+    const naeher = z.naeher?.tage
+      ? ` Näher an der Messung: ${fremdKurz} an ${z.naeher.fremd}, Eigene an ${z.naeher.eigen} von ${z.naeher.tage} Tagen.`
+      : "";
+    const vorlaeufig = n < 14 ? " (vorläufig)" : "";
+    const abstand = Math.abs(f.mae_pct - e.mae_pct);
+    if (abstand < 1) {
+      return kasten(`<strong>Gleichauf${vorlaeufig}</strong> — beide liegen im Mittel um ${fehler(f)} daneben (${n} Tage).${naeher}`, "var(--info-color,#2196F3)");
+    }
+    const siegerEigen = e.mae_pct < f.mae_pct;
+    const sieger = siegerEigen ? "Eigene Berechnung" : fremdKurz;
+    return kasten(`<strong>Genauer${vorlaeufig}: ${sieger}</strong> — im Mittel ${fehler(siegerEigen ? e : f)} daneben, ${siegerEigen ? fremdKurz : "Eigene Berechnung"} ${fehler(siegerEigen ? f : e)} (${n} Tage).${naeher}`, "var(--success-color,#4CAF50)");
+  }
+
   _renderPrognosevergleichKarte() {
     if (!this._config?.pv_prognose_vergleich) return "";
     const v = this._vergleich;
@@ -7742,6 +7768,7 @@ class EegOptimizerPanel extends HTMLElement {
         <div class="help-text">kWh je Tag; Abweichung = Prognose minus Messung. * Messung noch nicht vollständig. † Prognose erst nach 8 Uhr festgehalten (Home Assistant lief am Morgen nicht) — zählt nicht in die Zusammenfassung. Ein Tipp auf eine Zeile zeigt den Tag im Diagramm.</div>
       </div>`;
     return karte(`
+      ${this._vergleichUrteil(z, fremdKurz)}
       <div class="help-text" style="margin-bottom:8px">Beide Prognosen, wie sie am Morgen standen, gegen die gemessene PV-Leistung. Steuernd ist ${this._config?.forecast_source === "eigen" ? "die eigene Berechnung" : fremdKurz}.</div>
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:6px">
         <label style="margin:0">Tag</label>${auswahl}

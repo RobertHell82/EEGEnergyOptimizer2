@@ -2239,6 +2239,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 hass, _fremddaten_cycle, timedelta(minutes=30)
             )
             entry.async_on_unload(unsub_fremddaten)
+            # Einmal früh nach dem Start: sonst kam der erste Lauf erst nach
+            # 30 Minuten, und der Prognosevergleich zeigte nach jedem Update
+            # eine halbe Stunde lang „Noch keine Aufzeichnung" (Grünbach,
+            # 27.09.2026). Zwei Minuten, damit Solcast, Recorder und die
+            # eigene Prognose ihre Daten haben. Die Anbieter prüfen ihre
+            # Frist selbst — ein früher Lauf kostet keinen zusätzlichen Abruf.
+            if async_call_later is not None:
+                entry.async_on_unload(
+                    async_call_later(hass, FREMDDATEN_ERSTLAUF_S, _fremddaten_cycle)
+                )
             # Erster Lauf als Task: beim Boot sind PV-Prognose und
             # Batteriesensoren oft noch nicht da, das Setup soll nicht warten.
             hass.async_create_task(_schedule_cycle())
@@ -2469,6 +2479,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 # Optimizer — nach einer geänderten Sensor-Zuordnung lasen die Sensoren
 # sonst bis zum nächsten HA-Neustart die alten Entity-IDs (Beta-Befund
 # 19.08.2026: Optimizer nutzte den neuen PV-Sensor, Dashboard den alten).
+# Erster Fremddaten-Lauf nach dem Start (Sekunden) — siehe async_setup_entry.
+FREMDDATEN_ERSTLAUF_S = 120
+
 _RELOAD_CONFIG_KEYS = frozenset({
     CONF_INVERTER_TYPE,
     CONF_BATTERY_SOC_SENSOR,
