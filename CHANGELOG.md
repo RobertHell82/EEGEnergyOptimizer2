@@ -10,6 +10,16 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
+## [2.1.12] - 2026-09-27
+
+### Behoben
+
+- **„Prognose berechnen" meldete „Unknown command".** In 2.1.11 waren die drei neuen Befehle der eigenen PV-Prognose zwar geschrieben, aber nicht bei Home Assistant angemeldet. Deshalb gingen die Vorschau, der Stand der Prognose in den Einstellungen und die Dashboard-Karte „Prognosevergleich" nicht. Aufgefallen ist es in Grünbach bei der ersten Einrichtung. Ein neuer Test prüft jetzt, dass jeder Befehl auch angemeldet ist.
+
+### Geändert
+
+- **Die Flächentabelle erklärt ihre Felder.** Über der Tabelle steht je Spalte, was einzutragen ist: Leistung mit Rechenbeispiel, Neigung mit typischen Werten, Azimut als Kompasswert. Bei der Grenze steht, dass sie nur bei mehreren Wechselrichtern nötig ist und sonst leer bleibt. Dieselben Texte erscheinen als Tooltip an jedem Feld. Die Systemverluste haben Richtwerte für neue und ältere Anlagen bekommen.
+
 ## [2.1.11] - 2026-09-27
 
 ### Hinzugefügt
