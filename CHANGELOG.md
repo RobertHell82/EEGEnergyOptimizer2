@@ -10,6 +10,21 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
+## [2.1.15] - 2026-09-27
+
+### Behoben
+
+- **Die Beschreibung der EEG-Statistik war unvollständig.** README und die Datenschutz-Details im Panel nannten nur Anlagenprofil und Störungsmeldungen und sagten ausdrücklich, Momentaufnahmen und Tagesbilanz gebe es nicht mehr. Beide werden aber gesendet: alle 30 Minuten Ladestand, PV-, Haus-, Netz- und Batterieleistung, Modus und was die Steuerung gerade tut, einmal täglich die Bilanz des Vortags mit Prognose gegen Messung. Beides steht jetzt dort, wo man es nachliest.
+- **Die Anleitungen sprechen von allen sechs Wechselrichtern.** Installationsanleitung, Inbetriebnahme, Steuerung und die Anleitung zur Einspeisegrenze schrieben noch „nur Huawei“, die Inbetriebnahme zählte vier Geräte auf. Gesteuert werden alle sechs. Huawei ist freigegeben, die übrigen fünf sind im Feldtest; diese eine Einteilung gilt jetzt überall, und nur noch eine Seite führt die Liste.
+- **Die Schritte des Assistenten stimmen.** Drei Seiten beschrieben einen Verbindungstest und einen eigenen Schritt „Einspeisegrenze“, die es beide nicht mehr gibt, die Inbetriebnahme dazu in falscher Reihenfolge. Die sieben tatsächlichen Schritte stehen jetzt einmal in der Installationsanleitung, mit dem, was jeder abfragt.
+- **Die Inbetriebnahme nennt die eigene PV-Prognose.** Für vorbereitete Geräte ist sie der Weg ohne Konto. Das Verbrauchsprofil ist dort richtig beschrieben: zwei Gruppen, Werktag und Wochenende/Feiertag, nicht sieben Wochentage.
+- **Die Steuerung ist vollständig beschrieben.** Wirkungskontrolle, Schreibbremse, Pause, die Ausnahme bei SMA und der Heizstab-Schritt fehlten; die Rücknahme des Ladelimits halbiert den Abstand je Lauf, statt in festen 0,5-kW-Schritten zu gehen.
+- **Kleinere Korrekturen in den Anleitungen.** AC-Grenzleistung und PV-Spitzenleistung sind Pflichtfelder, nicht optional. Der Heizstab-Tab erscheint nur im Expertenmodus. Bei Kostal kann die Batterie nach einer Entladung bis zu 15 Minuten stehen, bis der Wechselrichter in seine Automatik zurückfällt; das steht jetzt im Guide.
+
+### Geändert
+
+- **Version 1 zeigt auf Version 2.** Das Repository der 1.x trägt auf jeder Seite einen Hinweis mit Link auf dieselbe Seite hier und wird archiviert. Die Kurzadresse `ew-ansfelden.cc/anleitung` auf dem Begleitschreiben führt jetzt auf die Inbetriebnahme dieser Version; bereits gedruckte Blätter bleiben gültig.
+
 ## [2.1.14] - 2026-09-27
 
 ### Geändert
