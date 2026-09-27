@@ -10,6 +10,13 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
+## [2.1.13] - 2026-09-27
+
+### Hinzugefügt
+
+- **Die eigene PV-Prognose als Sensoren.** Steuert die eigene Berechnung oder läuft sie als Vergleich mit, legt die Integration neun Sensoren an. „Eigene PV-Prognose Leistung" zeigt in kW die laufende Viertelstunde, das Gegenstück zu „PV-Leistung". Dazu kommen „verbleibend heute", „heute", „morgen" und „Tag 3" bis „Tag 7" in kWh, in derselben Form wie die Tagessensoren von Solcast. Damit liegen beide Prognosen im Verlauf und lassen sich in jedem Home-Assistant-Diagramm neben Solcast und die gemessene PV legen. Der Fahrplan rechnet weiter direkt aus der eigenen Berechnung, nicht über die Sensoren.
+- **Das Wochendiagramm zeigt beide Prognosen.** Mit eingeschaltetem Vergleich hat jeder Tag einen dritten Balken für die mitlaufende Quelle. Steuert Solcast, ist das die eigene Berechnung, steuert die eigene Berechnung, ist es Solcast oder Forecast.Solar.
+
 ## [2.1.12] - 2026-09-27
 
 ### Behoben
