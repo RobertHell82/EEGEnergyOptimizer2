@@ -10,6 +10,18 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
+## [2.1.16] - 2026-09-27
+
+### Hinzugefügt
+
+- **Fünf neue Anleitungen, direkt im Panel.** „Tarife & Gemeinschaft" erklärt jede Quelle der Standardvergütung, Arbeitspreis und Netzbereich, SNAP und WiNAP, die Nachtfenster und die Energiegemeinschaft mit PeakShare oder fester Abnahmequote samt Gewichtung. „Anlage & Batterie" erklärt Gerätedaten, Batterie-Leistungsgrenze, Mindest- und Maximum-Ladestand, wie die Reserve des Wechselrichters den Mindest-Ladestand anhebt, und den Sicherheitspuffer mit dem Grund, warum er auf 0 steht. „Dashboard & Bedienung" beschreibt Statuskarte, Modus und Pause samt den Diensten für Automationen, „Was deine PV bringt" mit der Regel, dass die beiden Ersparnis-Werte nie addiert werden dürfen, die Bezugsspitze und was bei Failsafe oder Not-Aus zu tun ist. „Einstellungen & Expertenmodus" zeigt, was nur im Expertenmodus erscheint, was beim Speichern neu lädt und wer was darf. Dazu die Wallbox Ambibox mit dem manuellen Test und seinen Sicherungen. Die Knöpfe sitzen dort, wo die Frage entsteht: in den Schritten „Anlage & Batterie" und „Tarife & Gemeinschaft", unter den Tabs der Einstellungen, in der Wallbox-Karte und ganz unten im Dashboard.
+
+### Behoben
+
+- **Die Tarif-Vorschau zeigte bei der ersten Gemeinschaft einen Aufschlag, den der Fahrplan nicht kannte.** Fehlte die Gewichtung in der Konfiguration, rechnete die Vorschau mit 1 ct, der Fahrplan mit 0. Jetzt rechnen beide mit 0.
+- **Die Nachtfenster lassen nur volle Stunden zu.** Die Zeitfelder nahmen Minuten an, der Fahrplan liest aber nur die Stunde — 21:30 galt als 21:00.
+- **Der Hilfetext der PV-Spitzenleistung sagt, wofür der Wert dient.** Er ist Ersatz, falls die AC-Grenzleistung fehlt, und Obergrenze für die Plausibilitätsprüfung in der EEG-Statistik, nicht eine Prüfung der Prognose.
+
 ## [2.1.15] - 2026-09-27
 
 ### Behoben
