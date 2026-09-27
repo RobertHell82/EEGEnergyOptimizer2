@@ -153,7 +153,17 @@ schedule_executor.py: ScheduleExecutor (execution, 30 s)
 > approach zero, since the plant then runs standard operation itself
 > (attribute `modus_ein_anteil` makes this verifiable).
 
-Conditional, created only when the setup calls for them: *Batterieleistung* /
+Conditional, created only when the setup calls for them: with the own PV
+forecast steering *or* running as comparison (`pv_prognose_vergleich`) the
+nine *Eigene PV-Prognose* sensors (Leistung in kW for the running quarter
+hour — the counterpart of *PV-Leistung* — plus verbleibend heute / heute /
+morgen / Tag 3–7 in kWh, the Solcast day-sensor shape). They are output
+only: schedule and comparison read the provider directly. The 30-min
+series on the Leistung sensor is called `prognose_halbstunden` (never
+`detailedForecast`, or `_solcast_detailed` would collect it as Solcast
+data) and is an unrecorded attribute. With the comparison on, the panel's
+week chart draws the non-steering source as a third bar per day, read from
+these sensors or from the Solcast/Forecast.Solar day sensors. *Batterieleistung* /
 *Netzleistung* combined-pair sensors (split-sensor inverters like Fronius),
 *Batterie-Ladestand/-Kapazität kombiniert* (multi-battery drivers), with a
 configured heater the four *Heizstab*-sensors (Leistung / Temperatur /

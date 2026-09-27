@@ -619,3 +619,93 @@ async def test_solcast_sensor_bleibt_ohne_attribute():
     await sensor.async_update()
     assert sensor.native_value == 4.0
     assert sensor.extra_state_attributes == {}
+
+
+# ---------------------------------------------------------------------------
+# Sensoren der eigenen Prognose
+# ---------------------------------------------------------------------------
+
+
+async def test_leistung_jetzt_ist_die_laufende_viertelstunde():
+    p = _provider()
+    a, b, c, d = _abruf_patches()
+    with a, b, c, d:
+        await p.async_fetch(force=True)
+    reihe = p.reihe(JETZT)
+    # JETZT = 10:00 UTC liegt im Slot 10:00–10:15, Intervall-Ende 10:15
+    erwartet = reihe.kw[reihe.ende.index(_utc(27, 10, 15))]
+    assert p.leistung_jetzt_kw(JETZT) == erwartet
+    assert p.leistung_jetzt_kw(JETZT + timedelta(minutes=14)) == erwartet
+    assert p.leistung_jetzt_kw(_utc(30, 12, 0)) is None  # hinter der Reihe
+
+
+def _sensor_umgebung(config):
+    from custom_components.eeg_energy_optimizer import sensor as sen
+
+    prognose = MagicMock()
+    prognose.leistung_jetzt_kw.return_value = 3.2
+    prognose.rest_heute_kwh.return_value = 12.0
+    prognose.tage_kwh.return_value = [25.0, 30.0, 18.0, 17.0, 16.0, 15.0, 14.0]
+    prognose.halbstunden.return_value = {_utc(27, 10, 30): 3.4, _utc(27, 10, 0): 3.1}
+    prognose.status.return_value = {"geholt": "x", "alter_minuten": 4, "fehler": None, "kwp_gesamt": 8.0}
+    entry = MagicMock()
+    entry.entry_id = "entry1"
+    return sen, sen.eigene_prognose_sensoren(MagicMock(), entry, config, {"pvprognose": prognose})
+
+
+async def test_neun_sensoren_mit_eigener_quelle_oder_vergleich():
+    _, keine = _sensor_umgebung({"forecast_source": "solcast_solar"})
+    assert keine == []
+    _, als_quelle = _sensor_umgebung({"forecast_source": "eigen"})
+    _, als_vergleich = _sensor_umgebung({"forecast_source": "solcast_solar", "pv_prognose_vergleich": True})
+    assert len(als_quelle) == len(als_vergleich) == 9
+    ids = [s._attr_unique_id for s in als_quelle]
+    assert len(set(ids)) == 9
+    assert all(i.startswith("eeg_energy_optimizer_entry1_eigene_prognose_") for i in ids)
+
+
+async def test_sensorwerte_und_attribute():
+    _, sensoren = _sensor_umgebung({"forecast_source": "eigen"})
+    nach_art = {s._art: s for s in sensoren}
+    for s in sensoren:
+        await s.async_update()
+    assert nach_art["leistung"].native_value == 3.2
+    assert nach_art["leistung"]._attr_native_unit_of_measurement == "kW"
+    assert nach_art["rest_heute"].native_value == 12.0
+    assert nach_art["heute"].native_value == 25.0
+    assert nach_art["morgen"].native_value == 30.0
+    assert nach_art["tag_3"].native_value == 18.0  # übermorgen, wie bei Solcast
+    assert nach_art["tag_7"].native_value == 14.0
+    assert nach_art["tag_7"]._attr_name == "Eigene PV-Prognose Tag 7"
+    halb = nach_art["leistung"].extra_state_attributes["prognose_halbstunden"]
+    assert [h["kw"] for h in halb] == [3.1, 3.4]  # zeitlich sortiert
+    assert "prognose_halbstunden" in nach_art["leistung"]._unrecorded_attributes
+    # Kein detailedForecast: die Solcast-Suche darf diese Sensoren nie sehen
+    assert all("detailedForecast" not in s.extra_state_attributes for s in sensoren)
+    assert nach_art["heute"].extra_state_attributes["alter_minuten"] == 4
+
+
+async def test_solcast_suche_ignoriert_die_eigenen_sensoren():
+    from custom_components.eeg_energy_optimizer import schedule as sched
+
+    _, sensoren = _sensor_umgebung({"forecast_source": "eigen"})
+    for s in sensoren:
+        await s.async_update()
+    hass = MagicMock()
+    hass.states.async_all.return_value = [
+        MagicMock(entity_id=f"sensor.x{i}", attributes=s.extra_state_attributes)
+        for i, s in enumerate(sensoren)
+    ]
+    assert sched._solcast_detailed(hass) == {}
+
+
+async def test_ohne_daten_bleiben_die_sensoren_leer():
+    _, sensoren = _sensor_umgebung({"forecast_source": "eigen"})
+    p = sensoren[0]._prognose
+    p.leistung_jetzt_kw.return_value = None
+    p.rest_heute_kwh.return_value = None
+    p.tage_kwh.return_value = None
+    p.halbstunden.return_value = {}
+    for s in sensoren:
+        await s.async_update()
+        assert s.native_value is None

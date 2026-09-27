@@ -38,7 +38,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from ..const import CONF_INVERTER_AC_LIMIT_KW, DOMAIN
@@ -259,6 +259,21 @@ class PvPrognoseProvider:
         if reihe is None:
             return None
         return rest_heute_kwh(reihe, jetzt or _utcnow(), _lokal)
+
+    def leistung_jetzt_kw(self, jetzt: datetime | None = None) -> float | None:
+        """Prognostizierte AC-Leistung der laufenden Viertelstunde (kW).
+
+        Das Gegenstück zum Sensor „PV-Leistung" — nebeneinander im Verlauf
+        zeigen beide, wie gut die Prognose den Tagesgang trifft.
+        """
+        reihe = self.reihe(jetzt)
+        if reihe is None:
+            return None
+        jetzt = jetzt or _utcnow()
+        for ende, kw in zip(reihe.ende, reihe.kw):
+            if ende - timedelta(minutes=15) <= jetzt < ende:
+                return kw
+        return None
 
     def morgen_kwh(self, jetzt: datetime | None = None) -> float | None:
         tage = self.tage_kwh(jetzt)

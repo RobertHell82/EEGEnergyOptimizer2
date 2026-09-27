@@ -429,6 +429,98 @@ class PVForecastTodaySensor(SensorEntity):
 # Sensor 12: PV-Prognose morgen (fast)
 # ---------------------------------------------------------------------------
 
+EIGENE_PROGNOSE_ARTEN = (
+    "leistung", "rest_heute", "heute", "morgen",
+    "tag_3", "tag_4", "tag_5", "tag_6", "tag_7",
+)
+
+
+class EigenePrognoseSensor(SensorEntity):
+    """Die eigene PV-Prognose (pvprognose/) als Sensor — neun Stück.
+
+    Dieselbe Form wie die Tagessensoren von Solcast (verbleibend heute,
+    heute, morgen, Tag 3 bis 7, in kWh), dazu „Leistung" in kW für die
+    laufende Viertelstunde — das Gegenstück zu „PV-Leistung". Angelegt,
+    sobald die eigene Berechnung steuert oder als Vergleich mitläuft;
+    damit liegen beide Prognosen im Recorder und lassen sich in jedem
+    Diagramm übereinanderlegen.
+
+    Die Sensoren sind nur Ausgabe: Fahrplan und Vergleich lesen direkt aus
+    dem Provider, nicht über den Zustandsspeicher. Die Halbstundenreihe am
+    Leistungssensor heißt bewusst NICHT ``detailedForecast`` — sonst sammelte
+    die Solcast-Suche in schedule.py sie als Solcast-Werte ein — und wird
+    nicht aufgezeichnet (sieben Tage Werte in jedem Zustandswechsel).
+    """
+
+    _attr_has_entity_name = True
+    _attr_icon = "mdi:weather-sunny"
+    _unrecorded_attributes = frozenset({"prognose_halbstunden"})
+
+    _NAMEN = {
+        "leistung": "Eigene PV-Prognose Leistung",
+        "rest_heute": "Eigene PV-Prognose verbleibend heute",
+        "heute": "Eigene PV-Prognose heute",
+        "morgen": "Eigene PV-Prognose morgen",
+    }
+
+    def __init__(self, hass: Any, entry: Any, prognose: Any, art: str) -> None:
+        self.hass = hass
+        self._prognose = prognose
+        self._art = art
+        self._attr_name = self._NAMEN.get(art) or f"Eigene PV-Prognose Tag {art[-1]}"
+        self._attr_unique_id = f"{DOMAIN}_{entry.entry_id}_eigene_prognose_{art}"
+        self._attr_device_info = _device_info(entry.entry_id)
+        if art == "leistung":
+            self._attr_native_unit_of_measurement = "kW"
+            self._attr_device_class = SensorDeviceClass.POWER
+            self._attr_state_class = SensorStateClass.MEASUREMENT
+            self._attr_suggested_display_precision = 2
+        else:
+            self._attr_native_unit_of_measurement = "kWh"
+            self._attr_device_class = SensorDeviceClass.ENERGY
+            self._attr_suggested_display_precision = 1
+        self._attr_native_value: float | None = None
+        self._attr_extra_state_attributes: dict[str, Any] = {}
+
+    async def async_update(self) -> None:
+        p = self._prognose
+        art = self._art
+        attrs: dict[str, Any] = {}
+        if art == "leistung":
+            self._attr_native_value = p.leistung_jetzt_kw()
+            attrs["prognose_halbstunden"] = [
+                {"start": t.isoformat(), "kw": kw} for t, kw in sorted(p.halbstunden().items())
+            ]
+        elif art == "rest_heute":
+            self._attr_native_value = p.rest_heute_kwh()
+        else:
+            tage = p.tage_kwh()
+            index = {"heute": 0, "morgen": 1}.get(art)
+            if index is None:
+                index = int(art[-1]) - 1
+            self._attr_native_value = tage[index] if tage and index < len(tage) else None
+        if art in ("leistung", "heute"):
+            stand = p.status() or {}
+            attrs["geholt"] = stand.get("geholt")
+            attrs["alter_minuten"] = stand.get("alter_minuten")
+            attrs["fehler"] = stand.get("fehler")
+            attrs["kwp_gesamt"] = stand.get("kwp_gesamt")
+        self._attr_extra_state_attributes = attrs
+
+
+def eigene_prognose_sensoren(hass: Any, entry: Any, config: dict, data: dict) -> list:
+    """Die neun Sensoren — nur mit eigener Berechnung als Quelle oder Vergleich."""
+    from .prognosevergleich import vergleich_aktiv
+
+    prognose = data.get("pvprognose")
+    if prognose is None:
+        return []
+    quelle = str(config.get(CONF_FORECAST_SOURCE) or "").lower()
+    if quelle != FORECAST_SOURCE_EIGEN and not vergleich_aktiv(config):
+        return []
+    return [EigenePrognoseSensor(hass, entry, prognose, art) for art in EIGENE_PROGNOSE_ARTEN]
+
+
 class PVForecastTomorrowSensor(SensorEntity):
     """PV forecast for tomorrow from forecast provider."""
 
@@ -2116,6 +2208,7 @@ async def async_setup_entry(
     slow_sensors: list[SensorEntity] = [profil_sensor]
     fast_sensors: list[SensorEntity] = (
         daily_sensors
+        + eigene_prognose_sensoren(hass, entry, config, data)
         + [pv_today_sensor, pv_tomorrow_sensor,
            hausverbrauch_sensor, pv_leistung_sensor, netzleistung_sensor,
            batterieleistung_sensor]

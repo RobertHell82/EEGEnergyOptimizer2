@@ -51,6 +51,17 @@ const SENSOR_SUFFIXES = {
   // Leistungspreis ab 2027 (leistungsspitze.py) — immer vorhanden.
   netzbezug_viertelstunde: "netzbezug_viertelstunde",
   bezugsspitze_monat: "bezugsspitze_monat",
+  // Eigene PV-Prognose (pvprognose/) — nur mit eigener Quelle oder Vergleich.
+  // Ohne sie bleibt die geratene entity_id ohne Zustand, das stört nicht.
+  eigen_leistung: "eigene_prognose_leistung",
+  eigen_rest_heute: "eigene_prognose_rest_heute",
+  eigen_heute: "eigene_prognose_heute",
+  eigen_morgen: "eigene_prognose_morgen",
+  eigen_tag_3: "eigene_prognose_tag_3",
+  eigen_tag_4: "eigene_prognose_tag_4",
+  eigen_tag_5: "eigene_prognose_tag_5",
+  eigen_tag_6: "eigene_prognose_tag_6",
+  eigen_tag_7: "eigene_prognose_tag_7",
 };
 const SELECT_SUFFIX = "optimizer";
 
@@ -7474,6 +7485,42 @@ class EegOptimizerPanel extends HTMLElement {
 
   /* ── Prognosevergleich (Dashboard-Karte) ────────────────────── */
 
+  _vergleichWoche() {
+    // Die nicht steuernde Quelle, sieben Tage aus ihren Sensoren. Steuert
+    // Solcast, sind das die Sensoren der eigenen Berechnung; steuert die
+    // eigene Berechnung, die Tagessensoren von Solcast (sonst Forecast.Solar).
+    const states = this._hass?.states || {};
+    const zahl = (id) => {
+      const st = id ? states[id] : null;
+      const v = st ? parseFloat(st.state) : NaN;
+      return Number.isFinite(v) ? v : null;
+    };
+    if (this._config?.forecast_source !== "eigen") {
+      const e = this._entityIds || {};
+      const id = (k) => e[`eigen_${k}`] || `sensor.eeg_energy_optimizer_eigene_pv_prognose_${k}`;
+      const werte = ["heute", "morgen", "tag_3", "tag_4", "tag_5", "tag_6", "tag_7"].map((k) => zahl(id(k)));
+      if (werte.every((v) => v == null)) return null;
+      return { label: "Eigene Berechnung", werte };
+    }
+    const kandidat = SOLCAST_DEFAULTS_CANDIDATES.forecast_tomorrow_entity.find((i) => states[i]);
+    if (kandidat) {
+      let prefix = kandidat.replace(/morgen$/, "");
+      if (prefix.endsWith("fuer_") && !states[prefix + "tag_3"]) prefix = prefix.replace(/fuer_$/, "");
+      const werte = [
+        zahl(prefix + "heute"), zahl(kandidat),
+        ...[3, 4, 5, 6, 7].map((t) => zahl(`${prefix}tag_${t}`)),
+      ];
+      return { label: "Solcast", werte };
+    }
+    if (states["sensor.energy_production_tomorrow"]) {
+      return {
+        label: "Forecast.Solar",
+        werte: [zahl("sensor.energy_production_today"), zahl("sensor.energy_production_tomorrow"), null, null, null, null, null],
+      };
+    }
+    return null;
+  }
+
   _ensurePrognosevergleich() {
     if (!this._config?.pv_prognose_vergleich || !this._hass) return;
     // Halbstündlich nachziehen — so oft schreibt das Backend.
@@ -9187,7 +9234,7 @@ class EegOptimizerPanel extends HTMLElement {
     return `<div class="activity-timeline">${rows}</div>${moreBtn}`;
   }
 
-  _renderBarChart(data, pvData = null) {
+  _renderBarChart(data, pvData = null, pvData2 = null, pvLabels = null) {
     if (!data || data.length === 0) return "<p>Keine Daten verfügbar</p>";
     const schmal = !!this._narrow;
     // Gezeichnet wird in echten Pixeln: viewBox-Breite == Anzeigebreite
@@ -9205,10 +9252,13 @@ class EegOptimizerPanel extends HTMLElement {
     const fsAxis = schmal ? 10 : 12;
     const fsDay = schmal ? 11 : 13;
     const fsLegend = schmal ? 10 : 12;
-    const maxVal = Math.max(...data.map(d => d.value), ...(pvData || []).map(d => d.value || 0), 1) * 1.1;
+    const maxVal = Math.max(...data.map(d => d.value), ...(pvData || []).map(d => d.value || 0),
+      ...(pvData2 || []).map(d => d.value || 0), 1) * 1.1;
     const slotW = chartW / data.length;
     const grouped = pvData != null;
-    const barW = grouped ? slotW * 0.35 : slotW * 0.7;
+    // Dritte Reihe: die mitlaufende Prognosequelle (Prognosevergleich).
+    const drei = grouped && pvData2 != null;
+    const barW = drei ? slotW * 0.26 : grouped ? slotW * 0.35 : slotW * 0.7;
     const gap = grouped ? 2 : slotW * 0.3;
 
     let bars = "";
@@ -9216,7 +9266,7 @@ class EegOptimizerPanel extends HTMLElement {
       const slotX = padding.left + i * slotW;
       if (grouped) {
         // Consumption bar (left)
-        const x1 = slotX + (slotW - barW * 2 - gap) / 2;
+        const x1 = slotX + (slotW - barW * (drei ? 3 : 2) - gap * (drei ? 2 : 1)) / 2;
         const barH1 = (d.value / maxVal) * chartH;
         const y1 = padding.top + chartH - barH1;
         const pvVal = pvData[i]?.value || 0;
@@ -9234,6 +9284,20 @@ class EegOptimizerPanel extends HTMLElement {
           const x2 = x1 + barW + gap;
           bars += `<rect x="${x2}" y="${y2}" width="${barW}" height="${barH2}" fill="#FF9800" rx="3"/>`;
           bars += `<text x="${x2 + barW/2}" y="${y2 - 4 + dyPv}" text-anchor="middle" font-size="${fsVal}" fill="var(--primary-text-color)">${fmtDe(pvVal, 1)}</text>`;
+        }
+        // Vergleichsquelle (rechts daneben). Werte nur am Desktop — am
+        // Handy stünden drei Zahlen auf 40 px und überschrieben sich.
+        if (drei) {
+          const v3 = pvData2[i]?.value || 0;
+          if (v3 > 0) {
+            const x3 = x1 + (barW + gap) * 2;
+            const h3 = (v3 / maxVal) * chartH;
+            const y3 = padding.top + chartH - h3;
+            bars += `<rect x="${x3}" y="${y3}" width="${barW}" height="${h3}" fill="#FFCC80" stroke="#FF9800" stroke-width="1" rx="3"/>`;
+            if (!schmal) {
+              bars += `<text x="${x3 + barW/2}" y="${y3 - 4}" text-anchor="middle" font-size="${fsVal - 1}" fill="var(--secondary-text-color)">${fmtDe(v3, 1)}</text>`;
+            }
+          }
         }
 
         // Day label centered under group
@@ -9261,14 +9325,20 @@ class EegOptimizerPanel extends HTMLElement {
     // Legend for grouped bars
     let legend = "";
     if (grouped) {
-      const breite = schmal ? 150 : 200;
-      const spalte = schmal ? 72 : 100;
+      const spalte = schmal ? 78 : 118;
+      const eintraege = [
+        ["var(--primary-color)", "", "Verbrauch"],
+        ["#FF9800", "", drei ? (pvLabels?.[0] || "PV-Prognose") : "PV-Prognose"],
+      ];
+      if (drei) eintraege.push(["#FFCC80", "#FF9800", pvLabels?.[1] || "Vergleich"]);
+      const breite = spalte * eintraege.length;
       const lx = Math.max(padding.left, width - padding.right - breite);
       const ly = schmal ? 11 : 14;
-      legend += `<rect x="${lx}" y="${ly - 8}" width="9" height="9" fill="var(--primary-color)" rx="2"/>`;
-      legend += `<text x="${lx + 13}" y="${ly}" font-size="${fsLegend}" fill="var(--primary-text-color)">Verbrauch</text>`;
-      legend += `<rect x="${lx + spalte}" y="${ly - 8}" width="9" height="9" fill="#FF9800" rx="2"/>`;
-      legend += `<text x="${lx + spalte + 13}" y="${ly}" font-size="${fsLegend}" fill="var(--primary-text-color)">PV-Prognose</text>`;
+      eintraege.forEach(([farbe, rand, text], k) => {
+        const x = lx + spalte * k;
+        legend += `<rect x="${x}" y="${ly - 8}" width="9" height="9" fill="${farbe}"${rand ? ` stroke="${rand}"` : ""} rx="2"/>`;
+        legend += `<text x="${x + 13}" y="${ly}" font-size="${fsLegend}" fill="var(--primary-text-color)">${this._escapeHtml(text)}</text>`;
+      });
     }
 
     return `<svg data-cw="bar" viewBox="0 0 ${width} ${height}" style="width:100%;height:auto;">${yLines}${bars}${legend}</svg>`;
@@ -10013,6 +10083,14 @@ class EegOptimizerPanel extends HTMLElement {
     const pvForecastData = forecastData.map((d, i) => {
       return { label: d.label, value: pvWeek[i] || 0 };
     });
+    // Prognosevergleich: die mitlaufende Quelle als dritte Balkenreihe.
+    const vglWoche = this._config?.pv_prognose_vergleich ? this._vergleichWoche() : null;
+    const pvVergleichData = vglWoche
+      ? forecastData.map((d, i) => ({ label: d.label, value: vglWoche.werte[i] || 0 }))
+      : null;
+    const pvLegende = vglWoche
+      ? [FORECAST_LABELS[this._config?.forecast_source] || "PV-Prognose", vglWoche.label]
+      : null;
     const _solcastDay37Missing = solcastPrefix && pvWeek.slice(2).every(v => v === 0);
 
     // --- Hourly profile chart (all weekdays) ---
@@ -10202,7 +10280,7 @@ class EegOptimizerPanel extends HTMLElement {
             <ha-icon icon="mdi:chevron-${this._forecastOpen ? "up" : "down"}" style="--mdc-icon-size:24px;color:var(--secondary-text-color);flex-shrink:0"></ha-icon>
           </div>
           ${!this._forecastOpen ? "" : `
-          ${this._renderBarChart(forecastData, pvForecastData)}
+          ${this._renderBarChart(forecastData, pvForecastData, pvVergleichData, pvLegende)}
           ${_solcastDay37Missing ? `<p style="margin:8px 0 0;padding:10px 12px;background:var(--warning-color,#ff9800)22;border-left:3px solid var(--warning-color,#ff9800);border-radius:4px;font-size:0.85em;color:var(--primary-text-color)">
             <ha-icon icon="mdi:alert-outline" style="--mdc-icon-size:16px;vertical-align:middle;margin-right:4px;color:var(--warning-color,#ff9800)"></ha-icon>
             Bitte die Sensoren f\u00fcr die Tage 3\u20137 in der Solcast Integration aktivieren, um die fehlenden Prognosedaten anzeigen zu lassen.</p>` : ""}`}

@@ -57,6 +57,10 @@ Lief Home Assistant am Morgen nicht, werden die Prognosen erst beim nächsten St
 
 Den Schalter gibt es auch im Einrichtungsassistenten beim Schritt „PV-Prognose“. Die steuernde Quelle selbst lässt sich in den Einstellungen unter **Anlage → PV-Prognose** wechseln; für Solcast und Forecast.Solar werden die Sensoren dabei vorbelegt.
 
+### Sensoren
+
+Steuert die eigene Berechnung oder läuft sie als Vergleich mit, legt die Integration neun Sensoren an: **Eigene PV-Prognose Leistung** (kW, die laufende Viertelstunde, das Gegenstück zu „PV-Leistung“), **verbleibend heute**, **heute**, **morgen** und **Tag 3** bis **Tag 7** (kWh). Sie haben dieselbe Form wie die Tagessensoren von Solcast und lassen sich in jedem Home-Assistant-Diagramm neben Solcast und die gemessene PV legen. Mit eingeschaltetem Vergleich zeigt das Wochendiagramm im Dashboard außerdem je Tag einen dritten Balken für die mitlaufende Quelle.
+
 ### Der p10 der eigenen Prognose
 
 Die Notstrom-Reserve rechnet mit einem Worst-Case-Pfad. Solcast liefert dafür ein echtes 10-%-Perzentil, die eigene Berechnung nicht. Mit eingeschaltetem Vergleich holt sie sich eines:
