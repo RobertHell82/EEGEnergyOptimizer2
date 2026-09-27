@@ -1,0 +1,59 @@
+<!-- GENERATED FILE - DO NOT EDIT.
+     Quelle: docs/guides/anlage_batterie.md
+     Neu generieren mit: python scripts/build_guides.py -->
+<h2 class="guide-title">Anlage &amp; Batterie</h2>
+<p>In diesem Schritt trägst du die Grenzen deiner Anlage ein: was der Wechselrichter netzseitig leisten kann und in welchem Bereich die Batterie arbeiten darf. Die Optimierung plant nie über diese Grenzen hinaus. Die meisten Werte stehen im Datenblatt von Wechselrichter und Batterie.</p>
+<h3>Anlage</h3>
+<table>
+<thead>
+<tr>
+<th>Feld</th>
+<th>Bedeutung</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>AC-Grenzleistung des Wechselrichters (kW)</strong></td>
+<td>Nennleistung auf der Netzseite, aus dem Datenblatt. Sie begrenzt im Plan die Summe aus Einspeisung und Hausverbrauch</td>
+</tr>
+<tr>
+<td><strong>PV-Spitzenleistung (kWp)</strong></td>
+<td>Summe der Modulleistung. Ersatzwert, falls die AC-Grenzleistung fehlt, und Obergrenze für die Plausibilitätsprüfung der Tageswerte in der EEG-Statistik</td>
+</tr>
+</tbody>
+</table>
+<p>Beide Felder sind <strong>Pflicht</strong>: Ohne sie lässt sich der Schritt nicht abschließen, und auch in den Einstellungen kannst du sie nicht wieder leeren.</p>
+<p>Die AC-Grenzleistung sollte stimmen. Ist sie zu groß, entstehen Pläne, die das Gerät nicht liefern kann. Sie wirkt an mehreren Stellen:</p>
+<ul>
+<li><strong>Einspeisung plus Hausverbrauch</strong> bleiben im Plan darunter. Eine Verbrauchsspitze über der AC-Grenze (etwa eine 11-kW-Wallbox an einem 10-kW-Gerät) rechnet der Plan als Netzbezug. Der Wechselrichter könnte sie ohnehin nicht decken.</li>
+<li><strong>Ohne Einspeisegrenze</strong> gilt die AC-Grenzleistung minus 0,5 kW als höchste Einspeisung.</li>
+<li>Die <strong>eigene PV-Prognose</strong> wird auf diesen Wert gedeckelt. Mehr, als das Gerät liefert, wird nie prognostiziert.</li>
+</ul>
+<p>Darunter steht die Karte <strong>Einspeisegrenze beachten</strong>. Schalte sie ein, wenn dein Netzbetreiber die Einspeiseleistung begrenzt. Was die Grenze bewirkt und wie du sie richtig einträgst, beschreibt die Anleitung „Einspeisegrenze“.</p>
+<h3>Batterie</h3>
+<h4>Batterie-Leistungsgrenze (kW)</h4>
+<p>So viel Leistung kann die Batterie höchstens aufnehmen oder abgeben. Der Wert gilt in beide Richtungen, für Laden und Entladen; vorgegeben sind 5 kW. Ist er zu klein, verschenkst du Möglichkeiten. Ist er zu groß, entstehen Pläne, die der Wechselrichter nicht erfüllt. Im Assistenten ist das Feld Pflicht.</p>
+<h4>Mindest-Ladestand (%)</h4>
+<p>Unter diesen Ladestand plant die Optimierung <strong>nie</strong>. Er ist eine harte Untergrenze, keine Empfehlung: Für die Optimierung ist die Batterie bei diesem Wert „leer“. Vorgegeben sind 10 %, mit 0 darf bis leer entladen werden.</p>
+<p>Der Mindest-Ladestand <strong>ist</strong> die Sicherheitsreserve. Eine eigene Notstromreserve mit kWh-Angabe gibt es nicht mehr. Was im Speicher bleiben soll, stellst du allein hier ein. Er schont die Zellen und lässt einen Puffer für Lastspitzen. Wie viel sinnvoll ist, hängt von der Größe deines Speichers ab.</p>
+<p>Der Mindest-Ladestand darf <strong>höchstens 20 Prozentpunkte unter dem Maximum-Ladestand</strong> liegen, damit der Optimierung ein nutzbarer Bereich bleibt. Bei einem Maximum von 100 % sind das 80 %, beim tiefsten erlaubten Maximum von 70 % sind es 50 %. Trägst du mehr ein, wird der Wert auf diese Grenze gesetzt. Das Feld zeigt immer den Wert, mit dem die Optimierung tatsächlich rechnet.</p>
+<div class="guide-alert note"><p><strong>Die Reserve des Wechselrichters hebt den Mindest-Ladestand an.</strong> Viele Geräte halten selbst einen Ladestand zurück und geben darunter nichts mehr ab. Liegt dieser Gerätewert höher als dein Mindest-Ladestand, plant die Optimierung mit dem Gerätewert. Sonst würde sie Entladungen planen, die der Wechselrichter verweigert, und Plan und Wirklichkeit liefen dauerhaft auseinander.</p>
+<ul>
+<li><strong>Huawei:</strong> der Backup-Ladestand (Notstrom) der Batterie. Bei mehreren Batterien zählt der höchste Wert.</li>
+<li><strong>SolaX:</strong> der Entladeboden im Eigenverbrauchsmodus. Er ist ein harter Riegel: Der Wechselrichter stoppt die Entladung dort, auch mitten in einer befohlenen Entladung. Für die Dauer einer geplanten Entladung senkt die Integration ihn deshalb auf 5 Prozentpunkte unter das Ziel und stellt danach deinen Wert wieder her. Die Optimierung plant immer mit deinem eingestellten Wert.</li>
+</ul>
+<p>Soll die Batterie tiefer entladen werden, musst du die Reserve im Gerät senken. Eine Einstellung hier reicht dafür nicht.</p></div>
+
+<h4>Maximum-Ladestand (%)</h4>
+<p>Über diesen Ladestand plant die Optimierung nicht. <strong>100</strong> heißt „bis voll laden“ und ist die Vorgabe. Der kleinste erlaubte Wert ist 70 %, darunter bliebe zu wenig nutzbarer Bereich.</p>
+<p>Mit einem niedrigeren Wert bleibt oben ein Rest frei. Manche Zellchemien altern nahe der Vollladung schneller. Wie viel eine solche Grenze im Einzelfall bringt, ist offen. An der Testanlage kostete ein Maximum von 90 % kaum Erlös. Unter dem Feld steht, wie viel Kapazität zwischen Mindest- und Maximum-Ladestand nutzbar bleibt.</p>
+<div class="guide-alert warning"><p><strong>Der Maximum-Ladestand begrenzt den Plan, nicht das Gerät.</strong> Der Wechselrichter lädt weiterhin bis voll, wenn die Optimierung auf Aus steht, pausiert ist oder Home Assistant neu startet. Dasselbe passiert, wenn bei aktiver Einspeisegrenze mehr PV-Leistung kommt, als ins Netz darf. Soll die Grenze die Zellen wirklich schützen, stellst du sie zusätzlich im Gerät ein.</p></div>
+
+<h4>Sicherheitspuffer auf die Prognose (%)</h4>
+<p>Dieses Feld gibt es nur in den <strong>Einstellungen</strong> und nur im <strong>Expertenmodus</strong>, im Assistenten fehlt es. Es verändert keinen Gerätewert. Es ist eine bewusste Abweichung von der Prognose.</p>
+<p>Mit einem Puffer von z. B. 10 % rechnet der Fahrplan mit 10 % mehr Verbrauch und 10 % weniger PV-Ertrag, als die Prognose sagt. Er lädt dadurch eher und entlädt zurückhaltender. Die Batterie ist abends eher voll und nachts seltener leer. Erlaubt sind 0 bis 50 %. Bei 50 % plant das Modell mit der halben Sonne und dem anderthalbfachen Verbrauch.</p>
+<p>Der Puffer wirkt <strong>nur auf die Vorausschau</strong>. Für die laufende Viertelstunde rechnet der Fahrplan immer mit den gemessenen Werten für PV und Hausverbrauch. Über diese Viertelstunde gibt es nichts zu raten, und ein Aufschlag auf einen Messwert wäre ein Fehler, keine Vorsicht.</p>
+<p><strong>Die Vorgabe ist 0 %, und dabei sollte es meist bleiben.</strong> Ein Aufschlag macht die Vorhersage nicht besser, er verschiebt sie nur, und das in der Hälfte der Fälle in die falsche Richtung. Außerdem lenkt er Einspeisung aus den Bedarfsstunden der Gemeinschaft in den Speicher. Das kostet Ertrag und läuft gegen den Zweck der Optimierung.</p>
+<p>Sinnvoll ist ein Puffer, wenn du bewusst vorsichtiger fahren willst: Eine volle Batterie am Abend ist dir dann wichtiger als der letzte Cent Einspeisung.</p>
+<h3>Später ändern</h3>
+<p>Alle Felder dieses Schritts findest du wieder in den <strong>Einstellungen</strong>, Tab <strong>Anlage</strong>: die Karte <strong>Anlage</strong> mit der Einspeisegrenze und die Karte <strong>Batterie</strong>. Gerätedaten aus dem Datenblatt ändern sich im Betrieb praktisch nie. Deshalb erscheinen <strong>AC-Grenzleistung</strong>, <strong>PV-Spitzenleistung</strong> und <strong>Batterie-Leistungsgrenze</strong> in den Einstellungen nur im <strong>Expertenmodus</strong> (Tab <strong>System</strong>). Mindest- und Maximum-Ladestand sind immer sichtbar.</p>

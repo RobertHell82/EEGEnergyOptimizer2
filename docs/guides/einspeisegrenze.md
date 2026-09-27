@@ -27,7 +27,7 @@ Die Einspeisegrenze wirkt an zwei Stellen:
 | **Einspeisegrenze beachten** | Schaltet die Funktion ein/aus (Standard: aus) |
 | **Höhe der Grenze (kW)** | Die maximale Einspeiseleistung laut Vorgabe deines Netzbetreibers (z. B. 4) |
 | **AC-Grenzleistung des Wechselrichters (kW)** | Pflicht. Nennleistung auf der Netzseite laut Datenblatt — begrenzt im Fahrplan die Summe aus Einspeisung und Hausverbrauch. Ein zu großer Wert erzeugt Pläne, die das Gerät nicht liefern kann |
-| **PV-Spitzenleistung (kWp)** | Pflicht. Summe der Modulleistung — dient der Plausibilitätsprüfung der Prognosewerte |
+| **PV-Spitzenleistung (kWp)** | Pflicht. Summe der Modulleistung — Ersatzwert, falls die AC-Grenzleistung fehlt, und Obergrenze für die Plausibilitätsprüfung der Tageswerte in der EEG-Statistik |
 
 Alle vier Felder stehen im Assistenten im Schritt **Anlage & Batterie**, später unter **Einstellungen → Anlage**. Die beiden Gerätedaten (AC-Grenzleistung, PV-Spitzenleistung) zeigen die Einstellungen nur im Expertenmodus, weil sie sich nicht ändern.
 

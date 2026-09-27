@@ -39,14 +39,31 @@ Eine der drei Prognose-Quellen wird benötigt:
 - **[Forecast.Solar einrichten](guides/forecast_solar.md)** (ohne Registrierung nutzbar)
 - **[Eigene Berechnung einrichten](guides/prognose_eigen.md)** (keine Zusatz-Integration, Wetter von Open-Meteo, Flächen der Anlage direkt im Panel)
 
+## ⚙️ Einstellungen
+
+Was die Felder im Einrichtungsassistenten und in den Einstellungen bedeuten:
+
+- **[Anlage & Batterie](guides/anlage_batterie.md)** — Gerätedaten, Batterie-Leistungsgrenze, Mindest- und Maximum-Ladestand, Sicherheitspuffer auf die Prognose
+- **[Einspeisegrenze](guides/einspeisegrenze.md)** — wenn der Netzbetreiber die Einspeiseleistung begrenzt
+- **[Tarife & Gemeinschaft](guides/tarife.md)** — Standardvergütung, Arbeitspreis und Netzgebühr, Energiegemeinschaften mit PeakShare oder fester Abnahmequote
+- **[Einstellungen & Expertenmodus](guides/einstellungen.md)** — die vier Tabs, was nur im Expertenmodus erscheint, EEG-Statistik und Plan-Archiv
+
+## 📊 Im Betrieb
+
+- **[Dashboard & Bedienung](guides/dashboard.md)** — Statuskarte, Modus und Pause, „Was deine PV bringt“, Bezugsspitze, was bei Störungen zu tun ist
+
 ## 🔥 Heizstab (optional)
 
 Wer einen Warmwasserpuffer hat, kann PV-Strom als Wärme speichern — der Fahrplan wägt ab, ob eine Kilowattstunde als Wärme oder als Einspeisung mehr bringt:
 
 - **[Heizstab (Fronius Ohmpilot) einrichten](guides/heizstab.md)** — direkt per Modbus TCP gesteuert, nach Plan und aus ungeplantem Überschuss
 
+## 🚗 Wallbox (optional)
+
+- **[Wallbox Ambibox](guides/wallbox.md)** — Fahrzeug in der Statuskarte, manueller Lade- und Entladetest; noch ohne Steuerung durch den Fahrplan
+
 > [!TIP]
-> Die Einrichtungs-Anleitungen sind auch direkt im Panel verfügbar — einfach auf die „Anleitung"-Buttons klicken: im Einrichtungsassistenten bei Wechselrichter, PV-Prognose und Anlage & Batterie, die Heizstab-Anleitung in den Einstellungen im Tab Heizstab.
+> Die Einrichtungs-Anleitungen sind auch direkt im Panel verfügbar — einfach auf die „Anleitung"-Buttons klicken: im Einrichtungsassistenten bei Wechselrichter, PV-Prognose, Anlage & Batterie und Tarife & Gemeinschaft, in den Einstellungen in jedem Tab, und die Anleitung zum Dashboard ganz unten im Dashboard.
 
 ## 🌐 Fernzugang (von außen erreichbar)
 

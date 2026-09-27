@@ -959,8 +959,9 @@ def _max_soc_pct(config: dict) -> float:
     """Maximum-Ladestand in Prozent — 100 heißt „bis voll laden".
 
     Gekappt bei 70 % nach unten: darunter bliebe zu wenig nutzbarer Bereich.
-    Zusammen mit der 30-%-Kappung des Mindest-Ladestands liegen Boden und
-    Deckel immer mindestens 40 Punkte auseinander.
+    Der Mindest-Ladestand ist auf Maximum − 20 Punkte gekappt
+    (``max_min_soc_pct``), Boden und Deckel liegen also immer mindestens
+    20 Punkte auseinander.
     """
     raw = config.get(CONF_SCHEDULE_MAX_SOC_PCT)
     if raw is None or raw == "":

@@ -140,7 +140,7 @@ schedule_executor.py: ScheduleExecutor (execution, 30 s)
 | 15 | Fahrplan Batterieleistung | fast | **Planned** battery power for the current slot — same cadence as the measured one, so recorder history makes plan and reality comparable |
 | 16 | Fahrplan Netzleistung | fast | **Planned** grid power for the current slot |
 | 17 | Entladung ins Netz | fast | Battery energy that actually reached the grid (kWh, TOTAL with `last_reset`) — the basis of the feed-in statistics card |
-| 18 | Fahrplan-Status | 30s | Executor state ("Laden begrenzt auf 2,0 kW", "Entladung 2,8 kW bis 43 %", "Normalbetrieb", "Anzeige-Modus") + plan/written-value attributes |
+| 18 | Fahrplan-Status | 30s | Executor state ("Laden begrenzt auf 2,0 kW", "Einspeisung 2,80 kW bis 43 %" (planned export; "Entladung …" only without a plan value), "Laden blockiert", "Normalbetrieb", "Anzeige-Modus") + plan/written-value attributes |
 | 19–21 | Ersparnis durch PV — heute / Monat / Jahr | fast | Avoided grid purchase + feed-in revenue (MONETARY, TOTAL). A **measurement**: every kWh is metered, prices come frozen per quarter-hour from `bilanz.py` |
 | 22–24 | Ersparnis durch Optimierung — heute / Monat / Jahr | fast | Actual vs. simulated standard operation over the **measured** PV/load series (MONETARY, TOTAL). A **model**, not a measurement — `None` when the day's starting SOC is unknown |
 | 25 | Netzbezug Viertelstunde | quarter-hour close + fast | Mean grid import of the last **completed** quarter-hour (comparable 1:1 with the grid operator's smart-meter portal); running quarter in unrecorded attributes `laufend_bisher_kw` / `laufend_hochrechnung_kw` |
@@ -197,7 +197,7 @@ three intents. `Fahrplan-Status` shows what actually happened:
   in the battery, so the charge limit is capped (0 kW = charging blocked).
   Guard 1 raises the cap again when the measured export sticks to the limit,
   which is the signature of silent curtailment.
-- **Entladung x kW bis y %** — forced discharge; the target SOC comes **from
+- **Einspeisung x kW bis y %** — forced discharge, named after the *planned export*, not the battery setpoint (which includes the house load); „Entladung x kW …“ only when no plan value is known; the target SOC comes **from
   the plan**, there is no independent floor. Guard 2 tracks the setpoint from
   planned export + measured house load.
 - **Normalbetrieb** — inverter released to its own automatic mode.
@@ -701,13 +701,14 @@ sensors (assigned once), steps 4–5 are the parameters:
    night rate `schedule_feedin_price_night`), consumption price, community
    shares/prices/weights, demand source PeakShare forecast or fixed acceptance
    quota (`eeg_demand_source`; quotas per community, day mandatory in quote
-   mode, name becomes free text). The night window lives in the Vergütung section
-   (rendered once via `_nachtfensterFelder`) and appears when ANY night rate
-   is set — base tariff or community; second community collapsed behind a
-   button; expert mode: battery aging cost
+   mode, name becomes free text). The base tariff's night window belongs to the
+   source „Fester Wert“ only (the other sources have no night rate); each
+   community has its own window. Only whole hours count — the planner reads
+   the hour of the time field (`_stunde_aus_zeit`). Second community collapsed
+   behind a button; expert mode: battery aging cost
 7. Zusammenfassung
 
-Settings live in three tabs: **Tarife** and **Anlage** are exactly the two
+Settings live in four tabs (Heizstab only in expert mode): **Tarife** and **Anlage** are exactly the two
 parameter wizard steps (same field renderers, `settings_` prefix) — **Anlage**
 (the *Heizstab* card lives in its own fourth tab **Heizstab**, shown in expert mode only —
 `_heizstabFields`, settings only, not in the wizard); **System**

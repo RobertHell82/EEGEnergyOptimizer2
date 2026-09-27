@@ -99,8 +99,8 @@ Zusammenfassung. Was in jedem Schritt abgefragt wird, steht in der
 [Installationsanleitung](../installation/eeg-integration.md#4-einrichtungsassistent).
 
 > [!TIP]
-> Bei den Schritten Wechselrichter, PV-Prognose und Anlage & Batterie (bei
-> Huawei auch Batterie) gibt es einen **„Anleitung"-Button**, der die passende Hilfe direkt im Panel
+> Bei den Schritten Wechselrichter, PV-Prognose, Anlage & Batterie und Tarife &
+> Gemeinschaft (bei Huawei auch Batterie) gibt es einen **„Anleitung"-Button**, der die passende Hilfe direkt im Panel
 > anzeigt.
 
 ---
@@ -111,7 +111,9 @@ Wenn alle Schritte erledigt sind, läuft der EEG Energy Optimizer und steuert
 deinen Speicher nach den **Einspeisepreisen**: Er speist ein, wenn eine
 Kilowattstunde gerade mehr wert ist — etwa weil deine Energiegemeinschaft dann
 Bedarf hat — und lädt oder hält, wenn sie weniger wert ist. Den Fahrplan und
-den Status siehst du jederzeit im Panel **EEG Energy Optimizer**.
+den Status siehst du jederzeit im Panel **EEG Energy Optimizer** — was dort
+steht und wie du die Steuerung pausierst, erklärt
+**[Dashboard & Bedienung](../guides/dashboard.md)**.
 
 > [!NOTE]
 > **Ohne Preisunterschied passiert nichts.** Feste Zeitfenster gibt es nicht,

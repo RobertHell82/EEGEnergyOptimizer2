@@ -1,0 +1,113 @@
+<!-- GENERATED FILE - DO NOT EDIT.
+     Quelle: docs/guides/wallbox.md
+     Neu generieren mit: python scripts/build_guides.py -->
+<h2 class="guide-title">Wallbox Ambibox (Beta)</h2>
+<p>Mit einer <strong>Ambibox</strong> (ambiCHARGE) zeigt der Optimizer das angesteckte Auto direkt in der Statuskarte an: Ladestand, Ladeleistung und was die Ladesitzung gerade tut. Die Anbindung läuft über Modbus TCP und ist noch im Beta-Stadium.</p>
+<h3>Was es heute kann — und was nicht</h3>
+<ul>
+<li><strong>Anzeigen:</strong> Zustand der Ladesitzung, Ladestand, Ladeleistung und die Energie der laufenden Ladesitzung, alle 15 Sekunden neu gelesen.</li>
+<li><strong>Von Hand testen:</strong> Laden oder Entladen mit einer gewählten Leistung für eine gewählte Zeit starten und wieder stoppen.</li>
+<li><strong>Nicht steuern:</strong> Der Optimierungsplan rührt die Wallbox nicht an. Das Auto ist kein Teil des Fahrplans, und außer im manuellen Test schreibt der Optimizer nichts an die Ambibox.</li>
+</ul>
+<h3>Voraussetzungen</h3>
+<ul>
+<li>Eine <strong>Ambibox</strong> im selben Netzwerk wie Home Assistant, mit <strong>freigeschaltetem Modbus TCP</strong></li>
+<li>Für den manuellen Test: ein <strong>angestecktes Fahrzeug</strong>, das die Wallbox nicht als „Nicht steuerbar" meldet</li>
+<li>Für den Entladetest zusätzlich: ein Fahrzeug, das über <strong>ISO 15118-20</strong> lädt. Die älteren Protokolle (CHAdeMO, DIN 70121, ISO 15118-2) können nur laden</li>
+</ul>
+<h3>Einrichtung</h3>
+<p>Die Wallbox steht in den <strong>Einstellungen</strong> im Tab <strong>Anlage</strong>, in der Karte <strong>Wallbox</strong>. Die Karte erscheint erst, wenn im Tab <strong>System</strong> der <strong>Expertenmodus</strong> eingeschaltet ist. Im Einrichtungsassistenten kommt sie nicht vor — das Auto ist Zubehör, keine Voraussetzung für den Fahrplan.</p>
+<table>
+<thead>
+<tr>
+<th>Feld</th>
+<th>Bedeutung</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Typ der Wallbox</strong></td>
+<td>„Keine" oder „Ambibox (ambiCHARGE)". Erst mit der Ambibox erscheinen die übrigen Felder</td>
+</tr>
+<tr>
+<td><strong>Adresse der Ambibox (IP oder Hostname)</strong></td>
+<td>Pflichtfeld. Nur die Adresse, keine URL — also <code>192.168.1.70</code> statt <code>http://192.168.1.70/</code>. Eine eingetragene URL wird beim Speichern automatisch gekürzt</td>
+</tr>
+<tr>
+<td><strong>Modbus-Port</strong></td>
+<td>Vorgabe 502</td>
+</tr>
+<tr>
+<td><strong>Modbus-Unit-ID</strong></td>
+<td>Vorgabe 1. Nur ändern, wenn die Ambibox hinter einem Gateway hängt, das die Geräte durchnummeriert</td>
+</tr>
+<tr>
+<td><strong>Ladepunkt</strong></td>
+<td>1 bis 10, Vorgabe 1. Die Ambibox führt bis zu zehn Ladepunkte; bei einer einzelnen Wallbox ist es der erste</td>
+</tr>
+<tr>
+<td><strong>Vorzeichen des Leistungssollwerts</strong></td>
+<td>„Negativ = laden (Vorgabe)" oder „Positiv = laden". Gilt nur für den manuellen Test (siehe unten)</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Verbindung testen</strong> liest die Wallbox einmal mit den eingetragenen, noch nicht gespeicherten Werten und schreibt dabei nichts. Steht die Verbindung, zeigt der Test, ob ein Fahrzeug angesteckt ist, dessen Ladestand und Kapazität, das Ladeprotokoll und die „Steuerbarkeit laut Wallbox". Halte die Werte gegen die Anzeige der Ambibox. Schlägt der Test fehl, prüfe zuerst, ob Modbus TCP in der Ambibox freigeschaltet ist.</p>
+<p><em>Typ, Adresse, Port, Unit-ID und Ladepunkt lösen beim Speichern einen Neustart der Integration aus. Das Vorzeichen gilt ohne Neustart.</em></p>
+<h3>Anzeige in der Statuskarte</h3>
+<p>Das Auto steht als eigene Zeile in der Statuskarte, weil es zum aktuellen Zustand der Anlage gehört:</p>
+<ul>
+<li><strong>Angesteckt:</strong> „Auto:" mit Ladestand (samt Energie in kWh), darunter ein Balken. Lädt das Auto, steht dort „lädt mit … kW", speist es zurück, „speist zurück mit … kW"; sonst der Zustand der Ladesitzung. Meldet das Auto einen Zielladestand, erscheint er als Strich im Balken und als „Ziel … %", wenn bekannt mit der Zeit bis zur Abfahrt.</li>
+<li><strong>Nicht angesteckt:</strong> „Kein Fahrzeug angesteckt". Verlangt die Wallbox es, kommt der Hinweis „Stecker ziehen und neu anstecken" dazu.</li>
+<li><strong>Wallbox antwortet nicht:</strong> „Wallbox nicht erreichbar" mit Adresse und letztem Fehler.</li>
+<li><strong>Störungen</strong> der Wallbox oder der Fahrzeugbatterie stehen rot darunter.</li>
+</ul>
+<p>Die Richtung kommt aus dem Batteriezustand, den die Ambibox meldet, nicht aus dem Vorzeichen des Messwerts — die Anzeige stimmt also unabhängig davon, wie das Gerät das Vorzeichen setzt.</p>
+<p>Dazu legt die Integration vier Sensoren an:</p>
+<table>
+<thead>
+<tr>
+<th>Sensor</th>
+<th>Inhalt</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Auto Status</strong></td>
+<td>Zustand der Ladesitzung als Text („Lädt", „Pausiert", „Kein Fahrzeug angesteckt" …) oder „Ambibox nicht erreichbar". Die Details — Ladeprotokoll, Steuermodus, Kapazität, Batteriegesundheit, Temperatur, Ladezyklen, Höchstleistungen, Abfahrt — stehen in den Attributen</td>
+</tr>
+<tr>
+<td><strong>Auto Ladestand</strong></td>
+<td>Ladestand in %. Ohne angestecktes Auto „nicht verfügbar", denn dann wäre es der Wert des zuletzt verbundenen Fahrzeugs</td>
+</tr>
+<tr>
+<td><strong>Auto Ladeleistung</strong></td>
+<td>Leistung in kW — positiv beim Laden, negativ beim Rückspeisen, wie bei der Hausbatterie</td>
+</tr>
+<tr>
+<td><strong>Auto Energie Ladesitzung</strong></td>
+<td>Geladene Energie der laufenden Sitzung in kWh. Beginnt mit jeder neuen Sitzung bei null; die zurückgespeiste Energie steht im Attribut</td>
+</tr>
+</tbody>
+</table>
+<p><em>Antwortet die Ambibox nicht, stehen die drei Messwert-Sensoren auf „nicht verfügbar" — so bleibt kein alter Ladestand stehen, nachdem das Auto weggefahren ist.</em></p>
+<h3>Manueller Lade- und Entladetest</h3>
+<p>Der Test steht in der Auto-Zeile der Statuskarte, sobald ein Fahrzeug angesteckt und der <strong>Expertenmodus</strong> eingeschaltet ist: zwei Felder für die Leistung (kW, 0,5 bis 22) und die Dauer (min, 1 bis 60, Vorgabe 15) sowie die Knöpfe <strong>Laden</strong> und <strong>Entladen</strong>. Läuft ein Test, zeigt die Zeile „Handbetrieb" mit Richtung, Leistung, Restzeit und dem geschriebenen Sollwert in Watt, dazu den Knopf <strong>Stoppen</strong>.</p>
+<p>Starten und stoppen dürfen nur <strong>Administratoren</strong> von Home Assistant; bei allen anderen lehnt die Integration die Anfrage ab.</p>
+<p>Drei Sicherungen hängen am Test, weil das Verhalten des Geräts nicht vollständig bekannt ist:</p>
+<ul>
+<li><strong>Nachschreiben:</strong> Der Sollwert wird alle 30 Sekunden erneut geschrieben.</li>
+<li><strong>Höchstdauer:</strong> Nach der eingestellten Zeit, spätestens nach 60 Minuten, stoppt der Test von selbst — auch wenn niemand mehr hinsieht. Er endet ebenso, wenn das Auto abgesteckt wird.</li>
+<li><strong>Ende mit der Integration:</strong> Wird die Integration beendet oder neu geladen, wird der Test gestoppt.</li>
+</ul>
+<p>Beim Stoppen schreibt der Optimizer erst 0 W und dann den Befehl zum Beenden des Ladevorgangs.</p>
+<p>Verweigert wird der Start, wenn kein Fahrzeug angesteckt ist, wenn die Wallbox das Fahrzeug als nicht steuerbar meldet und — nur beim Entladen — wenn das Fahrzeug nicht über ISO 15118-20 lädt. Der Grund steht dann unter den Knöpfen.</p>
+<div class="guide-alert warning"><p><strong>Der Test ist ein Werkzeug für jemanden, der am Auto steht.</strong> Er ist kein Alltagsknopf und keine Ladesteuerung. Starte ihn nur, wenn du das Ergebnis an der Wallbox und am Fahrzeug beobachtest.</p></div>
+
+<h3>Offene Punkte</h3>
+<p>Das Herstellerdokument lässt drei Fragen offen. Genau dafür gibt es den manuellen Test:</p>
+<ol>
+<li><strong>Wie lange gilt ein Sollwert?</strong> Ob und wann die Ambibox einen Wert ohne Nachschreiben verwirft, ist nicht dokumentiert. Die 30 Sekunden sind bewusst eng gewählt.</li>
+<li><strong>Welches Vorzeichen heißt Laden?</strong> Steht nirgends. Die Vorgabe „Negativ = laden" folgt der einzigen bekannten fremden Umsetzung. Entlädt das Auto, wenn du <strong>Laden</strong> drückst, oder passiert gar nichts, stelle das Vorzeichen in den Einstellungen um und teste erneut.</li>
+<li><strong>Was macht die Eigenoptimierung der Ambibox?</strong> Die Ambibox regelt mit ihrem Energiemanagement (sidOS) selbst. Was passiert, wenn der Optimizer gleichzeitig einen Sollwert schreibt, ist nicht beschrieben.</li>
+</ol>
+<p>Beobachte beim Test deshalb: ob das Auto in die gewählte Richtung und mit ungefähr der gewählten Leistung lädt oder entlädt, ob die Leistung zwischen zwei Nachschreib-Zeitpunkten wegfällt oder springt, ob die Ambibox die Leistung von sich aus verändert, und ob das Auto nach <strong>Stoppen</strong> oder nach Ablauf der Zeit wirklich aufhört.</p>

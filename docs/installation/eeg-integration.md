@@ -40,7 +40,7 @@ Der Assistent hat sieben Schritte. Die ersten drei ordnen einmalig die Sensoren 
 | **6. Tarife & Gemeinschaft** | Standardvergütung (fester Wert, OeMAG, Energie AG, aWATTar SUNNY oder Börsen-Spotpreis), Arbeitspreis und Netzbereich; optional bis zu zwei Energiegemeinschaften — mit PeakShare-Bedarfsprognose oder fester Abnahmequote |
 | **7. Zusammenfassung** | Alles noch einmal im Überblick, dann speichern |
 
-Bei den Schritten Wechselrichter, PV-Prognose und Anlage & Batterie (bei Huawei auch Batterie) gibt es einen **„Anleitung"-Button**, der die passende Hilfe direkt im Panel öffnet.
+Bei den Schritten Wechselrichter, PV-Prognose, Anlage & Batterie und Tarife & Gemeinschaft (bei Huawei auch Batterie) gibt es einen **„Anleitung"-Button**, der die passende Hilfe direkt im Panel öffnet. Was die Felder der beiden Einstellungsschritte bedeuten, erklären [Anlage & Batterie](../guides/anlage_batterie.md) und [Tarife & Gemeinschaft](../guides/tarife.md); die Bedienung danach [Dashboard & Bedienung](../guides/dashboard.md).
 
 ## Voraussetzungen für den Betrieb
 

@@ -351,7 +351,17 @@ const DIALOG_CONTENT = {
   sma: { file: "sma.html" },
   einspeisegrenze: { file: "einspeisegrenze.html" },
   heizstab: { file: "heizstab.html" },
+  tarife: { file: "tarife.html" },
+  anlage_batterie: { file: "anlage_batterie.html" },
+  dashboard: { file: "dashboard.html" },
+  wallbox: { file: "wallbox.html" },
+  einstellungen: { file: "einstellungen.html" },
 };
+
+// Link auf einen Guide-Dialog — dieselbe Form wie die „Anleitung: …"-Links
+// an den Feldern, damit alle Einstiege gleich aussehen.
+const anleitungLink = (dialog, text) =>
+  `<button class="btn-link btn-tap" data-action="show-dialog" data-dialog="${dialog}">Anleitung: ${text}</button>`;
 
 // Suppress HA-internal unhandled promise rejections that crash the panel
 window.addEventListener("unhandledrejection", (e) => {
@@ -6770,11 +6780,11 @@ class EegOptimizerPanel extends HTMLElement {
       <div style="display:flex;gap:12px">
         <div class="field-group" style="flex:1">
           <label>Nachtfenster von${stern}</label>
-          <input type="time" data-field="${prefix}schedule_night_start" value="${d.schedule_night_start || "20:00"}">
+          <input type="time" step="3600" data-field="${prefix}schedule_night_start" value="${d.schedule_night_start || "20:00"}">
         </div>
         <div class="field-group" style="flex:1">
           <label>Nachtfenster bis${stern}</label>
-          <input type="time" data-field="${prefix}schedule_night_end" value="${d.schedule_night_end || "06:00"}">
+          <input type="time" step="3600" data-field="${prefix}schedule_night_end" value="${d.schedule_night_end || "06:00"}">
         </div>
       </div>
       <div class="help-text" style="margin-bottom:16px">Wann der Nachtsatz der Standardvergütung gilt. Darf über Mitternacht gehen. ${nachtsatz ? "" : "Ohne eingetragenen Nachtsatz wirkt das Fenster nicht — es gilt dann rund um die Uhr die Tagvergütung. "}Das Nachtfenster der Gemeinschaften stellst du bei deren Nachtsätzen ein.</div>`;
@@ -7032,7 +7042,10 @@ class EegOptimizerPanel extends HTMLElement {
       const preis = Number(d[`peakshare_price${s}`] ?? 0.102);
       // Leeres Nachtfeld (0) heißt: derselbe Satz wie am Tag.
       const preisNacht = Number(d[`peakshare_price_night${s}`] ?? 0) || preis;
-      const gewicht = Number(d[`peakshare_weight${s}`] ?? (nr === 1 ? 0.01 : 0));
+      // Fehlt der Wert, rechnet das Backend mit 0 (eeg_price._zahl) — die
+      // Vorschau muss dasselbe tun, sonst zeigt sie einen Aufschlag, den der
+      // Fahrplan nicht kennt.
+      const gewicht = Number(d[`peakshare_weight${s}`] ?? 0);
       // Abnahmequote (Quotenmodus): leeres Nachtfeld heißt wie am Tag, über
       // 100 % wird geklemmt — dieselben Regeln wie eeg_price._quoten.
       const quoteTag = Math.min(100, Math.max(0, Number(d[`peakshare_quote_pct${s}`] ?? 0)));
@@ -7190,12 +7203,12 @@ class EegOptimizerPanel extends HTMLElement {
         <div style="display:flex;gap:12px;margin-top:8px">
           <div class="field-group" style="flex:1">
             <label>Nachtfenster der Gemeinschaften von${gemStern}</label>
-            <input type="time" data-field="${prefix}peakshare_night_start"
+            <input type="time" step="3600" data-field="${prefix}peakshare_night_start"
                    value="${d.peakshare_night_start || d.schedule_night_start || "20:00"}">
           </div>
           <div class="field-group" style="flex:1">
             <label>Nachtfenster bis${gemStern}</label>
-            <input type="time" data-field="${prefix}peakshare_night_end"
+            <input type="time" step="3600" data-field="${prefix}peakshare_night_end"
                    value="${d.peakshare_night_end || d.schedule_night_end || "06:00"}">
           </div>
         </div>
@@ -7796,7 +7809,7 @@ class EegOptimizerPanel extends HTMLElement {
         <label>PV-Spitzenleistung (kWp) *</label>
         <input type="number" data-field="${prefix}pv_peak_kwp"
                value="${d.pv_peak_kwp || ""}" min="0.1" max="200" step="0.1" placeholder="z.B. 9.9">
-        <div class="help-text">Summe der Modulleistung. Dient der Plausibilitätsprüfung der Prognosewerte.</div>
+        <div class="help-text">Summe der Modulleistung. Ersatzwert, falls die AC-Grenzleistung fehlt, und Obergrenze für die Plausibilitätsprüfung der Tageswerte in der EEG-Statistik.</div>
       </div>` : "";
     return `
       ${geraetedaten}
@@ -7939,6 +7952,7 @@ class EegOptimizerPanel extends HTMLElement {
       <p style="margin-bottom:16px;color:var(--secondary-text-color)">
         Diese Grenzen kommen aus den Datenblättern von Wechselrichter und
         Batterie — die Optimierung plant nie darüber hinaus.
+        ${anleitungLink("anlage_batterie", "Anlage & Batterie")}
       </p>
       <h3 style="margin:4px 0 12px;font-size:16px">Anlage</h3>
       ${this._anlageFields(d, "")}
@@ -7952,6 +7966,7 @@ class EegOptimizerPanel extends HTMLElement {
       <p style="margin-bottom:16px;color:var(--secondary-text-color)">
         Die Optimierung rechnet laufend den wirtschaftlich besten Lade- und
         Entladeplan. Diese Preise sind ihre Grundlage.
+        ${anleitungLink("tarife", "Tarife & Gemeinschaft")}
       </p>
       ${this._controlHint(d.inverter_type)}
       <h3 style="margin:4px 0 12px;font-size:16px">Vergütung</h3>
@@ -8122,7 +8137,7 @@ class EegOptimizerPanel extends HTMLElement {
     const d = this._settingsData;
     const isExpert = d.expert_mode;
 
-    // Drei Tabs: die zwei Parameter-Tabs entsprechen 1:1 den beiden
+    // Vier Tabs (Heizstab nur im Expertenmodus): die zwei Parameter-Tabs entsprechen 1:1 den beiden
     // Parameter-Schritten des Wizards (gleiche Feld-Renderer), „System" trägt
     // alles Übrige. Aus Vorversionen gemerkte Tab-Namen werden auf die neuen
     // abgebildet, statt stumm auf den ersten Tab zu springen.
@@ -8167,6 +8182,7 @@ class EegOptimizerPanel extends HTMLElement {
         <div class="help-text" style="margin-bottom:16px">
           Die Optimierung rechnet laufend den wirtschaftlich besten Lade- und
           Entladeplan. Diese Preise sind ihre Grundlage.
+          ${anleitungLink("tarife", "Tarife & Gemeinschaft")}
         </div>
         ${this._controlHint(d.inverter_type)}
         ${this._verguetungFields(d, "settings_")}
@@ -8197,7 +8213,8 @@ class EegOptimizerPanel extends HTMLElement {
         ${this._pvPrognoseFelder(d, "settings_")}
       </div>` : ""}
       <div class="card" style="margin-bottom:16px">
-        <h3 class="settings-karte-titel" style="margin:0 0 16px">Batterie</h3>
+        <h3 class="settings-karte-titel" style="margin:0 0 4px">Batterie</h3>
+        <div class="help-text" style="margin-bottom:16px">${anleitungLink("anlage_batterie", "Anlage & Batterie")}</div>
         ${this._batterieOptFields(d, "settings_")}
       </div>
       ${isExpert ? `
@@ -8206,6 +8223,7 @@ class EegOptimizerPanel extends HTMLElement {
         <div class="help-text" style="margin-bottom:16px">
           Zeigt das angesteckte Fahrzeug an. Noch ohne Steuerung — Laden und
           Entladen des Autos folgen in einem späteren Schritt.
+          ${anleitungLink("wallbox", "Wallbox")}
         </div>
         ${this._wallboxFields(d, "settings_")}
       </div>` : ""}`;
@@ -8273,6 +8291,7 @@ class EegOptimizerPanel extends HTMLElement {
     return `
       <div style="max-width:600px;margin:0 auto">
         ${tabBar}
+        <div class="help-text" style="margin:-4px 0 12px;text-align:right">${anleitungLink("einstellungen", "Einstellungen & Expertenmodus")}</div>
         ${tabContent}
         ${fehlerHinweis}
         <button class="btn-primary" data-action="save-settings" style="width:100%;padding:12px">Speichern</button>
@@ -10408,6 +10427,7 @@ class EegOptimizerPanel extends HTMLElement {
         </div>
 
         <div style="text-align:center;margin-top:32px;padding:16px 0 8px;font-size:11px;color:var(--secondary-text-color,#999);line-height:1.6">
+          <div style="font-size:13px;margin-bottom:12px">${anleitungLink("dashboard", "Dashboard & Bedienung")}</div>
           <img src="/eeg_optimizer_panel/logo.png" alt="EEG Energy Optimizer" style="max-height:36px;width:auto;display:block;margin:0 auto 8px;filter:brightness(1) saturate(1.2) hue-rotate(-10deg)">
           <div style="opacity:0.35">EEG Energy Optimizer${this._config?.version ? " v" + this._config.version : ""}</div>
           <div style="max-width:480px;margin:4px auto 0;font-size:10px;opacity:0.35">Diese Software steuert Batteriespeicher automatisch. Nutzung auf eigene Verantwortung \u2014 keine Haftung f\u00fcr Sch\u00e4den an Ger\u00e4ten, Ertragsausf\u00e4lle oder fehlerhafte Steuerung.</div>
