@@ -203,6 +203,13 @@ const WIZARD_DEFAULTS = {
   forecast_day5_entity: "",
   forecast_day6_entity: "",
   forecast_day7_entity: "",
+  // Eigene Berechnung (forecast_source "eigen"): Modulflächen {name, kwp,
+  // neigung, azimut} — Azimut als Kompasswert (Süd = 180) — und die
+  // pauschalen Systemverluste in Prozent.
+  pv_flaechen: [],
+  pv_verluste_pct: 14,
+  // Prognosevergleich: die andere Quelle läuft mit, ohne zu steuern.
+  pv_prognose_vergleich: false,
   lookback_weeks: 4,
   enable_peakshare: true,
   peakshare_community: "BEG",
@@ -324,6 +331,7 @@ const DIALOG_CONTENT = {
   huawei: { file: "huawei.html" },
   solcast: { file: "solcast.html" },
   forecast_solar: { file: "forecast_solar.html" },
+  prognose_eigen: { file: "prognose_eigen.html" },
   capacity_sensor: { file: "capacity_sensor.html" },
   sigenergy: { file: "sigenergy.html" },
   solax: { file: "solax.html" },
@@ -378,6 +386,23 @@ const euroAus = (ct) => Math.round(Number(ct || 0) * 1000) / 100000;
 const leseZahl = (el) => {
   const roh = parseFloat(el.value) || 0;
   return el.dataset?.unit === "ct" ? euroAus(roh) : roh;
+};
+
+// Prognosequellen (forecast_source) mit Anzeigename. „eigen" ist die
+// Berechnung in der Integration selbst (pvprognose/) — ohne fremde
+// HA-Integration, mit Wetter von Open-Meteo und der Anlage aus der Konfig.
+const FORECAST_LABELS = {
+  solcast_solar: "Solcast Solar",
+  forecast_solar: "Forecast.Solar",
+  eigen: "Eigene Berechnung (Open-Meteo)",
+};
+
+// Kompass-Azimut (0 = Nord, 90 = Ost, 180 = Süd, 270 = West) → Himmelsrichtung,
+// als Lesehilfe neben dem Gradwert. Dieselbe Konvention wie sun.sun.
+const himmelsrichtung = (azimut) => {
+  const a = (((Number(azimut) || 0) % 360) + 360) % 360;
+  const namen = ["N", "NO", "O", "SO", "S", "SW", "W", "NW"];
+  return namen[Math.round(a / 45) % 8];
 };
 
 // Netzbereiche laut Anlage I zum ElWG, beschriftet mit dem Netzbetreiber,
@@ -752,6 +777,18 @@ class EegOptimizerPanel extends HTMLElement {
     this._sunnyStatus = null;
     this._sunnyBusy = false;
     this._sunnyRequested = false;
+    // Eigene PV-Prognose: Stand des Providers (Einstellungen, Dashboard) und
+    // das Ergebnis von „Prognose berechnen" mit ungespeicherten Flächen.
+    this._pvPrognoseStatus = null;
+    this._pvPrognoseBusy = false;
+    this._pvPrognoseRequested = false;
+    this._pvProbe = { busy: false, ergebnis: null, fehler: null };
+    // Prognosevergleich (Dashboard-Karte): Antwort von get_prognosevergleich,
+    // gewählter Tag, Ladezeitpunkt für die halbstündige Auffrischung.
+    this._vergleich = null;
+    this._vergleichBusy = false;
+    this._vergleichGeladen = 0;
+    this._vergleichTag = null;
     // Energie AG (Team Sonne Float), gleiche Mechanik.
     this._energieAgStatus = null;
     this._energieAgBusy = false;
@@ -928,6 +965,12 @@ class EegOptimizerPanel extends HTMLElement {
 
     // Listen for input/change events for native inputs
     this._shadow.addEventListener("input", (e) => {
+      // Flächentabelle der eigenen PV-Prognose: eigene Weiche, kein data-field.
+      const flaeche = e.target.closest("[data-flaeche]");
+      if (flaeche) {
+        this._flaecheEingabe(flaeche);
+        return;
+      }
       const target = e.target.closest("[data-field]");
       if (target) {
         const field = target.dataset.field;
@@ -1003,11 +1046,21 @@ class EegOptimizerPanel extends HTMLElement {
       }
       // Auswahlfelder über dem Diagramm — kein data-field, sie gehören zu
       // keiner Konfiguration, sondern nur zur Ansicht.
+      // Tageswahl der Prognosevergleich-Karte: Ansicht, keine Konfiguration.
+      const vglTag = e.target.closest("select[data-vergleich-tag]");
+      if (vglTag) {
+        this._vergleichTag = vglTag.value;
+        this._loadPrognosevergleich(vglTag.value);
+        return;
+      }
       const chartWahl = e.target.closest("select[data-chart]");
       if (chartWahl) {
         this._chartBereichSetzen(chartWahl.dataset.chart, chartWahl.value);
         return;
       }
+      // Flächentabelle der eigenen PV-Prognose: schon im input-Handler
+      // übernommen, hier nur die Weiche, damit kein data-field-Vorfahr greift.
+      if (e.target.closest("[data-flaeche]")) return;
       const target = e.target.closest("[data-field]");
       if (target) {
         const field = target.dataset.field;
@@ -1052,6 +1105,13 @@ class EegOptimizerPanel extends HTMLElement {
             }
             // Die Vertragsvariante blendet den angezeigten SUNNY-Wert um.
             if (realField === "awattar_sunny_vertrag") this._render();
+            // Quellenwechsel der PV-Prognose: Sensoren vorbelegen bzw.
+            // Flächen anlegen, dann die passenden Felder zeigen.
+            if (realField === "forecast_source") {
+              this._applyForecastDefaults(target.value, this._settingsData);
+              if (target.value === "eigen") this._ensurePvPrognoseStatus();
+              this._render();
+            }
             // Dasselbe fuer die Energie-AG-Variante (Mindestverguetung).
             if (realField === "energie_ag_variante") this._render();
             // Die Bedarfsquelle tauscht die PeakShare-Auswahl gegen Namens-
@@ -1766,12 +1826,31 @@ class EegOptimizerPanel extends HTMLElement {
         break;
       case "open-settings":
         this._settingsData = {...this._config};
+        // Die Flächenliste wird in der Tabelle an Ort und Stelle geändert —
+        // als geteilte Referenz sähe die Änderungserkennung beim Speichern
+        // keinen Unterschied zur Konfiguration. Deshalb eine tiefe Kopie.
+        this._settingsData.pv_flaechen = JSON.parse(JSON.stringify(this._config?.pv_flaechen || []));
         this._gem2Open = false;
         this._view = "settings";
         // Der Tarif steht in den Einstellungen; ohne Wert wäre der
         // Umschalter eine Behauptung.
         if (this._oemagStatus === null) this._loadOemagTarif();
         this._loadArchivStatus();
+        // Installierte Prognose-Integrationen für die Quellenwahl — nur
+        // lesen; _checkPrerequisites würde den Assistenten vorbelegen.
+        if (!this._prerequisites && this._hass) {
+          this._hass.callWS({ type: "eeg_optimizer/check_prerequisites" })
+            .then((r) => { this._prerequisites = r; this._render(); })
+            .catch(() => {});
+        }
+        // Eigene PV-Prognose: Stand des Providers für die Anlage-Karte —
+        // steuernd oder als mitlaufende Vergleichsquelle.
+        if (this._settingsData.forecast_source === "eigen" || this._settingsData.pv_prognose_vergleich) {
+          this._pvProbe = { busy: false, ergebnis: null, fehler: null };
+          this._pvPrognoseStatus = null;
+          this._pvPrognoseRequested = false;
+          this._ensurePvPrognoseStatus();
+        }
         if (this._settingsData.enable_peakshare !== false && this._peakshareCommunitiesCache.length === 0) {
           this._loadPeakShareCommunities();
         }
@@ -1784,6 +1863,8 @@ class EegOptimizerPanel extends HTMLElement {
         // Einstellungen. Alle Felder sind mit der Konfiguration vorbefüllt.
         this._wizardStep = 1;
         this._wizardData = {...WIZARD_DEFAULTS, ...this._config};
+        // Flächenliste tief kopieren (siehe open-settings).
+        this._wizardData.pv_flaechen = JSON.parse(JSON.stringify(this._config?.pv_flaechen || []));
         this._gem2Open = false;
         this._view = "wizard";
         this._render();
@@ -1803,7 +1884,22 @@ class EegOptimizerPanel extends HTMLElement {
         break;
       case "toggle-settings-feature": {
         const feat = dataset?.feature;
-        if (feat) { this._settingsData[feat] = dataset.on !== "1"; this._render(); }
+        if (feat) {
+          this._settingsData[feat] = dataset.on !== "1";
+          // Vergleich eingeschaltet, aber noch keine Flächen: eine Zeile
+          // vorbelegen, damit die Tabelle nicht leer dasteht — ohne Flächen
+          // lässt sich nicht speichern.
+          if (feat === "pv_prognose_vergleich" && this._settingsData[feat]) {
+            if (!Array.isArray(this._settingsData.pv_flaechen) || this._settingsData.pv_flaechen.length === 0) {
+              this._settingsData.pv_flaechen = [this._neueFlaeche(this._settingsData)];
+            }
+            if (this._settingsData.pv_verluste_pct == null || this._settingsData.pv_verluste_pct === "") {
+              this._settingsData.pv_verluste_pct = 14;
+            }
+            this._ensurePvPrognoseStatus();
+          }
+          this._render();
+        }
         break;
       }
       case "toggle-feature": {
@@ -1812,7 +1908,18 @@ class EegOptimizerPanel extends HTMLElement {
         // und die Einspeisegrenze liessen sich waehrend der Ersteinrichtung
         // nicht schalten, ohne Fehlermeldung.
         const feat = dataset?.feature;
-        if (feat) { this._wizardData[feat] = dataset.on !== "1"; this._render(); }
+        if (feat) {
+          this._wizardData[feat] = dataset.on !== "1";
+          // Vergleich mit der eigenen Berechnung als Mitläufer: Flächen
+          // vorbelegen, wie beim Einschalten in den Einstellungen.
+          if (feat === "pv_prognose_vergleich" && this._wizardData[feat]) {
+            const w = this._wizardData;
+            if (!Array.isArray(w.pv_flaechen) || w.pv_flaechen.length === 0) w.pv_flaechen = [this._neueFlaeche(w)];
+            if (w.pv_verluste_pct == null || w.pv_verluste_pct === "") w.pv_verluste_pct = 14;
+          }
+          this._saveWizardProgress();
+          this._render();
+        }
         break;
       }
       case "back-to-dashboard":
@@ -1947,10 +2054,47 @@ class EegOptimizerPanel extends HTMLElement {
         if (value) {
           this._wizardData.forecast_source = value;
           this._applyForecastDefaults(value);
+          this._saveWizardProgress();
           this._render();
         }
         break;
       }
+      case "add-flaeche": {
+        // Eigene PV-Prognose: Zeile in der Flächentabelle (Assistent oder
+        // Einstellungen, je nach data-scope).
+        const fd = this._flaechenDaten(dataset?.scope || "");
+        if (!Array.isArray(fd.pv_flaechen)) fd.pv_flaechen = [];
+        if (fd.pv_flaechen.length < 8) fd.pv_flaechen.push(this._neueFlaeche(fd));
+        if ((dataset?.scope || "") !== "settings_") this._saveWizardProgress();
+        this._render();
+        break;
+      }
+      case "remove-flaeche": {
+        const fd = this._flaechenDaten(dataset?.scope || "");
+        const idx = Number(dataset?.index);
+        if (Array.isArray(fd.pv_flaechen) && fd.pv_flaechen.length > 1 && idx >= 0 && idx < fd.pv_flaechen.length) {
+          fd.pv_flaechen.splice(idx, 1);
+        }
+        if ((dataset?.scope || "") !== "settings_") this._saveWizardProgress();
+        this._render();
+        break;
+      }
+      case "probe-pvprognose":
+        this._probePvPrognose(dataset?.scope || "");
+        break;
+      case "refresh-pvprognose":
+        this._loadPvPrognoseStatus(true);
+        break;
+      case "vergleich-tag":
+        // Zeile der Vergleichstabelle: diesen Tag ins Diagramm holen.
+        if (dataset?.datum) {
+          this._vergleichTag = dataset.datum;
+          this._loadPrognosevergleich(dataset.datum);
+        }
+        break;
+      case "refresh-prognosevergleich":
+        this._loadPrognosevergleich(this._vergleichTag);
+        break;
       case "select-inverter": {
         const invValue = dataset?.value;
         if (invValue && invValue !== this._wizardData.inverter_type) {
@@ -2550,6 +2694,27 @@ class EegOptimizerPanel extends HTMLElement {
           return false;
         }
         const fcSrc = this._wizardData.forecast_source;
+        if (this._wizardData.pv_prognose_vergleich && fcSrc !== "eigen") {
+          const fehlerV = this._flaechenFehler(this._wizardData);
+          if (fehlerV) {
+            this._showValidationError(`Prognosevergleich: ${fehlerV}`);
+            return false;
+          }
+        }
+        if (fcSrc === "eigen") {
+          const fehler = this._flaechenFehler(this._wizardData);
+          if (fehler) {
+            this._showValidationError(fehler);
+            return false;
+          }
+          // PV-Spitze vorbelegen, wenn sie noch fehlt: die Summe der Flächen
+          // ist genau der Wert, den der nächste Schritt abfragt.
+          if (!(parseFloat(this._wizardData.pv_peak_kwp) > 0)) {
+            this._wizardData.pv_peak_kwp =
+              Math.round(this._flaechenSummeKwp(this._wizardData) * 100) / 100;
+          }
+          return true;
+        }
         const fcP = this._prerequisites;
         if (fcSrc === "solcast_solar" && fcP && !fcP.solcast_solar) {
           this._showValidationError("Solcast Solar muss zuerst installiert werden. Klicke auf 'Anleitung' für Hilfe.");
@@ -2738,6 +2903,20 @@ class EegOptimizerPanel extends HTMLElement {
     if (!(Number(d.pv_peak_kwp) > 0)) fehlt.push("PV-Spitzenleistung");
     if (d.grid_export_limit_enabled && !(Number(d.grid_export_limit_kw) > 0)) {
       fehlt.push("Höhe der Einspeisegrenze");
+    }
+    // Fremde Prognosequelle: ohne ihre zwei Sensoren kein Tageswert und —
+    // bei Forecast.Solar — keine Reihe für den Fahrplan.
+    if (d.forecast_source === "solcast_solar" || d.forecast_source === "forecast_solar") {
+      if (!String(d.forecast_remaining_entity || "").trim()) fehlt.push("Sensor PV-Prognose verbleibend heute");
+      if (!String(d.forecast_tomorrow_entity || "").trim()) fehlt.push("Sensor PV-Prognose morgen");
+      const pq = this._prerequisites;
+      if (pq && !pq[d.forecast_source]) fehlt.push(`${FORECAST_LABELS[d.forecast_source]} ist nicht installiert`);
+    }
+    // Eigene PV-Prognose: ohne gültige Flächen rechnet der Provider nichts —
+    // auch als mitlaufende Vergleichsquelle.
+    if (d.forecast_source === "eigen" || d.pv_prognose_vergleich) {
+      const flaechenFehler = this._flaechenFehler(d);
+      if (flaechenFehler) fehlt.push(flaechenFehler);
     }
     if (d.heizstab_enabled) {
       if (!String(d.heizstab_host || "").trim()) fehlt.push("Adresse des Ohmpilot (Heizstab)");
@@ -4778,6 +4957,11 @@ class EegOptimizerPanel extends HTMLElement {
       } else if (p.forecast_solar) {
         this._wizardData.forecast_source = "forecast_solar";
         this._applyForecastDefaults("forecast_solar");
+      } else if (this._wizardData.forecast_source !== "eigen") {
+        // Keine Prognose-Integration installiert: die eigene Berechnung
+        // braucht keine — sie ist dann der Weg ohne Umweg.
+        this._wizardData.forecast_source = "eigen";
+        this._applyForecastDefaults("eigen");
       }
     }
 
@@ -4876,38 +5060,56 @@ class EegOptimizerPanel extends HTMLElement {
     // We use our own autocomplete, no HA component loading needed
   }
 
-  _applyForecastDefaults(source) {
+  _applyForecastDefaults(source, d = this._wizardData) {
+    // Zielobjekt: der Assistent oder die Einstellungen (Quellenwechsel).
+    if (source === "eigen") {
+      // Eigene Berechnung: keine fremden Sensoren. Eine erste Fläche wird
+      // vorbelegt, damit die Tabelle nicht leer startet — mit der PV-Spitze,
+      // wenn sie schon bekannt ist (Wiederholung der Einrichtung).
+      for (const k of [
+        "forecast_remaining_entity", "forecast_tomorrow_entity", "forecast_today_entity",
+        "forecast_day3_entity", "forecast_day4_entity", "forecast_day5_entity",
+        "forecast_day6_entity", "forecast_day7_entity",
+      ]) d[k] = "";
+      if (!Array.isArray(d.pv_flaechen) || d.pv_flaechen.length === 0) {
+        d.pv_flaechen = [this._neueFlaeche(d)];
+      }
+      if (d.pv_verluste_pct == null || d.pv_verluste_pct === "") {
+        d.pv_verluste_pct = 14;
+      }
+      return;
+    }
     if (source === "solcast_solar") {
       // Auto-detect which Solcast naming convention exists
       const states = this._hass?.states || {};
       const pick = (candidates) => candidates.find(id => states[id]) || candidates[0];
-      this._wizardData.forecast_remaining_entity =
+      d.forecast_remaining_entity =
         pick(SOLCAST_DEFAULTS_CANDIDATES.forecast_remaining_entity);
-      this._wizardData.forecast_tomorrow_entity =
+      d.forecast_tomorrow_entity =
         pick(SOLCAST_DEFAULTS_CANDIDATES.forecast_tomorrow_entity);
       // Auto-detect additional Solcast sensors (today + day 3-7)
-      const prefix = this._wizardData.forecast_tomorrow_entity.replace(/morgen$/, "");
+      const prefix = d.forecast_tomorrow_entity.replace(/morgen$/, "");
       // Handle old "fuer_" prefix — tag sensors don't have "fuer_"
       const tagPrefix = prefix.endsWith("fuer_") && !states[prefix + "tag_3"]
         ? prefix.replace(/fuer_$/, "") : prefix;
       const tryFind = (id) => states[id] ? id : "";
-      this._wizardData.forecast_today_entity = tryFind(tagPrefix + "heute");
-      this._wizardData.forecast_day3_entity = tryFind(tagPrefix + "tag_3");
-      this._wizardData.forecast_day4_entity = tryFind(tagPrefix + "tag_4");
-      this._wizardData.forecast_day5_entity = tryFind(tagPrefix + "tag_5");
-      this._wizardData.forecast_day6_entity = tryFind(tagPrefix + "tag_6");
-      this._wizardData.forecast_day7_entity = tryFind(tagPrefix + "tag_7");
+      d.forecast_today_entity = tryFind(tagPrefix + "heute");
+      d.forecast_day3_entity = tryFind(tagPrefix + "tag_3");
+      d.forecast_day4_entity = tryFind(tagPrefix + "tag_4");
+      d.forecast_day5_entity = tryFind(tagPrefix + "tag_5");
+      d.forecast_day6_entity = tryFind(tagPrefix + "tag_6");
+      d.forecast_day7_entity = tryFind(tagPrefix + "tag_7");
     } else {
-      this._wizardData.forecast_remaining_entity =
+      d.forecast_remaining_entity =
         FORECAST_SOLAR_DEFAULTS.forecast_remaining_entity;
-      this._wizardData.forecast_tomorrow_entity =
+      d.forecast_tomorrow_entity =
         FORECAST_SOLAR_DEFAULTS.forecast_tomorrow_entity;
-      this._wizardData.forecast_today_entity = "";
-      this._wizardData.forecast_day3_entity = "";
-      this._wizardData.forecast_day4_entity = "";
-      this._wizardData.forecast_day5_entity = "";
-      this._wizardData.forecast_day6_entity = "";
-      this._wizardData.forecast_day7_entity = "";
+      d.forecast_today_entity = "";
+      d.forecast_day3_entity = "";
+      d.forecast_day4_entity = "";
+      d.forecast_day5_entity = "";
+      d.forecast_day6_entity = "";
+      d.forecast_day7_entity = "";
     }
   }
 
@@ -5253,7 +5455,12 @@ class EegOptimizerPanel extends HTMLElement {
         const opt = ev.target.closest(".ep-option");
         if (opt) {
           input.value = opt.dataset.value;
-          this._wizardData[field] = opt.dataset.value;
+          // Auch in den Einstellungen (Quellenwechsel der PV-Prognose).
+          if (field.startsWith("settings_")) {
+            this._settingsData[field.replace("settings_", "")] = opt.dataset.value;
+          } else {
+            this._wizardData[field] = opt.dataset.value;
+          }
           dropdown.style.display = "none";
           updatePreview(opt.dataset.value);
           this._syncWeiterKnopf();
@@ -5367,14 +5574,22 @@ class EegOptimizerPanel extends HTMLElement {
       if (!(Number(d.pv_peak_kwp) > 0)) return true;
       if (d.grid_export_limit_enabled && !(Number(d.grid_export_limit_kw) > 0)) return true;
     }
-    // PV-Prognose: sperren, wenn keine Prognose-Integration installiert ist.
-    if (
-      name === "PV-Prognose" &&
-      this._prerequisites &&
-      !this._prerequisites.solcast_solar &&
-      !this._prerequisites.forecast_solar
-    ) {
-      return true;
+    // PV-Prognose: die eigene Berechnung braucht mindestens eine Fläche mit
+    // Leistung; die beiden Integrationen müssen installiert sein.
+    if (name === "PV-Prognose") {
+      if (this._wizardData.forecast_source === "eigen") {
+        return !!this._flaechenFehler(this._wizardData);
+      }
+      if (this._wizardData.pv_prognose_vergleich && this._flaechenFehler(this._wizardData)) {
+        return true;
+      }
+      if (
+        this._prerequisites &&
+        !this._prerequisites.solcast_solar &&
+        !this._prerequisites.forecast_solar
+      ) {
+        return true;
+      }
     }
     return false;
   }
@@ -5781,6 +5996,7 @@ class EegOptimizerPanel extends HTMLElement {
     const selected = this._wizardData.forecast_source || "";
     const solcastSelected = selected === "solcast_solar";
     const forecastSelected = selected === "forecast_solar";
+    const eigenSelected = selected === "eigen";
 
     // Auto-suggest sensor defaults when source is selected
     const allSolcastCandidates = [
@@ -5803,7 +6019,12 @@ class EegOptimizerPanel extends HTMLElement {
       + "Solcast-Sensornamen variieren je nach Version, z.B.: "
       + "sensor.solcast_pv_forecast_prognose_morgen oder "
       + "sensor.solcast_pv_forecast_prognose_fuer_morgen.";
-    const sensorFields = selected ? `
+    const eigenFields = eigenSelected ? `
+      <div style="margin-top:16px">
+        <h3 style="margin:0 0 12px;font-size:15px">Deine Anlage</h3>
+        ${this._pvPrognoseFelder(this._wizardData, "")}
+      </div>` : "";
+    const sensorFields = selected && !eigenSelected ? `
       <div style="margin-top:16px">
         ${this._entityPickerHtml(
           "forecast_remaining_entity",
@@ -5827,7 +6048,7 @@ class EegOptimizerPanel extends HTMLElement {
 
     return `
       <p style="margin-bottom:12px;color:var(--secondary-text-color)">Wähle deine PV-Prognose-Quelle:</p>
-      <div class="prereq-cards" style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">
+      <div class="prereq-cards" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;margin-bottom:16px">
         <div class="card forecast-option ${solcastSelected ? "selected" : ""}" style="padding:16px;cursor:pointer;text-align:center;display:flex;flex-direction:column;align-items:center" data-action="select-forecast" data-value="solcast_solar">
           <div style="height:60px;display:flex;align-items:center;justify-content:center;margin-bottom:8px">
             <img src="https://brands.home-assistant.io/solcast_solar/logo.png" alt="Solcast" style="max-width:100px;max-height:60px;height:auto" onerror="this.style.display='none'">
@@ -5846,9 +6067,25 @@ class EegOptimizerPanel extends HTMLElement {
           <p style="font-size:13px;color:var(--secondary-text-color);margin:8px 0">Einfachere Einrichtung, keine Registrierung n\u00f6tig.</p>
           <button class="btn-secondary" data-action="show-dialog" data-dialog="forecast_solar">Anleitung</button>
         </div>
+        <div class="card forecast-option ${eigenSelected ? "selected" : ""}" style="padding:16px;cursor:pointer;text-align:center;display:flex;flex-direction:column;align-items:center" data-action="select-forecast" data-value="eigen">
+          <div style="height:60px;display:flex;align-items:center;justify-content:center;margin-bottom:8px">
+            <ha-icon icon="mdi:calculator-variant-outline" style="--mdc-icon-size:48px;color:var(--primary-color)"></ha-icon>
+          </div>
+          <h3 style="margin:0 0 8px">Eigene Berechnung</h3>
+          <span class="status-badge installed">Keine Zusatz-Integration</span>
+          <p style="font-size:13px;color:var(--secondary-text-color);margin:8px 0">Wetter von Open-Meteo, Anlage hier eintragen. Kein Konto, kein Schl\u00fcssel, mehrere Ausrichtungen.</p>
+          <button class="btn-secondary" data-action="show-dialog" data-dialog="prognose_eigen">Anleitung</button>
+        </div>
       </div>
-      <button class="btn-secondary" data-action="recheck-prerequisites">Erneut pr\u00fcfen</button>
+      ${eigenSelected ? "" : `<button class="btn-secondary" data-action="recheck-prerequisites">Erneut pr\u00fcfen</button>`}
       ${sensorFields}
+      ${eigenFields}
+      ${selected ? `<div style="margin-top:16px">${this._vergleichFeature(this._wizardData, "")}</div>` : ""}
+      ${selected && !eigenSelected && this._wizardData.pv_prognose_vergleich ? `
+      <div style="margin-top:16px">
+        <h3 style="margin:0 0 12px;font-size:15px">Deine Anlage (für die eigene Berechnung)</h3>
+        ${this._pvPrognoseFelder(this._wizardData, "")}
+      </div>` : ""}
       ${selected && this._wizardData.expert_mode && solcastSelected ? `
       <div style="margin-top:16px">
         <h3 style="margin:0 0 12px;font-size:15px">Weitere Prognose-Sensoren (optional)</h3>
@@ -6976,6 +7213,476 @@ class EegOptimizerPanel extends HTMLElement {
     });
   }
 
+  /* ── Eigene PV-Prognose (forecast_source "eigen") ───────────── */
+
+  _neueFlaeche(d) {
+    // Vorbelegung einer neuen Zeile: was von der PV-Spitze noch nicht auf
+    // Flächen verteilt ist, Neigung 30°, Süd — der häufigste Fall.
+    const rest = Math.max(0, (Number(d?.pv_peak_kwp) || 0) - this._flaechenSummeKwp(d));
+    return { name: "", kwp: rest > 0 ? Math.round(rest * 100) / 100 : "", neigung: 30, azimut: 180 };
+  }
+
+  _flaechenSummeKwp(d) {
+    return (d?.pv_flaechen || []).reduce((s, f) => s + (Number(f?.kwp) || 0), 0);
+  }
+
+  _flaechenFehler(d) {
+    // Dieselbe Prüfung wie pruefe_flaechen im Backend — damit die Meldung
+    // am Feld steht und nicht als Speicherfehler zurückkommt.
+    const liste = d?.pv_flaechen;
+    if (!Array.isArray(liste) || liste.length === 0) {
+      return "Mindestens eine PV-Fläche (kWp, Neigung, Azimut)";
+    }
+    if (liste.length > 8) return "Höchstens 8 PV-Flächen";
+    for (let i = 0; i < liste.length; i++) {
+      const f = liste[i] || {};
+      const kwp = Number(f.kwp);
+      if (!(kwp >= 0.05 && kwp <= 500)) return `PV-Fläche ${i + 1}: Leistung in kWp (0,05 bis 500)`;
+      const neigung = f.neigung === "" || f.neigung == null ? 30 : Number(f.neigung);
+      if (!(neigung >= 0 && neigung <= 90)) return `PV-Fläche ${i + 1}: Neigung zwischen 0 und 90 Grad`;
+      const azimut = f.azimut === "" || f.azimut == null ? 180 : Number(f.azimut);
+      if (!(azimut >= 0 && azimut <= 360)) return `PV-Fläche ${i + 1}: Azimut zwischen 0 und 360 Grad`;
+      if (f.max_kw !== "" && f.max_kw != null) {
+        const grenze = Number(f.max_kw);
+        if (!(grenze >= 0.1 && grenze <= 500)) return `PV-Fläche ${i + 1}: Grenze in kW (0,1 bis 500) oder leer`;
+      }
+    }
+    const verluste = d.pv_verluste_pct === "" || d.pv_verluste_pct == null ? 14 : Number(d.pv_verluste_pct);
+    if (!(verluste >= 0 && verluste <= 60)) return "Systemverluste der PV-Prognose zwischen 0 und 60 %";
+    return null;
+  }
+
+  _flaechenDaten(scope) {
+    return scope === "settings_" ? (this._settingsData || {}) : this._wizardData;
+  }
+
+  _flaecheEingabe(el) {
+    // Felder der Flächentabelle: data-flaeche = Index, data-key = Feld,
+    // data-scope = "" (Assistent) oder "settings_" (Einstellungen). Bewusst
+    // ohne data-field: die Speichern-Logik der Einstellungen liest alle
+    // data-field-Elemente flach nach, eine Liste passt da nicht hinein.
+    const scope = el.dataset.scope || "";
+    const d = this._flaechenDaten(scope);
+    const idx = Number(el.dataset.flaeche);
+    if (!Array.isArray(d.pv_flaechen) || !d.pv_flaechen[idx]) return;
+    const key = el.dataset.key;
+    if (key === "name") {
+      d.pv_flaechen[idx].name = el.value;
+    } else {
+      d.pv_flaechen[idx][key] = el.value === "" ? "" : Number(String(el.value).replace(",", "."));
+    }
+    if (key === "azimut") {
+      // Himmelsrichtung neben dem Feld nachziehen — ohne Render, der den
+      // Fokus kosten würde.
+      const label = this._shadow?.querySelector(`[data-richtung="${scope}${idx}"]`);
+      if (label) label.textContent = himmelsrichtung(d.pv_flaechen[idx].azimut);
+    }
+    if (scope !== "settings_") {
+      this._saveWizardProgress();
+      this._syncWeiterKnopf();
+    }
+  }
+
+  _pvPrognoseFelder(d, prefix) {
+    const liste = Array.isArray(d.pv_flaechen) ? d.pv_flaechen : [];
+    const esc = (v) => this._escapeHtml(String(v ?? ""));
+    const zeilen = liste.map((f, i) => `
+      <div class="flaeche-zeile" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px;align-items:end;margin-bottom:8px;padding:8px;border:1px solid var(--divider-color);border-radius:6px">
+        <div class="field-group" style="margin:0">
+          <label>Name</label>
+          <input type="text" data-flaeche="${i}" data-key="name" data-scope="${prefix}" value="${esc(f.name)}" placeholder="z.B. Dach Süd" maxlength="40">
+        </div>
+        <div class="field-group" style="margin:0">
+          <label>Leistung (kWp) *</label>
+          <input type="number" data-flaeche="${i}" data-key="kwp" data-scope="${prefix}" value="${esc(f.kwp)}" min="0.05" max="500" step="0.01" placeholder="z.B. 5.5">
+        </div>
+        <div class="field-group" style="margin:0">
+          <label>Neigung (°)</label>
+          <input type="number" data-flaeche="${i}" data-key="neigung" data-scope="${prefix}" value="${esc(f.neigung ?? 30)}" min="0" max="90" step="1">
+        </div>
+        <div class="field-group" style="margin:0">
+          <label>Azimut (°) <span style="color:var(--secondary-text-color)">— <span data-richtung="${prefix}${i}">${himmelsrichtung(f.azimut ?? 180)}</span></span></label>
+          <input type="number" data-flaeche="${i}" data-key="azimut" data-scope="${prefix}" value="${esc(f.azimut ?? 180)}" min="0" max="360" step="1">
+        </div>
+        <div class="field-group" style="margin:0">
+          <label>Grenze (kW)</label>
+          <input type="number" data-flaeche="${i}" data-key="max_kw" data-scope="${prefix}" value="${esc(f.max_kw ?? "")}" min="0.1" max="500" step="0.1" placeholder="keine" title="AC-Grenze dieser Fläche: eigener Wechselrichter oder MPP-Tracker. Leer = nur die Summe wird gedeckelt.">
+        </div>
+        <button class="btn-secondary" data-action="remove-flaeche" data-index="${i}" data-scope="${prefix}" title="Fläche entfernen" ${liste.length <= 1 ? "disabled" : ""} style="padding:8px 12px">
+          <ha-icon icon="mdi:close" style="--mdc-icon-size:18px"></ha-icon>
+        </button>
+      </div>`).join("");
+    const summe = this._flaechenSummeKwp(d);
+    return `
+      <div class="help-text" style="margin-bottom:12px">
+        Eine Zeile je Modulfläche mit gleicher Ausrichtung. Azimut als Kompasswert:
+        0° = Nord, 90° = Ost, <strong>180° = Süd</strong>, 270° = West. Neigung 0° = flach.
+        <button class="btn-link btn-tap" data-action="show-dialog" data-dialog="prognose_eigen">Anleitung: Eigene Prognose</button>
+      </div>
+      ${zeilen}
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px">
+        <button class="btn-secondary" data-action="add-flaeche" data-scope="${prefix}" ${liste.length >= 8 ? "disabled" : ""}>
+          <ha-icon icon="mdi:plus" style="--mdc-icon-size:18px"></ha-icon> Fläche hinzufügen
+        </button>
+        <span class="help-text" style="margin:0">Summe ${fmtDe(summe, 2)} kWp${Number(d.pv_peak_kwp) > 0 && Math.abs(summe - Number(d.pv_peak_kwp)) > 0.05 ? ` — PV-Spitzenleistung ist mit ${fmtDe(Number(d.pv_peak_kwp), 2)} kWp eingetragen` : ""}</span>
+      </div>
+      <div class="field-group">
+        <label>Systemverluste (%)</label>
+        <input type="number" data-field="${prefix}pv_verluste_pct"
+               value="${d.pv_verluste_pct ?? 14}" min="0" max="60" step="1" placeholder="14">
+        <div class="help-text">Pauschal für Verschmutzung, Leitung, Mismatch, Wechselrichter und Alterung. 14 % ist der übliche Richtwert; die AC-Grenzleistung des Wechselrichters deckelt zusätzlich.</div>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
+        <button class="btn-secondary" data-action="probe-pvprognose" data-scope="${prefix}" ${this._pvProbe.busy ? "disabled" : ""}>
+          <ha-icon icon="mdi:weather-sunny" style="--mdc-icon-size:18px"></ha-icon> ${this._pvProbe.busy ? "Wird berechnet…" : "Prognose berechnen"}
+        </button>
+        ${prefix ? `<button class="btn-link" data-action="refresh-pvprognose" style="font-size:12px;padding:0" ${this._pvPrognoseBusy ? "disabled" : ""}>Gespeicherte Prognose jetzt holen</button>` : ""}
+      </div>
+      ${this._pvPrognoseErgebnis(prefix)}`;
+  }
+
+  _pvPrognoseErgebnis(prefix) {
+    // Ergebnis von „Prognose berechnen" (ungespeicherte Flächen) hat Vorrang;
+    // in den Einstellungen steht darunter der Stand des laufenden Providers.
+    const tageZeile = (tage, spitze) => {
+      if (!Array.isArray(tage) || tage.length === 0) return "";
+      const heute = new Date();
+      const zellen = tage.slice(0, 7).map((kwh, i) => {
+        let label;
+        if (i === 0) label = "Heute";
+        else if (i === 1) label = "Morgen";
+        else {
+          const dd = new Date(heute);
+          dd.setDate(dd.getDate() + i);
+          label = this._getWeekdayShort(dd);
+        }
+        return `<div style="text-align:center;min-width:64px"><div style="font-size:12px;color:var(--secondary-text-color)">${label}</div><div style="font-weight:600">${fmtDe(Number(kwh) || 0, 1)}</div></div>`;
+      }).join("");
+      return `<div style="display:flex;gap:12px;flex-wrap:wrap;margin:8px 0 4px">${zellen}</div>
+        <div class="help-text">kWh je Tag${spitze != null ? `, Spitze ${fmtDe(Number(spitze), 2)} kW` : ""}</div>`;
+    };
+    const warn = (text) => `<div class="help-text" style="margin-top:8px;padding:10px 12px;background:var(--warning-color,#ff9800)22;border-left:3px solid var(--warning-color,#ff9800);border-radius:4px">${this._escapeHtml(text)}</div>`;
+    let html = "";
+    const pr = this._pvProbe;
+    if (pr.fehler) {
+      html += warn(`Berechnung fehlgeschlagen: ${pr.fehler}`);
+    } else if (pr.ergebnis) {
+      const e = pr.ergebnis;
+      html += `<div class="help-text" style="color:var(--primary-text-color)">Berechnet für ${fmtDe(Number(e.kwp_gesamt) || 0, 2)} kWp am Standort ${fmtDe(Number(e.standort?.breite) || 0, 3)} / ${fmtDe(Number(e.standort?.laenge) || 0, 3)}${e.ac_limit_kw ? `, gedeckelt auf ${fmtDe(Number(e.ac_limit_kw), 1)} kW` : ""}:</div>`
+        + tageZeile(e.tage_kwh, e.spitze_kw);
+      if (!e.ac_limit_kw) {
+        // Im Assistenten kommt die AC-Grenze erst im nächsten Schritt —
+        // die Vorschau zeigt deshalb ungedeckelte Spitzen.
+        html += `<div class="help-text">${prefix
+          ? "Ohne AC-Deckel gerechnet — die AC-Grenzleistung des Wechselrichters fehlt in der Anlage."
+          : "Ohne AC-Deckel gerechnet: die AC-Grenzleistung des Wechselrichters kommt im nächsten Schritt „Anlage &amp; Batterie“. Im Betrieb wird die Summe darauf gedeckelt; nur diese Vorschau zeigt die Spitzen ungedeckelt."}</div>`;
+      }
+    }
+    if (prefix) {
+      const st = this._pvPrognoseStatus;
+      if (this._pvPrognoseBusy) {
+        html += `<div class="help-text">Prognose wird geholt…</div>`;
+      } else if (st && Array.isArray(st.tage_kwh)) {
+        const alter = st.alter_minuten == null ? "" : st.alter_minuten < 60
+          ? `, geholt vor ${st.alter_minuten} min` : `, geholt vor ${Math.round(st.alter_minuten / 60)} h`;
+        html += `<div class="help-text" style="margin-top:8px;color:var(--primary-text-color)">Gespeicherte Prognose (${fmtDe(Number(st.kwp_gesamt) || 0, 2)} kWp${alter})${st.fehler ? ` — letzter Abruf fehlgeschlagen: ${this._escapeHtml(st.fehler)}` : ""}:</div>`
+          + tageZeile(st.tage_kwh, st.spitze_kw);
+      } else if (st && st.fehler) {
+        html += warn(`Noch keine Prognose geholt: ${st.fehler}`);
+      }
+    }
+    return html;
+  }
+
+  async _probePvPrognose(scope) {
+    const d = this._flaechenDaten(scope);
+    const fehler = this._flaechenFehler(d);
+    if (fehler) {
+      this._showValidationError(fehler);
+      return;
+    }
+    if (!this._hass) return;
+    this._pvProbe = { busy: true, ergebnis: null, fehler: null };
+    this._render();
+    try {
+      const ergebnis = await this._hass.callWS({
+        type: "eeg_optimizer/probe_pvprognose",
+        flaechen: (d.pv_flaechen || []).map((f) => ({
+          name: f.name || "",
+          kwp: Number(f.kwp),
+          neigung: f.neigung === "" || f.neigung == null ? 30 : Number(f.neigung),
+          azimut: f.azimut === "" || f.azimut == null ? 180 : Number(f.azimut),
+          max_kw: f.max_kw === "" || f.max_kw == null ? null : Number(f.max_kw),
+        })),
+        verluste_pct: d.pv_verluste_pct === "" || d.pv_verluste_pct == null ? null : Number(d.pv_verluste_pct),
+        ac_limit_kw: Number(d.inverter_ac_limit_kw) > 0 ? Number(d.inverter_ac_limit_kw) : null,
+      });
+      this._pvProbe = { busy: false, ergebnis, fehler: null };
+    } catch (e) {
+      this._pvProbe = { busy: false, ergebnis: null, fehler: e?.message || String(e) };
+    }
+    this._render();
+  }
+
+  async _loadPvPrognoseStatus(refresh = false) {
+    if (this._pvPrognoseBusy || !this._hass) {
+      if (!this._hass) this._pvPrognoseRequested = false;
+      return;
+    }
+    this._pvPrognoseBusy = true;
+    if (refresh) this._render();
+    try {
+      this._pvPrognoseStatus = await this._hass.callWS({
+        type: "eeg_optimizer/get_pvprognose",
+        ...(refresh ? { refresh: true } : {}),
+      });
+    } catch (e) {
+      console.warn("Eigene PV-Prognose nicht abrufbar:", e);
+      this._pvPrognoseStatus = { tage_kwh: null, fehler: e?.message || String(e) };
+    } finally {
+      this._pvPrognoseBusy = false;
+      this._render();
+    }
+  }
+
+  _ensurePvPrognoseStatus() {
+    if (this._pvPrognoseStatus !== null || this._pvPrognoseBusy || this._pvPrognoseRequested) return;
+    this._pvPrognoseRequested = true;
+    this._loadPvPrognoseStatus();
+  }
+
+  /* ── Prognosevergleich (Dashboard-Karte) ────────────────────── */
+
+  _ensurePrognosevergleich() {
+    if (!this._config?.pv_prognose_vergleich || !this._hass) return;
+    // Halbstündlich nachziehen — so oft schreibt das Backend.
+    const alt = !this._vergleich || Date.now() - (this._vergleichGeladen || 0) > 30 * 60 * 1000;
+    if (alt && !this._vergleichBusy) this._loadPrognosevergleich(this._vergleichTag);
+  }
+
+  async _loadPrognosevergleich(datum = null) {
+    if (this._vergleichBusy || !this._hass) return;
+    this._vergleichBusy = true;
+    try {
+      this._vergleich = await this._hass.callWS({
+        type: "eeg_optimizer/get_prognosevergleich",
+        ...(datum ? { datum } : {}),
+      });
+      if (this._vergleich?.tag?.datum) this._vergleichTag = this._vergleich.tag.datum;
+    } catch (e) {
+      console.warn("Prognosevergleich nicht abrufbar:", e);
+      this._vergleich = { aktiv: true, tage: [], uebersicht: [], tag: null, fehler: e?.message || String(e) };
+    } finally {
+      this._vergleichGeladen = Date.now();
+      this._vergleichBusy = false;
+      this._render();
+    }
+  }
+
+  _renderVergleichChart(tag, fremdName) {
+    const slots = tag.slots || [];
+    const n = slots.length;
+    if (n < 2) return "";
+    const serien = [
+      { label: fremdName, color: "#2196F3", data: tag.fremd, sw: 2 },
+      { label: "Eigene Berechnung", color: "#FF9800", data: tag.eigen, sw: 2 },
+      { label: "Gemessen", color: "#4CAF50", data: tag.gemessen, sw: 2.5 },
+    ].filter((s) => s.data && Object.keys(s.data).length > 0);
+    if (!serien.length) return "";
+    const schmal = !!this._narrow;
+    const width = this._cw("vgl");
+    const height = schmal ? 230 : 280;
+    const padding = { top: 12, right: schmal ? 8 : 16, bottom: schmal ? 46 : 44, left: schmal ? 32 : 46 };
+    const chartW = width - padding.left - padding.right;
+    const chartH = height - padding.top - padding.bottom;
+    const fs = schmal ? 10 : 12;
+    const maxVal = Math.max(0.5, ...serien.flatMap((s) => slots.map((t) => Number(s.data[t]) || 0))) * 1.1;
+    const x = (i) => padding.left + (i / (n - 1)) * chartW;
+    const y = (v) => padding.top + chartH - (v / maxVal) * chartH;
+
+    let yLines = "";
+    const stufen = schmal ? 2 : 4;
+    for (let i = 0; i <= stufen; i++) {
+      const yy = padding.top + (chartH / stufen) * i;
+      yLines += `<line x1="${padding.left}" y1="${yy}" x2="${width - padding.right}" y2="${yy}" stroke="var(--divider-color)" stroke-dasharray="4"/>`;
+      yLines += `<text x="${padding.left - 5}" y="${yy + 4}" text-anchor="end" font-size="${fs}" fill="var(--secondary-text-color)">${fmtDe(maxVal * (stufen - i) / stufen, 1)}</text>`;
+    }
+    let xLabels = "";
+    const stepH = schmal ? 6 : 3;
+    slots.forEach((iso, i) => {
+      const d = new Date(iso);
+      if (d.getMinutes() === 0 && d.getHours() % stepH === 0) {
+        xLabels += `<text x="${x(i)}" y="${padding.top + chartH + 14}" text-anchor="middle" font-size="${fs}" fill="var(--secondary-text-color)">${d.getHours()}:00</text>`;
+      }
+    });
+    let linien = "";
+    serien.forEach((s) => {
+      // Fehlende Slots unterbrechen die Linie, statt sie zu überbrücken.
+      const segmente = [];
+      let akt = [];
+      slots.forEach((iso, i) => {
+        const v = s.data[iso];
+        if (v == null) {
+          if (akt.length) segmente.push(akt);
+          akt = [];
+          return;
+        }
+        akt.push(`${x(i).toFixed(1)},${y(Number(v)).toFixed(1)}`);
+      });
+      if (akt.length) segmente.push(akt);
+      segmente.forEach((seg) => {
+        linien += `<polyline points="${seg.join(" ")}" fill="none" stroke="${s.color}" stroke-width="${s.sw}" stroke-linejoin="round"/>`;
+      });
+    });
+    let legende = "";
+    const ly = padding.top + chartH + (schmal ? 36 : 34);
+    const itemW = chartW / 3;
+    serien.forEach((s, idx) => {
+      const lx = padding.left + idx * itemW;
+      legende += `<line x1="${lx}" y1="${ly - 4}" x2="${lx + 16}" y2="${ly - 4}" stroke="${s.color}" stroke-width="${s.sw}"/>`;
+      legende += `<text x="${lx + 20}" y="${ly}" font-size="${fs}" fill="var(--primary-text-color)">${this._escapeHtml(s.label)}</text>`;
+    });
+    return `<svg data-cw="vgl" viewBox="0 0 ${width} ${height}" style="width:100%;height:auto">${yLines}${xLabels}${linien}${legende}</svg>`;
+  }
+
+  _vergleichFeature(d, prefix) {
+    const eigen = d.forecast_source === "eigen";
+    const pq = this._prerequisites;
+    const fremdDa = !pq || pq.solcast_solar || pq.forecast_solar;
+    const hinweis = eigen && !fremdDa && d.pv_prognose_vergleich
+      ? `<div class="help-text" style="margin-top:8px;padding:10px 12px;background:var(--warning-color,#ff9800)22;border-left:3px solid var(--warning-color,#ff9800);border-radius:4px">Weder Solcast noch Forecast.Solar ist installiert — ohne eine der beiden gibt es nichts zu vergleichen, und der p10 kommt erst nach 14 Tagen aus der eigenen Historie.</div>`
+      : "";
+    return this._featureCard({
+      on: !!d.pv_prognose_vergleich,
+      action: prefix ? "toggle-settings-feature" : "toggle-feature",
+      feature: "pv_prognose_vergleich",
+      icon: "mdi:compare-horizontal",
+      titel: "Prognosevergleich",
+      beschreibung: eigen
+        ? `Solcast oder Forecast.Solar wird mitgelesen (muss installiert sein), ohne zu steuern. Jeden Morgen werden beide Prognosen festgehalten und gegen die Messung gestellt — die Karte „Prognosevergleich“ im Dashboard zeigt Verlauf und Fehler der letzten 30 Tage. Ist Solcast da, leiht sich die Notstrom-Reserve dessen p10; sonst kommt er nach 14 Tagen aus der eigenen Historie.`
+        : `Die eigene Berechnung (Open-Meteo) läuft mit, ohne zu steuern — dafür die Flächen der Anlage eintragen. Jeden Morgen werden beide Prognosen festgehalten und gegen die Messung gestellt; die Karte „Prognosevergleich“ im Dashboard zeigt Verlauf und Fehler der letzten 30 Tage.`,
+    }) + hinweis;
+  }
+
+  _prognoseQuelleFelder(d) {
+    // Einstellungen: die steuernde Quelle wählen. Für Solcast und
+    // Forecast.Solar die beiden Sensoren dazu (vorbelegt aus der Erkennung),
+    // für die eigene Berechnung die Flächenkarte darunter.
+    const pq = this._prerequisites;
+    const opt = (wert, label) => {
+      const fehlt = pq && wert !== "eigen" && !pq[wert];
+      return `<option value="${wert}" ${d.forecast_source === wert ? "selected" : ""}>${label}${fehlt ? " (nicht installiert)" : ""}</option>`;
+    };
+    const fremd = d.forecast_source === "solcast_solar" || d.forecast_source === "forecast_solar";
+    return `
+      <div class="field-group">
+        <label>Steuernde Quelle</label>
+        <select data-field="settings_forecast_source">
+          ${opt("solcast_solar", "Solcast Solar")}
+          ${opt("forecast_solar", "Forecast.Solar")}
+          ${opt("eigen", "Eigene Berechnung (Open-Meteo)")}
+        </select>
+        <div class="help-text">Aus dieser Quelle rechnet der Fahrplan. Ein Wechsel lädt die Integration nach dem Speichern neu.</div>
+      </div>
+      ${fremd ? `
+        ${this._entityPickerHtml("settings_forecast_remaining_entity", d.forecast_remaining_entity, "Sensor PV-Prognose verbleibend heute *", "Verbleibende PV-Produktion für heute in kWh.", "sensor")}
+        ${this._entityPickerHtml("settings_forecast_tomorrow_entity", d.forecast_tomorrow_entity, "Sensor PV-Prognose morgen *", "Prognostizierte PV-Produktion für morgen in kWh.", "sensor")}
+      ` : ""}
+      <div style="margin-top:8px">${this._vergleichFeature(d, "settings_")}</div>`;
+  }
+
+  _renderPrognosevergleichKarte() {
+    if (!this._config?.pv_prognose_vergleich) return "";
+    const v = this._vergleich;
+    const karte = (inhalt) => `
+      <div class="card" style="margin-bottom:16px">
+        <h3 class="settings-karte-titel" style="margin:0 0 4px">Prognosevergleich</h3>
+        ${inhalt}
+      </div>`;
+    if (!v) return karte(`<div class="help-text">Wird geladen…</div>`);
+    const tage = v.tage || [];
+    if (!tage.length) {
+      return karte(`<div class="help-text">Noch keine Aufzeichnung. Beide Prognosen werden ab 5 Uhr morgens festgehalten, die Messung kommt im Lauf des Tages dazu.${v.fehler ? ` Letzter Fehler: ${this._escapeHtml(v.fehler)}` : ""}</div>`);
+    }
+    const tag = v.tag || {};
+    const st = v.tag_statistik || {};
+    const fremdName = FORECAST_LABELS[tag.fremd_name] || "Fremdprognose";
+    const fremdKurz = tag.fremd_name === "forecast_solar" ? "Forecast.Solar" : "Solcast";
+    const zwei = (n) => String(n).padStart(2, "0");
+    const datumKurz = (d) => {
+      const dd = new Date(`${d}T12:00:00`);
+      return `${this._getWeekdayShort(dd)} ${zwei(dd.getDate())}.${zwei(dd.getMonth() + 1)}.`;
+    };
+    const kwh = (val) => (val == null ? "—" : fmtDe(Number(val), 1));
+    const vz = (a) => (a > 0 ? "+" : a < 0 ? "−" : "");
+    const abwText = (q) => {
+      if (!q || q.abweichung_kwh == null) return "—";
+      const a = q.abweichung_kwh;
+      const p = q.abweichung_pct;
+      return `${vz(a)}${fmtDe(Math.abs(a), 1)}${p != null ? ` (${vz(p)}${fmtDe(Math.abs(p), 0)} %)` : ""}`;
+    };
+    const auswahl = `<select data-vergleich-tag style="max-width:180px">${tage.slice().reverse().map((d) =>
+      `<option value="${d}" ${d === tag.datum ? "selected" : ""}>${datumKurz(d)}</option>`).join("")}</select>`;
+    const qf = st.quellen?.fremd;
+    const qe = st.quellen?.eigen;
+    const festgehalten = tag.festgehalten ? new Date(tag.festgehalten) : null;
+    const tagZeile = `<div class="help-text" style="margin:6px 0 0">
+      ${tag.vollstaendig ? "Ganzer Tag" : "Bisher"}: gemessen <strong>${kwh(st.gemessen_kwh)} kWh</strong>${qf ? `, ${fremdKurz} ${kwh(tag.vollstaendig ? qf.prognose_kwh : qf.prognose_bisher_kwh)} kWh` : ""}${qe ? `, Eigene ${kwh(tag.vollstaendig ? qe.prognose_kwh : qe.prognose_bisher_kwh)} kWh` : ""}${festgehalten ? ` — Prognosen festgehalten um ${zwei(festgehalten.getHours())}:${zwei(festgehalten.getMinutes())}` : ""}${st.spaet ? " (spät — zählt nicht in die Zusammenfassung)" : ""}
+    </div>`;
+    const z = v.zusammenfassung || {};
+    const zq = (q, name) => q
+      ? `${name}: Abweichung im Mittel ${q.bias_pct != null ? `${vz(q.bias_pct)}${fmtDe(Math.abs(q.bias_pct), 0)} %` : `${fmtDe(q.bias_kwh, 1)} kWh`}, Fehler ${fmtDe(q.mae_kwh, 1)} kWh je Tag${q.mae_kw != null ? ` (${fmtDe(q.mae_kw, 2)} kW je Halbstunde)` : ""}`
+      : "";
+    const naeher = z.naeher?.tage
+      ? ` Näher an der Messung: ${fremdKurz} an ${z.naeher.fremd}, Eigene an ${z.naeher.eigen} von ${z.naeher.tage} Tagen.`
+      : "";
+    const ze = z.quellen?.eigen;
+    const p10 = ze
+      ? (ze.p10_faktor != null
+        ? ` Empirischer p10 der eigenen Prognose: Faktor ${fmtDe(ze.p10_faktor, 2)} aus ${ze.p10_tage} Tagen.`
+        : ` Empirischer p10 ab ${v.p10_min_tage || 14} vollständigen Tagen (bisher ${ze.p10_tage || 0}).`)
+      : "";
+    const zusammen = z.tage
+      ? `<div class="help-text" style="margin-top:10px"><strong>${z.tage} vollständige Tage${z.spaet_ausgelassen ? `, ${z.spaet_ausgelassen} spät festgehaltene ausgelassen` : ""}.</strong> ${[zq(z.quellen?.fremd, fremdKurz), zq(ze, "Eigene")].filter(Boolean).join(" · ")}.${naeher}${p10}</div>`
+      : `<div class="help-text" style="margin-top:10px">Noch kein vollständiger Tag — die Auswertung beginnt mit der ersten ganzen Messung.</div>`;
+    const zelle = `style="padding:4px 6px;border-bottom:1px solid var(--divider-color);white-space:nowrap"`;
+    const rechts = `style="padding:4px 6px;border-bottom:1px solid var(--divider-color);text-align:right;white-space:nowrap"`;
+    const zeilen = (v.uebersicht || []).slice(0, 14).map((u) => {
+      const f = u.quellen?.fremd;
+      const e = u.quellen?.eigen;
+      let naeherZ = "";
+      if (f && e && f.abweichung_kwh != null && e.abweichung_kwh != null) {
+        naeherZ = Math.abs(f.abweichung_kwh) < Math.abs(e.abweichung_kwh) ? fremdKurz : "Eigene";
+      }
+      return `<tr data-action="vergleich-tag" data-datum="${u.datum}" style="cursor:pointer${u.datum === tag.datum ? ";font-weight:600" : ""}">
+        <td ${zelle}>${datumKurz(u.datum)}</td>
+        <td ${rechts}>${kwh(f?.prognose_kwh)}</td>
+        <td ${rechts}>${kwh(e?.prognose_kwh)}</td>
+        <td ${rechts}>${kwh(u.gemessen_kwh)}${u.vollstaendig ? "" : " *"}${u.spaet ? " †" : ""}</td>
+        <td ${rechts}>${abwText(f)}</td>
+        <td ${rechts}>${abwText(e)}</td>
+        <td ${zelle}>${naeherZ}</td>
+      </tr>`;
+    }).join("");
+    const kopf = (t, r) => `<th style="padding:4px 6px;text-align:${r ? "right" : "left"};font-weight:normal;color:var(--secondary-text-color)">${t}</th>`;
+    const tabelle = `
+      <div style="overflow-x:auto;margin-top:10px">
+        <table style="width:100%;border-collapse:collapse;font-size:13px">
+          <thead><tr>${kopf("Tag")}${kopf(fremdKurz, true)}${kopf("Eigene", true)}${kopf("Gemessen", true)}${kopf(`Abw. ${fremdKurz}`, true)}${kopf("Abw. Eigene", true)}${kopf("Näher")}</tr></thead>
+          <tbody>${zeilen}</tbody>
+        </table>
+        <div class="help-text">kWh je Tag; Abweichung = Prognose minus Messung. * Messung noch nicht vollständig. † Prognose erst nach 8 Uhr festgehalten (Home Assistant lief am Morgen nicht) — zählt nicht in die Zusammenfassung. Ein Tipp auf eine Zeile zeigt den Tag im Diagramm.</div>
+      </div>`;
+    return karte(`
+      <div class="help-text" style="margin-bottom:8px">Beide Prognosen, wie sie am Morgen standen, gegen die gemessene PV-Leistung. Steuernd ist ${this._config?.forecast_source === "eigen" ? "die eigene Berechnung" : fremdKurz}.</div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:6px">
+        <label style="margin:0">Tag</label>${auswahl}
+        <button class="btn-link" data-action="refresh-prognosevergleich" style="font-size:12px;padding:0" ${this._vergleichBusy ? "disabled" : ""}>Aktualisieren</button>
+      </div>
+      ${this._renderVergleichChart(tag, fremdName)}
+      ${tagZeile}${zusammen}${tabelle}`);
+  }
+
   _anlageFields(d, prefix) {
     // Anlagendaten des Wechselrichters: was er netzseitig kann und ob eine
     // Einspeisegrenze gilt. Beides begrenzt im Modell die Summe aus
@@ -7164,8 +7871,7 @@ class EegOptimizerPanel extends HTMLElement {
 
   _renderStepZusammenfassung() {
     const d = this._wizardData;
-    const forecastName =
-      d.forecast_source === "solcast_solar" ? "Solcast Solar" : "Forecast.Solar";
+    const forecastName = FORECAST_LABELS[d.forecast_source] || "Forecast.Solar";
     const gesteuert = SCHEDULE_CONTROL_INVERTERS.includes(d.inverter_type);
 
     const row = (label, value) =>
@@ -7219,8 +7925,17 @@ class EegOptimizerPanel extends HTMLElement {
       <div class="summary-section">
         <h3>Prognose</h3>
         ${row("Quelle", forecastName)}
-        ${row("Verbleibend heute", d.forecast_remaining_entity || "—")}
-        ${row("Morgen", d.forecast_tomorrow_entity || "—")}
+        ${d.forecast_source === "eigen"
+          ? (d.pv_flaechen || []).map((f, i) => row(
+              this._escapeHtml(f.name || `Fläche ${i + 1}`),
+              `${fmtDe(Number(f.kwp) || 0, 2)} kWp, ${fmtDe(Number(f.neigung) || 0, 0)}° Neigung, Azimut ${fmtDe(Number(f.azimut) || 0, 0)}° (${himmelsrichtung(f.azimut)})`
+            )).join("")
+            + row("Systemverluste", fmtDe(Number(d.pv_verluste_pct ?? 14), 0) + " %")
+          : row("Verbleibend heute", d.forecast_remaining_entity || "—")
+            + row("Morgen", d.forecast_tomorrow_entity || "—")}
+        ${row("Prognosevergleich", d.pv_prognose_vergleich
+          ? (d.forecast_source === "eigen" ? "Aktiv — Solcast/Forecast.Solar läuft mit" : "Aktiv — eigene Berechnung läuft mit")
+          : "Aus")}
       </div>
 
       <div class="summary-section">
@@ -7374,6 +8089,19 @@ class EegOptimizerPanel extends HTMLElement {
         ${this._anlageFields(d, "settings_")}
       </div>
       <div class="card" style="margin-bottom:16px">
+        <h3 class="settings-karte-titel" style="margin:0 0 16px">PV-Prognose</h3>
+        ${this._prognoseQuelleFelder(d)}
+      </div>
+      ${d.forecast_source === "eigen" || d.pv_prognose_vergleich ? `
+      <div class="card" style="margin-bottom:16px">
+        <h3 class="settings-karte-titel" style="margin:0 0 4px">${d.forecast_source === "eigen" ? "PV-Prognose (eigene Berechnung)" : "Eigene Berechnung (Vergleichsquelle)"}</h3>
+        <div class="help-text" style="margin-bottom:16px">
+          Wetter von Open-Meteo, Anlage von hier. Geänderte Flächen gelten
+          nach dem Speichern; „Prognose berechnen" zeigt vorher, was sie ergeben.
+        </div>
+        ${this._pvPrognoseFelder(d, "settings_")}
+      </div>` : ""}
+      <div class="card" style="margin-bottom:16px">
         <h3 class="settings-karte-titel" style="margin:0 0 16px">Batterie</h3>
         ${this._batterieOptFields(d, "settings_")}
       </div>
@@ -7488,9 +8216,13 @@ class EegOptimizerPanel extends HTMLElement {
           ${row("Batterie-SOC", d.battery_soc_sensor)}
           ${row("Kapazität", d.battery_capacity_sensor
             || (d.battery_capacity_kwh ? `${fmtDe(Number(d.battery_capacity_kwh), 1)} kWh (manuell)` : ""))}
-          ${row("Prognose", d.forecast_source === "forecast_solar" ? "Forecast.Solar" : "Solcast Solar")}
-          ${row("Prognose heute (Rest)", d.forecast_remaining_entity)}
-          ${row("Prognose morgen", d.forecast_tomorrow_entity)}
+          ${row("Prognose", FORECAST_LABELS[d.forecast_source] || "Solcast Solar")}
+          ${d.forecast_source === "eigen"
+            ? row("PV-Flächen", (d.pv_flaechen || []).map((f, i) =>
+                `${f.name || `Fläche ${i + 1}`} ${fmtDe(Number(f.kwp) || 0, 2)} kWp / ${fmtDe(Number(f.neigung) || 0, 0)}° / ${himmelsrichtung(f.azimut)}`
+              ).join(", "))
+            : row("Prognose heute (Rest)", d.forecast_remaining_entity)
+              + row("Prognose morgen", d.forecast_tomorrow_entity)}
         </div>
         <button class="btn-secondary" data-action="restart-wizard" style="width:100%;display:flex;align-items:center;justify-content:center;gap:8px;padding:12px">
           <ha-icon icon="mdi:refresh" style="--mdc-icon-size:20px"></ha-icon> Einrichtung erneut durchlaufen
@@ -9111,6 +9843,8 @@ class EegOptimizerPanel extends HTMLElement {
 
     // Geldwerte nachziehen, wenn sie älter als eine Minute sind.
     this._ensureBilanz();
+    // Prognosevergleich nachziehen (nur mit eingeschaltetem Vergleich).
+    this._ensurePrognosevergleich();
 
     // --- Status card ---
     const modeState = this._readState(this._entityIds?.select || "select.eeg_energy_optimizer_optimizer");
@@ -9170,9 +9904,20 @@ class EegOptimizerPanel extends HTMLElement {
       forecastSolarPrefix = forecastTomorrowId.replace(/tomorrow$/, "");
     }
 
+    // Eigene Berechnung: keine fremden Tagessensoren — die sieben
+    // Tagessummen hängen als Attribut am eigenen Sensor „PV-Prognose heute".
+    const eigenState = this._config?.forecast_source === "eigen"
+      ? this._readState(this._entityIds?.pv_heute || "sensor.eeg_energy_optimizer_pv_prognose_heute")
+      : null;
+    const eigenTage = Array.isArray(eigenState?.attributes?.tage_kwh)
+      ? eigenState.attributes.tage_kwh.map((v) => Number(v) || 0)
+      : null;
+
     // PV total today — prefer configured sensor, then auto-detect
     let pvHeute = null;
-    if (this._config?.forecast_today_entity) {
+    if (eigenTage) {
+      pvHeute = eigenTage[0];
+    } else if (this._config?.forecast_today_entity) {
       pvHeute = this._readFloat(this._config.forecast_today_entity);
     }
     if (pvHeute == null && solcastPrefix) {
@@ -9186,7 +9931,9 @@ class EegOptimizerPanel extends HTMLElement {
 
     // PV tomorrow
     let pvMorgen = null;
-    if (solcastPrefix) {
+    if (eigenTage) {
+      pvMorgen = eigenTage[1] ?? null;
+    } else if (solcastPrefix) {
       pvMorgen = this._readFloat(solcastPrefix + "morgen");
     } else if (forecastSolarPrefix) {
       pvMorgen = this._readFloat(forecastSolarPrefix + "tomorrow");
@@ -9197,6 +9944,7 @@ class EegOptimizerPanel extends HTMLElement {
 
     // 7-day PV forecast array — prefer configured sensors, then auto-detect from prefix
     const _pvDay = (dayNum) => {
+      if (eigenTage) return eigenTage[dayNum - 1] || 0;
       const cfgKey = `forecast_day${dayNum}_entity`;
       if (this._config?.[cfgKey]) return this._readFloat(this._config[cfgKey]) || 0;
       if (solcastPrefix) return this._readFloat(solcastPrefix + `tag_${dayNum}`) || 0;
@@ -9401,6 +10149,7 @@ class EegOptimizerPanel extends HTMLElement {
 
         <!-- Optimierungsgewinn: was die Optimierung gegenüber Standardbetrieb bringt -->
         ${this._renderGewinnKarte()}
+        ${this._renderPrognosevergleichKarte()}
 
         ${this._config?.expert_mode ? this._renderControlStateKarte(decisionState) : ""}
 
@@ -10278,7 +11027,9 @@ class EegOptimizerPanel extends HTMLElement {
     `;
 
     // After innerHTML, populate entity datalists
-    if (this._view === "wizard" && this._hass) {
+    // Auch in den Einstellungen: beim Quellenwechsel der PV-Prognose stehen
+    // dort die Prognose-Sensoren zur Wahl.
+    if ((this._view === "wizard" || this._view === "settings") && this._hass) {
       requestAnimationFrame(() => this._bindEntityPickers());
     }
   }

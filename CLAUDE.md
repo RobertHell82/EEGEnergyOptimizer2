@@ -30,7 +30,7 @@ __init__.py: async_setup_entry()
   → Activity log: persistent ring buffer (5000 entries, paginated API)
   → 30s timer: _guard_cycle()          — ScheduleExecutor
   → 1min timer: ScheduleRunner.async_step()
-  → 30min timer: PeakShare + OeMAG + grid-tariff refresh (+ spot / OeMAG estimate / aWATTar SUNNY, when chosen as base tariff)
+  → 30min timer: PeakShare + OeMAG + grid-tariff refresh (+ spot / OeMAG estimate / aWATTar SUNNY, when chosen as base tariff; + own PV forecast from Open-Meteo when `forecast_source = "eigen"`)
 
 schedule.py: ScheduleRunner (planning, 1 min)
   → async_collect_inputs()  [event loop] — profile, battery, PV forecast,
@@ -93,6 +93,7 @@ schedule_executor.py: ScheduleExecutor (execution, 30 s)
 | `oemag_schaetzung.py` | Estimate of the OeMAG tariff for the *current* month (source `oemag_estimate`): aWATTar day-ahead prices weighted by Austrian solar generation (Energy-Charts), clamped to 60–100 % of the E-Control quarterly price (scraped; fallback derived from clamped months of the OeMAG table), minus balancing cost. Validated 2025-01…2026-08: MAE 0.21 ct |
 | `awattar_sunny.py` | Optional base tariff: aWATTar SUNNY fixed monthly feed-in price (source `awattar_sunny`). No API — reads the yearly tab of aWATTar's published price sheet (Google Sheet, gviz CSV) and falls back to the tariff page; two contract variants (`awattar_sunny_vertrag` = `neu`/`alt`, contracts after/until 25.02.2026) because the sheet carries two SUNNY columns; cached across restarts, hourly retry while the current month is missing |
 | `energie_ag.py` | Optional base tariff: Energie AG „Team Sonne Float“ (sources `energie_ag` / `energie_ag_estimate`). Price = **reference market value PV § 13 EAG − 1.5 ct discount** (`energie_ag_abschlag`, VPI-indexed so it is configurable). Two price variants (`energie_ag_variante` = `float`/`loyal_float`); Loyal Float guarantees a minimum of 2 ct but requires an electricity contract with Energie AG Vertrieb. The reference market value is scraped from e-control.at/referenzmarktwert (the very page the price sheet cites), cached across restarts, hourly retry while the due month is missing. Verified against all 12 months of the price sheet's chart (0.00 ct deviation). `energie_ag_estimate` reuses `oemag_schaetzung`'s **raw** value — that raw monthly mean IS this reference market value, before corridor and balancing cost — so there is no second fetch |
+| `prognosevergleich.py` | **Prognosevergleich** (`pv_prognose_vergleich`): the non-steering source runs alongside — Solcast/Forecast.Solar next to the own forecast or vice versa. Once per day after 05:00 local (first 30-min tick) it freezes both 30-min series for the local calendar day (foreign: Solcast `detailedForecast`, else Forecast.Solar wh_hours; own: `PvPrognoseProvider.halbstunden()`), then keeps pulling the measured PV as 30-min means from the recorder 5-min statistics (`schedule_archive.async_ist_verlauf`) for today and yesterday until the day is complete. 30 days in a `Store`, slot keys are UTC ISO strings (local midnight → midnight, 46/50 slots on DST days). Per day and source: forecast kWh, deviation, MAE over daylight slots; over all complete days: bias, MAE, "who was closer" count, and the **empirical p10** = 10 % quantile of measured/forecast daily ratios, only from `P10_MIN_TAGE` = 14 days on, clamped to [0.2, 1]. `schedule._eigene_prognose` uses, in this order and only with the switch on: the p10/p50 ratio borrowed from Solcast, the empirical factor, else none (60 % worst-case factor). A day whose first capture happens after `FESTHALTEN_SPAET_STUNDE` (08:00, HA was down in the morning) is flagged `spaet`: shown with † in the table, excluded from the summary and the empirical p10, since a forecast made at noon has seen half the day. Capture times are kept per source (`festgehalten_fremd` / `_eigen`). Reads and shows, never steers |
 | `power_readings.py` | Shared sensor reads — house load (minus heater), PV now, grid export, heater power, battery capacity resolution |
 | `heizstab/controller.py` | Heater control — `HeizstabController` (`regeln()`: comfort → discharge → max temperature → plan (`plan_kw`) → surplus rule `naechster_sollwert`; temperature hysteresis, saturation, `puffer_budget_kwh` for the LP, 20-s watchdog write (plus an immediate rewrite when the device reads 0 W under a standing setpoint), 10-s read, 6-h time sync, detection of both foreign control and a device that does not follow), `create_heizstab()` factory |
 | `heizstab/ohmpilot_modbus.py` | Fronius Ohmpilot driver via direct Modbus TCP (setpoint 40599 int32 W big-endian, actual power 40800, temperature 40808 in 0.1 °C, unix time 40400; 50-s device watchdog). Taken over from HA_Optimierung_Gruenbach, registers verified on the device there |
@@ -104,7 +105,8 @@ schedule_executor.py: ScheduleExecutor (execution, 30 s)
 | `bilanz.py` | Energy balance in money — records 96 quarter-hours per day (energy, SOC, **frozen** prices and community balances), evaluates them with `bewerte_geldfluesse`, and derives the optimiser advantage against a simulated standard operation over the measured series. The balance day runs 04:00–04:00 (night discharge stays in one day; old midnight-based records are migrated on load). Days where the battery behaved like the reference (power deviation ≤ max(1 kWh, 10 % of throughput)) report advantage 0 with `kein_eingriff`; the raw difference stays in `vorteil_roh` |
 | `override.py` | Time-boxed user override — **Pause** (behave like mode Aus) with two end conditions: expiry time (`stunden`, 0.25–48 h) and/or target SOC (`bis_soc_pct`, 50–100 %; ends when the measured SOC reaches it, 48 h cap as safety net). Persisted via `Store` so a restart mid-pause does not resume control. Evaluated in the guard cycle in `__init__.py` (`async_tick(now, soc_pct)`); exposed as HA services `pause` / `aufheben` (`services.yaml`) |
 | `coordinator.py` | Loads hourly consumption averages from recorder (rolling, weekday split) |
-| `forecast_provider.py` | Abstract PV forecast provider — Solcast and Forecast.Solar implementations |
+| `forecast_provider.py` | Abstract PV forecast provider — Solcast, Forecast.Solar (entity reads) and `EigenProvider` (wraps `pvprognose/`) |
+| `pvprognose/` | **Own PV forecast** (`forecast_source = "eigen"`), fully self-contained: `openmeteo.py` fetches `global_tilted_irradiance` + `temperature_2m` per surface from Open-Meteo (15-min, 7 days, no key; azimuth converted from compass to Open-Meteo's 0 = south; values are means of the *preceding* interval and get shifted to slot starts), `modell.py` is the pure PVWatts-style model (γ = −0.4 %/K, cell = air + 0.03 K·m²/W, losses `pv_verluste_pct` default 14 %, DC sum over all `pv_flaechen`, one AC clip at `inverter_ac_limit_kw`), `provider.py` holds ONE 7-day 15-min AC series in a `Store` (fetched in the 30-min cycle, `FRISCH_S` 25 min; failures keep the old series, older than 48 h counts as no forecast so the schedule fails loudly), serves `halbstunden()` for the schedule (Solcast raster, **no p10 → `min_production=None` → 60 % worst-case factor like Forecast.Solar**), `rest_heute_kwh()`/`morgen_kwh()` for the sensors and `tage_kwh()` for the week chart; `berechne_einmalig()` backs the panel's "Prognose berechnen" with unsaved surfaces. No calibration yet — the hook is one factor per timestamp between `leistungsreihe()` and the provider (see module doc) |
 | `config_flow.py` | Single-click config flow (full setup happens in panel) |
 | `peakshare.py` | PeakShareProvider — fetches + caches community demand forecasts (half-hourly refresh; hourly values, `opt()` resamples to 15 min itself) |
 | `telemetry.py`, `telemetry_buffer.py` | Opt-in reporting — profile + failures only, ring buffer with backoff. Snapshots are taken on the half-hour grid but **offset by `TELEMETRY_SNAPSHOT_OFFSET_MIN`**: `_collect_snapshot()` runs in the same guard cycle *after* the executor wrote, and the plain grid hit exactly the cycle that writes on a slot change (slots turn at :00/:15/:30/:45) — Huawei briefly drops the battery when `forcible_discharge_soc` is rewritten, so the power columns systematically recorded the gap we cause ourselves. Weismann, 21.09.2026: the grid meter read ~0 W at the grid start in 9 of 10 half-hours while the window averaged 271–661 W. `soc_pct` is unaffected; for power questions use the plant's own history, not the snapshots |
@@ -129,7 +131,7 @@ schedule_executor.py: ScheduleExecutor (execution, 30 s)
 |---|--------|--------|-------------|
 | 1 | Verbrauchsprofil | slow | Hourly averages per weekday for dashboard charts |
 | 2–8 | Tagesverbrauchsprognose heute..Tag 6 | fast | Daily consumption forecasts (7 sensors) |
-| 9 | PV-Prognose heute | fast | Remaining PV today from forecast provider |
+| 9 | PV-Prognose heute | fast | Remaining PV today from forecast provider. With the own forecast it also carries `tage_kwh` (7 daily sums), `heute_gesamt_kwh`, `quelle`, `geholt`, `alter_minuten`, `fehler` — the panel's week chart reads them there, since there are no foreign day sensors |
 | 10 | PV-Prognose morgen | fast | PV forecast tomorrow |
 | 11 | Hausverbrauch | fast | Calculated: PV - Battery - Grid (kW, MEASUREMENT) |
 | 12 | PV-Leistung | fast | Current PV production (kW, MEASUREMENT) |
@@ -203,14 +205,15 @@ three intents. `Fahrplan-Status` shows what actually happened:
 - **API**: Paginated WebSocket endpoint (`get_activity_log` with `offset`/`limit`)
 - **Frontend**: Loads 100 entries initially, "Mehr laden" fetches 100 more per click, live events via subscription
 
-### WebSocket API (33 commands)
+### WebSocket API (36 commands)
 
 Home Assistant hands a `websocket_command` to **every logged-in user** —
 `ActiveConnection.async_handle` checks no permissions. Anything that writes
 config, dials out to a caller-chosen host, drives hardware with no entity
 equivalent, or changes consent therefore carries
 `@websocket_api.require_admin` (topmost decorator, above `websocket_command`
-and `async_response`): `save_config`, `detect_sensors`, the four `probe_*`,
+and `async_response`): `save_config`, `detect_sensors`, the five `probe_*` (`probe_pvprognose`
+dials a fixed host, but with caller-chosen surfaces — same family),
 `ambibox_manual`, `refresh_consumption_profile` and the three `telemetry_*`.
 The read commands stay open so the dashboard works for non-admins, and so do
 `set_override` / `clear_override` / `refresh_schedule` / `tagesbilanz_jetzt`
@@ -247,6 +250,9 @@ of every single command and fails on a new, unclassified one.
 | `eeg_optimizer/get_spot_preis` | Current exchange spot price, data range, age (base tariff option; `refresh` forces a fetch) |
 | `eeg_optimizer/get_awattar_sunny` | aWATTar SUNNY monthly tariff for both contract variants (`neu`/`alt`) with month, source (`tabelle`/`tarifseite`), age, last error (base tariff option; `refresh` forces a fetch) |
 | `eeg_optimizer/get_energie_ag` | Energie AG feed-in tariff for both price variants with reference market value, month, age, last error, and the current-month estimate (base tariff option; `refresh` forces a fetch of both the monthly value and the estimate, `abschlag` lets the panel preview an unsaved discount) |
+| `eeg_optimizer/get_pvprognose` | Own PV forecast: surfaces, location, 7 daily sums, age of the weather data, last error (`refresh` forces an Open-Meteo fetch) |
+| `eeg_optimizer/probe_pvprognose` | "Prognose berechnen" — one-off fetch + model run with the *unsaved* surfaces (`flaechen` incl. optional `max_kw`, `verluste_pct`, `ac_limit_kw`), stores nothing; `invalid_config` for input/location problems, `fetch_failed` for network |
+| `eeg_optimizer/get_prognosevergleich` | Prognosevergleich for the dashboard card: list of recorded days, per-day stats, summary over complete days (bias, MAE, closer-count, empirical p10), one day in detail (`datum`, else the newest) with the three 30-min series |
 | `eeg_optimizer/get_feedin_statistics` | Feed-in statistics for the panel card (daily + period summaries) |
 | `eeg_optimizer/tagesbilanz_jetzt` | Build yesterday's daily balance now instead of waiting for 00:15 |
 | `eeg_optimizer/refresh_consumption_profile` | Manually recompute the consumption profile from recorder statistics |
@@ -402,6 +408,35 @@ the event loop is long enough for HA to flag a blocking call.
   the expected value and points the wrong way half the time, and it moves
   feed-in out of the community's demand hours into the battery. Settings
   only, expert mode only — it has no place in the wizard.
+- **Own PV forecast (`forecast_source = "eigen"`, package `pvprognose/`)**:
+  the third source, and the only one without a foreign HA integration or an
+  account. Weather from Open-Meteo, plant from the configuration (surfaces
+  with kWp / tilt / compass azimuth, losses), location from the HA core
+  config. Design decisions that are not obvious from the code: (1) Open-Meteo
+  does the transposition itself (`global_tilted_irradiance` with `tilt` /
+  `azimuth`), one request per surface — cheaper to get right than an own
+  Perez model, verified live 27.09.2026 (−90° gives the morning peak);
+  (2) every value is the mean of the **preceding** interval, so the value
+  stamped 08:15 is the slot 08:00–08:15 and gets shifted to the slot start
+  before it meets the schedule; (3) the schedule gets 30-min means keyed
+  like Solcast's `period_start`; the model has **no p10 of its own** — an
+  invented percentile is none. With the Prognosevergleich switch on it
+  borrows Solcast's p10/p50 ratio per half hour, or falls back to the
+  empirical factor from ≥ 14 complete comparison days; without either,
+  `min_production=None` and the reserve uses the 60 % factor like
+  Forecast.Solar. The chosen way is spelled out in the inputs'
+  `forecast_source` string (archive + panel); (3a) surfaces may carry an
+  optional `max_kw` — the AC limit of *their* inverter/MPPT — clipped per
+  surface after losses, before the plant-wide AC clip (two inverters clip
+  separately, the sum alone would under-clip); (4) a failed fetch keeps the old series (7 days
+  cover the 48-h horizon even after two days of outage), a series older
+  than 48 h counts as *no forecast* so the failure is loud, and the
+  "old weather" warning is throttled with the same one-shot merker as the
+  price hints; (5) the model knows no shading, snow or MPPT window — the
+  calibration against the plant's own recorder history is the designed
+  next step (one factor per timestamp, see `provider.py` docstring), and
+  until then the honest claim is "daily sums match, the intraday shape
+  under shading does not". Open-Meteo is free for non-commercial use only.
 - **Minimum state of charge** is a **hard floor**, modelled as *missing
   capacity* (`opt()` counts free room up to full, so a smaller capacity cuts
   the bottom off). Capped at 30 %, above which too little usable range is left
@@ -624,8 +659,30 @@ sensors (assigned once), steps 4–5 are the parameters:
    sensors (PV / battery / grid, directional pairs for Fronius & SMA)
 3. Batterie — SOC sensor, capacity (sensor or manual, per-device for Huawei
    Master/Slave)
-4. PV-Prognose — forecast source (Solcast / Forecast.Solar) + two mandatory
-   forecast sensors; expert mode: day 3–7 sensors
+4. PV-Prognose — forecast source (Solcast / Forecast.Solar / **Eigene
+   Berechnung**). Solcast and Forecast.Solar take two mandatory forecast
+   sensors (expert mode: day 3–7 sensors); "eigen" takes the plant instead:
+   a surface table (`pv_flaechen`: name, kWp, tilt, compass azimuth, up to
+   8 rows, add/remove, direction label next to the azimuth), the loss
+   percentage and a "Prognose berechnen" button (`probe_pvprognose`, works
+   before anything is saved). The surface inputs carry `data-flaeche` /
+   `data-key` / `data-scope` instead of `data-field`, because the settings
+   save re-reads every `data-field` flat and a list does not fit; the same
+   renderer (`_pvPrognoseFelder`) serves the settings card in **Anlage**.
+   Leaving the step pre-fills `pv_peak_kwp` with the kWp sum when empty.
+   Pre-selected when neither forecast integration is installed. Each row
+   also has an optional "Grenze (kW)" (`max_kw`, the AC limit of that
+   surface's own inverter). The wizard's "Prognose berechnen" runs before
+   the AC limit is known (it is asked one step later) and says so under
+   the result; the settings preview and the live provider always clip.
+   The step also carries the **Prognosevergleich** feature card; with the
+   switch on and a foreign source steering, the surface table appears
+   below it. Settings tab **Anlage** carries the "PV-Prognose" card: the
+   steering source as a select (switching fills the Solcast/Forecast.Solar
+   sensors from detection, shows them as pickers — the one exception to
+   "sensor mappings are wizard-only", because a source switch is useless
+   without them — and reloads on save), plus the same feature card; the surface table appears there
+   when the own forecast steers *or* runs as the comparison source
 5. Anlage & Batterie — AC power limit, PV peak power (both mandatory, checked
    in the wizard *and* on save), export limit, battery power limit, minimum
    state of charge, maximum state of charge (always visible, no toggle —
@@ -665,7 +722,9 @@ only, hidden during the startup phase); it reloads with every guard cycle,
 keyed on the status sensor's `letzte_aktualisierung`, so it never contradicts
 the status card above for longer than one cycle.
 
-Config entry version: 28 (migrations in `__init__.py`)
+Config entry version: 29 (migrations in `__init__.py`). The own forecast
+added no migration: `pv_flaechen` / `pv_verluste_pct` are optional keys,
+absent for every other source.
 
 ## Development Notes
 

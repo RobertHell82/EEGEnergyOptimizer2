@@ -47,6 +47,9 @@ GESICHERT = {
     "eeg_optimizer/probe_kostal",
     "eeg_optimizer/probe_sma",
     "eeg_optimizer/probe_ambibox",
+    # Eigene PV-Prognose: löst einen Abruf bei Open-Meteo mit frei wählbaren
+    # Flächen aus — gehört zur probe_*-Familie, auch wenn der Host fest ist.
+    "eeg_optimizer/probe_pvprognose",
     "eeg_optimizer/ambibox_manual",
     "eeg_optimizer/refresh_consumption_profile",
     "eeg_optimizer/telemetry_enable",
@@ -81,6 +84,8 @@ OFFEN = {
     "eeg_optimizer/get_spot_preis",
     "eeg_optimizer/get_awattar_sunny",
     "eeg_optimizer/get_energie_ag",
+    "eeg_optimizer/get_pvprognose",
+    "eeg_optimizer/get_prognosevergleich",
     "eeg_optimizer/telemetry_get_status",
     "eeg_optimizer/get_schedule",
     "eeg_optimizer/refresh_schedule",

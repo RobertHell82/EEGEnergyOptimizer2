@@ -121,6 +121,24 @@ CONF_LOOKBACK_WEEKS = "lookback_weeks"
 CONSUMPTION_SENSOR = "sensor.eeg_energy_optimizer_hausverbrauch"
 
 FORECAST_SOURCE_SOLCAST = "solcast_solar"
+FORECAST_SOURCE_FORECAST_SOLAR = "forecast_solar"
+# Eigene Berechnung (pvprognose/): Wetterdaten von Open-Meteo, Anlage aus der
+# Konfiguration — keine fremde HA-Integration, kein Schlüssel, kein Konto.
+FORECAST_SOURCE_EIGEN = "eigen"
+# Modulflächen der eigenen Prognose: Liste aus {name, kwp, neigung, azimut}.
+# Azimut als Kompasswert (0 = Nord, 90 = Ost, 180 = Süd, 270 = West) — die
+# Konvention von sun.sun und Forecast.Solar in HA; die Umrechnung auf
+# Open-Meteo (0 = Süd) passiert in pvprognose/openmeteo.py.
+CONF_PV_FLAECHEN = "pv_flaechen"
+# Pauschale Systemverluste in Prozent (Verschmutzung, Leitung, Mismatch,
+# Wechselrichter, Alterung). 14 % ist der PVWatts-Richtwert.
+CONF_PV_VERLUSTE_PCT = "pv_verluste_pct"
+DEFAULT_PV_VERLUSTE_PCT = 14.0
+# Prognosevergleich (prognosevergleich.py): die jeweils andere Quelle läuft
+# mit, ohne zu steuern — Solcast/Forecast.Solar neben der eigenen Berechnung
+# oder umgekehrt. Beide werden morgens festgehalten und gegen die Messung
+# gestellt; mit eigener Berechnung leiht sich die Reserve den p10 von Solcast.
+CONF_PV_PROGNOSE_VERGLEICH = "pv_prognose_vergleich"
 
 DEFAULT_LOOKBACK_WEEKS = 4
 # Die Update-Takte sind festverdrahtet (v26 entfernt die alten Konfig-
@@ -568,6 +586,14 @@ TELEMETRY_SETTINGS_KEYS = (
     # Wallbox als zweiter Speicher — erklaert spaeter, warum ein Plan mit
     # dem Auto rechnet. Bewusst OHNE Adresse.
     "wallbox_type",
+    # Eigene PV-Prognose und Prognosevergleich: wer die eigene Berechnung
+    # nutzt und womit. Die Flaechenliste selbst bleibt draussen — Anzahl und
+    # Summe reichen fuer die Auswertung und werden in __init__.py abgeleitet
+    # (wie "steuerung"). Der Standort kommt ohnehin nie mit.
+    "pv_prognose_vergleich",
+    "pv_verluste_pct",
+    "pv_flaechen_anzahl",
+    "pv_flaechen_kwp",
 )
 # ``discharge_a_start_time`` steht bewusst nicht mehr drin: der Schluessel
 # bleibt in der Konfiguration (Rueckwechsel-Garantie), verschiebt aber nur

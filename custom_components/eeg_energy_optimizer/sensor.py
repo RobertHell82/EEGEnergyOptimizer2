@@ -50,11 +50,13 @@ from .const import (
     DEFAULT_UPDATE_INTERVAL_FAST,
     DEFAULT_UPDATE_INTERVAL_SLOW,
     DOMAIN,
+    FORECAST_SOURCE_EIGEN,
     FORECAST_SOURCE_SOLCAST,
     WEEKDAY_KEYS,
 )
 from .coordinator import ConsumptionCoordinator
 from .forecast_provider import (
+    EigenProvider,
     ForecastSolarProvider,
     SolcastProvider,
 )
@@ -396,10 +398,31 @@ class PVForecastTodaySensor(SensorEntity):
         self._attr_unique_id = f"{DOMAIN}_{entry.entry_id}_pv_prognose_heute"
         self._attr_device_info = _device_info(entry.entry_id)
         self._attr_native_value: float | None = None
+        self._attr_extra_state_attributes: dict[str, Any] = {}
 
     async def async_update(self) -> None:
         forecast = self._provider.get_forecast()
         self._attr_native_value = forecast.remaining_today_kwh
+        # Eigene Berechnung: Solcast und Forecast.Solar haben eigene
+        # Tagessensoren, aus denen das Panel das Wochendiagramm liest. Die
+        # eigene Prognose hat keine — ihre Tagessummen und ihr Stand hängen
+        # deshalb hier als Attribute, damit das Panel eine Stelle hat.
+        tage = getattr(self._provider, "tage_kwh", None)
+        if not callable(tage):
+            return
+        attrs: dict[str, Any] = {}
+        werte = tage()
+        if werte:
+            attrs["heute_gesamt_kwh"] = werte[0]
+            attrs["tage_kwh"] = werte
+        status = getattr(self._provider, "status", None)
+        if callable(status):
+            stand = status() or {}
+            attrs["quelle"] = stand.get("quelle")
+            attrs["geholt"] = stand.get("geholt")
+            attrs["alter_minuten"] = stand.get("alter_minuten")
+            attrs["fehler"] = stand.get("fehler")
+        self._attr_extra_state_attributes = attrs
 
 
 # ---------------------------------------------------------------------------
@@ -1965,7 +1988,13 @@ async def async_setup_entry(
     remaining_id = config.get(CONF_FORECAST_REMAINING_ENTITY, "")
     tomorrow_id = config.get(CONF_FORECAST_TOMORROW_ENTITY, "")
 
-    if source == FORECAST_SOURCE_SOLCAST:
+    if source == FORECAST_SOURCE_EIGEN and data.get("pvprognose") is not None:
+        # Eigene Berechnung: die Reihe liegt im PvPrognoseProvider, keine
+        # fremden Entities. Ohne Provider (sollte nicht vorkommen — er wird
+        # in async_setup_entry vor den Plattformen angelegt) greift unten
+        # der Forecast.Solar-Leseweg, der dann schlicht None liefert.
+        provider = EigenProvider(hass, data["pvprognose"])
+    elif source == FORECAST_SOURCE_SOLCAST:
         provider = SolcastProvider(hass, remaining_id, tomorrow_id)
     else:
         provider = ForecastSolarProvider(hass, remaining_id, tomorrow_id)

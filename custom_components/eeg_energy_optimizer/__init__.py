@@ -33,7 +33,11 @@ from .const import (
     CONF_BATTERY_SOC_SENSOR,
     CONF_FORECAST_SOURCE,
     CONF_INVERTER_TYPE,
+    CONF_PV_FLAECHEN,
     CONF_PV_PEAK_KWP,
+    CONF_PV_PROGNOSE_VERGLEICH,
+    CONF_PV_VERLUSTE_PCT,
+    FORECAST_SOURCE_EIGEN,
     CONF_PV_POWER_SENSOR,
     CONF_PV_POWER_SENSOR_2,
     CONF_BATTERY_POWER_SENSOR,
@@ -255,6 +259,16 @@ def _build_telemetry_profile(hass, entry, identity_registered_at):
     # Muss in TELEMETRY_SETTINGS_KEYS stehen, sonst filtert _shape_profile sie
     # wieder heraus.
     settings["steuerung"] = TELEMETRY_STEUERUNG
+    # Eigene PV-Prognose: Anzahl und Summe der Flaechen statt der Liste.
+    flaechen = config.get(CONF_PV_FLAECHEN)
+    if isinstance(flaechen, list) and flaechen:
+        settings["pv_flaechen_anzahl"] = len(flaechen)
+        try:
+            settings["pv_flaechen_kwp"] = round(
+                sum(float(f.get("kwp") or 0.0) for f in flaechen if isinstance(f, dict)), 2
+            )
+        except (TypeError, ValueError):
+            pass
 
     return {
         "integration_started_at": _resolve_integration_started_at(
@@ -1472,6 +1486,23 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data[DOMAIN][entry.entry_id]["netzentgelt"] = netzentgelt_provider
     hass.async_create_task(netzentgelt_provider.async_fetch())
 
+    # Eigene PV-Prognose (pvprognose/): Open-Meteo-Wetter, Anlage aus der
+    # Konfiguration. Immer angelegt, damit Panel-Befehle sie finden; geholt
+    # wird nur, wenn sie die gewählte Prognosequelle ist — sonst ginge jede
+    # halbe Stunde ein Abruf für nichts hinaus. Vor dem Wizard-Abbruch, aber
+    # der Abruf kommt erst mit vollständiger Einrichtung, denn ohne Flächen
+    # gibt es nichts zu rechnen.
+    from .pvprognose import PvPrognoseProvider
+    pvprognose_provider = PvPrognoseProvider(hass, entry.entry_id, config)
+    await pvprognose_provider.async_load()
+    hass.data[DOMAIN][entry.entry_id]["pvprognose"] = pvprognose_provider
+    from .prognosevergleich import vergleich_aktiv
+    if setup_complete and (
+        str(config.get(CONF_FORECAST_SOURCE) or "").lower() == FORECAST_SOURCE_EIGEN
+        or vergleich_aktiv(config)
+    ):
+        hass.async_create_task(pvprognose_provider.async_fetch())
+
     # If setup not complete, register panel only — skip platforms and optimizer
     if not setup_complete:
         entry.async_on_unload(entry.add_update_listener(_async_update_listener))
@@ -1785,6 +1816,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         bilanz = EnergieBilanz(hass, entry.entry_id, config)
         await bilanz.async_load()
         data["bilanz"] = bilanz
+
+        # Prognosevergleich (prognosevergleich.py): zwei Prognosen und die
+        # Messung je Tag. Immer angelegt, damit die Aufzeichnung beim
+        # Einschalten des Schalters ohne Neustart weitergeht; geschrieben
+        # wird nur mit pv_prognose_vergleich (im Fremddaten-Takt).
+        from .prognosevergleich import Prognosevergleich
+
+        prognosevergleich = Prognosevergleich(hass, entry.entry_id)
+        await prognosevergleich.async_load()
+        data["prognosevergleich"] = prognosevergleich
 
         # Befristeter Eingriff (Pause). Persistent, damit ein
         # Neustart mitten in der Pause die Steuerung nicht wieder anwirft.
@@ -2149,6 +2190,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 # Netzentgelte: der Abruf selbst prüft die Tagesfrist, der
                 # halbstündige Takt ist nur der Anlass.
                 namen.append("netzentgelt")
+                # Eigene PV-Prognose: Wetter alle 30 Minuten, aber nur als
+                # gewählte Quelle oder als mitlaufende Vergleichsquelle —
+                # sonst ginge der Abruf ins Leere.
+                from .prognosevergleich import vergleich_aktiv
+                if (
+                    str(cfg.get(CONF_FORECAST_SOURCE) or "").lower() == FORECAST_SOURCE_EIGEN
+                    or vergleich_aktiv(cfg)
+                ):
+                    namen.append("pvprognose")
                 # Börse, Hochrechnungen und die festen Monatstarife nur
                 # abfragen, wenn sie der gewählte Basistarif sind.
                 quelle_basis = str(
@@ -2174,6 +2224,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                         await quelle.async_fetch()
                     except Exception:
                         _LOGGER.debug("%s: Abruf fehlgeschlagen", name, exc_info=True)
+
+                # Prognosevergleich: morgens beide Prognosen festhalten, die
+                # Messung nachziehen — nach den Abrufen, damit die eigene
+                # Reihe frisch ist.
+                vergleich = data.get("prognosevergleich")
+                if vergleich is not None and vergleich_aktiv(cfg):
+                    try:
+                        await vergleich.async_tick(cfg)
+                    except Exception:
+                        _LOGGER.debug("Prognosevergleich: Takt fehlgeschlagen", exc_info=True)
 
             unsub_fremddaten = async_track_time_interval(
                 hass, _fremddaten_cycle, timedelta(minutes=30)
@@ -2436,6 +2496,14 @@ _RELOAD_CONFIG_KEYS = frozenset({
     CONF_AMBIBOX_PORT,
     CONF_AMBIBOX_UNIT_ID,
     CONF_AMBIBOX_CONNECTOR,
+    # Eigene PV-Prognose: der Provider rechnet mit Flächen und Verlusten aus
+    # der Konfiguration, die er beim Bau liest — nach einer Änderung muss er
+    # neu gebaut und die Reihe neu geholt werden.
+    CONF_PV_FLAECHEN,
+    CONF_PV_VERLUSTE_PCT,
+    # Der Vergleichsschalter entscheidet, ob der Provider überhaupt holt —
+    # ein Neustart des Setups stößt den ersten Abruf sofort an.
+    CONF_PV_PROGNOSE_VERGLEICH,
 })
 # Präfixe decken Inverter-Anbindung (Modbus-Hosts/Ports, Geräte-IDs,
 # Steuer-Entities) und Forecast-Quellen ab, ohne jeden Key einzeln zu pflegen.

@@ -724,6 +724,51 @@ async def ws_save_config(
             return
         new_data[CONF_AMBIBOX_CHARGE_SIGN] = vorzeichen
 
+    # Eigene PV-Prognose: die Flächenliste wird geprüft und normiert, denn
+    # der Provider rechnet später ohne weitere Prüfung damit. Ein Azimut in
+    # Open-Meteo-Konvention (0 = Süd) statt Kompass fiele hier nicht auf —
+    # das erklärt die Anleitung, prüfen lässt es sich nicht.
+    from .const import (
+        CONF_FORECAST_SOURCE,
+        CONF_PV_FLAECHEN,
+        CONF_PV_PROGNOSE_VERGLEICH,
+        CONF_PV_VERLUSTE_PCT,
+        DEFAULT_PV_VERLUSTE_PCT,
+        FORECAST_SOURCE_EIGEN,
+    )
+
+    # Auch die mitlaufende Vergleichsquelle rechnet mit den Flächen.
+    if (
+        str(new_data.get(CONF_FORECAST_SOURCE) or "").lower() == FORECAST_SOURCE_EIGEN
+        or bool(new_data.get(CONF_PV_PROGNOSE_VERGLEICH))
+    ):
+        from .pvprognose import pruefe_flaechen
+
+        flaechen, fehler = pruefe_flaechen(new_data.get(CONF_PV_FLAECHEN))
+        if fehler:
+            connection.send_error(msg["id"], "invalid_config", fehler)
+            return
+        new_data[CONF_PV_FLAECHEN] = flaechen
+        roh_verluste = new_data.get(CONF_PV_VERLUSTE_PCT)
+        if roh_verluste in (None, ""):
+            new_data[CONF_PV_VERLUSTE_PCT] = DEFAULT_PV_VERLUSTE_PCT
+        else:
+            try:
+                verluste = float(roh_verluste)
+            except (TypeError, ValueError):
+                connection.send_error(
+                    msg["id"], "invalid_config", "Ungültige Systemverluste der PV-Prognose (%)"
+                )
+                return
+            if not 0 <= verluste <= 60:
+                connection.send_error(
+                    msg["id"],
+                    "invalid_config",
+                    "Systemverluste der PV-Prognose müssen zwischen 0 und 60 % liegen",
+                )
+                return
+            new_data[CONF_PV_VERLUSTE_PCT] = verluste
+
     # Einspeisegrenze des Fahrplans: bei aktivierter Grenze muss ein
     # positiver Wert gesetzt sein — sie fließt ins LP-Modell ein und
     # aktiviert Guard 1; eine Grenze von 0 wäre Unsinn.
@@ -2243,6 +2288,115 @@ def _consumption_status_payload(coordinator) -> dict:
         "lookback_weeks": coordinator.lookback_weeks,
         "is_running": coordinator.is_running,
     }
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "eeg_optimizer/get_pvprognose",
+        vol.Optional("refresh"): bool,
+    }
+)
+@websocket_api.async_response
+async def ws_get_pvprognose(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict,
+) -> None:
+    """Stand der eigenen PV-Prognose (pvprognose/): Flächen, Standort,
+    Tagessummen, Alter der Wetterdaten, letzter Fehler.
+
+    ``refresh`` erzwingt einen Abruf bei Open-Meteo — für „Jetzt holen" in
+    den Einstellungen. Ohne konfigurierte Flächen antwortet der Provider
+    mit seinem Fehlertext, nicht mit einem Fehler des Befehls: das Panel
+    zeigt ihn als Zeile an.
+    """
+    entry, data = _get_entry_data(hass, connection, msg)
+    if entry is None:
+        return
+    provider = data.get("pvprognose")
+    if provider is None:
+        connection.send_result(
+            msg["id"], {"tage_kwh": None, "fehler": "Anbieter nicht geladen"}
+        )
+        return
+    if msg.get("refresh"):
+        await provider.async_fetch(force=True)
+    connection.send_result(msg["id"], provider.status())
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "eeg_optimizer/get_prognosevergleich",
+        vol.Optional("datum"): str,
+    }
+)
+@websocket_api.async_response
+async def ws_get_prognosevergleich(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict,
+) -> None:
+    """Prognosevergleich fürs Dashboard: Übersicht aller Tage, Zusammenfassung
+    über die vollständigen Tage, ein Tag im Detail (``datum``, sonst der
+    jüngste). Lesend, deshalb offen — wie die anderen Karten."""
+    entry, data = _get_entry_data(hass, connection, msg)
+    if entry is None:
+        return
+    from .prognosevergleich import vergleich_aktiv
+
+    aktiv = vergleich_aktiv(data.get("config") or {})
+    vergleich = data.get("prognosevergleich")
+    if vergleich is None:
+        connection.send_result(
+            msg["id"],
+            {"aktiv": aktiv, "tage": [], "uebersicht": [], "tag": None, "fehler": "nicht geladen"},
+        )
+        return
+    ergebnis = vergleich.status(msg.get("datum"))
+    ergebnis["aktiv"] = aktiv
+    connection.send_result(msg["id"], ergebnis)
+
+
+@websocket_api.require_admin
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "eeg_optimizer/probe_pvprognose",
+        vol.Required("flaechen"): list,
+        vol.Optional("verluste_pct"): vol.Any(int, float, None),
+        vol.Optional("ac_limit_kw"): vol.Any(int, float, None),
+    }
+)
+@websocket_api.async_response
+async def ws_probe_pvprognose(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict,
+) -> None:
+    """„Prognose berechnen" im Assistenten und in den Einstellungen.
+
+    Rechnet einmal mit den UNGESPEICHERTEN Eingaben und speichert nichts —
+    im Assistenten gibt es noch keine Konfiguration, in den Einstellungen
+    will man vor dem Speichern sehen, was die Flächen ergeben. Antwortet
+    mit sieben Tagessummen, Standort und Spitzenleistung; Eingabefehler
+    kommen als ``invalid_config``, Netzfehler als ``fetch_failed``.
+    """
+    from .pvprognose import berechne_einmalig
+
+    try:
+        ac_limit = msg.get("ac_limit_kw")
+        ergebnis = await berechne_einmalig(
+            hass,
+            msg.get("flaechen"),
+            msg.get("verluste_pct"),
+            float(ac_limit) if ac_limit not in (None, "") else None,
+        )
+    except ValueError as err:
+        connection.send_error(msg["id"], "invalid_config", str(err))
+        return
+    except Exception as err:  # noqa: BLE001 — Netz, HTTP, Format: dem Panel als Text
+        connection.send_error(msg["id"], "fetch_failed", f"Open-Meteo nicht erreichbar: {err}")
+        return
+    connection.send_result(msg["id"], ergebnis)
 
 
 @websocket_api.require_admin

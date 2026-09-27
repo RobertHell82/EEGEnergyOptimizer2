@@ -33,10 +33,11 @@ Unterstützt werden derzeit **Fronius Gen24, Huawei SUN2000, Kostal Plenticore, 
 
 ## ☀️ PV-Prognose einrichten
 
-Eine der beiden Prognose-Quellen wird benötigt:
+Eine der drei Prognose-Quellen wird benötigt:
 
-- **[Solcast Solar einrichten](guides/solcast.md)** (empfohlen — 7-Tage-Prognose)
+- **[Solcast Solar einrichten](guides/solcast.md)** (7-Tage-Prognose mit Satelliten-Nowcast, kostenloses Konto nötig)
 - **[Forecast.Solar einrichten](guides/forecast_solar.md)** (ohne Registrierung nutzbar)
+- **[Eigene Berechnung einrichten](guides/prognose_eigen.md)** (keine Zusatz-Integration, Wetter von Open-Meteo, Flächen der Anlage direkt im Panel)
 
 ## 🔥 Heizstab (optional)
 

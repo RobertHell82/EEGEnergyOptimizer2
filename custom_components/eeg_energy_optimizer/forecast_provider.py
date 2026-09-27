@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -87,3 +87,29 @@ class ForecastSolarProvider(ForecastProvider):
             remaining_today_kwh=_read_float(self._hass, self._remaining_id),
             tomorrow_kwh=_read_float(self._hass, self._tomorrow_id),
         )
+
+
+class EigenProvider(ForecastProvider):
+    """Eigene Berechnung (pvprognose/): Werte kommen aus dem PvPrognoseProvider.
+
+    Kein Entity-Lesen — die Reihe liegt im Speicher. Neben den beiden
+    Tageswerten liefert der Provider auch die sieben Tagessummen fürs
+    Wochendiagramm (``tage_kwh``) und seinen Stand (``status``), die der
+    Sensor „PV-Prognose heute" als Attribute weitergibt.
+    """
+
+    def __init__(self, hass: HomeAssistant, prognose: Any) -> None:
+        super().__init__(hass)
+        self._prognose = prognose
+
+    def get_forecast(self) -> PVForecast:
+        return PVForecast(
+            remaining_today_kwh=self._prognose.rest_heute_kwh(),
+            tomorrow_kwh=self._prognose.morgen_kwh(),
+        )
+
+    def tage_kwh(self) -> list[float] | None:
+        return self._prognose.tage_kwh()
+
+    def status(self) -> dict[str, Any]:
+        return self._prognose.status()

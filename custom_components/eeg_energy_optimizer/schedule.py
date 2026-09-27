@@ -42,6 +42,7 @@ from .const import (
     DEFAULT_GRID_EXPORT_LIMIT_ENABLED,
     DEFAULT_GRID_EXPORT_LIMIT_KW,
     DOMAIN,
+    FORECAST_SOURCE_EIGEN,
     FORECAST_SOURCE_SOLCAST,
     GEWINN_HORIZONT_H,
     PUFFER_BEREITSCHAFTSVERLUST_KW,
@@ -1234,6 +1235,113 @@ def _production_from_detailed(
     return erwartung, p10
 
 
+P10_OHNE = "Worst-Case-Faktor"
+
+
+def _p10_verhaeltnis(
+    detailed: dict[datetime, tuple[float, float]],
+) -> dict[float, float]:
+    """p10 zu p50 je Zeitpunkt (Epoche) — 1,0, wo die Erwartung nahe null ist.
+
+    Das Verhältnis ist ein Maß für die Wetterunsicherheit dieser Halbstunde
+    und lässt sich auf eine andere Erwartung übertragen; der absolute p10
+    von Solcast nicht, denn der gehört zu Solcasts Anlagenmodell.
+    """
+    ergebnis: dict[float, float] = {}
+    for stamp, werte in detailed.items():
+        try:
+            erwartung, p10 = float(werte[0]), float(werte[1])
+        except (TypeError, ValueError, IndexError):
+            continue
+        ergebnis[stamp.timestamp()] = (
+            min(1.0, max(0.0, p10 / erwartung)) if erwartung > 0.05 else 1.0
+        )
+    return ergebnis
+
+
+def _naechstes_verhaeltnis(verhaeltnis: dict[float, float], stamp: datetime) -> float:
+    ziel = stamp.timestamp()
+    treffer = verhaeltnis.get(ziel)
+    if treffer is not None:
+        return treffer
+    passend = [t for t in verhaeltnis if 0 <= ziel - t <= 1800]
+    return verhaeltnis[max(passend)] if passend else 1.0
+
+
+def _eigene_prognose(
+    hass: HomeAssistant, config: dict[str, Any], data: dict[str, Any]
+) -> tuple[dict[datetime, tuple[float, float]], str | None, str]:
+    """Halbstundenwerte der eigenen Berechnung im Format von ``_solcast_detailed``.
+
+    Der PvPrognoseProvider (pvprognose/) liefert Halbstundenmittel ab
+    Slot-Anfang, aber kein eigenes Perzentil. Der p10 kommt deshalb, in
+    dieser Reihenfolge und nur mit eingeschaltetem Prognosevergleich:
+
+    1. **von Solcast geliehen** — das Verhältnis p10/p50 je Halbstunde,
+       angewendet auf die eigene Erwartung (``_p10_verhaeltnis``);
+    2. **empirisch** — das 10-%-Quantil des Verhältnisses gemessen zu
+       prognostiziert über die vollständigen Tage des Vergleichs
+       (``Prognosevergleich.p10_faktor``), sobald genug Tage da sind;
+    3. sonst **keiner** — die Erwartung steht zweimal im Tupel, der Aufrufer
+       setzt ``min_production`` auf None und die Reserve rechnet mit dem
+       Worst-Case-Faktor wie bei Forecast.Solar.
+
+    Ab ``WARN_ALTER_S`` Alter der Wetterdaten steht ein Hinweis im
+    Protokoll — einmal, dann höchstens alle sechs Stunden (derselbe Merker
+    wie bei den Preisen). Rückgabe: (Werte, Fehlertext, p10-Herkunft) — der
+    Fehlertext heißt „kein Fahrplan".
+    """
+    from .prognosevergleich import QUELLE_EIGEN, vergleich_aktiv
+    from .pvprognose import WARN_ALTER_S
+
+    prognose = data.get("pvprognose")
+    if prognose is None:
+        return {}, "Eigene PV-Prognose nicht geladen", P10_OHNE
+    halb = prognose.halbstunden()
+    if not halb:
+        status = prognose.status()
+        grund = status.get("fehler") or (
+            "Wetterdaten älter als 48 h"
+            if status.get("veraltet")
+            else "noch keine Wetterdaten"
+        )
+        return {}, f"Keine PV-Prognose — eigene Berechnung: {grund}", P10_OHNE
+    alter = prognose.alter_s()
+    zu_alt = alter is not None and alter > WARN_ALTER_S
+    if _preishinweis_faellig("pvprognose_alt", zu_alt):
+        _LOGGER.warning(
+            "PV-Prognose: Wetterdaten sind %.1f h alt (letzter Abruf fehlgeschlagen: %s) "
+            "— der Fahrplan rechnet weiter damit",
+            (alter or 0.0) / 3600.0,
+            prognose.status().get("fehler") or "kein Fehler gemeldet",
+        )
+
+    herkunft = P10_OHNE
+    verhaeltnis: dict[float, float] = {}
+    faktor: float | None = None
+    if vergleich_aktiv(config):
+        solcast = _solcast_detailed(hass, config)
+        if solcast:
+            verhaeltnis = _p10_verhaeltnis(solcast)
+            herkunft = "von Solcast geliehen"
+        else:
+            vergleich = data.get("prognosevergleich")
+            if vergleich is not None:
+                faktor, tage = vergleich.p10_faktor(QUELLE_EIGEN)
+                if faktor is not None:
+                    herkunft = f"empirisch aus {tage} Tagen (Faktor {faktor:.2f})"
+
+    werte: dict[datetime, tuple[float, float]] = {}
+    for stamp, kw in halb.items():
+        if verhaeltnis:
+            werte[stamp] = (kw, round(kw * _naechstes_verhaeltnis(verhaeltnis, stamp), 4))
+        elif faktor is not None:
+            werte[stamp] = (kw, round(kw * faktor, 4))
+        else:
+            werte[stamp] = (kw, kw)
+    return werte, None, herkunft
+
+
 async def _async_solar_forecast_wh(hass: HomeAssistant, source: str) -> dict[str, float] | None:
     """Stündliche PV-Prognose über die Energy-Dashboard-Schnittstelle.
 
@@ -1515,12 +1623,28 @@ async def async_collect_inputs(
 
     # Die Prognose kommt vor dem Zeitraster, denn sie bestimmt, wie weit
     # überhaupt geplant werden darf.
-    # Erste Wahl: Solcast-Halbstundenwerte, die bringen einen echten p10 mit.
-    detailed = _solcast_detailed(hass, config)
     wh_hours: dict[str, float] | None = None
+    eigen = source == FORECAST_SOURCE_EIGEN
+    eigen_ohne_p10 = False
+    p10_herkunft = P10_OHNE
+    if eigen:
+        # Eigene Berechnung (pvprognose/): Halbstundenmittel im Raster von
+        # Solcast; der p10 ist geliehen, empirisch oder keiner — siehe
+        # _eigene_prognose.
+        detailed, problem, p10_herkunft = _eigene_prognose(hass, config, data)
+        if problem:
+            return None, problem
+        eigen_ohne_p10 = p10_herkunft == P10_OHNE
+    else:
+        # Erste Wahl: Solcast-Halbstundenwerte, die bringen einen echten p10 mit.
+        detailed = _solcast_detailed(hass, config)
     if detailed:
         horizon = DEFAULT_HORIZON_HOURS
-        quelle = f"{source} (detailedForecast)"
+        quelle = (
+            f"eigen (Open-Meteo, Halbstundenmittel; p10: {p10_herkunft})"
+            if eigen
+            else f"{source} (detailedForecast)"
+        )
     else:
         # Rückfall: Energy-Dashboard-Schnittstelle, nur Erwartungswerte —
         # und je nach Zugang nur bis zum Ende des morgigen Tages.
@@ -1546,6 +1670,10 @@ async def async_collect_inputs(
 
     if wh_hours is None:
         production, min_production = _production_from_detailed(detailed, stamps)
+        if eigen_ohne_p10:
+            # Kein erfundenes Perzentil: die Reserve nimmt den Worst-Case-
+            # Faktor (60 % der Erwartung), wie bei Forecast.Solar.
+            min_production = None
     else:
         production = _production_from_wh(wh_hours, stamps)
         min_production = None

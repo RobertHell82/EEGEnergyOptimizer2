@@ -13,7 +13,8 @@ HACS-kompatible Home Assistant Integration für vorausschauendes Batteriemanagem
 - **PeakShare-Integration** — die Bedarfsprognose deiner EEG-Community wird zum Auf- bzw. Abschlag auf den Basistarif und geht so direkt in den Fahrplan ein; im Dashboard ist die Bedarfskurve sichtbar
 - **Heizstab** (Beta) — ein Fronius Ohmpilot als zweite Senke: Der Optimierer plant die Wärme mit, wenn sie mehr bringt als die Einspeisung, und die Steuerung führt den Heizstab dem Plan nach. Statt abgeregelt zu werden, geht der Überschuss in den Puffer — aber nur echter PV-Überschuss, nie Strom aus der Batterie
 - **Wallbox** (Beta) — eine bidirektionale Ambibox als dritte Senke, mit Ladezustand und Ladeleistung des Fahrzeugs im Dashboard
-- **PV-Prognose** — Solcast Solar und Forecast.Solar Unterstützung mit 7-Tage-Ausblick
+- **PV-Prognose** — Solcast Solar, Forecast.Solar oder eigene Berechnung (Open-Meteo-Wetter, Anlage mit mehreren Ausrichtungen und Grenze je Wechselrichter direkt im Panel, ohne Konto) mit 7-Tage-Ausblick
+- **Prognosevergleich** — die zweite Quelle läuft mit, ohne zu steuern; jeden Morgen werden beide Prognosen festgehalten und im Dashboard gegen die Messung gestellt (Diagramm je Tag, Abweichung der letzten 30 Tage)
 - **Verbrauchsprofil** — lernt stündliche Verbrauchsmuster pro Wochentag aus den HA-Recorder-Daten
 - **Live-Dashboard** — Sidebar-Panel mit Energiefluss, Fahrplan und Ist-Verlauf, PeakShare-Bedarfskurve, Geldbilanz und Aktivitätsprotokoll. Die Steuerung lässt sich pausieren — für eine Dauer oder bis die Batterie einen Ladestand erreicht hat
 - **Einrichtungsassistent** — schrittweises Onboarding mit automatischer Sensorerkennung
@@ -81,7 +82,7 @@ Das Sidebar-Panel (`/eeg-optimizer`) führt durch die Einrichtung:
 1. Voraussetzungsprüfung
 2. Wechselrichtertyp wählen + automatische Sensorerkennung
 3. Batterie- & PV-Sensoren zuordnen
-4. Prognosequelle wählen (Solcast / Forecast.Solar)
+4. Prognosequelle wählen (Solcast / Forecast.Solar / eigene Berechnung mit Flächen der Anlage)
 5. Fahrplan-Einstellungen (Einspeisevergütung, Arbeitspreis + Netzbereich, Mindest- und Maximum-Ladestand, Batterie-Leistungsgrenze; PeakShare-Community optional)
 6. Einspeisegrenze (optional)
 7. Wechselrichter-Verbindungstest
@@ -173,7 +174,7 @@ Viele Netzbetreiber begrenzen die maximale Einspeiseleistung (z. B. 4 kW). Kennt
 
 - Home Assistant 2025.1.0 oder neuer
 - Einer der oben genannten **Wechselrichter mit Batteriespeicher**. Fronius, Kostal und SMA werden direkt per Modbus TCP angesprochen und brauchen keine weitere Integration; Huawei, Sigenergy und SolaX setzen die jeweilige Integration voraus
-- Eine PV-Prognose-Integration (Solcast Solar oder Forecast.Solar)
+- Eine PV-Prognose: Solcast Solar, Forecast.Solar oder die eigene Berechnung der Integration (braucht nur den Standort in Home Assistant)
 
 ## Lizenz
 
