@@ -24,25 +24,33 @@ Der EEG Energy Optimizer wird als **benutzerdefiniertes Repository** (Custom Rep
 
 1. Gehe zu **Einstellungen → Geräte & Dienste → Integration hinzufügen**
 2. Suche nach **„EEG Energy Optimizer"** und füge ihn hinzu
-3. In der Seitenleiste erscheint der Eintrag **EEG Optimizer** — das Panel führt dich durch die restliche Einrichtung:
-   1. Voraussetzungsprüfung
-   2. Wechselrichtertyp wählen + automatische Sensorerkennung
-   3. Batterie- & PV-Sensoren zuordnen
-   4. Prognosequelle wählen (Solcast / Forecast.Solar)
-   5. Fahrplan-Einstellungen (Einspeisevergütung, Bezugspreis, Mindest- und Maximum-Ladestand, Alterungskosten, Batterie-Leistungsgrenze; Energiegemeinschaft optional — mit PeakShare-Prognose oder fester Abnahmequote)
-   6. Einspeisegrenze (optional)
-   7. Wechselrichter-Verbindungstest
+3. In der Seitenleiste erscheint der Eintrag **EEG Energy Optimizer** — er öffnet den Einrichtungsassistenten.
+
+## 4. Einrichtungsassistent
+
+Der Assistent hat sieben Schritte. Die ersten drei ordnen einmalig die Sensoren zu, Schritt 4 bis 6 sind die Einstellungen, die du später unter **Einstellungen** im Panel jederzeit wieder ändern kannst.
+
+| Schritt | Was abgefragt wird |
+|---|---|
+| **1. Willkommen** | Prüft, ob die nötigen Integrationen installiert sind (je nach Wechselrichter und Prognosequelle) |
+| **2. Wechselrichter** | Typ wählen; je nach Gerät automatische Sensorerkennung oder Verbindungsprüfung per Modbus. Dazu die Sensoren für PV-, Batterie- und Netzleistung |
+| **3. Batterie** | Sensor für den Ladestand und die Kapazität — als Sensor oder von Hand eingetragen |
+| **4. PV-Prognose** | Quelle wählen: Solcast, Forecast.Solar oder die **eigene Berechnung** (Flächen der Anlage mit kWp, Neigung und Ausrichtung, ohne Konto). Optional der Prognosevergleich, bei dem die zweite Quelle zum Vergleich mitläuft |
+| **5. Anlage & Batterie** | AC-Grenzleistung des Wechselrichters und PV-Spitzenleistung (beide Pflicht), Einspeisegrenze des Netzbetreibers, Batterie-Leistungsgrenze, Mindest- und Maximum-Ladestand |
+| **6. Tarife & Gemeinschaft** | Standardvergütung (fester Wert, OeMAG, Energie AG, aWATTar SUNNY oder Börsen-Spotpreis), Arbeitspreis und Netzbereich; optional bis zu zwei Energiegemeinschaften — mit PeakShare-Bedarfsprognose oder fester Abnahmequote |
+| **7. Zusammenfassung** | Alles noch einmal im Überblick, dann speichern |
+
+Bei den Schritten Wechselrichter, PV-Prognose und Anlage & Batterie (bei Huawei auch Batterie) gibt es einen **„Anleitung"-Button**, der die passende Hilfe direkt im Panel öffnet.
 
 ## Voraussetzungen für den Betrieb
 
 - Home Assistant **2025.1.0** oder neuer
-- Ein **Huawei SUN2000** mit Batteriespeicher und die [Huawei Solar Integration](../guides/huawei.md), eingerichtet und funktionsfähig — andere Wechselrichter werden derzeit nicht unterstützt ([Stand der Unterstützung](../wechselrichter-status.md))
-- Eine **PV-Prognose-Integration**:
-  - [Solcast Solar](../guides/solcast.md) (empfohlen)
-  - [Forecast.Solar](../guides/forecast_solar.md)
-
-Die Wechselrichter- und Prognose-Anleitungen sind auch direkt im Einrichtungsassistenten über die „Anleitung"-Buttons erreichbar.
+- Einer der sechs unterstützten **Wechselrichter mit Batteriespeicher** — welche das sind und wie weit sie erprobt sind, steht im [Stand der Unterstützung](../wechselrichter-status.md). Fronius, Kostal und SMA werden direkt per Modbus TCP angesprochen; Huawei, Sigenergy und SolaX brauchen die jeweilige Integration, eingerichtet und funktionsfähig (siehe die Guides dort)
+- Eine **PV-Prognose**, eine von drei:
+  - [Solcast Solar](../guides/solcast.md) — kostenloses Konto nötig, am genauesten
+  - [Forecast.Solar](../guides/forecast_solar.md) — ohne Registrierung
+  - [Eigene Berechnung](../guides/prognose_eigen.md) — ohne Konto und ohne weitere Integration, braucht nur den richtigen Standort in Home Assistant
 
 ## Updates
 
-Updates erscheinen automatisch in HACS bzw. unter **Einstellungen → Geräte & Dienste → Updates**, sobald eine neue Version veröffentlicht wird. Nach einem Update Home Assistant neu starten.
+Updates erscheinen automatisch in HACS und oben unter **Einstellungen**, sobald eine neue Version veröffentlicht wird. Nach einem Update Home Assistant neu starten.

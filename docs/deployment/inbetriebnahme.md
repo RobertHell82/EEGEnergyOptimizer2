@@ -41,63 +41,67 @@ führt dich durch die wenigen Schritte, bis dein System läuft.
 
 | Einstellung | Wo | Was |
 |---|---|---|
-| **Standort** (wichtigster Schritt!) | Einstellungen → System → Allgemein | Ab Werk auf **„Linz Hauptplatz"** voreingestellt — **unbedingt auf deine eigene Adresse ändern** (auf der Karte oder per Koordinaten), Höhe & Zeitzone prüfen. Ohne korrekten Standort berechnet der Optimizer Sonnenauf-/-untergang und PV-Prognose mit falschen Zeiten. |
-| **Passwort ändern** (Benutzer `ewa-mitglied`) | Profil (Name unten links) → *Passwort ändern* | Voreingestelltes Passwort durch ein eigenes ersetzen |
+| **Standort** (wichtigster Schritt!) | Einstellungen → System → Allgemein | Ab Werk auf **„Linz Hauptplatz"** voreingestellt — **unbedingt auf deine eigene Adresse ändern** (auf der Karte oder per Koordinaten), Höhe & Zeitzone prüfen. Ohne korrekten Standort berechnet der Optimizer Sonnenauf-/-untergang und PV-Prognose für den falschen Ort. |
+| **Passwort ändern** (Benutzer `ewa-mitglied`) | Profil (Name unten links) → *Sicherheit* → *Passwort ändern* | Voreingestelltes Passwort durch ein eigenes ersetzen |
 
 ---
 
-## Schritt 4: PV-Prognose (Solcast)
+## Schritt 4: PV-Prognose
 
-Der Optimizer braucht eine PV-Prognose für deine Anlage. Empfohlen ist **Solcast**: Jedes Mitglied erstellt sich ein **eigenes, kostenloses** Konto und erfasst dort die Daten seiner PV-Anlage.
+Der Optimizer braucht eine PV-Prognose für deine Anlage. Du hast drei Möglichkeiten:
 
-→ **[Solcast Solar einrichten](../guides/solcast.md)** _(Konto anlegen, PV-Anlage erfassen, API-Key in Home Assistant eintragen, Prognose-Sensoren aktivieren)_
+| Quelle | Aufwand | Anleitung |
+|---|---|---|
+| **Solcast** (empfohlen) | eigenes, kostenloses Konto; dort die PV-Anlage erfassen und den API-Key in Home Assistant eintragen | [Solcast Solar einrichten](../guides/solcast.md) |
+| **Eigene Berechnung** | kein Konto — du trägst im Assistenten nur die Flächen deiner Anlage ein (kWp, Neigung, Ausrichtung) | [Eigene PV-Prognose](../guides/prognose_eigen.md) |
+| **Forecast.Solar** | ohne Registrierung, muss als Integration hinzugefügt werden | [Forecast.Solar einrichten](../guides/forecast_solar.md) |
 
 > [!NOTE]
-> Alternativ kannst du **[Forecast.Solar](../guides/forecast_solar.md)** nutzen —
-> ohne Registrierung, aber etwas ungenauer. Es muss als Integration hinzugefügt werden.
+> Solcast ist am genauesten, weil es morgens das aktuelle Satellitenbild
+> einrechnet — das zeigt sich vor allem an Nebeltagen. Die eigene Berechnung
+> ist der schnellste Weg ohne Konto. Du kannst später beide nebeneinander
+> laufen lassen und im Dashboard vergleichen (Prognosevergleich).
 
 ---
 
 ## Schritt 5: Wechselrichter anbinden
 
 Damit der Optimizer deinen Speicher steuern kann, wird er mit deinem
-Wechselrichter verbunden. Unterstützt werden derzeit **Fronius Gen24, Huawei
-SUN2000, Sigenergy SigenStor und SolaX Gen4+**:
+Wechselrichter verbunden. Unterstützt werden **Fronius Gen24, Huawei SUN2000,
+Kostal Plenticore, Sigenergy SigenStor, SMA Smart Energy und SolaX Gen4+**:
 
 | Wechselrichter | Anleitung |
 |---|---|
 | **Fronius Gen24** | [Fronius einrichten](../guides/fronius.md) |
 | **Huawei SUN2000** | [Huawei Solar einrichten](../guides/huawei.md) + [Akkukapazität-Sensor](../guides/capacity_sensor.md) |
+| **Kostal Plenticore** | [Kostal einrichten](../guides/kostal.md) |
 | **Sigenergy SigenStor** | [Sigenergy einrichten](../guides/sigenergy.md) |
+| **SMA Smart Energy** | [SMA einrichten](../guides/sma.md) |
 | **SolaX Gen4+** | [SolaX Modbus einrichten](../guides/solax.md) |
 
-> Andere Wechselrichter (Kostal, SMA) werden derzeit
-> nicht unterstützt — siehe [Stand der Unterstützung](../wechselrichter-status.md).
+Wie weit jedes Gerät erprobt ist, steht im
+[Stand der Unterstützung](../wechselrichter-status.md).
 
 ---
 
-## Schritt 6: EEG Optimizer fertig einrichten
+## Schritt 6: EEG Energy Optimizer fertig einrichten
 
 Zum Schluss verbindest du den Optimizer mit deiner Anlage:
 
 1. Öffne **Home Assistant im Browser** (gleiche Adresse wie in Schritt 2:
    `http://homeassistant.local:8123`).
-2. Klicke in der **Seitenleiste links** auf den Eintrag **„EEG Optimizer"** —
-   das öffnet das Einrichtungs-Panel.
+2. Klicke in der **Seitenleiste links** auf den Eintrag **„EEG Energy Optimizer"** —
+   das öffnet den Einrichtungsassistenten.
 
-Das Panel führt dich Schritt für Schritt durch:
-
-1. Voraussetzungsprüfung
-2. Wechselrichtertyp wählen + automatische Sensorerkennung
-3. Prognosequelle wählen (Solcast / Forecast.Solar)
-4. Batterie- & PV-Sensoren zuordnen
-5. Fahrplan-Einstellungen (Einspeisevergütung, Bezugspreis, Mindest- und Maximum-Ladestand, Alterungskosten, Batterie-Leistungsgrenze, Energiegemeinschaft mit PeakShare-Prognose oder fester Abnahmequote)
-6. Einspeisegrenze (optional)
-7. Wechselrichter-Verbindungstest
+Der Assistent führt dich in sieben Schritten durch: Willkommen · Wechselrichter ·
+Batterie · PV-Prognose · Anlage & Batterie · Tarife & Gemeinschaft ·
+Zusammenfassung. Was in jedem Schritt abgefragt wird, steht in der
+[Installationsanleitung](../installation/eeg-integration.md#4-einrichtungsassistent).
 
 > [!TIP]
-> Bei jedem Schritt im Panel gibt es einen **„Anleitung"-Button**, der genau die
-> oben verlinkten Hilfen direkt anzeigt.
+> Bei den Schritten Wechselrichter, PV-Prognose und Anlage & Batterie (bei
+> Huawei auch Batterie) gibt es einen **„Anleitung"-Button**, der die passende Hilfe direkt im Panel
+> anzeigt.
 
 ---
 
@@ -107,7 +111,7 @@ Wenn alle Schritte erledigt sind, läuft der EEG Energy Optimizer und steuert
 deinen Speicher nach den **Einspeisepreisen**: Er speist ein, wenn eine
 Kilowattstunde gerade mehr wert ist — etwa weil deine Energiegemeinschaft dann
 Bedarf hat — und lädt oder hält, wenn sie weniger wert ist. Den Fahrplan und
-den Status siehst du jederzeit im **EEG Optimizer Panel**.
+den Status siehst du jederzeit im Panel **EEG Energy Optimizer**.
 
 > [!NOTE]
 > **Ohne Preisunterschied passiert nichts.** Feste Zeitfenster gibt es nicht,
@@ -117,14 +121,13 @@ den Status siehst du jederzeit im **EEG Optimizer Panel**.
 
 > [!NOTE]
 > **Einlaufzeit — mindestens eine Woche laufen lassen:** Der Optimizer lernt das
-> Verbrauchsprofil deines Haushalts aus den aufgezeichneten Daten — getrennt nach
-> Wochentag und Stunde. Direkt nach der Inbetriebnahme sind noch keine
-> Verbrauchsdaten vorhanden; erst nach **etwa einer Woche** Dauerbetrieb liegt
-> für jeden Wochentag ein eigenes Profil vor. Bis dahin behilft sich der
-> Optimizer mit den Daten ähnlicher Wochentage — die Prognosen (und damit die
-> Lade-/Entladeentscheidungen) werden mit jeder weiteren Woche genauer. Lass das
-> Gerät daher durchgehend laufen und beurteile das Verhalten des Optimizers
-> frühestens nach einer Woche.
+> Verbrauchsprofil deines Haushalts aus den aufgezeichneten Daten — stundenweise,
+> getrennt nach Werktag und Wochenende/Feiertag, aus den letzten vier Wochen.
+> Direkt nach der Inbetriebnahme sind noch keine Verbrauchsdaten vorhanden; nach
+> **etwa einer Woche** Dauerbetrieb liegen für beide Gruppen genug Werte vor,
+> und mit jeder weiteren Woche werden die Prognosen (und damit die Lade- und
+> Entladeentscheidungen) genauer. Lass das Gerät daher durchgehend laufen und
+> beurteile das Verhalten des Optimizers frühestens nach einer Woche.
 
 > [!TIP]
 > Auf deinem Gerät ist ein **Fernzugang für die EEG** eingerichtet, damit wir dich

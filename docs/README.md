@@ -19,7 +19,7 @@ Am besten in dieser Reihenfolge:
 
 ## 🔌 Wechselrichter anbinden
 
-Unterstützt werden derzeit **Fronius Gen24, Huawei SUN2000, Kostal Plenticore, Sigenergy SigenStor, SMA Smart Energy und SolaX Gen4+**:
+Unterstützt werden **Fronius Gen24, Huawei SUN2000, Kostal Plenticore, Sigenergy SigenStor, SMA Smart Energy und SolaX Gen4+** — alle sechs werden vom Fahrplan gesteuert. Wie weit jedes Gerät erprobt ist, steht im **[Stand der Unterstützung](wechselrichter-status.md)**:
 
 | Wechselrichter | Anleitung |
 |---|---|
@@ -46,7 +46,7 @@ Wer einen Warmwasserpuffer hat, kann PV-Strom als Wärme speichern — der Fahrp
 - **[Heizstab (Fronius Ohmpilot) einrichten](guides/heizstab.md)** — direkt per Modbus TCP gesteuert, nach Plan und aus ungeplantem Überschuss
 
 > [!TIP]
-> Alle Einrichtungs-Anleitungen sind auch direkt im Einrichtungsassistenten der Integration verfügbar — einfach auf die „Anleitung"-Buttons im Panel klicken.
+> Die Einrichtungs-Anleitungen sind auch direkt im Panel verfügbar — einfach auf die „Anleitung"-Buttons klicken: im Einrichtungsassistenten bei Wechselrichter, PV-Prognose und Anlage & Batterie, die Heizstab-Anleitung in den Einstellungen im Tab Heizstab.
 
 ## 🌐 Fernzugang (von außen erreichbar)
 
@@ -59,14 +59,14 @@ Home Assistant über eine eigene Internet-Adresse erreichbar machen — ohne Por
 Die Anlage wird von einem **Fahrplan** gesteuert, und der richtet sich ausschließlich nach **Preisen**: Jede Minute wird der erlösbeste Lade- und Entladeplan über 48 Stunden gerechnet. Die Einspeisevergütung ist dabei eine Zeitreihe — ein Basistarif plus Auf- bzw. Abschlag aus dem Bedarf deiner Energiegemeinschaften. Wo eine Kilowattstunde mehr wert ist, wird eingespeist; wo sie weniger wert ist, wird geladen oder gehalten.
 
 > [!IMPORTANT]
-Mit aktiver Energiegemeinschaft fließt deren Bedarfsprognose in den Preis ein:
-Braucht die Gemeinschaft gerade Strom, ist deine Kilowattstunde dort mehr wert
-und der Fahrplan speist ein; hat sie Überschuss, lohnt eher das Laden.
-Vergütet wird nur, was die Gemeinschaft wirklich abnimmt — der Rest geht zum
-Basistarif an den Reststromlieferanten.
+> Mit aktiver Energiegemeinschaft fließt deren Bedarfsprognose in den Preis ein:
+> Braucht die Gemeinschaft gerade Strom, ist deine Kilowattstunde dort mehr wert
+> und der Fahrplan speist ein; hat sie Überschuss, lohnt eher das Laden.
+> Vergütet wird nur, was die Gemeinschaft wirklich abnimmt — der Rest geht zum
+> Basistarif an den Reststromlieferanten.
 
 > **Erkennt die Optimierung keinen Mehrwert, passiert nichts.** Ist der Einspeisepreis nachts nicht besser als tagsüber, wird nachts nicht eingespeist. Es gibt keine feste Nachtentladung und kein Zeitfenster — ohne Preisunterschied bleibt die Batterie, wo sie ist.
 
 Wie das im Detail funktioniert, steht in der **[Projekt-Übersicht](../README.md)**; den Ablauf der Steuerung zeigt **[steuerung.md](steuerung.md)** mit Diagrammen.
 
-Die **Einspeisegrenze** teilt dem Fahrplan mit, wie viel am Netzanschluss höchstens eingespeist werden darf — er plant dann so, dass möglichst nichts abgeregelt wird. Details in der Anleitung auf der gleichnamigen Wizard-Seite.
+Die **Einspeisegrenze** teilt dem Fahrplan mit, wie viel am Netzanschluss höchstens eingespeist werden darf — er plant dann so, dass möglichst nichts abgeregelt wird. Details in der Anleitung **[Einspeisegrenze](guides/einspeisegrenze.md)** — im Panel im Schritt „Anlage & Batterie“ bzw. unter Einstellungen → Anlage.

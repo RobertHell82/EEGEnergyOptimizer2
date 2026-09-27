@@ -64,7 +64,9 @@ Der Fahrplan stellt den Plenticore über zwei Register, beide flüchtig (RAM) �
 
 Einen Ziel-Ladestand kennt die Kostal-Schnittstelle nicht. Stattdessen prüft der Optimizer den Ladestand alle 30 Sekunden selbst und beendet die Entladung; der Watchdog deckt nur den Absturzfall ab.
 
-> **Beta:** Ladeblockierung und Entladung sind am Gerät verifiziert. Teil-Ladelimits (der Normalfall im Fahrplan) prüft der Treiber beim ersten Mal selbst nach: Weicht der zurückgelesene Wert stark vom geschriebenen ab, steht eine Warnung im Protokoll — dann meldet sich bitte mit der Firmware-Version.
+**Nach einer Entladung kann die Batterie bis zu 15 Minuten stehen.** Ein Entlade-Sollwert von 0 W hält am Plenticore, solange *irgendein* Steuerregister geschrieben wird. Deshalb schreibt der Treiber nach dem Ende einer Entladung so lange gar nichts, bis der Wechselrichter von selbst in sein internes Batteriemanagement zurückgefallen ist — erkennbar an der gemessenen Batterieleistung, höchstens 15 Minuten. Steht die Statuskarte in dieser Zeit auf „Normalbetrieb“, die Batterie aber still, ist das dieser Rückfall und kein Fehler.
+
+> **Feldtest:** Ladeblockierung und Entladung sind am Gerät verifiziert. Teil-Ladelimits (der Normalfall im Fahrplan) prüft der Treiber beim ersten Mal selbst nach: Weicht der zurückgelesene Wert stark vom geschriebenen ab, steht eine Warnung im Protokoll — dann meldet sich bitte mit der Firmware-Version.
 
 ## Häufige Probleme
 

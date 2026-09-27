@@ -109,7 +109,7 @@ schedule_executor.py: ScheduleExecutor (execution, 30 s)
 | `pvprognose/` | **Own PV forecast** (`forecast_source = "eigen"`), fully self-contained: `openmeteo.py` fetches `global_tilted_irradiance` + `temperature_2m` per surface from Open-Meteo (15-min, 7 days, no key; azimuth converted from compass to Open-Meteo's 0 = south; values are means of the *preceding* interval and get shifted to slot starts), `modell.py` is the pure PVWatts-style model (γ = −0.4 %/K, cell = air + 0.03 K·m²/W, losses `pv_verluste_pct` default 14 %, DC sum over all `pv_flaechen`, one AC clip at `inverter_ac_limit_kw`), `provider.py` holds ONE 7-day 15-min AC series in a `Store` (fetched in the 30-min cycle, `FRISCH_S` 25 min; failures keep the old series, older than 48 h counts as no forecast so the schedule fails loudly), serves `halbstunden()` for the schedule (Solcast raster, **no p10 → `min_production=None` → 60 % worst-case factor like Forecast.Solar**), `rest_heute_kwh()`/`morgen_kwh()` for the sensors and `tage_kwh()` for the week chart; `berechne_einmalig()` backs the panel's "Prognose berechnen" with unsaved surfaces. No calibration yet — the hook is one factor per timestamp between `leistungsreihe()` and the provider (see module doc) |
 | `config_flow.py` | Single-click config flow (full setup happens in panel) |
 | `peakshare.py` | PeakShareProvider — fetches + caches community demand forecasts (half-hourly refresh; hourly values, `opt()` resamples to 15 min itself) |
-| `telemetry.py`, `telemetry_buffer.py` | Opt-in reporting — profile + failures only, ring buffer with backoff. Snapshots are taken on the half-hour grid but **offset by `TELEMETRY_SNAPSHOT_OFFSET_MIN`**: `_collect_snapshot()` runs in the same guard cycle *after* the executor wrote, and the plain grid hit exactly the cycle that writes on a slot change (slots turn at :00/:15/:30/:45) — Huawei briefly drops the battery when `forcible_discharge_soc` is rewritten, so the power columns systematically recorded the gap we cause ourselves. Weismann, 21.09.2026: the grid meter read ~0 W at the grid start in 9 of 10 half-hours while the window averaged 271–661 W. `soc_pct` is unaffected; for power questions use the plant's own history, not the snapshots |
+| `telemetry.py`, `telemetry_buffer.py` | Opt-in reporting — profile, failures, half-hourly snapshots (`/v1/snapshot`: SOC, PV/house/grid/battery kW, mode, executor state, plan min-SOC) and a daily outcome (`/v1/outcome`, `tagesbilanz.py`), ring buffer with backoff. README and the panel's privacy details list all four; keep them in sync when a payload changes. Snapshots are taken on the half-hour grid but **offset by `TELEMETRY_SNAPSHOT_OFFSET_MIN`**: `_collect_snapshot()` runs in the same guard cycle *after* the executor wrote, and the plain grid hit exactly the cycle that writes on a slot change (slots turn at :00/:15/:30/:45) — Huawei briefly drops the battery when `forcible_discharge_soc` is rewritten, so the power columns systematically recorded the gap we cause ourselves. Weismann, 21.09.2026: the grid meter read ~0 W at the grid start in 9 of 10 half-hours while the window averaged 271–661 W. `soc_pct` is unaffected; for power questions use the plant's own history, not the snapshots |
 | `websocket_api.py` | 26 WebSocket commands for panel (config, schedule, control state, PeakShare, OeMAG, spot price, aWATTar SUNNY, grid tariffs, feed-in statistics, daily balance, probes, telemetry, activity log) |
 | `inverter/base.py` | Abstract inverter interface (InverterBase ABC) |
 | `inverter/huawei.py` | Huawei SUN2000 implementation via HA services — Single + Master/Slave (multi-device) |
@@ -119,7 +119,7 @@ schedule_executor.py: ScheduleExecutor (execution, 30 s)
 | `inverter/sma.py` | SMA Smart Energy / Sunny Boy Storage implementation via direct Modbus TCP (CmpBMS 6-parameter method, complete-block writes, watchdog keepalive task; `discharge_is_grid_setpoint=True`, charge limit read from the active block) |
 | `inverter/solax.py` | SolaX Gen4+ implementation via solax_modbus Mode 1 |
 | `inverter/__init__.py` | Factory function `create_inverter()` |
-| `select.py` | Mode select entity (Ein/Test), restores state across restarts |
+| `select.py` | Mode select entity (Ein/Aus), restores state across restarts (a stored „Test“ from before 1.5.52 maps to Aus) |
 | `const.py` | All constants, defaults, mode enums, state names |
 | `ambibox/modbus.py` | Ambibox (sidOS) Modbus TCP — bulk read of the EV charger block (104 registers at 4000 + 200 × connector); writes only the manual-test setpoint (holding 3000 + 100 × connector) |
 | `ambibox/controller.py` | Interprets those registers into an `AutoZustand`, polls every 15 s, pushes to sensors/panel; owns the manual charge/discharge test (keepalive, time limit, stop) |
@@ -185,7 +185,7 @@ feeds it, and `get_feedin_statistics` serves the panel card from it.
 
 | Entity | Options | Description |
 |--------|---------|-------------|
-| `select.eeg_energy_optimizer_optimizer` | Ein / Test | Ein executes inverter commands, Test computes and displays only (Aus is internal state only) |
+| `select.eeg_energy_optimizer_optimizer` | Ein / Aus | Ein executes inverter commands, Aus computes and displays only and releases what was set. „Test“ was the name of the non-writing mode until 1.5.52; `MODE_TEST` stays in `const.py` only so a stored state maps to Aus |
 
 ### Executor States
 
@@ -201,7 +201,7 @@ three intents. `Fahrplan-Status` shows what actually happened:
   the plan**, there is no independent floor. Guard 2 tracks the setpoint from
   planned export + measured house load.
 - **Normalbetrieb** — inverter released to its own automatic mode.
-- **Anzeige-Modus** / **Treiber wird nicht gesteuert** — mode is Test, or the
+- **Anzeige-Modus** / **Treiber wird nicht gesteuert** — mode is Aus (or a pause runs), or the
   driver has `supports_schedule_control=False`. Plan is computed and shown,
   nothing is written.
 - **Failsafe / Not-Aus** — no fresh plan for 15 min releases the inverter;
@@ -449,8 +449,8 @@ the event loop is long enough for HA to flag a blocking call.
   under shading does not". Open-Meteo is free for non-commercial use only.
 - **Minimum state of charge** is a **hard floor**, modelled as *missing
   capacity* (`opt()` counts free room up to full, so a smaller capacity cuts
-  the bottom off). Capped at 30 %, above which too little usable range is left
-  to carry a night. There is no separate blackout reserve — the minimum SOC
+  the bottom off). Capped at 20 percentage points below the maximum SOC
+  (`schedule.py`), so a usable range is always left to carry a night. There is no separate blackout reserve — the minimum SOC
   *is* the safety reserve. The inverter's own backup SOC raises it when
   higher, otherwise the device refuses discharges the plan expects. The
   `max_blackout_reserve` route was built and discarded (it is forward-looking
@@ -458,13 +458,13 @@ the event loop is long enough for HA to flag a blocking call.
   stayed at 30.8 % for every setting); do not retry it. Note that the target
   SOC handed to the inverter comes from the plan; there is no independent
   interlock, the protection lives in the plan alone.
-- **Huawei is the only supported inverter for now**: `supports_schedule_control`
-  gates writing, and `NUR_HUAWEI_WAEHLBAR` in the panel hides the others
-  from the wizard (already-configured foreign drivers stay visible). The other
-  drivers stay in the tree, fully intact, for mergeability with the main
-  integration. Status, open points per driver and the three-step release path:
-  `docs/wechselrichter-status.md` — that file is the single source of truth,
-  keep it in sync when a driver is enabled.
+- **All six drivers are steered and selectable**: every driver returns
+  `supports_schedule_control=True`, and `SCHEDULE_CONTROL_INVERTERS` in the
+  panel lists all six for the wizard (`NUR_HUAWEI_WAEHLBAR` is gone). Huawei is
+  „freigegeben“, the other five are „Feldtest“ — one two-level scale, used
+  everywhere. Status and open points per driver: `docs/wechselrichter-status.md`,
+  the single source of truth for users (no other doc keeps its own list); the
+  release path for a new driver lives in `docs/DEVELOPMENT.md`.
 - **Not-Aus** (`GUARD_EMERGENCY_IMPORT_KW` = 1 kW, `GUARD_EMERGENCY_IMPORT_RUNS`
   = 3): without the old grid-import watchdog, discharge would be unsecured if
   the grid sensor misreads or the house load sits permanently above the
@@ -561,7 +561,7 @@ the event loop is long enough for HA to flag a blocking call.
   case where the formula went negative and was clamped to 0 — that 0 is a
   limit, not a measurement. Any new value on that card belongs in the same
   attribute set.
-- **Consumption Profile**: Hourly averages from recorder, split by 7 individual weekdays (mo–so), rolling window (default 4 weeks), with weekday fallback chain for missing data.
+- **Consumption Profile**: Hourly averages from recorder in two groups — `wt` (Mon–Fri unless a holiday) and `we` (Sat, Sun, every holiday) — over a rolling window (default 4 weeks), trimmed mean. Two groups instead of seven weekdays give ~20 instead of 4 support values per weekday hour (`coordinator.py` docstring).
 - **The Hausverbrauch backfill must compute exactly what the live sensor
   computes, and it fills gaps only.** It runs on every start and rebuilds
   hourly statistics from the source sensors (`power_readings.backfill_stunden`).
@@ -709,7 +709,7 @@ sensors (assigned once), steps 4–5 are the parameters:
 
 Settings live in three tabs: **Tarife** and **Anlage** are exactly the two
 parameter wizard steps (same field renderers, `settings_` prefix) — **Anlage**
-(the *Heizstab* card lives in its own fourth tab **Heizstab** —
+(the *Heizstab* card lives in its own fourth tab **Heizstab**, shown in expert mode only —
 `_heizstabFields`, settings only, not in the wizard); **System**
 holds the expert-mode switch, a read-only sensor overview (with the
 restart-wizard button — sensor mappings are wizard-only by design), telemetry

@@ -14,7 +14,7 @@ Entscheiden und Setzen sind strikt getrennt:
   ausschließlich über das ``InverterBase``-API.
 
 Gesteuert wird nur ein Treiber mit ``supports_schedule_control=True``
-(derzeit Huawei). Alle anderen Treiber rechnen und zeigen an.
+(derzeit alle sechs). Ein Treiber ohne das Flag rechnet und zeigt nur an.
 
 Heizstab (heizstab/): eine zweite Senke neben der Batterie. Nach jedem
 Guard-Lauf bestimmt ``_heizstab_schritt`` den Sollwert des Heizstabs aus der

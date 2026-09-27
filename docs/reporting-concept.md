@@ -2,14 +2,14 @@
 
 Zukunftskonzept für zentrales Reporting aller EEG-Installationen.
 
-> **Stand 26.08.2026:** Dieses Dokument beschreibt den ursprünglichen Entwurf.
-> Umgesetzt ist davon die Registrierung (`/v1/register`, `/v1/installation`).
-> Gesendet werden aber nur **Anlagenprofil** (`/v1/profile`) und **Störungen**
-> (`/v1/failure`) — die Ereignis-Sender wurden mit der Zustands-Heuristik
-> entfernt (1.5.1). Die Ereignistypen unten (`morning_block`,
-> `evening_discharge`) waren deren Zustände; seit dem Fahrplan-Umbau gibt es
-> keine benannten Zustände mehr, sondern einen Plan je 15-Minuten-Slot.
-> Ein Nachfolger müsste an den Entlade-Sessions der Steuerung ansetzen.
+> [!NOTE]
+> **Historisches Konzeptpapier.** Es beschreibt den ursprünglichen Entwurf
+> aus der Zeit der Zustands-Heuristik (1.x) und wird nicht mehr
+> nachgeführt. Was heute tatsächlich gesendet wird — Anlagenprofil,
+> Störungen, halbstündliche Momentaufnahmen und eine Tagesbilanz —, steht
+> im Abschnitt „EEG-Statistik“ der [README](../README.md). Die Ereignistypen
+> unten (`morning_block`, `evening_discharge`) waren Zustände der 1.x-Reihe
+> und existieren nicht mehr.
 
 ## Ziel
 

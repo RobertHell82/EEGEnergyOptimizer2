@@ -55,7 +55,7 @@ Jeden Morgen ab 5 Uhr werden beide Prognosen für den Tag festgehalten, im Lauf 
 
 Lief Home Assistant am Morgen nicht, werden die Prognosen erst beim nächsten Start festgehalten. Nach 8 Uhr haben sie den halben Tag schon gesehen — solche Tage stehen mit † in der Tabelle, zählen aber nicht in die Zusammenfassung und nicht in den p10.
 
-Den Schalter gibt es auch im Einrichtungsassistenten beim Schritt „PV-Prognose“. Die steuernde Quelle selbst lässt sich in den Einstellungen unter **Anlage → PV-Prognose** wechseln; für Solcast und Forecast.Solar werden die Sensoren dabei vorbelegt.
+Die steuernde Quelle selbst lässt sich in den Einstellungen unter **Anlage → PV-Prognose** wechseln; für Solcast und Forecast.Solar werden die Sensoren dabei vorbelegt.
 
 ### Sensoren
 
@@ -63,7 +63,7 @@ Steuert die eigene Berechnung oder läuft sie als Vergleich mit, legt die Integr
 
 ### Der p10 der eigenen Prognose
 
-Die Notstrom-Reserve rechnet mit einem Worst-Case-Pfad. Solcast liefert dafür ein echtes 10-%-Perzentil, die eigene Berechnung nicht. Mit eingeschaltetem Vergleich holt sie sich eines:
+Der Fahrplan hält eine Reserve für den Fall zurück, dass die PV schwächer kommt als erwartet, und rechnet dafür mit einem Worst-Case-Pfad. Solcast liefert dafür ein echtes 10-%-Perzentil, die eigene Berechnung nicht. Mit eingeschaltetem Vergleich holt sie sich eines:
 
 1. **Von Solcast geliehen**: das Verhältnis p10 zu Erwartung je Halbstunde, angewendet auf die eigene Erwartung — ein Unsicherheitsmaß aus dem Wetter, keine erfundene Zahl.
 2. **Empirisch**: ohne Solcast, sobald 14 vollständige Vergleichstage da sind, das 10-%-Quantil des Verhältnisses gemessen zu prognostiziert aus der eigenen Historie.

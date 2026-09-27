@@ -21,10 +21,43 @@ Die Installations-Anleitungen (`docs/installation/`) existieren nur in `docs/` �
 | `> [!WARNING]` Blockquote | Orange Warnbox |
 | `> [!NOTE]` Blockquote | Blaue Infobox |
 | `> [!CAUTION]` Blockquote | Rote Pflicht-/Fehlerbox |
+| `> [!IMPORTANT]` Blockquote | wie `CAUTION` (rote Box) |
+| `> [!TIP]` Blockquote | wie `NOTE` (blaue Box) |
 | `_kursiv_` | Grauer Sekundärtext (Hinweise) |
 | `![alt](../images/...)` | Bild (Pfad wird automatisch umgeschrieben) |
 | Tabellen, Listen, Links, `code`, `<br>` | wie üblich |
 
+## Einen Wechselrichter freigeben
+
+Welche Geräte unterstützt werden und wie weit sie erprobt sind, steht für
+Anwender in [wechselrichter-status.md](wechselrichter-status.md). Ein neuer
+Treiber wird an drei Stellen freigeschaltet, in dieser Reihenfolge:
+
+1. **Backend** — `custom_components/eeg_energy_optimizer/inverter/<treiber>.py`:
+   Property `supports_schedule_control` auf `True` setzen (Default in
+   `inverter/base.py` ist `False`). Das ist der einzige Schalter, den der
+   `ScheduleExecutor` abfragt.
+2. **Einrichtungsassistent** — `frontend/eeg-optimizer-panel.js`: Die Liste
+   `SCHEDULE_CONTROL_INVERTERS` steuert beides — welche Karte im Assistenten
+   erscheint und ob der Hinweis „nur Anzeige" gezeigt wird. Ein bereits
+   konfigurierter Treiber außerhalb der Liste bleibt unabhängig davon sichtbar.
+3. **Doku** — die Zeile in der Tabelle von `wechselrichter-status.md`
+   eintragen, den Guide in `docs/README.md` verlinken und
+   `python scripts/build_guides.py` laufen lassen.
+
+Vor dem Schritt von „Feldtest“ zu „freigegeben“ an einer echten Anlage
+nachweisen:
+
+- Ladelimit setzen, nachführen und wieder zurücknehmen
+- Erzwungene Entladung mit Ziel-Ladestand starten und stoppen
+- Not-Aus greift (Netzbezug während der Entladung)
+- Failsafe gibt frei (Fahrplan fehlt länger als 15 Minuten)
+- Modus Ein → Aus nimmt alle Steuerwerte zurück, auch beim wiederholten
+  Umschalten
+
+Welche Sensoren ein Treiber lesen und welche Schnittstelle er anbieten muss,
+steht in [NECESSARY_SENSORS_NEW_INVERTER.md](../NECESSARY_SENSORS_NEW_INVERTER.md).
+
 ## Weitere interne Dokumente
 
-- [Telemetrie-/Reporting-Konzept](reporting-concept.md)
+- [Telemetrie-/Reporting-Konzept](reporting-concept.md) — historisches Konzeptpapier; was heute gesendet wird, steht im Abschnitt „EEG-Statistik“ der [README](../README.md)

@@ -10,7 +10,7 @@ Der Gen24 kann den Ohmpilot selbst regeln — aber er regelt die **Einspeisung a
 
 - Ein **Fronius Ohmpilot** mit Netzwerkanschluss (LAN oder WLAN) und einem angeschlossenen Heizstab
 - Der Ohmpilot ist **vom Wechselrichter entkoppelt**: Kopplung im Gen24-Webinterface unter *Geräte- und Systemeinstellungen → Komponenten* lösen, oder den Ohmpilot in ein anderes Subnetz stellen
-- Eine konfigurierte **Einspeisegrenze** (siehe Anleitung „Einspeisegrenze"). Ohne sie gilt die AC-Grenzleistung des Wechselrichters als Grenze
+- Eine konfigurierte **Einspeisegrenze** (siehe Anleitung „Einspeisegrenze"). Ohne sie gilt die AC-Grenzleistung des Wechselrichters minus 0,5 kW als Grenze — und der Heizstab startet praktisch nie
 - Ein **Netzleistungs-Sensor**, der Einspeisung und Bezug misst
 
 > [!CAUTION]
@@ -64,11 +64,11 @@ _Die Obergrenze ist allein die **Maximaltemperatur**: Ist sie erreicht, nimmt de
 
 ## Konfiguration
 
-Alle Felder stehen in den **Einstellungen** im eigenen Tab **Heizstab**. Im Einrichtungsassistenten kommt der Heizstab nicht vor — er ist die Ausnahme, nicht die Regel.
+Alle Felder stehen in den **Einstellungen** im eigenen Tab **Heizstab**. Der Tab erscheint erst, wenn im Tab **System** der **Expertenmodus** eingeschaltet ist. Im Einrichtungsassistenten kommt der Heizstab nicht vor — er ist die Ausnahme, nicht die Regel.
 
 | Feld | Bedeutung |
 |---|---|
-| **Heizstab (Fronius Ohmpilot)** | Schaltet die Steuerung ein. Aus = der Optimizer fasst den Ohmpilot nicht an |
+| **Heizstab steuern — nur Fronius Ohmpilot** | Schaltet die Steuerung ein. Aus = der Optimizer fasst den Ohmpilot nicht an |
 | **Adresse des Ohmpilot** | IP-Adresse oder Hostname des Ohmpilot im Netzwerk |
 | **Modbus-Port** | Standard 502 |
 | **Leistung des Heizstabs (kW)** | Nennleistung des angeschlossenen Heizstabs — 3 kW einphasig, 6 oder 9 kW dreiphasig |

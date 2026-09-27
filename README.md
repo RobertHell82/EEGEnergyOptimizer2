@@ -12,16 +12,16 @@ HACS-kompatible Home Assistant Integration für vorausschauendes Batteriemanagem
 - **Einspeisegrenze** — plant um die Exportgrenze des Netzbetreibers herum und hebt das Ladelimit an, wenn die Einspeisung trotzdem an der Grenze klebt
 - **PeakShare-Integration** — die Bedarfsprognose deiner EEG-Community wird zum Auf- bzw. Abschlag auf den Basistarif und geht so direkt in den Fahrplan ein; im Dashboard ist die Bedarfskurve sichtbar
 - **Heizstab** (Beta) — ein Fronius Ohmpilot als zweite Senke: Der Optimierer plant die Wärme mit, wenn sie mehr bringt als die Einspeisung, und die Steuerung führt den Heizstab dem Plan nach. Statt abgeregelt zu werden, geht der Überschuss in den Puffer — aber nur echter PV-Überschuss, nie Strom aus der Batterie
-- **Wallbox** (Beta) — eine bidirektionale Ambibox als dritte Senke, mit Ladezustand und Ladeleistung des Fahrzeugs im Dashboard
+- **Wallbox** (Beta) — eine bidirektionale Ambibox wird ausgelesen: Ladezustand und Ladeleistung des Fahrzeugs stehen in der Statuskarte, ein manueller Lade- und Entladetest ist möglich. Der Fahrplan steuert die Wallbox noch nicht
 - **PV-Prognose** — Solcast Solar, Forecast.Solar oder eigene Berechnung (Open-Meteo-Wetter, Anlage mit mehreren Ausrichtungen und Grenze je Wechselrichter direkt im Panel, ohne Konto) mit 7-Tage-Ausblick
 - **Prognosevergleich** — die zweite Quelle läuft mit, ohne zu steuern; jeden Morgen werden beide Prognosen festgehalten und im Dashboard gegen die Messung gestellt (Diagramm je Tag, Abweichung der letzten 30 Tage)
-- **Verbrauchsprofil** — lernt stündliche Verbrauchsmuster pro Wochentag aus den HA-Recorder-Daten
+- **Verbrauchsprofil** — lernt den stündlichen Verbrauch aus den HA-Recorder-Daten, getrennt nach Werktag und Wochenende/Feiertag
 - **Live-Dashboard** — Sidebar-Panel mit Energiefluss, Fahrplan und Ist-Verlauf, PeakShare-Bedarfskurve, Geldbilanz und Aktivitätsprotokoll. Die Steuerung lässt sich pausieren — für eine Dauer oder bis die Batterie einen Ladestand erreicht hat
 - **Einrichtungsassistent** — schrittweises Onboarding mit automatischer Sensorerkennung
 
 ### EEG-Statistik
 
-Der EEG Energy Optimizer sendet anonymisierte Diagnose- und Wirksamkeitsdaten an einen vom Maintainer betriebenen Cloudflare-Backend. Damit lassen sich Schwachstellen schneller finden und die Wirksamkeit der EEG-Steuerung über mehrere Anlagen hinweg auswerten — ohne Personenbezug. Die Funktion ist bei **neuen Installationen standardmäßig aktiv**; deaktivieren und vollständig löschen lässt sie sich jederzeit im Panel unter *Einstellungen → EEG-Statistik*. Bestehende Installationen behalten ihre vorherige Einstellung (Default war zuvor *aus*).
+Der EEG Energy Optimizer sendet anonymisierte Diagnose- und Wirksamkeitsdaten an einen vom Maintainer betriebenen Cloudflare-Backend. Damit lassen sich Schwachstellen schneller finden und die Wirksamkeit der EEG-Steuerung über mehrere Anlagen hinweg auswerten — ohne Personenbezug. Die Funktion ist bei **neuen Installationen standardmäßig aktiv**; deaktivieren und vollständig löschen lässt sie sich jederzeit im Panel unter *Einstellungen → System → EEG-Statistik*. Bestehende Installationen behalten ihre vorherige Einstellung (Default war zuvor *aus*).
 
 #### Was übermittelt wird
 
@@ -29,10 +29,10 @@ Der EEG Energy Optimizer sendet anonymisierte Diagnose- und Wirksamkeitsdaten an
 |-----------|----------|--------|
 | **Profil** | bei Setup, Restart, Settings-Change | App-Version, HA-Version, Wechselrichter-Typ, Batterie-Kapazität, PV-Peak, Prognose-Quelle, Länder-ISO-Code, ausgewählte EEG-Community (sofern PeakShare aktiv), gefilterte Settings (Whitelist) |
 | **Failure** | bei Auftreten (mit Dedup) | Zeitstempel, Kategorie, Schweregrad, gehashte Fehlermeldung, Kontext-JSON |
+| **Momentaufnahme** | alle 30 Minuten (gesammelt übertragen) | Zeitstempel, Ladestand, PV-, Haus-, Netz- und Batterieleistung, Modus (Ein/Aus), was die Steuerung gerade tut (Laden begrenzt, Entladung, Freigabe, Failsafe), der Mindest-Ladestand des Fahrplans |
+| **Tagesbilanz** | einmal täglich | PV-Erzeugung, Verbrauch und Einspeisung des Vortags, höchste Leistung, Ladestand am Anfang und Ende, dazu PV- und Verbrauchsprognose des Fahrplans für denselben Tag |
 
-> Snapshot-, State-Change- und Outcome-Meldungen gibt es nicht mehr — ihre Semantik war an die frühere Zustandslogik gebunden, die es nicht mehr gibt. Profil- und Failure-Meldungen laufen weiter.
-
-Die Settings-Whitelist enthält ausschließlich numerische/kategorische Konfigurationswerte (Tarife, Batterie-Leistungsgrenze, Vorausschau etc.) — **keine Entity-IDs**, keine Sensor-Namen.
+Die Settings-Whitelist enthält ausschließlich numerische/kategorische Konfigurationswerte (Tarife, Batterie-Leistungsgrenze, Anzahl und kWp-Summe der PV-Flächen etc.) — **keine Entity-IDs**, keine Sensor-Namen.
 
 #### Was nicht übermittelt wird
 
@@ -54,19 +54,19 @@ Alle sechs werden vom Fahrplan **gesteuert** (Ladelimit und erzwungene Entladung
 |---|---|---|
 | **Fronius Gen24** | direkt per Modbus TCP (SunSpec Model 124) | [Guide](docs/guides/fronius.md) |
 | **Huawei SUN2000** | via [Huawei Solar](https://github.com/wlcrs/huawei_solar); Single oder Master/Slave (mehrere Wechselrichter + Batterien), direkt am Dongle oder über EMMA | [Guide](docs/guides/huawei.md) |
-| **Kostal Plenticore** (Beta) | direkt per Modbus TCP | [Guide](docs/guides/kostal.md) |
+| **Kostal Plenticore** | direkt per Modbus TCP | [Guide](docs/guides/kostal.md) |
 | **Sigenergy SigenStor** | via [Sigenergy-Integration](https://github.com/TypQxQ/Sigenergy-Local-Modbus) | [Guide](docs/guides/sigenergy.md) |
-| **SMA Smart Energy** (Beta) | direkt per Modbus TCP (externes Batteriemanagement) | [Guide](docs/guides/sma.md) |
+| **SMA Smart Energy** | direkt per Modbus TCP (externes Batteriemanagement) | [Guide](docs/guides/sma.md) |
 | **SolaX Gen4+** | via [solax_modbus](https://github.com/wills106/homeassistant-solax-modbus) | [Guide](docs/guides/solax.md) |
 
-**Beta** heißt: Die Steuerung ist an einer echten Anlage nachgewiesen, aber noch nicht so breit erprobt wie die übrigen. Den genauen Stand je Gerät führt [docs/wechselrichter-status.md](docs/wechselrichter-status.md).
+Huawei ist **freigegeben**, die übrigen fünf sind im **Feldtest**: Die Steuerung ist an einer echten Anlage nachgewiesen, der Dauerbetrieb über Wochen noch nicht vollständig. Was das je Gerät heißt und was noch offen ist, steht in [docs/wechselrichter-status.md](docs/wechselrichter-status.md).
 
 ## Installation
 
 1. HACS in Home Assistant öffnen
 2. Oben rechts auf die drei Punkte klicken
 3. "Benutzerdefinierte Repositories" auswählen
-4. Repository-URL eingeben und als Kategorie "Integration" wählen
+4. Repository-URL `https://github.com/RobertHell82/EEGEnergyOptimizer2` eingeben und als Kategorie "Integration" wählen
 5. "Hinzufügen" klicken und "EEG Energy Optimizer" installieren
 6. Home Assistant neu starten
 
@@ -78,14 +78,9 @@ Nach der Installation die Integration hinzufügen:
 
 **Einstellungen > Geräte & Dienste > Integration hinzufügen > EEG Energy Optimizer**
 
-Das Sidebar-Panel (`/eeg-optimizer`) führt durch die Einrichtung:
-1. Voraussetzungsprüfung
-2. Wechselrichtertyp wählen + automatische Sensorerkennung
-3. Batterie- & PV-Sensoren zuordnen
-4. Prognosequelle wählen (Solcast / Forecast.Solar / eigene Berechnung mit Flächen der Anlage)
-5. Fahrplan-Einstellungen (Einspeisevergütung, Arbeitspreis + Netzbereich, Mindest- und Maximum-Ladestand, Batterie-Leistungsgrenze; PeakShare-Community optional)
-6. Einspeisegrenze (optional)
-7. Wechselrichter-Verbindungstest
+Das Sidebar-Panel **EEG Energy Optimizer** führt in sieben Schritten durch die Einrichtung — was in jedem Schritt abgefragt wird, steht in der [Installationsanleitung](docs/installation/eeg-integration.md#4-einrichtungsassistent):
+
+Willkommen · Wechselrichter · Batterie · PV-Prognose · Anlage & Batterie · Tarife & Gemeinschaft · Zusammenfassung
 
 ## Funktionsweise
 
@@ -144,14 +139,17 @@ Alle 30 Sekunden hält die **Steuerung** den zuletzt gerechneten Fahrplan gegen 
 
 - **Plant der Slot Laden**, wird das Ladelimit auf die Planleistung gesetzt. Die **Ladelimit-Nachführung** hebt es schrittweise an, wenn die gemessene Einspeisung an der Einspeisegrenze klebt (stille Abregelung), und nimmt es mit Hysterese wieder auf den Planwert zurück.
 - **Plant der Slot Einspeisung aus der Batterie**, wird eine erzwungene Entladung gestartet. Die **Entlade-Nachführung** rechnet die gemessene Hauslast auf die geplante Netzleistung auf, damit die geplante Einspeisung tatsächlich am Netzanschluss ankommt.
+- **Plant der Slot nur Entladung für das Haus**, wird der Wechselrichter freigegeben — das erledigt sein Automatikmodus selbst.
 - **Plant der Slot nichts**, bleibt das Laden blockiert — sonst würde der Automatikmodus Überschuss in die Batterie laden, den der Plan einspeisen will. Ist die Batterie ohnehin voll, wird gar nicht eingegriffen: Ein Ladelimit bewirkt dort nichts und stünde nur im Weg.
 - **Ist ein Heizstab eingerichtet**, führt die Steuerung ihn im selben Takt nach: geregelt auf „Einspeisung ≈ 0“, gedeckelt auf die geplante Wärme. Der Sollwert geht alle 20 Sekunden an den Ohmpilot, weil dessen Watchdog nach 50 Sekunden abschaltet.
 
 Sicherheitsnetze:
 
 - **Not-Aus:** Netzbezug über 1 kW in drei aufeinanderfolgenden Läufen während einer Entladung → die Entladung wird gestoppt und bis zum nächsten Slotwechsel gesperrt.
+- **Wirkungskontrolle:** Liefert die Batterie während einer befohlenen Entladung sechs Läufe lang (drei Minuten) weniger als die Hälfte der Vorgabe, wird die Entladung gestoppt und neu gesetzt — höchstens zweimal je Viertelstunde, danach meldet die Statuskarte das Problem.
 - **Failsafe:** Fehlt länger als 15 Minuten ein brauchbarer Fahrplan, wird der Wechselrichter einmalig in den Automatikmodus freigegeben.
 - **Totbänder:** Geschrieben wird nur bei relevanter Änderung (> 200 W bzw. ≥ 1 Prozentpunkt Ziel-SOC) — das minimiert Schreibzugriffe.
+- **Schreibbremse:** Lehnt der Wechselrichter einen Befehl ab, wird er nicht in jedem Lauf wiederholt, sondern mit wachsendem Abstand (bis zu fünf Minuten).
 
 ### Modus
 
@@ -164,11 +162,13 @@ Der Schalter im Dashboard entscheidet, ob gesteuert wird:
 
 Beim Wechsel von Ein auf Aus werden gesetzte Steuerwerte zurückgenommen: Der Wechselrichter wird freigegeben und läuft wieder in seinem Automatikmodus, es bleibt kein Ladelimit stehen.
 
+Für eine begrenzte Zeit geht das auch ohne den Schalter anzufassen: Die **Pause** im Dashboard verhält sich wie „Aus“ und endet von selbst — nach einer gewählten Dauer (¼ bis 48 Stunden) oder sobald die Batterie einen Ladestand erreicht hat. Sie übersteht einen Neustart; in Automationen gibt es dafür die Dienste `eeg_energy_optimizer.pause` und `eeg_energy_optimizer.aufheben`.
+
 **Der vollständige Ablauf eines Steuerungslaufs — mit Diagrammen zum Herzeigen — steht in [docs/steuerung.md](docs/steuerung.md).**
 
 ### Einspeisegrenze
 
-Viele Netzbetreiber begrenzen die maximale Einspeiseleistung (z. B. 4 kW). Kennt der Fahrplan diese Grenze, plant er so, dass möglichst nichts abgeregelt wird: Der Überschuss geht bis zur Grenze ins Netz, die Batterie lädt bevorzugt in den Stunden, in denen die Erzeugung über der Grenze liegt. Klebt die gemessene Einspeisung trotzdem an der Grenze, hebt die Ladelimit-Nachführung das Ladelimit an. Details im Einspeisegrenze-Guide im Panel.
+Viele Netzbetreiber begrenzen die maximale Einspeiseleistung (z. B. 4 kW). Kennt der Fahrplan diese Grenze, plant er so, dass möglichst nichts abgeregelt wird: Der Überschuss geht bis zur Grenze ins Netz, die Batterie lädt bevorzugt in den Stunden, in denen die Erzeugung über der Grenze liegt. Klebt die gemessene Einspeisung trotzdem an der Grenze, hebt die Ladelimit-Nachführung das Ladelimit an. Details in der Anleitung [Einspeisegrenze](docs/guides/einspeisegrenze.md), im Panel im Schritt „Anlage & Batterie“.
 
 ## Voraussetzungen
 

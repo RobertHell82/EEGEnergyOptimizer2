@@ -15,7 +15,7 @@ flowchart LR
     IN["PV-Prognose<br/>Verbrauchsprofil<br/>Batteriezustand<br/>Tarife"] --> OPT
     OPT["🧮 Optimierer<br/><i>jede Minute</i>"] -- "Fahrplan<br/>48 h · 15-min-Slots" --> EXE
     MESS["📈 Messwerte<br/>Netz · Hauslast · PV"] --> EXE
-    EXE["⚙️ Steuerung<br/><i>alle 30 Sekunden</i>"] -- "Ladelimit<br/>Entladung<br/>Freigabe" --> WR["🔌 Wechselrichter<br/><i>derzeit Huawei</i>"]
+    EXE["⚙️ Steuerung<br/><i>alle 30 Sekunden</i>"] -- "Ladelimit<br/>Entladung<br/>Freigabe" --> WR["🔌 Wechselrichter"]
 ```
 
 Warum zwei Takte? Der Plan ändert sich langsam (die Welt der Prognosen), die
@@ -33,7 +33,7 @@ Modus **Ein**.
 
 ```mermaid
 flowchart TD
-    START(["⏱️ Alle 30 Sekunden"]) --> SUP{"Treiber steuerbar?<br/><i>(derzeit nur Huawei)</i>"}
+    START(["⏱️ Alle 30 Sekunden"]) --> SUP{"Treiber steuerbar?<br/><i>(alle sechs unterstützten)</i>"}
     SUP -- "nein" --> E1["Ende — Fahrplan nur Anzeige"]
     SUP -- "ja" --> WECHSEL{"Moduswechsel<br/>Ein → Aus?"}
     WECHSEL -- "ja" --> REL["Wechselrichter einmalig freigeben"] --> FRISCH
@@ -41,7 +41,7 @@ flowchart TD
     FRISCH -- "ja" --> ABSICHT["Absicht des <b>laufenden Slots</b> bestimmen:<br/>Laden · Entladen · Freigabe · Blockieren"]
     FRISCH -- "nein" --> SLOT
     ABSICHT --> SLOT["Slotwechsel?<br/>→ Not-Aus-Sperre aufheben"]
-    SLOT --> MODUS{"Modus = Ein?"}
+    SLOT --> MODUS{"Modus = Ein<br/>und keine Pause?"}
     MODUS -- "nein" --> E2["Anzeige-Modus — nichts steuern.<br/>Einmalig: Werte aus einer<br/>Vorsession zurücknehmen"]
     MODUS -- "ja" --> BEREIT{"Startphase vorbei<br/>und Wechselrichter<br/>erreichbar?"}
     BEREIT -- "nein" --> E3["Ende — warten"]
@@ -54,7 +54,7 @@ flowchart TD
     SPERRE -- "nein" --> AKTION{"Absicht?"}
     AKTION -- "Freigabe" --> AF["✅ Automatikmodus<br/><i>(Eigenverbrauch)</i>"]
     AKTION -- "Ladelimit" --> AL["🔋 Ladelimit setzen<br/>+ <b>Ladelimit-Nachführung</b>"]
-    AKTION -- "Entladung" --> AE["⚡ Entladung setzen<br/>+ <b>Entlade-Nachführung</b>"]
+    AKTION -- "Entladung" --> AE["⚡ Entladung setzen<br/>+ <b>Entlade-Nachführung</b><br/>+ <b>Wirkungskontrolle</b>"]
 
     style NA fill:#ffcdd2,color:#000
     style FS fill:#ffe0b2,color:#000
@@ -73,7 +73,7 @@ Der laufende Fahrplan-Slot wird treiberneutral in genau eine Absicht übersetzt:
 | **Einspeisen aus der Batterie** (`battery_p > 0`, `grid_p > 0`) | Erzwungene Entladung | Energie soll aktiv in die Energiegemeinschaft. |
 | **Entladen nur für den Hausverbrauch** | Freigabe | Das erledigt der Wechselrichter im Automatikmodus selbst — kein Eingriff nötig. |
 | **Nichts** (`battery_p ≈ 0`), Batterie hat Platz | Ladelimit = 0 | Freigeben wäre falsch: Der Automatikmodus würde PV-Überschuss in die Batterie laden, den der Plan einspeisen will. An einem Sonnenmorgen sieht das dann von außen wie eine „Morgen-Einspeisung" aus — es ist aber keine Regel, sondern nur das Ergebnis der Preise dieses Tages. |
-| **Nichts** (`battery_p ≈ 0`), Batterie voll (≥ 99 %) | Freigabe | „Nicht laden" ist hier keine Absicht, sondern Platzmangel. Ein Ladelimit 0 bewirkt nichts und stünde nur im Weg, sobald wieder Platz entsteht. Kein Eingriff, der Standardwert bleibt. |
+| **Nichts** (`battery_p ≈ 0`), Batterie voll (im letzten Prozent vor dem Maximum-Ladestand) | Freigabe | „Nicht laden" ist hier keine Absicht, sondern Platzmangel. Ein Ladelimit 0 bewirkt nichts und stünde nur im Weg, sobald wieder Platz entsteht. Kein Eingriff, der Standardwert bleibt. |
 
 ---
 
@@ -102,12 +102,15 @@ Gemessene Einspeisung                        Reaktion pro Lauf (30 s)
    Grenze − 0,3 kW ─────────────────┛
                                     ┓
                                     ┣━ deutlich darunter:
-   darunter                         ┛      − 0,5 kW zurück Richtung
-                                           Fahrplanwert, nie darunter  ▼
+   darunter                         ┛      halber Abstand zum Fahrplan-
+                                           wert zurück (mind. 0,5 kW),
+                                           nie darunter  ▼
 ```
 
 Das **asymmetrische tote Band** verhindert Pendeln zwischen Anheben und
-Rücknahme. Ohne Einspeisegrenze (oder wenn der Netz-Messwert fehlt) wird
+Rücknahme. Die Rücknahme halbiert den Abstand je Lauf, weil ihr Ziel bekannt
+ist — mit festen Schritten wäre der Slot oft vorbei, bevor sein Planwert
+wirkt. Ohne Einspeisegrenze (oder wenn der Netz-Messwert fehlt) wird
 schlicht der Fahrplanwert geschrieben — fail-open.
 
 ### Entlade-Nachführung
@@ -128,6 +131,23 @@ Liefert die PV gerade genug, um den Plan zu decken (Rest < 0,05 kW), wird gar
 nicht erzwungen entladen — Freigabe. Ist die Hauslast nicht messbar, greift die
 Prognose des Slots (fail-open, geloggt).
 
+**Ausnahme SMA:** Dort ist die Entladung ein Sollwert am *Netzanschluss* — der
+Wechselrichter legt die Hauslast selbst obendrauf. Die Steuerung gibt deshalb
+direkt die geplante Einspeisung vor, ohne Hauslast und PV aufzurechnen.
+
+### Wirkungskontrolle
+
+Dass der Wechselrichter einen Befehl bestätigt, heißt noch nicht, dass er ihn
+auch ausführt. Deshalb prüft die Steuerung während jeder Entladung, ob die
+Batterie tatsächlich liefert: Bleibt die gemessene Leistung **sechs Läufe lang
+(3 Minuten) unter der Hälfte der Vorgabe und mehr als 0,3 kW darunter**, wird
+die Entladung gestoppt und im nächsten Lauf neu gesetzt. Beide Bedingungen
+müssen zusammen erfüllt sein — sonst löste bei kleinen Vorgaben schon das
+Rauschen aus. Das geschieht höchstens zweimal je Slot; danach meldet die
+Statuskarte das Problem, statt zwischen Stopp und Befehl hin und her zu
+springen. Ist der Ziel-Ladestand erreicht, gilt die Entladung als erfüllt und
+wird nicht geprüft.
+
 ---
 
 ## Sicherheitsnetze
@@ -140,16 +160,21 @@ Prognose des Slots (fail-open, geloggt).
 | ⏳ **Startphase** | Erste 90 Sekunden nach dem Start | Noch keine Steuerbefehle — erst Messwerte sammeln. |
 | ♻️ **Nachgeholte Freigabe** | Erster Lauf nach einem Neustart, während wir *nicht* steuern | Ein Limit aus der Vorsession käme im Anzeige-Modus sonst nie zurück — es würde dort nie geschrieben. Wird bis zum Erfolg wiederholt. |
 | 📏 **Totbänder** | Änderung ≤ 0,2 kW (Ladelimit, Entladeleistung) bzw. < 1 %-Punkt (Ziel-SOC) | Nicht schreiben — der Wert im Gerät ist noch gut genug. Minimiert die Schreibzugriffe drastisch. |
+| 🔁 **Wirkungskontrolle** | Batterie liefert während einer Entladung 3 Minuten lang weniger als die Hälfte der Vorgabe | Entladung stoppen und neu setzen, höchstens zweimal je Slot (siehe oben). |
+| 🐢 **Schreibbremse** | Der Wechselrichter lehnt einen Befehl ab | Nicht in jedem Lauf wiederholen, sondern mit doppeltem Abstand (1, 2, 4 … bis 10 Läufe = 5 Minuten). Der Grund steht im Aktivitätsprotokoll. |
+| ⏸️ **Pause** | Im Dashboard gestartet, oder Dienst `eeg_energy_optimizer.pause` | Verhält sich wie Modus **Aus** und endet von selbst — nach der gewählten Dauer (¼ bis 48 h) oder sobald der gewählte Ladestand erreicht ist. Übersteht einen Neustart. |
 
 ---
 
 ## Freigabe heißt: Standardwert
 
 „Freigabe" ist kein eigener Zustand im Wechselrichter, sondern die Rückkehr zu
-seinen Standardwerten: Das Ladelimit wird auf das Maximum der Number-Entität
-gesetzt (bei einer 5-kW-Batterie also 5 kW) und eine laufende Zwangsentladung
-gestoppt. Der anlagenspezifische Standardwert muss dafür nirgends gespeichert
-werden — er steht im `max`-Attribut der Entität.
+seinen Standardwerten: Ein gesetztes Ladelimit wird aufgehoben und eine
+laufende Zwangsentladung gestoppt. Wie das am Gerät aussieht, hängt vom Treiber
+ab — bei Huawei wird das Ladelimit auf das Maximum der Number-Entität gesetzt
+(bei einer 5-kW-Batterie also 5 kW), bei den Modbus-Treibern (Fronius, Kostal,
+SMA) geht die Batteriesteuerung zurück an die interne Automatik des
+Wechselrichters.
 
 Deshalb gilt: **Wir greifen nur ein, wenn der Fahrplan einen konkreten Wert
 vorgibt.** Sonst stehen die Werte des Geräts.
@@ -169,12 +194,22 @@ Der Schalter oben im Dashboard (`select.eeg_energy_optimizer_optimizer`):
 **Aus** nimmt gesetzte Steuerwerte zurück: Der Wechselrichter wird freigegeben
 und läuft danach in seinem Automatikmodus (Eigenverbrauch).
 
+Die **Pause** wirkt wie **Aus** auf Zeit: Sie gibt frei und endet von selbst.
+
 Pro Lauf passiert höchstens **ein** Schreibvorgang, und nur über die
 abstrakte Wechselrichter-Schnittstelle (`InverterBase`) — die Steuerung kennt
 keine Modbus-Register und keine Entitäten.
 
+## Heizstab
+
+Ist ein Heizstab (Fronius Ohmpilot) eingerichtet, führt die Steuerung ihn nach
+jedem Lauf nach: Plant der laufende Slot Wärme, regelt sie auf „Einspeisung
+≈ 0“, gedeckelt auf die geplante Leistung. Plant er keine, nimmt der Heizstab
+nur den Überschuss, der an der Einspeisegrenze sonst abgeregelt würde. Während
+einer Entladung und im Modus Aus bleibt er aus. Details in der Anleitung
+[Heizstab](guides/heizstab.md).
+
 ---
 
 *Technische Referenz: `custom_components/eeg_energy_optimizer/schedule_executor.py`
-(Klasse `ScheduleExecutor`), Konstanten in `const.py`. Der vollständige
-Umbauplan mit Begründungen: [`UMBAU-FAHRPLAN.md`](../UMBAU-FAHRPLAN.md).*
+(Klasse `ScheduleExecutor`), Konstanten in `const.py`.*

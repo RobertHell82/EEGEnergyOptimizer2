@@ -8395,6 +8395,8 @@ class EegOptimizerPanel extends HTMLElement {
             <ul style="margin:6px 0 10px 18px;padding:0">
               <li><strong>Profil</strong> (bei Setup, Restart, Settings-Change): App-/HA-Version, Wechselrichter-Typ, Batterie-Kapazität, PV-Peak, Prognose-Quelle, Land, ausgewählte EEG-Community (sofern PeakShare aktiv), Whitelist-Settings (numerische/kategorische Werte, keine Entity-IDs)</li>
               <li><strong>Failure</strong> (bei Auftreten): Kategorie, Schweregrad, gehashte Fehlermeldung</li>
+              <li><strong>Momentaufnahme</strong> (alle 30 Minuten): Ladestand, PV-, Haus-, Netz- und Batterieleistung, Modus, was die Steuerung gerade tut, Mindest-Ladestand des Fahrplans</li>
+              <li><strong>Tagesbilanz</strong> (einmal täglich): PV-Erzeugung, Verbrauch und Einspeisung des Vortags, höchste Leistung, Ladestand am Anfang und Ende, PV- und Verbrauchsprognose für denselben Tag</li>
             </ul>
             <strong>Nicht übermittelt:</strong>
             <ul style="margin:6px 0 10px 18px;padding:0">

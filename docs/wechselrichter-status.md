@@ -1,75 +1,42 @@
 # Wechselrichter — Stand der Unterstützung
 
-Diese Seite ist die **einzige Wahrheitsquelle** dafür, welcher Wechselrichter
-unterstützt wird. README und Doku verweisen hierher, statt eigene Listen zu
-führen.
+Diese Seite ist die **einzige Stelle**, an der steht, welcher Wechselrichter
+unterstützt wird und wie weit er erprobt ist. Die übrige Doku verweist
+hierher, statt eigene Listen zu führen.
 
 > [!IMPORTANT]
-> **Unterstützt werden derzeit Fronius Gen24, Huawei SUN2000, Kostal
-> Plenticore, Sigenergy SigenStor, SMA Smart Energy und SolaX Gen4+.** Nur
-> diese sechs steuert der Fahrplan, und nur sie stehen im
-> Einrichtungsassistenten zur Auswahl. Fronius, Kostal, Sigenergy, SMA und
-> SolaX sind im Feldtest — siehe unten.
+> **Unterstützt werden Fronius Gen24, Huawei SUN2000, Kostal Plenticore,
+> Sigenergy SigenStor, SMA Smart Energy und SolaX Gen4+.** Alle sechs stehen
+> im Einrichtungsassistenten zur Auswahl, und bei allen sechs setzt die
+> Steuerung den Fahrplan am Gerät durch (Ladelimit und erzwungene
+> Entladung) — keiner wird nur ausgelesen.
 
 ## Übersicht
 
-| Wechselrichter | Treiber im Code | Fahrplan-Steuerung | Im Assistenten wählbar |
-|---|---|---|---|
-| **Fronius Gen24** | vorhanden | **ja** (Feldtest) | **ja** |
-| **Huawei SUN2000** | vorhanden | **ja** | **ja** |
-| **Kostal Plenticore** | vorhanden | **ja** (Beta) | **ja** |
-| **Sigenergy SigenStor** | vorhanden | **ja** (Feldtest) | **ja** |
-| **SMA Smart Energy** | vorhanden | **ja** (Beta) | **ja** |
-| **SolaX Gen4+** | vorhanden | **ja** (Feldtest) | **ja** |
+| Wechselrichter | Anbindung | Stand |
+|---|---|---|
+| **Fronius Gen24** | direkt per Modbus TCP | Feldtest |
+| **Huawei SUN2000** | Huawei-Solar-Integration | **freigegeben** |
+| **Kostal Plenticore** | direkt per Modbus TCP | Feldtest |
+| **Sigenergy SigenStor** | Sigenergy-Local-Modbus-Integration | Feldtest |
+| **SMA Smart Energy** | direkt per Modbus TCP | Feldtest |
+| **SolaX Gen4+** | SolaX-Modbus-Integration | Feldtest |
 
-## Warum stillgelegt?
-
-Die 2.0 hat die Steuerung vollständig ersetzt: Statt Zuständen und Zeitfenstern
-setzt ein Executor alle 30 Sekunden einen 48-Stunden-Fahrplan durch — mit
-Ladelimit-Nachführung, Entlade-Nachführung, Not-Aus und Failsafe. Dieser Weg
-ist für Huawei nachgewiesen, für Fronius, Kostal, Sigenergy, SMA und SolaX
-im Feldtest.
-
-Ein Treiber, der nur anzeigt, aber nicht steuert, ist für den Anwender
-irreführend — deshalb steht er gar nicht erst zur Auswahl.
-
-## Einen Wechselrichter wieder freischalten
-
-Drei Stellen, in dieser Reihenfolge:
-
-1. **Backend** — `custom_components/eeg_energy_optimizer/inverter/<treiber>.py`:
-   Property `supports_schedule_control` auf `True` setzen (Default in
-   `inverter/base.py` ist `False`). Das ist der einzige Schalter, den der
-   `ScheduleExecutor` abfragt.
-2. **Einrichtungsassistent** — `frontend/eeg-optimizer-panel.js`: Die Liste
-   `SCHEDULE_CONTROL_INVERTERS` steuert beides — welche Karte im Assistenten
-   erscheint und ob der Hinweis „nur Anzeige" gezeigt wird. Den Schlüssel des
-   Treibers dort eintragen; ein bereits konfigurierter Fremdtreiber bleibt
-   unabhängig davon sichtbar.
-3. **Doku** — die Zeile in der Tabelle oben umstellen, den Guide in
-   `docs/README.md` wieder verlinken und `python scripts/build_guides.py`
-   laufen lassen.
-
-Vor der Freigabe an einer echten Anlage nachweisen:
-
-- Ladelimit setzen, nachführen und wieder zurücknehmen
-- Erzwungene Entladung mit Ziel-Ladestand starten und stoppen
-- Not-Aus greift (Netzbezug während der Entladung)
-- Failsafe gibt frei (Fahrplan fehlt länger als 15 Minuten)
-- Modus Ein → Aus nimmt alle Steuerwerte zurück, auch beim wiederholten
-  Umschalten
-
-Welche Sensoren ein Treiber lesen und welche Schnittstelle er anbieten muss,
-steht in [NECESSARY_SENSORS_NEW_INVERTER.md](../NECESSARY_SENSORS_NEW_INVERTER.md).
+- **Freigegeben** heißt: über längere Zeit im Dauerbetrieb, alle
+  Sicherheitsnetze am Gerät nachgewiesen.
+- **Feldtest** heißt: Laden sperren, Entladen und Freigeben sind an einer
+  echten Anlage nachgewiesen, der Dauerbetrieb über Tage und Wochen noch
+  nicht vollständig. Was je Gerät noch offen ist, steht unten. Wer so ein
+  Gerät betreibt, schaut in den ersten Tagen am besten öfter in die
+  Statuskarte und das Aktivitätsprotokoll.
 
 ## Was je Wechselrichter noch zu klären ist
 
-Alphabetisch. Die Guides in `docs/guides/` beschreiben die Einrichtung
-unverändert weiter und bleiben erhalten.
+Alphabetisch. Die Einrichtung selbst beschreibt jeweils der verlinkte Guide.
 
 ### Fronius Gen24
 
-**Freigegeben, im Feldtest.** Steuerung über direktes Modbus TCP (SunSpec
+**Feldtest.** Steuerung über direktes Modbus TCP (SunSpec
 Model 124), Sensordaten über die native
 [Fronius](https://www.home-assistant.io/integrations/fronius/) Integration
 (Solar API). Keine zusätzliche HACS-Integration nötig — nur die Fronius Core
@@ -97,7 +64,7 @@ Guide: [huawei.md](guides/huawei.md) · [Akkukapazität-Sensor](guides/capacity_
 
 ### Kostal Plenticore
 
-plus/G2/G3, Steuerung über direktes Modbus TCP (Port 1502, proprietäre
+**Feldtest.** plus/G2/G3, Steuerung über direktes Modbus TCP (Port 1502, proprietäre
 Batterie-Steuerregister), Sensordaten über die native
 [Kostal Plenticore](https://www.home-assistant.io/integrations/kostal_plenticore/)
 Integration (REST). Die Umstellung der Batteriesteuerung auf „Extern über
@@ -105,7 +72,7 @@ Protokoll (Modbus TCP)" liegt im Servicemenü und erfordert einen
 **Installateur-Login**. Kostal erwartet zyklische Steuerbefehle (Watchdog):
 Fällt Home Assistant aus, kehrt der Wechselrichter zur internen Automatik
 zurück. Die Steuerregister sind flüchtig (RAM) — kein NVRAM-Verschleiß.
-**Fahrplan-Steuerung seit 2.1.1-dev9 (Beta):** Ladeblockierung, Entladung und
+Fahrplan-Steuerung seit 2.1.1-dev9: Ladeblockierung, Entladung und
 Stopp sind am Gerät verifiziert (1.x-Reihe, 19.08.2026). Die Kodierung von
 Register 1038 für Teil-Ladelimits prüft der Treiber beim ersten Wert selbst
 nach und meldet eine Abweichung im Protokoll. **Feldbefund Ansfelden
@@ -121,7 +88,7 @@ Guide: [kostal.md](guides/kostal.md)
 
 ### Sigenergy SigenStor
 
-**Freigegeben, im Feldtest.** SigenStor-Anlagen (EC-/CMU-Serie) ab Firmware
+**Feldtest.** SigenStor-Anlagen (EC-/CMU-Serie) ab Firmware
 SPC109, Steuerung über die HACS-Integration
 [Sigenergy Local Modbus](https://github.com/TypQxQ/Sigenergy-Local-Modbus)
 (Domain `sigen`) — Remote EMS per Schalter, Auswahl und Zahlen-Entitäten,
@@ -154,7 +121,7 @@ Guide: [sigenergy.md](guides/sigenergy.md)
 
 ### SMA Smart Energy
 
-Sunny Tripower Smart Energy, Sunny Boy Storage, Sunny Boy Smart Energy.
+**Feldtest.** Sunny Tripower Smart Energy, Sunny Boy Storage, Sunny Boy Smart Energy.
 Steuerung über direktes Modbus TCP (Port 502, externes Batteriemanagement /
 CmpBMS-Register), Sensordaten über die native
 [SMA Solar](https://www.home-assistant.io/integrations/sma/) Integration
@@ -162,7 +129,7 @@ CmpBMS-Register), Sensordaten über die native
 SMA-Webinterface — kein Grid-Guard-Code nötig. Watchdog wie bei Kostal, die
 Steuerregister sind flüchtige Sollwerte. Bei vorhandenem Sunny Home Manager
 2.0 muss dessen prognosebasiertes Laden deaktiviert werden.
-**Fahrplan-Steuerung seit 2.1.1-dev12 (Beta):** Ladeblockierung, Netz-
+Fahrplan-Steuerung seit 2.1.1-dev12: Ladeblockierung, Netz-
 Sollwert und Stopp sind am Gerät verifiziert (1.x-Reihe, STP10.0-3SE-40).
 Besonderheit: Die Entladung ist ein **Netz-Sollwert** (GridWSpt) — der
 Wechselrichter legt die Hauslast selbst obendrauf, deshalb gibt die
@@ -173,7 +140,7 @@ Guide: [sma.md](guides/sma.md)
 
 ### SolaX Gen4+
 
-**Freigegeben, im Feldtest.** Steuerung über die
+**Feldtest.** Steuerung über die
 [SolaX Modbus](https://github.com/wills106/homeassistant-solax-modbus)
 Integration (RemoteControl Mode 1).
 

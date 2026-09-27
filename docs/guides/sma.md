@@ -50,20 +50,20 @@ Der Fahrplan stellt den SMA über das **externe Batteriemanagement** (CmpBMS, �
 | **40795** Max. Ladeleistung | Der Fahrplan begrenzt das Laden auf die geplante Leistung. 0 W blockiert das Laden, das Entladen für den Hausverbrauch bleibt möglich |
 | **40801** Netz-Sollwert | Erzwungene Einspeisung: positiver Wert in Watt **am Netzanschlusspunkt** |
 
-**Der Netz-Sollwert ist die Besonderheit gegenüber anderen Wechselrichtern.** Fronius, Huawei und Kostal bekommen gesagt, mit wie viel die *Batterie* entladen soll — davon deckt das Gerät zuerst das Haus, der Rest geht ins Netz. Der SMA bekommt stattdessen gesagt, wie viel *ins Netz* gehen soll, und legt die Hauslast selbst obendrauf. Die Steuerung gibt ihm deshalb direkt die geplante Einspeisung vor. Reicht die Entladeleistung der Batterie für Haus plus Einspeisung nicht, senkt sie den Sollwert um das Fehlende, statt dass das Gerät still weniger liefert.
+**Der Netz-Sollwert ist die Besonderheit gegenüber anderen Wechselrichtern.** Fronius, Huawei, Kostal, Sigenergy und SolaX bekommen gesagt, mit wie viel die *Batterie* entladen soll — davon deckt das Gerät zuerst das Haus, der Rest geht ins Netz. Der SMA bekommt stattdessen gesagt, wie viel *ins Netz* gehen soll, und legt die Hauslast selbst obendrauf. Die Steuerung gibt ihm deshalb direkt die geplante Einspeisung vor. Reicht die Entladeleistung der Batterie für Haus plus Einspeisung nicht, senkt sie den Sollwert um das Fehlende, statt dass das Gerät still weniger liefert.
 
 **Der Watchdog ist das Sicherheitsnetz:** Der Block muss spätestens alle 300 Sekunden erneuert werden, sonst fällt der Wechselrichter in sein internes Batteriemanagement zurück. Der Treiber schreibt alle 60 Sekunden nach. Stürzt Home Assistant mitten in einer Einspeisung ab, endet sie also von selbst.
 
 Einen Ziel-Ladestand kennt die SMA-Schnittstelle nicht; der Optimizer prüft den Ladestand alle 30 Sekunden selbst und beendet die Einspeisung.
 
-> **Beta:** Ladeblockierung, Netz-Sollwert und Stopp sind am Gerät verifiziert (Sunny Tripower 10.0 Smart Energy). Offen ist der Dauerbetrieb über mehrere Tage — insbesondere neben einem Sunny Home Manager 2.0.
+> **Feldtest:** Ladeblockierung, Netz-Sollwert und Stopp sind am Gerät verifiziert (Sunny Tripower 10.0 Smart Energy). Offen ist der Dauerbetrieb über mehrere Tage — insbesondere neben einem Sunny Home Manager 2.0.
 
 ## Häufige Probleme
 
 | Problem | Lösung |
 |---|---|
 | **Modbus Connection refused** | Modbus-TCP-Server nicht aktiviert → Schritt 2 wiederholen (Port 502) |
-| **Verbindungstest meldet „Steuerregister 40236 nicht lesbar"** | Manche Firmwares nutzen eine abweichende Registeradresse — bitte beim Support melden, bevor die Steuerung aktiviert wird |
+| **Die Verbindungsprüfung im Assistenten meldet „Steuerregister 40236 nicht lesbar"** | Manche Firmwares nutzen eine abweichende Registeradresse — bitte beim Support melden, bevor die Steuerung aktiviert wird |
 | **Keine SMA-Sensoren in HA** | Falsche Gruppe/Passwort bei der SMA-Integration — Benutzer-Zugang des Webinterface verwenden |
 | **Batterie lädt trotz Blockierung** | Sunny Home Manager 2.0 steuert noch mit → Schritt 3: prognosebasiertes Laden deaktivieren |
 | **Keine Batteriekapazität erkannt** | SMA liefert keinen Kapazitätssensor — die nutzbare Kapazität (z.B. vom BYD-Typenschild) im Wizard manuell eintragen |

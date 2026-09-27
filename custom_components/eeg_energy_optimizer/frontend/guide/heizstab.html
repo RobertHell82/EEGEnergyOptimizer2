@@ -9,7 +9,7 @@
 <ul>
 <li>Ein <strong>Fronius Ohmpilot</strong> mit Netzwerkanschluss (LAN oder WLAN) und einem angeschlossenen Heizstab</li>
 <li>Der Ohmpilot ist <strong>vom Wechselrichter entkoppelt</strong>: Kopplung im Gen24-Webinterface unter <em>Geräte- und Systemeinstellungen → Komponenten</em> lösen, oder den Ohmpilot in ein anderes Subnetz stellen</li>
-<li>Eine konfigurierte <strong>Einspeisegrenze</strong> (siehe Anleitung „Einspeisegrenze"). Ohne sie gilt die AC-Grenzleistung des Wechselrichters als Grenze</li>
+<li>Eine konfigurierte <strong>Einspeisegrenze</strong> (siehe Anleitung „Einspeisegrenze"). Ohne sie gilt die AC-Grenzleistung des Wechselrichters minus 0,5 kW als Grenze — und der Heizstab startet praktisch nie</li>
 <li>Ein <strong>Netzleistungs-Sensor</strong>, der Einspeisung und Bezug misst</li>
 </ul>
 <div class="guide-alert caution"><p><strong>Zwei Steuerungen auf einem Gerät gehen nicht.</strong> Der Ohmpilot kennt keine Zugriffsrechte — wer zuletzt auf das Register schreibt, gewinnt. Bleibt er mit dem Gen24 gekoppelt, heizt der Gen24 jede Einspeisung weg und der Optimizer setzt sie zurück; am Ende gewinnt keiner. Dasselbe gilt für <strong>jede andere Steuerung</strong>: eine alte Automatisierung, ein Node-RED-Flow, eine zweite Integration. Erst alles andere abschalten, dann einschalten.</p>
@@ -63,7 +63,7 @@
 <p>Jede Kilowattstunde, die aus PV in den Puffer geht, zählt mit dem <strong>Wärmewert</strong> — unabhängig davon, wie warm der Puffer gerade ist. Das ist die Zahl, gegen die der Optimizer die Einspeisung abwägt: Liegt der Wärmewert darüber, heizt er den Puffer, statt einzuspeisen.</p>
 <p><em>Die Obergrenze ist allein die <strong>Maximaltemperatur</strong>: Ist sie erreicht, nimmt der Puffer nichts mehr auf, und die Energie geht wieder ins Netz.</em></p>
 <h3>Konfiguration</h3>
-<p>Alle Felder stehen in den <strong>Einstellungen</strong> im eigenen Tab <strong>Heizstab</strong>. Im Einrichtungsassistenten kommt der Heizstab nicht vor — er ist die Ausnahme, nicht die Regel.</p>
+<p>Alle Felder stehen in den <strong>Einstellungen</strong> im eigenen Tab <strong>Heizstab</strong>. Der Tab erscheint erst, wenn im Tab <strong>System</strong> der <strong>Expertenmodus</strong> eingeschaltet ist. Im Einrichtungsassistenten kommt der Heizstab nicht vor — er ist die Ausnahme, nicht die Regel.</p>
 <table>
 <thead>
 <tr>
@@ -73,7 +73,7 @@
 </thead>
 <tbody>
 <tr>
-<td><strong>Heizstab (Fronius Ohmpilot)</strong></td>
+<td><strong>Heizstab steuern — nur Fronius Ohmpilot</strong></td>
 <td>Schaltet die Steuerung ein. Aus = der Optimizer fasst den Ohmpilot nicht an</td>
 </tr>
 <tr>
