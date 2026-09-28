@@ -10,6 +10,20 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
+## [2.1.23] - 2026-09-28
+
+### Behoben
+
+- **Der Hausverbrauch aus der Vergangenheit war 1000-fach zu klein.** Beim Start baut die Integration die Stundenwerte des Hausverbrauchs aus den Statistiken von PV, Batterie und Netz nach. Speichert ein Wechselrichter diese Statistiken in W und zeigt sie in kW an (Huawei), liefert Home Assistant sie bereits in kW aus — der Nachbau teilte trotzdem noch einmal durch 1000. In Traun standen so 0,005 kW in der Statistik, wo das Haus 4,7 kW aus dem Netz bezog; das Verbrauchsprofil lernte 0,02 kWh am Tag. Der Fahrplan rechnete dadurch mit einem Haus ohne Verbrauch und verkaufte abends die Batterie, und der Standardbetrieb in der Karte „Optimierungsgewinn“ blieb flach auf einem Ladestand, weil er ohne Verbrauch nie entladen konnte. Die Statistik wird jetzt ausdrücklich in kW angefordert; der nächste Start schreibt die Stundenwerte des Rückblicks einmal neu, danach lernt das Profil wieder den echten Verbrauch. Der Fehler kam mit 2.1.17.
+
+### Hinzugefügt
+
+- **Das ⓘ neben der Bezugsspitze zeigt, was sie an Netzkosten bedeutet.** Leistungspreis je Monat inklusive Umsatzsteuer: höchstens mit den Sätzen im Endausbau (33,82 €/kW im Jahr bis 10 kW, 67,64 €/kW darüber), zum Start 2027 mit rund 19 €/kW im Jahr, jeweils mit mindestens 2 kW. Eine Spitze von 5 kW kostet danach höchstens 16,91 € im Monat, zum Start etwa 9,50 €. Das sind Richtwerte der E-Control vom Juli 2026; die Tarife je Netzbereich folgen mit der Tarifverordnung Ende 2026.
+
+### Entfernt
+
+- **Die Karte „Energiebedarf“ ist weg.** Bedarf und Überschuss der Gemeinschaften stehen als Kurve im Optimierungsplan; die eigene Karte zeigte dasselbe noch einmal.
+
 ## [2.1.22] - 2026-09-28
 
 ### Behoben
