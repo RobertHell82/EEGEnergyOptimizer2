@@ -110,7 +110,7 @@ schedule_executor.py: ScheduleExecutor (execution, 30 s)
 | `config_flow.py` | Single-click config flow (full setup happens in panel) |
 | `peakshare.py` | PeakShareProvider — fetches + caches community demand forecasts (half-hourly refresh; hourly values, `opt()` resamples to 15 min itself) |
 | `telemetry.py`, `telemetry_buffer.py` | Opt-in reporting — profile, failures, half-hourly snapshots (`/v1/snapshot`: SOC, PV/house/grid/battery kW, mode, executor state, plan min-SOC) and a daily outcome (`/v1/outcome`, `tagesbilanz.py`), ring buffer with backoff. README and the panel's privacy details list all four; keep them in sync when a payload changes. Snapshots are taken on the half-hour grid but **offset by `TELEMETRY_SNAPSHOT_OFFSET_MIN`**: `_collect_snapshot()` runs in the same guard cycle *after* the executor wrote, and the plain grid hit exactly the cycle that writes on a slot change (slots turn at :00/:15/:30/:45) — Huawei briefly drops the battery when `forcible_discharge_soc` is rewritten, so the power columns systematically recorded the gap we cause ourselves. Weismann, 21.09.2026: the grid meter read ~0 W at the grid start in 9 of 10 half-hours while the window averaged 271–661 W. `soc_pct` is unaffected; for power questions use the plant's own history, not the snapshots |
-| `websocket_api.py` | 26 WebSocket commands for panel (config, schedule, control state, PeakShare, OeMAG, spot price, aWATTar SUNNY, grid tariffs, feed-in statistics, daily balance, probes, telemetry, activity log) |
+| `websocket_api.py` | 35 WebSocket commands for panel (config, schedule, control state, PeakShare, OeMAG, spot price, aWATTar SUNNY, grid tariffs, daily balance, probes, telemetry, activity log) |
 | `inverter/base.py` | Abstract inverter interface (InverterBase ABC) |
 | `inverter/huawei.py` | Huawei SUN2000 implementation via HA services — Single + Master/Slave (multi-device) |
 | `inverter/_distribution.py` | Shared proportional discharge distribution (Huawei multi-battery) |
@@ -139,7 +139,7 @@ schedule_executor.py: ScheduleExecutor (execution, 30 s)
 | 14 | Batterieleistung | fast | Current battery power — positive = charge, negative = discharge (kW, MEASUREMENT) |
 | 15 | Fahrplan Batterieleistung | fast | **Planned** battery power for the current slot — same cadence as the measured one, so recorder history makes plan and reality comparable |
 | 16 | Fahrplan Netzleistung | fast | **Planned** grid power for the current slot |
-| 17 | Entladung ins Netz | fast | Battery energy that actually reached the grid (kWh, TOTAL with `last_reset`) — the basis of the feed-in statistics card |
+| 17 | Entladung ins Netz | fast | Battery energy that actually reached the grid (kWh, TOTAL with `last_reset`) — fed by `statistics.py`; the feed-in statistics card that read it is gone (2.1.24) |
 | 18 | Fahrplan-Status | 30s | Executor state ("Laden begrenzt auf 2,0 kW", "Einspeisung 2,80 kW bis 43 %" (planned export; "Entladung …" only without a plan value), "Laden blockiert", "Normalbetrieb", "Anzeige-Modus") + plan/written-value attributes |
 | 19–21 | Ersparnis durch PV — heute / Monat / Jahr | fast | Avoided grid purchase + feed-in revenue (MONETARY, TOTAL). A **measurement**: every kWh is metered, prices come frozen per quarter-hour from `bilanz.py` |
 | 22–24 | Ersparnis durch Optimierung — heute / Monat / Jahr | fast | Actual vs. simulated standard operation over the **measured** PV/load series (MONETARY, TOTAL). A **model**, not a measurement — `None` when the day's starting SOC is unknown |
@@ -178,8 +178,9 @@ the entity and its history survive — but its attributes changed completely
 *Morgen-Einspeisung / Nacht-Entladung Energie heute* (1.5.1),
 *Prognose bis Sonnenaufgang* and *Batterie fehlende Energie* (1.5.23 — they
 were inputs of the heuristic and had no reader left). The statistics tracker
-(`statistics.py`) went with them in 1.5.1 but is back: *Entladung ins Netz*
-feeds it, and `get_feedin_statistics` serves the panel card from it.
+(`statistics.py`) went with them in 1.5.1 but is back: it feeds *Entladung
+ins Netz*. The panel card it served (and `get_feedin_statistics`) was
+removed again in 2.1.24 — the counter and the sensor stay.
 
 ### Select Entity
 
@@ -215,7 +216,7 @@ three intents. `Fahrplan-Status` shows what actually happened:
 - **API**: Paginated WebSocket endpoint (`get_activity_log` with `offset`/`limit`)
 - **Frontend**: Loads 100 entries initially, "Mehr laden" fetches 100 more per click, live events via subscription
 
-### WebSocket API (36 commands)
+### WebSocket API (35 commands)
 
 Home Assistant hands a `websocket_command` to **every logged-in user** —
 `ActiveConnection.async_handle` checks no permissions. Anything that writes
@@ -263,7 +264,6 @@ of every single command and fails on a new, unclassified one.
 | `eeg_optimizer/get_pvprognose` | Own PV forecast: surfaces, location, 7 daily sums, age of the weather data, last error (`refresh` forces an Open-Meteo fetch) |
 | `eeg_optimizer/probe_pvprognose` | "Prognose berechnen" — one-off fetch + model run with the *unsaved* surfaces (`flaechen` incl. optional `max_kw`, `verluste_pct`, `ac_limit_kw`), stores nothing; `invalid_config` for input/location problems, `fetch_failed` for network |
 | `eeg_optimizer/get_prognosevergleich` | Prognosevergleich for the dashboard card: list of recorded days, per-day stats, summary over complete days (bias, MAE, closer-count, empirical p10), one day in detail (`datum`, else the newest) with the three 30-min series |
-| `eeg_optimizer/get_feedin_statistics` | Feed-in statistics for the panel card (daily + period summaries) |
 | `eeg_optimizer/tagesbilanz_jetzt` | Build yesterday's daily balance now instead of waiting for 00:15 |
 | `eeg_optimizer/refresh_consumption_profile` | Manually recompute the consumption profile from recorder statistics |
 | `eeg_optimizer/telemetry_enable` | Opt in to reporting |
@@ -275,9 +275,9 @@ Gone with the heuristic: the `*_test_overrides` commands (1.5.1), the
 `manual_*` commands (1.5.5, when manual control was dropped), plus
 `test_inverter` (the connection-test button is gone) and
 `get_consumption_profile_status` (the panel reads it from sensor attributes)
-in 1.5.23. `get_feedin_statistics` was dropped in 1.5.1 as well but came
-back with the feed-in statistics card — it and `statistics.py` are live
-again (see the handler's docstring).
+in 1.5.23. `get_feedin_statistics` was dropped in 1.5.1, came back with the
+feed-in statistics card and went again with it in 2.1.24; `statistics.py`
+stays for the *Entladung ins Netz* sensor.
 
 ### Inverter Abstraction
 

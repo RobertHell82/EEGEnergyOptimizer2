@@ -481,7 +481,6 @@ def async_register_websocket_commands(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_telemetry_enable)
     websocket_api.async_register_command(hass, ws_telemetry_disable)
     websocket_api.async_register_command(hass, ws_telemetry_forget)
-    websocket_api.async_register_command(hass, ws_get_feedin_statistics)
     # Ambibox (ambibox/) — Verbindungstest und manueller Lade-/Entladetest.
     # Den Fahrzeugzustand holt das Panel nicht über einen Befehl, sondern
     # aus den Auto-Sensoren; die sind live und brauchen kein Polling.
@@ -2712,76 +2711,6 @@ async def ws_refresh_schedule(
 
     await runner.async_run()
     connection.send_result(msg["id"], runner.to_dict())
-
-
-@websocket_api.websocket_command(
-    {
-        vol.Required("type"): "eeg_optimizer/get_feedin_statistics",
-        vol.Optional("days", default=0): vol.Coerce(int),
-    }
-)
-@websocket_api.async_response
-async def ws_get_feedin_statistics(
-    hass: HomeAssistant,
-    connection: websocket_api.ActiveConnection,
-    msg: dict,
-) -> None:
-    """Einspeise-Statistik für die Panel-Karte.
-
-    Antwortformat unverändert gegenüber der Zeit vor dem Umbau, samt der
-    ``morning``-Abschnitte: Tage von damals tragen dort noch Werte, und sie
-    verschwinden zu lassen, weil das Feature weg ist, wäre ein zweiter
-    Datenverlust. Neu geschrieben wird nur noch ``evening`` (siehe
-    statistics.py).
-
-    ``days = 0`` heißt: alle Tage.
-    """
-    entry, data = _get_entry_data(hass, connection, msg)
-    if entry is None:
-        return
-
-    leer_je_schluessel = {"kwh": 0.0, "count": 0, "duration_min": 0}
-    leer = {
-        "morning": dict(leer_je_schluessel),
-        "evening": dict(leer_je_schluessel),
-    }
-
-    stats = data.get("feedin_stats")
-    if not stats:
-        connection.send_result(msg["id"], {
-            "daily": {}, "today": leer, "week": leer,
-            "month": leer, "year": leer, "total": leer,
-            "zaehlweise": None, "umgestellt_am": None,
-        })
-        return
-
-    from datetime import timedelta
-
-    from homeassistant.util import dt as dt_util
-
-    from .statistics import UMGESTELLT_AM, ZAEHLWEISE
-
-    tage = msg.get("days", 0)
-    jetzt = dt_util.now()
-    heute = jetzt.strftime("%Y-%m-%d")
-    if tage > 0:
-        von = (jetzt - timedelta(days=tage - 1)).strftime("%Y-%m-%d")
-        daily = stats.get_daily_stats(start_date=von, end_date=heute)
-    else:
-        daily = stats.get_daily_stats()
-
-    connection.send_result(msg["id"], {
-        "daily": daily,
-        "today": stats.get_summary(days=1),
-        "week": stats.get_summary(days=7),
-        "month": stats.get_summary(days=30),
-        "year": stats.get_summary(days=365),
-        "total": stats.get_summary(days=None),
-        # Damit die Karte den Bedeutungswechsel benennen kann, statt zwei
-        # verschiedene Größen als eine Reihe zu zeichnen.
-        "zaehlweise": ZAEHLWEISE,
-        "umgestellt_am": UMGESTELLT_AM,
-    })
 
 
 @websocket_api.websocket_command(

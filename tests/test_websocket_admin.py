@@ -89,7 +89,6 @@ OFFEN = {
     "eeg_optimizer/telemetry_get_status",
     "eeg_optimizer/get_schedule",
     "eeg_optimizer/refresh_schedule",
-    "eeg_optimizer/get_feedin_statistics",
     "eeg_optimizer/tagesbilanz_jetzt",
     "eeg_optimizer/get_schedule_archive",
     "eeg_optimizer/get_entity_ids",
