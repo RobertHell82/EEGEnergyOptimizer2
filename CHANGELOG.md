@@ -10,6 +10,13 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
+## [2.1.19] - 2026-09-28
+
+### Geändert
+
+- **Die Prognosequelle wählt man in den Einstellungen wie im Assistenten.** Statt einer Auswahlliste stehen im Tab „Prognose“ die drei Karten Solcast, Forecast.Solar und Eigene Berechnung, kompakt in einer Reihe, mit Logo und dem Hinweis, ob die Integration installiert ist. Ein Klick auf die schon gewählte Karte ändert nichts; nur ein echter Wechsel belegt die Sensoren neu.
+- **Die Prognose-Sensoren sind zugeklappt.** Eine Zeile zeigt, welche Sensoren zugeordnet sind, ein Klick öffnet die Felder. Fehlt ein Pflichtsensor, ist der Bereich von selbst offen.
+
 ## [2.1.18] - 2026-09-28
 
 ### Geändert
