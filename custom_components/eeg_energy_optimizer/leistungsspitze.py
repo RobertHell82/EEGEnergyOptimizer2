@@ -105,6 +105,52 @@ def monat_von(t: datetime) -> str:
     return _lokal(t).strftime("%Y-%m")
 
 
+# Was die Spitze kostet — RICHTWERTE, keine Tarife. Die Beträge je
+# Netzbereich kommen erst mit der Tarifverordnung (SNE-T-V) gegen Ende 2026;
+# bis dahin gibt es nur die „illustrative Überlegung" der E-Control
+# (Fachveranstaltung 14.07.2026, Folien 5 und 7), bevölkerungsgewichtete
+# Österreich-Durchschnitte, netto wie jedes Netzentgelt:
+#
+# * Endstufe (etwa ab 2030): 33,82 €/kW im Jahr bis 10 kW, 67,64 €/kW für
+#   den Teil darüber — die HÖCHSTEN derzeit bekannten Sätze.
+# * Start 2027: etwa die Hälfte, rund 19 €/kW im Jahr (je Netzbereich 15 bis
+#   26), eine Stufe über 10 kW ohne bekannten Betrag.
+#
+# Verrechnet wird die Monatsspitze, mindestens 2 kW (SNE-G-V § 6, Entwurf).
+# TODO 2027: durch die Sätze der SNE-T-V je Netzbereich ersetzen
+# (netzentgelt.py liest die Verordnung ohnehin).
+LEISTUNGSPREIS_QUELLE = "E-Control, Richtwerte vom 14.07.2026"
+LEISTUNGSPREIS_MINDEST_KW = 2.0
+LEISTUNGSPREIS_STUFE_KW = 10.0
+LEISTUNGSPREIS_ENDSTUFE_EUR_KW_JAHR = (33.82, 67.64)
+LEISTUNGSPREIS_START_EUR_KW_JAHR = 19.0
+LEISTUNGSPREIS_START_SPANNE = (15.0, 26.0)
+LEISTUNGSPREIS_UST = 1.20
+
+
+def netzkosten_monat(kw: float | None) -> dict[str, Any] | None:
+    """Leistungspreis für eine Monatsspitze, € je Monat inkl. USt.
+
+    ``endstufe_eur`` mit den höchsten bekannten Sätzen, ``start_eur`` mit dem
+    Durchschnitt zum Start 2027 (ohne Stufe — ihr Betrag ist nicht bekannt).
+    """
+    if kw is None:
+        return None
+    verrechnet = max(float(kw), LEISTUNGSPREIS_MINDEST_KW)
+    bis, darueber = LEISTUNGSPREIS_ENDSTUFE_EUR_KW_JAHR
+    endstufe = (
+        min(verrechnet, LEISTUNGSPREIS_STUFE_KW) * bis
+        + max(0.0, verrechnet - LEISTUNGSPREIS_STUFE_KW) * darueber
+    )
+    start = verrechnet * LEISTUNGSPREIS_START_EUR_KW_JAHR
+    return {
+        "verrechnet_kw": round(verrechnet, 2),
+        "endstufe_eur": round(endstufe / 12 * LEISTUNGSPREIS_UST, 2),
+        "start_eur": round(start / 12 * LEISTUNGSPREIS_UST, 2),
+        "quelle": LEISTUNGSPREIS_QUELLE,
+    }
+
+
 def _runde_kw(kw: float) -> float:
     """Kaufmännisch auf zwei Nachkommastellen — wie der Netzbetreiber."""
     return float(Decimal(str(kw)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))

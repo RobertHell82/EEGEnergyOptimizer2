@@ -108,6 +108,7 @@ Ab 2027 richtet sich der Leistungspreis des Netzentgelts nach dem höchsten Vier
 
 - **Netzbezug Viertelstunde** — mittlerer Bezug der zuletzt **abgeschlossenen** Viertelstunde (:00, :15, :30, :45). Einspeisung zählt nicht und verrechnet sich nicht mit dem Bezug derselben Viertelstunde. Der Wert ist mit dem Smart-Meter-Portal des Netzbetreibers vergleichbar; gemessen wird allerdings am Netzsensor des Wechselrichters, nicht am Zähler.
 - **Bezugsspitze Monat** — die höchste dieser Viertelstunden im laufenden Kalendermonat, mit Zeitpunkt und den Vormonaten. Die Mindestbemessung von 2 kW ist **nicht** eingerechnet: Sie ist eine Regel der Abrechnung, keine Messung.
+- **Netzkosten** — das ⓘ neben der Bezugsspitze zeigt, was sie als Leistungspreis im Monat kosten würde: höchstens mit den Sätzen im Endausbau (33,82 €/kW im Jahr bis 10 kW, 67,64 €/kW darüber), zum Start 2027 mit rund 19 €/kW im Jahr, jeweils mit mindestens 2 kW und inklusive Umsatzsteuer. Das sind Richtwerte der E-Control vom Juli 2026; die Tarife je Netzbereich kommen erst mit der Tarifverordnung Ende 2026.
 
 _Hatte eine Viertelstunde Messlücken, ist ihr Wert eine Untergrenze. Sie zählt trotzdem zur Monatsspitze und ist als unvollständig markiert._
 

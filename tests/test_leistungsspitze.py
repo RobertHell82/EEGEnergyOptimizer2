@@ -274,3 +274,29 @@ async def test_sensoren_ohne_messung_sind_unbekannt():
     await ms.async_update()
     assert vs.native_value is None
     assert ms.native_value is None
+
+
+# ---------------------------------------------------------------------------
+# Netzkosten der Spitze (Richtwerte E-Control 14.07.2026)
+# ---------------------------------------------------------------------------
+
+
+def test_netzkosten_monat_endstufe_und_start():
+    from custom_components.eeg_energy_optimizer.leistungsspitze import netzkosten_monat
+
+    k = netzkosten_monat(5.0)
+    # 5 kW × 33,82 €/kW·a ÷ 12 × 1,2 USt
+    assert k["endstufe_eur"] == pytest.approx(5 * 33.82 / 12 * 1.2, abs=0.01)
+    assert k["start_eur"] == pytest.approx(5 * 19.0 / 12 * 1.2, abs=0.01)
+    assert k["verrechnet_kw"] == 5.0
+
+
+def test_netzkosten_monat_mindestens_zwei_kw_und_stufe():
+    from custom_components.eeg_energy_optimizer.leistungsspitze import netzkosten_monat
+
+    assert netzkosten_monat(0.8)["verrechnet_kw"] == 2.0
+    assert netzkosten_monat(0.8)["endstufe_eur"] == netzkosten_monat(2.0)["endstufe_eur"]
+    # Über 10 kW kostet jedes kW den doppelten Satz
+    k = netzkosten_monat(12.0)
+    assert k["endstufe_eur"] == pytest.approx((10 * 33.82 + 2 * 67.64) / 12 * 1.2, abs=0.01)
+    assert netzkosten_monat(None) is None

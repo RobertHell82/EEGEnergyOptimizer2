@@ -9108,6 +9108,16 @@ class EegOptimizerPanel extends HTMLElement {
         return `<li>${this._escapeHtml(name)}: ${fmtDe(Number(kw), 2)} kW</li>`;
       });
     if (vormonate.length) details.push(`<p>Vormonate:</p><ul>${vormonate.join("")}</ul>`);
+    const kosten = a.netzkosten_monat;
+    if (kosten && Number.isFinite(Number(kosten.endstufe_eur))) {
+      const mindest = spitzeBekannt && spitze < Number(kosten.verrechnet_kw)
+        ? ` (verrechnet werden mindestens ${fmtDe(Number(kosten.verrechnet_kw), 0)}&nbsp;kW)`
+        : "";
+      details.push(`<p>Netzkosten dafür${mindest}: bis zu <strong>${fmtDe(Number(kosten.endstufe_eur), 2)}&nbsp;€ im Monat</strong> im Endausbau
+        (33,82&nbsp;€/kW im Jahr bis 10&nbsp;kW, 67,64&nbsp;€/kW darüber), zum Start 2027 etwa ${fmtDe(Number(kosten.start_eur), 2)}&nbsp;€
+        (rund 19&nbsp;€/kW im Jahr, je Netzbereich 15 bis 26). Inklusive 20&nbsp;% USt.</p>`);
+      details.push(`<p style="color:var(--secondary-text-color)">Das sind Richtwerte der E-Control vom 14.07.2026, keine Tarife — die Beträge je Netzbereich kommen mit der Tarifverordnung Ende 2026.</p>`);
+    }
     details.push(`<p style="color:var(--secondary-text-color)">Ab 2027 richtet sich der Leistungspreis des Netzentgelts nach diesem Wert: dem höchsten Viertelstunden-Mittel des Netzbezugs im Monat.</p>`);
 
     const entity = this._entityIds?.bezugsspitze_monat;

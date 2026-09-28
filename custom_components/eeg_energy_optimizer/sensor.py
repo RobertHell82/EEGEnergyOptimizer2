@@ -1231,6 +1231,12 @@ class BezugsspitzeMonatSensor(SensorEntity):
             monat: eintrag.get("kw")
             for monat, eintrag in sorted(self._spitze.verlauf.items())
         }
+        # Was die Spitze als Leistungspreis kostet — Richtwerte, siehe
+        # leistungsspitze.netzkosten_monat. Hier und nicht im Panel, damit
+        # die Sätze an einer Stelle stehen.
+        from .leistungsspitze import netzkosten_monat
+
+        attrs["netzkosten_monat"] = netzkosten_monat(spitze["kw"] if spitze else None)
         self._attr_extra_state_attributes = attrs
 
 
