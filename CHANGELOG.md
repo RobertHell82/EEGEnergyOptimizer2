@@ -10,6 +10,17 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
+## [2.1.20] - 2026-09-28
+
+### Behoben
+
+- **Die Einstellungen nutzen die ganze Breite.** Sie waren auf 600 px begrenzt, das Dashboard daneben auf 900. Die Flächentabelle der eigenen PV-Prognose brach dadurch in zwei Zeilen um, „Grenze“ und der Entfernen-Knopf rutschten nach unten, obwohl rechts und links Platz war. Jetzt steht eine Fläche in einer Zeile. Auf schmalen Bildschirmen bricht die Tabelle nach ihrer eigenen Breite um, in drei und dann zwei Spalten; das gilt auch im Assistenten.
+- **Im Tab „Verbraucher“ stand der Einleitungssatz zum Heizstab doppelt.** Er steht jetzt nur noch im Schalter.
+
+### Geändert
+
+- **Kurze Felder bei Heizstab und Wallbox stehen nebeneinander.** Adresse und Port, Maximal- und Mindesttemperatur, Puffervolumen und Wärmewert, Unit-ID und Ladepunkt teilen sich je eine Zeile, statt einzeln die volle Breite zu belegen.
+
 ## [2.1.19] - 2026-09-28
 
 ### Geändert
