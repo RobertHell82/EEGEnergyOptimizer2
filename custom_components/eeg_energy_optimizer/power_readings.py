@@ -147,7 +147,9 @@ def resolve_backfill_signs(config: dict) -> tuple[int, int]:
 # noch keine Statistik haben. 2 = Heizstab wird abgezogen (23.09.2026).
 # 3 = Einheit aus den Statistik-Metadaten statt aus dem Live-Zustand
 # (27.09.2026, siehe ``backfill_faktor_kw``).
-BACKFILL_FORMEL = 3
+# 4 = Statistik ausdrücklich in kW angefordert (28.09.2026) — Stand 3 rechnete
+# Leistungsstatistiken in W doppelt um und schrieb 1000-fach zu kleine Werte.
+BACKFILL_FORMEL = 4
 
 
 def backfill_faktor_kw(
@@ -155,10 +157,21 @@ def backfill_faktor_kw(
 ) -> float | None:
     """Umrechnungsfaktor auf kW für eine Quellstatistik des Backfills.
 
-    Die Statistik liegt in der Einheit, in der sie aufgezeichnet wurde —
-    diese Einheit steht in ihren Metadaten und gewinnt. Nur ohne Metadaten
-    zählt die Einheit des Live-Zustands. ``None`` heißt: nicht vorhanden
-    (Sensor ohne Zustand, keine Metadaten), ``""`` heißt: ohne Einheit.
+    Der Backfill fordert die Statistik mit ``units={"power": "kW"}`` an:
+    Steht in den Metadaten eine Leistungseinheit (W, kW, MW), rechnet
+    Home Assistant selbst um, und der Faktor ist 1. Nur eine Einheit, die
+    Home Assistant nicht kennt, rechnen wir selbst — dann wie
+    ``read_power_kw``. Ohne Metadaten zählt die Einheit des Live-Zustands.
+    ``None`` heißt: nicht vorhanden (Sensor ohne Zustand, keine Metadaten),
+    ``""`` heißt: ohne Einheit.
+
+    Bis 28.09.2026 galt der Faktor der Metadaten-Einheit auch für
+    umgerechnete Werte: Home Assistant liefert Statistiken ohne ``units`` in
+    der ANZEIGE-Einheit des Sensors. In Traun speichern die Huawei-Sensoren
+    in W und zeigen kW — geliefert wurde kW, der Backfill teilte noch einmal
+    durch 1000. Aus 4,2 kW Hausverbrauch wurden 0,004 kW, das Profil lernte
+    einen Tagesverbrauch von 0,02 kWh, der Fahrplan plante ohne Haus, und
+    der Standardbetrieb der Gewinnkarte blieb flach auf einem Ladestand.
 
     Bis 27.09.2026 las der Backfill nur den Live-Zustand und nahm ohne ihn kW
     an. In Ansfelden war der zweite Kostal beim HA-Start noch nicht geladen:
@@ -170,10 +183,25 @@ def backfill_faktor_kw(
     Rückgabe ``None`` = Einheit unbekannt → der Aufrufer bricht ab, statt zu
     raten. Leere Einheit = kW, wie in ``read_power_kw``.
     """
-    einheit = statistik_einheit if statistik_einheit is not None else zustand_einheit
-    if einheit is None:
+    if statistik_einheit is not None:
+        if statistik_einheit.strip().lower() in _HA_LEISTUNGSEINHEITEN:
+            return 1.0  # Home Assistant hat schon auf kW umgerechnet
+        return _UNIT_FACTORS_TO_KW.get(statistik_einheit.strip().lower(), 1.0)
+    if zustand_einheit is None:
         return None
-    return _UNIT_FACTORS_TO_KW.get(einheit.strip().lower(), 1.0)
+    return _UNIT_FACTORS_TO_KW.get(zustand_einheit.strip().lower(), 1.0)
+
+
+def history_faktor_kw(
+    zustand_einheit: str | None, statistik_einheit: str | None
+) -> float:
+    """Umrechnungsfaktor für die ZUSTANDSHISTORIE (Fallback ohne Statistik).
+
+    Zustände stehen in der Einheit des Zustands, nicht der Statistik — also
+    gewinnt hier die Zustandseinheit, die Metadaten sind nur Ersatz.
+    """
+    einheit = zustand_einheit if zustand_einheit is not None else statistik_einheit
+    return _UNIT_FACTORS_TO_KW.get((einheit or "").strip().lower(), 1.0)
 
 
 def backfill_stunden(
@@ -223,6 +251,10 @@ def backfill_stunden(
         stunden.append((ts, haus, bat, grid))
     return stunden, zu_hoch
 
+
+# Einheiten, die Home Assistant als Leistung kennt und beim Lesen der
+# Statistik selbst umrechnet (PowerConverter).
+_HA_LEISTUNGSEINHEITEN = frozenset({"w", "kw", "mw", "gw"})
 
 # Bekannte Einheiten-Aliase, alle in der KEY in lowercase. Deckt die in HA-
 # Sensoren beobachteten Schreibweisen ab — bewusst defensiv, weil HA-Custom-

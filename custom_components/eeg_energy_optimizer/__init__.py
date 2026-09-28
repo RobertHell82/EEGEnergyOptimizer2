@@ -12,6 +12,7 @@ import logging
 from .power_readings import (
     BACKFILL_FORMEL,
     backfill_faktor_kw,
+    history_faktor_kw,
     backfill_stunden,
     compute_battery_now_kw,
     compute_grid_export_kw,
@@ -615,11 +616,13 @@ async def async_backfill_hausverbrauch_stats(
             lambda: get_metadata(hass, statistic_ids=faktor_ids)
         )
         faktoren: dict[str, float] = {}
+        history_faktoren: dict[str, float] = {}
         for eid in faktor_ids:
             meta = metadaten.get(eid)
             statistik_einheit = (
                 (meta[1].get("unit_of_measurement") or "") if meta else None
             )
+            history_faktoren[eid] = history_faktor_kw(_zustand_einheit(eid), statistik_einheit)
             faktor = backfill_faktor_kw(statistik_einheit, _zustand_einheit(eid))
             if faktor is None:
                 # Raten hat 45 Stunden mit bis zu 46 kW erzeugt — lieber
@@ -654,7 +657,9 @@ async def async_backfill_hausverbrauch_stats(
             now,
             sensor_ids | {CONSUMPTION_SENSOR},
             "hour",
-            None,
+            # Ausdrücklich kW: ohne ``units`` liefert HA die Anzeige-Einheit,
+            # und die weicht von der gespeicherten ab (backfill_faktor_kw).
+            {"power": "kW"},
             {"mean"},
         )
 
@@ -761,8 +766,8 @@ async def async_backfill_hausverbrauch_stats(
                     return by_ts
                 return {ts: v * factor for ts, v in by_ts.items()}
 
-            pv_by_ts = _apply_factor(pv_by_ts, pv_factor)
-            pv2_by_ts = _apply_factor(pv2_by_ts, pv2_factor) if pv2_by_ts else {}
+            pv_by_ts = _apply_factor(pv_by_ts, history_faktoren[pv_id])
+            pv2_by_ts = _apply_factor(pv2_by_ts, history_faktoren[pv2_id]) if pv2_by_ts else {}
             heiz_by_ts = _apply_factor(
                 _history_to_hourly_means(history.get(heiz_id, [])), heiz_factor
             ) if heiz_id else {}
@@ -770,11 +775,11 @@ async def async_backfill_hausverbrauch_stats(
             if has_battery_pair:
                 pos_h = _apply_factor(
                     _history_to_hourly_means(history.get(battery_charge_id, [])),
-                    battery_factors[battery_charge_id],
+                    history_faktoren[battery_charge_id],
                 )
                 neg_h = _apply_factor(
                     _history_to_hourly_means(history.get(battery_discharge_id, [])),
-                    battery_factors[battery_discharge_id],
+                    history_faktoren[battery_discharge_id],
                 )
                 keys = set(pos_h) | set(neg_h)
                 battery_by_ts = {
@@ -784,18 +789,18 @@ async def async_backfill_hausverbrauch_stats(
             else:
                 bat_h = _apply_factor(
                     _history_to_hourly_means(history.get(battery_single_id, [])),
-                    battery_factors[battery_single_id],
+                    history_faktoren[battery_single_id],
                 )
                 battery_by_ts = {ts: v * battery_sign for ts, v in bat_h.items()}
 
             if has_grid_pair:
                 pos_h = _apply_factor(
                     _history_to_hourly_means(history.get(grid_export_id, [])),
-                    grid_factors[grid_export_id],
+                    history_faktoren[grid_export_id],
                 )
                 neg_h = _apply_factor(
                     _history_to_hourly_means(history.get(grid_import_id, [])),
-                    grid_factors[grid_import_id],
+                    history_faktoren[grid_import_id],
                 )
                 keys = set(pos_h) | set(neg_h)
                 grid_by_ts = {
@@ -805,7 +810,7 @@ async def async_backfill_hausverbrauch_stats(
             else:
                 grid_h = _apply_factor(
                     _history_to_hourly_means(history.get(grid_single_id, [])),
-                    grid_factors[grid_single_id],
+                    history_faktoren[grid_single_id],
                 )
                 grid_by_ts = {ts: v * grid_sign for ts, v in grid_h.items()}
 

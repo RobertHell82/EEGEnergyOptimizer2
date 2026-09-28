@@ -732,21 +732,36 @@ from custom_components.eeg_energy_optimizer.power_readings import (  # noqa: E40
 )
 
 
-def test_backfill_faktor_ohne_zustand_nimmt_die_statistik_einheit():
-    """Ansfelden, 06.09.2026 19 Uhr: der zweite Kostal war beim Start noch
-    nicht geladen. Seine 41,9 W wurden als kW gerechnet → 45,8 kW Haus."""
-    assert backfill_faktor_kw("W", None) == 0.001
-
-
-def test_backfill_faktor_statistik_gewinnt_gegen_den_zustand():
-    """Die Statistik liegt in der Einheit, in der sie aufgezeichnet wurde."""
-    assert backfill_faktor_kw("W", "kW") == 0.001
+def test_backfill_faktor_leistungseinheit_rechnet_home_assistant_um():
+    """Der Backfill fordert kW an; bei W/kW/MW in den Metadaten liefert HA
+    schon kW. Traun, 28.09.2026: Statistik in W, Anzeige in kW — mit dem
+    Faktor 0,001 obendrauf wurden 4,2 kW Hausverbrauch zu 0,004 kW.
+    Ansfelden (W ohne geladenen Zustand) ist damit ebenso richtig."""
+    assert backfill_faktor_kw("W", "kW") == 1.0
+    assert backfill_faktor_kw("W", None) == 1.0
     assert backfill_faktor_kw("kW", "W") == 1.0
+    assert backfill_faktor_kw("MW", None) == 1.0
+
+
+def test_backfill_faktor_unbekannte_statistik_einheit_rechnen_wir_selbst():
+    """Eine Einheit, die HA nicht als Leistung kennt, rechnet HA nicht um."""
+    assert backfill_faktor_kw(" watt ", None) == 0.001
+    assert backfill_faktor_kw("kilowatt", None) == 1.0
 
 
 def test_backfill_faktor_ohne_metadaten_nimmt_den_zustand():
     assert backfill_faktor_kw(None, "W") == 0.001
     assert backfill_faktor_kw(None, "kW") == 1.0
+
+
+def test_history_faktor_nimmt_die_zustandseinheit():
+    """Die Zustandshistorie steht in der Einheit des Zustands."""
+    from custom_components.eeg_energy_optimizer.power_readings import history_faktor_kw
+
+    assert history_faktor_kw("kW", "W") == 1.0
+    assert history_faktor_kw("W", "kW") == 0.001
+    assert history_faktor_kw(None, "W") == 0.001
+    assert history_faktor_kw(None, None) == 1.0
 
 
 def test_backfill_faktor_unbekannt_raet_nicht():
@@ -758,4 +773,3 @@ def test_backfill_faktor_leere_einheit_ist_kw():
     """Wie read_power_kw: ohne Einheit gilt kW."""
     assert backfill_faktor_kw("", None) == 1.0
     assert backfill_faktor_kw(None, "") == 1.0
-    assert backfill_faktor_kw(" watt ", None) == 0.001
