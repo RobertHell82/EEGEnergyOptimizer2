@@ -10,6 +10,13 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
+## [2.1.22] - 2026-09-28
+
+### Behoben
+
+- **Der Optimierungsgewinn rechnet dem Standardbetrieb keine Wärme mehr gut, die der Puffer nicht aufnehmen kann.** Die Referenz „ohne“ gab dem Heizstab alles, was sie sonst abregeln müsste, ohne auf die Maximaltemperatur zu achten. In Grünbach stand der Puffer am 28.09. bei 68,5 von 75 °C, also 8,3 kWh Platz; die Referenz rechnete für den Folgetag 18,5 kWh Wärme. Der Vorteil der Optimierung stand dadurch bei −0,23 €, fast ausschließlich wegen der Wärme. Jetzt gilt für die Referenz dieselbe Schranke wie für den Fahrplan, das Pufferbudget je Kalendertag. Auch die Sensoren „Ersparnis durch Optimierung“ begrenzen die Referenz auf die gemessene Wärme des Tages plus den Platz, der im Puffer noch frei ist.
+- **Der Optimierungsgewinn wird bis Mitternacht gezählt.** Bisher endete das Fenster genau 24 Stunden nach dem Planlauf, etwa morgen um 11:45. Wer am nächsten Tag früher heizte, bekam die Wärme ins Fenster, wer später heizte, nicht: Der Fahrplan leert die Batterie nachts, lädt sie morgens und heizt erst am Nachmittag, der Standardbetrieb mit voller Batterie heizt schon am Vormittag. Jetzt zählen mindestens 24 Stunden und dann bis zur nächsten Mitternacht, mittags also rund 36 Stunden. So liegt jeder Tag mit seinem Pufferbudget auf beiden Seiten ganz im Fenster.
+
 ## [2.1.21] - 2026-09-28
 
 ### Geändert
