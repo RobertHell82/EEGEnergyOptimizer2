@@ -395,6 +395,13 @@ window.addEventListener("error", (e) => {
 // Format a number with German decimal comma instead of dot.
 const fmtDe = (value, decimals = 1) => Number(value).toFixed(decimals).replace(".", ",");
 
+// Für innerHTML außerhalb der Klasse — dieselbe Regel wie _escapeHtml.
+const escHtml = (text) => String(text ?? "").replace(/[&<>"']/g, ch => (
+  { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]
+));
+// Links aus Backend-Antworten: nur http(s), sonst kein Link (javascript: & Co.).
+const sichereUrl = (url) => (/^https?:\/\//i.test(String(url ?? "")) ? escHtml(url) : null);
+
 // Preise werden in Cent eingegeben, die Konfiguration haelt Euro je kWh.
 // Die Umrechnung sitzt an genau zwei Stellen: hier beim Anzeigen und im
 // Eingabepfad an `data-unit="ct"`. Gerundet wird, weil 0.082 * 100 in
@@ -576,11 +583,12 @@ const netzgebuehrDetails = (d, netze) => {
 
   let herkunft = quellen.length
     ? `<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--divider-color)">
-         ${quellen.map((q) => `<div>${q}</div>`).join("")}
+         ${quellen.map((q) => `<div>${escHtml(q)}</div>`).join("")}
        </div>`
     : "";
-  if (!netz.manuell && netze?.url) {
-    herkunft += `<div style="margin-top:4px"><a href="${netze.url}" target="_blank" rel="noopener">Verordnung im RIS öffnen</a></div>`;
+  const risUrl = netz.manuell ? null : sichereUrl(netze?.url);
+  if (risUrl) {
+    herkunft += `<div style="margin-top:4px"><a href="${risUrl}" target="_blank" rel="noopener">Verordnung im RIS öffnen</a></div>`;
   }
 
   const hinweis = netz.manuell
@@ -4041,7 +4049,7 @@ class EegOptimizerPanel extends HTMLElement {
     if (!b || !b.verfuegbar) return "";
     const pv = b.pv_ersparnis || {};
     const heute = b.heute || {};
-    const waehrung = b.waehrung === "EUR" ? "€" : (b.waehrung || "€");
+    const waehrung = b.waehrung === "EUR" ? "€" : this._escapeHtml(b.waehrung || "€");
     const eur = (v) =>
       v == null ? "—" : `${v < 0 ? "−" : ""}${fmtDe(Math.abs(Number(v)), 2)}&nbsp;${waehrung}`;
 
@@ -4940,7 +4948,8 @@ class EegOptimizerPanel extends HTMLElement {
       const unit = stateObj.attributes?.unit_of_measurement || "";
       const friendly = stateObj.attributes?.friendly_name || "";
       if (stateVal !== "unavailable" && stateVal !== "unknown") {
-        valuePreview = `<div class="ep-value-preview" data-preview-for="${field}">Aktuell: <strong>${stateVal}${unit ? " " + unit : ""}</strong>${friendly ? ` — ${friendly}` : ""}</div>`;
+        // Zustand, Einheit und Name stammen aus beliebigen HA-Entitäten — escapen.
+        valuePreview = `<div class="ep-value-preview" data-preview-for="${field}">Aktuell: <strong>${this._escapeHtml(stateVal)}${unit ? " " + this._escapeHtml(unit) : ""}</strong>${friendly ? ` — ${this._escapeHtml(friendly)}` : ""}</div>`;
       } else {
         valuePreview = `<div class="ep-value-preview unavailable" data-preview-for="${field}">Sensor nicht verfügbar</div>`;
       }
@@ -4950,7 +4959,7 @@ class EegOptimizerPanel extends HTMLElement {
         <label>${label}</label>
         <div class="ep-container">
           <input type="text" class="entity-input" data-field="${field}" data-domain="${domain || ""}"
-                 value="${value || ""}" placeholder="Tippen zum Suchen..." autocomplete="off">
+                 value="${this._escapeHtml(value || "")}" placeholder="Tippen zum Suchen..." autocomplete="off">
           <svg class="ep-chevron" viewBox="0 0 24 24" width="20" height="20">
             <path fill="currentColor" d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6z"/>
           </svg>
@@ -4990,9 +4999,9 @@ class EegOptimizerPanel extends HTMLElement {
           return;
         }
         dropdown.innerHTML = matches
-          .map((e) => `<div class="ep-option" data-value="${e.id}">
-            <span class="ep-name">${e.name || e.id}</span>
-            <span class="ep-id">${e.id}</span>
+          .map((e) => `<div class="ep-option" data-value="${this._escapeHtml(e.id)}">
+            <span class="ep-name">${this._escapeHtml(e.name || e.id)}</span>
+            <span class="ep-id">${this._escapeHtml(e.id)}</span>
           </div>`)
           .join("");
         dropdown.style.display = "block";
@@ -5014,17 +5023,18 @@ class EegOptimizerPanel extends HTMLElement {
           const unit = stateObj.attributes?.unit_of_measurement || "";
           const friendly = stateObj.attributes?.friendly_name || "";
           const unavail = sv === "unavailable" || sv === "unknown";
+          const text = unavail ? "Sensor nicht verfügbar" : `Aktuell: <strong>${this._escapeHtml(sv)}${unit ? " " + this._escapeHtml(unit) : ""}</strong>${friendly ? ` — ${this._escapeHtml(friendly)}` : ""}`;
           if (!preview) {
             // Insert preview after ep-container
             const container = input.closest(".ep-container");
             const div = document.createElement("div");
             div.className = "ep-value-preview" + (unavail ? " unavailable" : "");
             div.setAttribute("data-preview-for", field);
-            div.innerHTML = unavail ? "Sensor nicht verfügbar" : `Aktuell: <strong>${sv}${unit ? " " + unit : ""}</strong>${friendly ? ` — ${friendly}` : ""}`;
+            div.innerHTML = text;
             container.parentNode.insertBefore(div, container.nextSibling);
           } else {
             preview.className = "ep-value-preview" + (unavail ? " unavailable" : "");
-            preview.innerHTML = unavail ? "Sensor nicht verfügbar" : `Aktuell: <strong>${sv}${unit ? " " + unit : ""}</strong>${friendly ? ` — ${friendly}` : ""}`;
+            preview.innerHTML = text;
           }
         } else if (preview) {
           preview.remove();
@@ -5481,7 +5491,7 @@ class EegOptimizerPanel extends HTMLElement {
         </p>
         <div style="margin-bottom:12px">
           <label style="display:block;font-weight:500;margin-bottom:4px">Modbus IP-Adresse *</label>
-          <input type="text" value="${this._wizardData.fronius_modbus_host || ""}"
+          <input type="text" value="${this._escapeHtml(this._wizardData.fronius_modbus_host || "")}"
                  data-field="fronius_modbus_host" placeholder="z.B. 192.168.1.100"
                  style="width:100%;padding:8px;border:1px solid var(--divider-color);border-radius:4px;background:var(--card-background-color);color:var(--primary-text-color)">
           <div class="help-text">Die IP-Adresse des Fronius Wechselrichters (gleiche wie im Fronius Web-Interface).</div>
@@ -5503,7 +5513,7 @@ class EegOptimizerPanel extends HTMLElement {
         </p>
         <div style="margin-bottom:12px">
           <label style="display:block;font-weight:500;margin-bottom:4px">Modbus IP-Adresse *</label>
-          <input type="text" value="${this._wizardData.kostal_modbus_host || ""}"
+          <input type="text" value="${this._escapeHtml(this._wizardData.kostal_modbus_host || "")}"
                  data-field="kostal_modbus_host" placeholder="z.B. 192.168.1.100"
                  style="width:100%;padding:8px;border:1px solid var(--divider-color);border-radius:4px;background:var(--card-background-color);color:var(--primary-text-color)">
           <div class="help-text">Die IP-Adresse des Kostal Wechselrichters (gleiche wie im Kostal-Webserver).</div>
@@ -5517,10 +5527,10 @@ class EegOptimizerPanel extends HTMLElement {
         </div>
         ${this._kostalProbeResult ? (this._kostalProbeResult.battery_control_external ? `
         <div style="padding:8px 12px;border-radius:4px;background:rgba(76,175,80,.12);color:var(--primary-text-color);font-size:13px">
-          &#10003; ${this._kostalProbeResult.product || "Kostal"} erkannt &mdash; externe Batteriesteuerung (Modbus) ist aktiv.
+          &#10003; ${this._escapeHtml(this._kostalProbeResult.product || "Kostal")} erkannt &mdash; externe Batteriesteuerung (Modbus) ist aktiv.
         </div>` : `
         <div style="padding:8px 12px;border-radius:4px;background:rgba(255,152,0,.15);color:var(--primary-text-color);font-size:13px">
-          &#9888; ${this._kostalProbeResult.product || "Kostal"} erkannt, aber die Batteriesteuerung steht noch auf <strong>Intern</strong>.
+          &#9888; ${this._escapeHtml(this._kostalProbeResult.product || "Kostal")} erkannt, aber die Batteriesteuerung steht noch auf <strong>Intern</strong>.
           Die Umstellung auf &bdquo;Extern &uuml;ber Protokoll (Modbus TCP)&ldquo; erfordert den Installateur (siehe Anleitung, Schritt 3).
           Du kannst die Einrichtung trotzdem abschlie&szlig;en &mdash; die Batterie-Steuerung funktioniert erst nach der Umstellung.
         </div>`) : ""}
@@ -5535,7 +5545,7 @@ class EegOptimizerPanel extends HTMLElement {
         </p>
         <div style="margin-bottom:12px">
           <label style="display:block;font-weight:500;margin-bottom:4px">Modbus IP-Adresse *</label>
-          <input type="text" value="${this._wizardData.sma_modbus_host || ""}"
+          <input type="text" value="${this._escapeHtml(this._wizardData.sma_modbus_host || "")}"
                  data-field="sma_modbus_host" placeholder="z.B. 192.168.1.100"
                  style="width:100%;padding:8px;border:1px solid var(--divider-color);border-radius:4px;background:var(--card-background-color);color:var(--primary-text-color)">
           <div class="help-text">Die IP-Adresse des SMA Wechselrichters (gleiche wie im SMA-Webinterface).</div>
@@ -5549,10 +5559,10 @@ class EegOptimizerPanel extends HTMLElement {
         </div>
         ${this._smaProbeResult ? (this._smaProbeResult.opmod_register_ok ? `
         <div style="padding:8px 12px;border-radius:4px;background:rgba(76,175,80,.12);color:var(--primary-text-color);font-size:13px">
-          &#10003; SMA-Ger&auml;t erkannt (Seriennr. ${this._smaProbeResult.serial}${this._smaProbeResult.soc != null ? `, Batterie-SOC ${this._smaProbeResult.soc}%` : ""}) &mdash; Steuerregister (CmpBMS) verf&uuml;gbar.
+          &#10003; SMA-Ger&auml;t erkannt (Seriennr. ${this._escapeHtml(this._smaProbeResult.serial)}${this._smaProbeResult.soc != null ? `, Batterie-SOC ${this._escapeHtml(this._smaProbeResult.soc)}%` : ""}) &mdash; Steuerregister (CmpBMS) verf&uuml;gbar.
         </div>` : `
         <div style="padding:8px 12px;border-radius:4px;background:rgba(255,152,0,.15);color:var(--primary-text-color);font-size:13px">
-          &#9888; SMA-Ger&auml;t erkannt (Seriennr. ${this._smaProbeResult.serial}), aber das Steuerregister 40236 (CmpBMS.OpMod) ist nicht lesbar.
+          &#9888; SMA-Ger&auml;t erkannt (Seriennr. ${this._escapeHtml(this._smaProbeResult.serial)}), aber das Steuerregister 40236 (CmpBMS.OpMod) ist nicht lesbar.
           Manche Firmwares nutzen eine abweichende Adresse &mdash; bitte melde dich beim Support, bevor du die Steuerung aktivierst.
         </div>`) : ""}
       </div>` : ""}
@@ -5733,8 +5743,8 @@ class EegOptimizerPanel extends HTMLElement {
       const ok = e.enabled === true;
       const text = e.enabled === null || e.enabled === undefined ? "nicht vorhanden" : ok ? "aktiv" : "deaktiviert";
       const farbe = ok ? "var(--success-color, #4caf50)" : "var(--warning-color, #ffa600)";
-      const id = e.entity_id ? ` <code style="font-size:11px;opacity:.8">${e.entity_id}</code>` : "";
-      return `<li><span style="color:${farbe};font-weight:500">${text}</span> — ${e.name}${id}</li>`;
+      const id = e.entity_id ? ` <code style="font-size:11px;opacity:.8">${this._escapeHtml(e.entity_id)}</code>` : "";
+      return `<li><span style="color:${farbe};font-weight:500">${text}</span> — ${this._escapeHtml(e.name ?? "")}${id}</li>`;
     }).join("");
     const rand = fehlend ? "var(--warning-color, #ffa600)" : "var(--success-color, #4caf50)";
     const hinweis = fehlend
@@ -5754,9 +5764,9 @@ class EegOptimizerPanel extends HTMLElement {
     const d = this._wizardData;
     const line = (label, primary, second) => {
       const sec = second
-        ? `<span style="color:var(--success-color,#43a047)">+ ${second}</span>`
+        ? `<span style="color:var(--success-color,#43a047)">+ ${this._escapeHtml(second)}</span>`
         : `<span style="color:var(--warning-color,#ffa600)">(zweiter nicht erkannt)</span>`;
-      return `<li style="margin:2px 0"><strong>${label}:</strong> ${primary || "—"} ${primary ? sec : ""}</li>`;
+      return `<li style="margin:2px 0"><strong>${label}:</strong> ${this._escapeHtml(primary || "—")} ${primary ? sec : ""}</li>`;
     };
     const allOk = d.pv_power_sensor_2 && d.battery_power_sensor_2;
     const col = allOk ? "var(--primary-color)" : "var(--warning-color,#ffa600)";
@@ -5819,7 +5829,7 @@ class EegOptimizerPanel extends HTMLElement {
       const caps = this._wizardData.huawei_battery_capacities || {};
       const fields = huaweiDevs.map(dev => `
         <div class="field-group" style="margin-bottom:10px">
-          <label>Kapazität „${dev.name}" (kWh) *</label>
+          <label>Kapazität „${this._escapeHtml(dev.name ?? "")}" (kWh) *</label>
           <input type="number" data-field="huawei_cap_${dev.id}"
                  value="${caps[dev.id] || ""}" min="1" max="100" step="0.5" placeholder="z.B. 10">
         </div>`).join("");
@@ -5958,7 +5968,7 @@ class EegOptimizerPanel extends HTMLElement {
       ? `<div class="help-text" style="margin-top:8px;padding:10px 12px;background:var(--success-color,#4caf50)18;border-left:3px solid var(--success-color,#4caf50);border-radius:4px">
            <strong>Verbindung steht.</strong><br>
            ${res.verbunden
-             ? `Fahrzeug angesteckt — ${res.session_text || "Zustand unbekannt"}${res.soc_pct != null ? `, Ladestand ${fmtDe(res.soc_pct, 0)} %` : ""}${res.kapazitaet_kwh ? `, Kapazität ${fmtDe(res.kapazitaet_kwh, 1)} kWh` : ""}.`
+             ? `Fahrzeug angesteckt — ${this._escapeHtml(res.session_text || "Zustand unbekannt")}${res.soc_pct != null ? `, Ladestand ${fmtDe(res.soc_pct, 0)} %` : ""}${res.kapazitaet_kwh ? `, Kapazität ${fmtDe(res.kapazitaet_kwh, 1)} kWh` : ""}.`
              : "Kein Fahrzeug angesteckt — die Wallbox antwortet trotzdem."}
            ${res.protokoll ? `<br>Ladeprotokoll: ${this._escapeHtml(res.protokoll)}` : ""}
            ${res.control_mode_text ? `<br>Steuerbarkeit laut Wallbox: ${this._escapeHtml(res.control_mode_text)}` : ""}
@@ -6086,7 +6096,7 @@ class EegOptimizerPanel extends HTMLElement {
           ? `, Daten bis ${new Date(sch.solar_bis).toLocaleString("de-AT", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}`
           : "";
         const korridor = sch.korridor_von != null
-          ? `, Korridor ${fmtDe(sch.korridor_von * 100, 3)}–${fmtDe(sch.korridor_bis * 100, 3)} ct (${sch.anker_quelle})`
+          ? `, Korridor ${fmtDe(sch.korridor_von * 100, 3)}–${fmtDe(sch.korridor_bis * 100, 3)} ct (${this._escapeHtml(sch.anker_quelle ?? "")})`
           : ", ohne Korridor — Quartalspreis der E-Control nicht lesbar";
         schaetzZeile = `<strong>${fmtDe(sch.preis * 100, 3)} ct/kWh</strong> für ${monate[sch.monat] || "den laufenden Monat"}`
           + ` — aus ${sch.slots} Viertelstunden${stand}${korridor}`
@@ -6644,7 +6654,7 @@ class EegOptimizerPanel extends HTMLElement {
         ? `<div class="help-text">Gemeinschaften werden geladen…</div>`
         : `<select data-field="${prefix}peakshare_community${s}">
              <option value="" ${name ? "" : "selected"}>${nr === 2 ? "— keine —" : "— bitte wählen —"}</option>
-             ${namen.map(c => `<option value="${c}" ${c === name ? "selected" : ""}>${c}</option>`).join("")}
+             ${namen.map(c => `<option value="${this._escapeHtml(c)}" ${c === name ? "selected" : ""}>${this._escapeHtml(c)}</option>`).join("")}
            </select>`;
 
       let wirkung;
@@ -7331,7 +7341,7 @@ class EegOptimizerPanel extends HTMLElement {
       return `${vz(a)}${fmtDe(Math.abs(a), 1)}${p != null ? ` (${vz(p)}${fmtDe(Math.abs(p), 0)} %)` : ""}`;
     };
     const auswahl = `<select data-vergleich-tag style="max-width:180px">${tage.slice().reverse().map((d) =>
-      `<option value="${d}" ${d === tag.datum ? "selected" : ""}>${datumKurz(d)}</option>`).join("")}</select>`;
+      `<option value="${this._escapeHtml(d)}" ${d === tag.datum ? "selected" : ""}>${datumKurz(d)}</option>`).join("")}</select>`;
     const qf = st.quellen?.fremd;
     const qe = st.quellen?.eigen;
     const festgehalten = tag.festgehalten ? new Date(tag.festgehalten) : null;
@@ -7598,8 +7608,10 @@ class EegOptimizerPanel extends HTMLElement {
     const forecastName = FORECAST_LABELS[d.forecast_source] || "Forecast.Solar";
     const gesteuert = SCHEDULE_CONTROL_INVERTERS.includes(d.inverter_type);
 
+    // Reiner Text: Sensornamen, Flächen- und Gemeinschaftsnamen (PeakShare-API)
+    // landen hier — row() escapt beides, die Aufrufer übergeben kein HTML.
     const row = (label, value) =>
-      `<div class="summary-row"><span class="label">${label}</span><span class="value">${value}</span></div>`;
+      `<div class="summary-row"><span class="label">${this._escapeHtml(label)}</span><span class="value">${this._escapeHtml(value)}</span></div>`;
     const preis = (v, fallback) => `${fmtDe(ctAus(v ?? fallback), 2)} ct/kWh`;
     // aWATTar SUNNY: der Wert der gewählten Vertragsvariante, falls geholt.
     const sunnyWert = this._sunnyStatus?.[d.awattar_sunny_vertrag === "alt" ? "alt" : "neu"];
@@ -7651,7 +7663,7 @@ class EegOptimizerPanel extends HTMLElement {
         ${row("Quelle", forecastName)}
         ${d.forecast_source === "eigen"
           ? (d.pv_flaechen || []).map((f, i) => row(
-              this._escapeHtml(f.name || `Fläche ${i + 1}`),
+              f.name || `Fläche ${i + 1}`,
               `${fmtDe(Number(f.kwp) || 0, 2)} kWp, ${fmtDe(Number(f.neigung) || 0, 0)}° Neigung, Azimut ${fmtDe(Number(f.azimut) || 0, 0)}° (${himmelsrichtung(f.azimut)})`
             )).join("")
             + row("Systemverluste", fmtDe(Number(d.pv_verluste_pct ?? 14), 0) + " %")
@@ -7985,7 +7997,7 @@ class EegOptimizerPanel extends HTMLElement {
     } else if (registered && s.registered_at) {
       const d = new Date(s.registered_at);
       const dStr = isNaN(d.getTime()) ? s.registered_at : d.toLocaleDateString("de-DE");
-      statusText = `Registriert als anonyme Anlage <code title="${fullId}">${shortId}</code> seit ${dStr}`;
+      statusText = `Registriert als anonyme Anlage <code title="${this._escapeHtml(fullId)}">${this._escapeHtml(shortId)}</code> seit ${this._escapeHtml(dStr)}`;
     } else if (hasIdentity && !enabled) {
       statusText = "Pausiert — Identität bleibt gespeichert";
     } else if (enabled && !registered) {
@@ -7995,7 +8007,7 @@ class EegOptimizerPanel extends HTMLElement {
     }
 
     const errorRow = this._telemetryError
-      ? `<div class="help-text" style="color:var(--error-color,#d33);margin-bottom:12px">${this._telemetryError}</div>`
+      ? `<div class="help-text" style="color:var(--error-color,#d33);margin-bottom:12px">${this._escapeHtml(this._telemetryError)}</div>`
       : "";
 
     const showDeleteBtn = registered || hasIdentity;
@@ -8772,11 +8784,11 @@ class EegOptimizerPanel extends HTMLElement {
       const nachkomma = (isW || einheit.toLowerCase() === "kw") ? 2 : 1;
       const istText = isNaN(raw)
         ? this._escapeHtml(String(r.value ?? "?"))
-        : `${fmtDe(isW ? istKw : raw, nachkomma)} ${einheit}`;
+        : `${fmtDe(isW ? istKw : raw, nachkomma)} ${this._escapeHtml(einheit)}`;
       let soll = "—";
       let abweichung = false;
       if (r.written != null) {
-        soll = `${fmtDe(r.written, 2)} ${r.written_unit || ""}`;
+        soll = `${fmtDe(r.written, 2)} ${this._escapeHtml(r.written_unit || "")}`;
         abweichung = istKw != null && Math.abs(istKw - r.written) > 0.25;
       } else if (r.role === "charge_limit" && r.max != null && istKw != null) {
         // Nichts geschrieben = Standardwert erwartet (Maximum der Entität).
@@ -8884,7 +8896,7 @@ class EegOptimizerPanel extends HTMLElement {
       // Details: neue Einträge tragen den Executor-Status; alte Einträge der
       // Zustands-Heuristik ihre historischen Felder (best effort).
       const details = [];
-      if (e.soc != null) details.push(`SOC ${e.soc}%`);
+      if (e.soc != null) details.push(`SOC ${this._escapeHtml(e.soc)}%`);
       if (e.status && e.status !== e.zustand) details.push(this._escapeHtml(e.status));
       if (e.plan && e.plan.kind === "discharge") details.push(`Plan: Einspeisung ${fmtDe(e.plan.power_kw ?? 0, 1)} kW`);
       else if (e.plan && e.plan.kind === "charge_limit") details.push(`Plan: Ladelimit ${fmtDe(e.plan.power_kw ?? 0, 1)} kW`);
@@ -9388,7 +9400,7 @@ class EegOptimizerPanel extends HTMLElement {
         </div>`;
       } else {
         resultBanner = `<div class="inverter-test-result error" style="margin-top:8px">
-          <ha-icon icon="mdi:alert-circle"></ha-icon> ${r.error || "Neuberechnung fehlgeschlagen."}
+          <ha-icon icon="mdi:alert-circle"></ha-icon> ${this._escapeHtml(r.error || "Neuberechnung fehlgeschlagen.")}
         </div>`;
       }
     }
@@ -9903,7 +9915,7 @@ class EegOptimizerPanel extends HTMLElement {
                 ${heizAktiv ? `<div class="hlv hlv-clickable" data-action="show-entity" data-entity="${heizEntity}"><span class="hlv-label">Heizstab</span><span class="hlv-val ${heizKw == null ? "" : "val-heiz"}">${heizKw == null ? "\u2014" : `${fmtDe(heizKw, 2)} kW`}${heizTempC == null ? "" : ` <small>(${fmtDe(heizTempC, 0)} °C)</small>`}</span></div>` : ""}
               </div>`}
           <div style="margin-top:12px">
-            <span class="status-indicator ${zustandBadgeClass}" style="display:inline-block">${zustandSymbol}${zustand}</span>
+            <span class="status-indicator ${zustandBadgeClass}" style="display:inline-block">${zustandSymbol}${this._escapeHtml(zustand)}</span>
             ${this._renderSteuerungZeilen(decisionState)}
             ${this._renderAutoZeile()}
             ${this._renderSpitzeZeile()}
@@ -10113,7 +10125,7 @@ class EegOptimizerPanel extends HTMLElement {
           <div style="padding:24px;font-family:sans-serif">
             <h3 style="color:#db4437;margin-top:0">Dashboard-Fehler</h3>
             <p>Ein unerwarteter Fehler ist aufgetreten.</p>
-            <pre style="font-size:12px;overflow:auto;background:#f5f5f5;padding:12px;border-radius:4px">${outerErr.message}\n${outerErr.stack}</pre>
+            <pre style="font-size:12px;overflow:auto;background:#f5f5f5;padding:12px;border-radius:4px">${escHtml(outerErr?.message)}\n${escHtml(outerErr?.stack)}</pre>
             <button onclick="location.reload()" style="margin-top:12px;padding:8px 16px;cursor:pointer">Seite neu laden</button>
           </div>`;
       } catch (_) { /* truly fatal */ }
@@ -10193,7 +10205,7 @@ class EegOptimizerPanel extends HTMLElement {
           <div class="card" style="border-left:4px solid var(--error-color, #db4437); margin:16px">
             <h3 style="color:var(--error-color, #db4437); margin-top:0">Render-Fehler</h3>
             <p style="color:var(--secondary-text-color)">Das Dashboard konnte nicht gerendert werden. Details:</p>
-            <pre style="font-size:12px; overflow:auto; background:var(--secondary-background-color, #f5f5f5); padding:12px; border-radius:4px">${err.message}\n${err.stack}</pre>
+            <pre style="font-size:12px; overflow:auto; background:var(--secondary-background-color, #f5f5f5); padding:12px; border-radius:4px">${escHtml(err?.message)}\n${escHtml(err?.stack)}</pre>
           </div>
         </div>`;
     }
@@ -10762,7 +10774,7 @@ class EegOptimizerPanel extends HTMLElement {
       ${this._toast ? `
         <div class="toast toast-${this._toast.type}" role="alert">
           <ha-icon icon="mdi:${this._toast.type === "error" ? "alert-circle" : this._toast.type === "success" ? "check-circle" : "information"}"></ha-icon>
-          <span>${this._toast.msg}</span>
+          <span>${this._escapeHtml(this._toast.msg)}</span>
           <button class="toast-close" data-action="dismiss-toast" title="Schlie\u00dfen">\u00d7</button>
         </div>
       ` : ""}
