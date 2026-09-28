@@ -5635,9 +5635,9 @@ class EegOptimizerPanel extends HTMLElement {
         </div>
         <div class="card forecast-option ${eigenSelected ? "selected" : ""}" style="padding:16px;cursor:pointer;text-align:center;display:flex;flex-direction:column;align-items:center" data-action="select-forecast" data-value="eigen">
           <div style="height:60px;display:flex;align-items:center;justify-content:center;margin-bottom:8px">
-            <ha-icon icon="mdi:calculator-variant-outline" style="--mdc-icon-size:48px;color:var(--primary-color)"></ha-icon>
+            <img src="/eeg_optimizer_panel/logo.png" alt="Verein Energiewende Ansfelden" style="max-width:120px;max-height:60px;height:auto">
           </div>
-          <h3 style="margin:0 0 8px">Eigene Berechnung</h3>
+          <h3 style="margin:0 0 8px">Eigene Berechnung<span style="display:inline-block;margin-left:6px;padding:1px 6px;border-radius:8px;font-size:11px;font-weight:600;vertical-align:middle;letter-spacing:0.03em;color:#fff;background:var(--warning-color,#ff9800)">BETA</span></h3>
           <span class="status-badge installed">Keine Zusatz-Integration</span>
           <p style="font-size:13px;color:var(--secondary-text-color);margin:8px 0">Wetter von Open-Meteo, Anlage hier eintragen. Kein Konto, kein Schl\u00fcssel, mehrere Ausrichtungen.</p>
           <button class="btn-secondary" data-action="show-dialog" data-dialog="prognose_eigen">Anleitung</button>
@@ -7251,7 +7251,7 @@ class EegOptimizerPanel extends HTMLElement {
         <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px">
           ${karte("solcast_solar", logo("solcast_solar", "Solcast"), "Solcast Solar")}
           ${karte("forecast_solar", logo("forecast_solar", "Forecast.Solar"), "Forecast.Solar")}
-          ${karte("eigen", `<ha-icon icon="mdi:calculator-variant-outline" style="--mdc-icon-size:32px;color:var(--primary-color)"></ha-icon>`, "Eigene Berechnung")}
+          ${karte("eigen", `<img src="/eeg_optimizer_panel/logo.png" alt="Verein Energiewende Ansfelden" style="max-width:80px;max-height:36px;height:auto">`, `Eigene Berechnung<span style="display:inline-block;margin-left:6px;padding:1px 6px;border-radius:8px;font-size:11px;font-weight:600;vertical-align:middle;letter-spacing:0.03em;color:#fff;background:var(--warning-color,#ff9800)">BETA</span>`)}
         </div>
         <div class="help-text">Aus dieser Quelle rechnet der Fahrplan. Ein Wechsel lädt die Integration nach dem Speichern neu.</div>
       </div>
