@@ -722,7 +722,11 @@ holds the expert-mode switch, a read-only sensor overview (with the
 restart-wizard button — sensor mappings are wizard-only by design), telemetry
 opt-in, schedule archive, and (expert) balance card + profile lookback. In the
 settings, device-datasheet values (AC limit, PV peak, battery power limit) are
-expert-only; in the wizard they are always visible.
+expert-only; in the wizard they are always visible. The settings use the full content width
+(`.settings-wrap`, 900 px like the dashboard; it was 600 px and broke the
+surface table in two rows); the surface table wraps on its **own** width
+(`@container`, 6 → 3 → 2 columns), not the viewport's, because the HA
+sidebar takes 0–256 px.
 
 Dashboard notes: the status card ends with the capacity-charge line
 (`_renderSpitzeZeile`, below `_renderAutoZeile`): only "Bezugsspitze <Monat>"

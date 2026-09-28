@@ -6445,24 +6445,28 @@ class EegOptimizerPanel extends HTMLElement {
         <div class="help-text">Bindet eine Wallbox per Modbus TCP an, um das angesteckte Fahrzeug anzuzeigen — Ladestand, Ladeleistung und Zustand der Ladesitzung. Gesteuert wird die Wallbox dabei nicht: Die Optimierung liest nur mit.</div>
       </div>
       ${typ === "ambibox" ? `
-      <div class="field-group">
+      <div style="display:flex;gap:12px;flex-wrap:wrap">
+      <div class="field-group" style="flex:3;min-width:220px">
         <label>Adresse der Ambibox (IP oder Hostname) *</label>
         <input type="text" data-field="${prefix}ambibox_host" value="${this._escapeHtml(d.ambibox_host || "")}" placeholder="z.B. 192.168.1.70">
         <div class="help-text">Nur die Adresse, keine URL — also <code>192.168.1.70</code> statt <code>http://192.168.1.70/</code> (eine URL wird beim Speichern automatisch gekürzt). Modbus TCP muss in der Ambibox freigeschaltet sein.</div>
       </div>
-      <div class="field-group">
+      <div class="field-group" style="flex:1;min-width:110px">
         <label>Modbus-Port</label>
         <input type="number" data-field="${prefix}ambibox_port" value="${d.ambibox_port ?? 502}" min="1" max="65535" step="1">
       </div>
-      <div class="field-group">
+      </div>
+      <div style="display:flex;gap:12px;flex-wrap:wrap">
+      <div class="field-group" style="flex:1;min-width:220px">
         <label>Modbus-Unit-ID</label>
         <input type="number" data-field="${prefix}ambibox_unit_id" value="${d.ambibox_unit_id ?? 1}" min="0" max="247" step="1">
         <div class="help-text">Bleibt üblicherweise auf 1. Nur ändern, wenn die Ambibox hinter einem Gateway hängt, das die Geräte durchnummeriert.</div>
       </div>
-      <div class="field-group">
+      <div class="field-group" style="flex:1;min-width:220px">
         <label>Ladepunkt</label>
         <input type="number" data-field="${prefix}ambibox_connector" value="${d.ambibox_connector ?? 1}" min="1" max="10" step="1">
         <div class="help-text">Die Ambibox führt bis zu zehn Ladepunkte. Bei einer einzelnen Wallbox ist es der erste.</div>
+      </div>
       </div>
       <div class="field-group">
         <label>Vorzeichen des Leistungssollwerts</label>
@@ -7339,7 +7343,7 @@ class EegOptimizerPanel extends HTMLElement {
     const liste = Array.isArray(d.pv_flaechen) ? d.pv_flaechen : [];
     const esc = (v) => this._escapeHtml(String(v ?? ""));
     const zeilen = liste.map((f, i) => `
-      <div class="flaeche-zeile" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px;align-items:end;margin-bottom:8px;padding:8px;border:1px solid var(--divider-color);border-radius:6px">
+      <div class="flaeche-zeile">
         <div class="field-group" style="margin:0">
           <label>Name</label>
           <input type="text" data-flaeche="${i}" data-key="name" data-scope="${prefix}" value="${esc(f.name)}" placeholder="z.B. Dach Süd" maxlength="40" title="${FLAECHE_HILFE.name}">
@@ -7381,7 +7385,7 @@ class EegOptimizerPanel extends HTMLElement {
       <div class="help-text" style="margin-bottom:12px">
         <button class="btn-link btn-tap" data-action="show-dialog" data-dialog="prognose_eigen">Anleitung: Eigene Prognose</button>
       </div>
-      ${zeilen}
+      <div class="flaechen">${zeilen}</div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px">
         <button class="btn-secondary" data-action="add-flaeche" data-scope="${prefix}" ${liste.length >= 8 ? "disabled" : ""}>
           <ha-icon icon="mdi:plus" style="--mdc-icon-size:18px"></ha-icon> Fläche hinzufügen
@@ -7947,31 +7951,35 @@ class EegOptimizerPanel extends HTMLElement {
           <ha-icon icon="mdi:alert-outline" style="--mdc-icon-size:16px;vertical-align:middle"></ha-icon>
           <strong>Keine Einspeisegrenze konfiguriert.</strong> Der Heizstab nimmt nur, was über die Einspeisegrenze hinausgeht — ohne sie gilt die AC-Grenzleistung des Wechselrichters minus 0,5 kW als Grenze, und der Heizstab startet praktisch nie. Unter „Anlage" die Einspeisegrenze einschalten (z. B. 4 kW).
         </div>`}
-        <div class="field-group">
+        <div style="display:flex;gap:12px;flex-wrap:wrap">
+        <div class="field-group" style="flex:3;min-width:220px">
           <label>Adresse des Ohmpilot (IP oder Hostname) *</label>
           <input type="text" data-field="${prefix}heizstab_host" value="${this._escapeHtml(d.heizstab_host || "")}" placeholder="z.B. 192.168.1.58">
           <div class="help-text">Nur die Adresse, keine URL — also <code>192.168.1.58</code> statt <code>http://192.168.1.58/</code> (eine URL wird beim Speichern automatisch gekürzt). Der Ohmpilot hat einen eigenen Modbus-TCP-Server. Die Kopplung zum Gen24 im Wechselrichter lösen — sonst schreiben zwei Steuerungen auf dasselbe Register, und der Gen24 regelt die Einspeisung auf null.
             <button class="btn-link btn-tap" data-action="show-dialog" data-dialog="heizstab">Anleitung: Heizstab</button>
           </div>
         </div>
-        <div class="field-group">
+        <div class="field-group" style="flex:1;min-width:110px">
           <label>Modbus-Port</label>
           <input type="number" data-field="${prefix}heizstab_port" value="${d.heizstab_port ?? 502}" min="1" max="65535" step="1">
+        </div>
         </div>
         <div class="field-group">
           <label>Leistung des Heizstabs (kW) *</label>
           <input type="number" data-field="${prefix}heizstab_max_kw" value="${d.heizstab_max_kw ?? 6}" min="0.5" max="30" step="0.5">
           <div class="help-text">Nennleistung des angeschlossenen Heizstabs — 3 kW einphasig, 6 oder 9 kW dreiphasig. Mehr kann der Ohmpilot nicht vorgeben.</div>
         </div>
-        <div class="field-group">
+        <div style="display:flex;gap:12px;flex-wrap:wrap">
+        <div class="field-group" style="flex:1;min-width:220px">
           <label>Maximaltemperatur (°C) *</label>
           <input type="number" data-field="${prefix}heizstab_maxtemp_c" value="${d.heizstab_maxtemp_c ?? 80}" min="30" max="95" step="1">
           <div class="help-text">Bis zu dieser Wassertemperatur darf der Heizstab heizen; darüber bleibt er aus, weiter geht es 3 K darunter. Der Ohmpilot hat zusätzlich seinen eigenen Übertemperaturschutz.</div>
         </div>
-        <div class="field-group">
+        <div class="field-group" style="flex:1;min-width:220px">
           <label>Mindesttemperatur (°C)</label>
           <input type="number" data-field="${prefix}heizstab_mintemp_c" value="${d.heizstab_mintemp_c ?? 0}" min="0" max="90" step="1">
           <div class="help-text">Darunter hat der Heizstab Vorrang vor der Einspeisung: Er nimmt allen PV-Überschuss, auch den unterhalb der Einspeisegrenze, bis 5 K darüber — aber weder Netz- noch Batteriestrom. 0 = keine Mindesttemperatur; der Heizstab heizt dann nach Plan und nimmt darüber hinaus, was an der Einspeisegrenze abgeregelt würde.</div>
+        </div>
         </div>
         ${Number(d.heizstab_mintemp_c) > 0 ? `
         <div class="field-group">
@@ -7986,10 +7994,18 @@ class EegOptimizerPanel extends HTMLElement {
         <div class="help-text" style="margin:4px 0 12px;padding:10px 12px;background:var(--info-color,#2196f3)14;border-left:3px solid var(--info-color,#2196f3);border-radius:4px">
           <strong>Aufteilung des Überschusses:</strong> Geplante Wärme kommt aus dem Fahrplan — dort sind Batterie und Heizstab schon gemeinsam geplant. Für den <em>ungeplanten</em> Überschuss regeln beide gemeinsam, gewichtet nach Ladestand — unter 20 % bekommt die Batterie alles (ihre Energie trägt durch die Nacht, die Wärme nicht), ab 50 % ist es die Hälfte, dazwischen gleitend. Unter der Mindesttemperatur hat der Heizstab Vorrang mit voller Leistung.
         </div>
-        <div class="field-group">
+        <div style="display:flex;gap:12px;flex-wrap:wrap">
+        <div class="field-group" style="flex:1;min-width:220px">
           <label>Puffervolumen (Liter)</label>
           <input type="number" data-field="${prefix}heizstab_puffer_liter" value="${d.heizstab_puffer_liter || ""}" min="0" max="10000" step="10" placeholder="z.B. 600">
           <div class="help-text">Wie groß der Speicher ist, den der Heizstab erwärmt. Daraus rechnet der Optimierungsplan, wie viel Wärme noch hineinpasst — und hält abends die Batterie zurück, solange diese Wärme mehr wert ist als die Einspeisung. Bei Schichtspeichern nur den Teil angeben, der tatsächlich warm wird (oft weniger als das Typenschild sagt). Auf ein paar hundert Liter kommt es nicht an. Leer = der Heizstab bekommt wie bisher nur, was ohnehin abgeregelt würde.</div>
+        </div>
+        <div class="field-group" style="flex:1;min-width:220px">
+          <label>Wärmewert (ct/kWh)</label>
+          <input type="number" data-field="${prefix}heizstab_waermewert" data-unit="ct"
+                 value="${ctAus(d.heizstab_waermewert ?? 0)}" min="0" max="100" step="0.1">
+          <div class="help-text">Was eine Kilowattstunde Wärme ersetzt — der Preis der Energie, mit der du sonst heizen würdest (Gas, Wärmepumpe, Strom). Jede Kilowattstunde in den Puffer zählt mit diesem Wert — in „Ersparnis durch PV" wie im Optimierungsgewinn. 0 = Wärme wird gezählt, aber nicht bewertet.</div>
+        </div>
         </div>
         <div class="field-group">
           <label>Heizstab sperren, solange diese Entität eingeschaltet ist</label>
@@ -7998,12 +8014,6 @@ class EegOptimizerPanel extends HTMLElement {
             ${this._schalterEntitaeten().map(e => `<option value="${this._escapeHtml(e)}"></option>`).join("")}
           </datalist>
           <div class="help-text">Für eine zweite Wärmequelle — Holzvergaser, Kessel, Wärmepumpe —, die den Puffer selbst heizt. Solange die Entität „ein" meldet, bleibt der Heizstab aus, und der Plan rechnet nicht mit ihm. Ist sie nicht erreichbar, gilt der Heizstab als frei: Ein ausgefallener Sensor soll ihn nicht unbemerkt stilllegen.</div>
-        </div>
-        <div class="field-group">
-          <label>Wärmewert (ct/kWh)</label>
-          <input type="number" data-field="${prefix}heizstab_waermewert" data-unit="ct"
-                 value="${ctAus(d.heizstab_waermewert ?? 0)}" min="0" max="100" step="0.1">
-          <div class="help-text">Was eine Kilowattstunde Wärme ersetzt — der Preis der Energie, mit der du sonst heizen würdest (Gas, Wärmepumpe, Strom). Jede Kilowattstunde in den Puffer zählt mit diesem Wert — in „Ersparnis durch PV" wie im Optimierungsgewinn. 0 = Wärme wird gezählt, aber nicht bewertet.</div>
         </div>`,
     });
   }
@@ -8284,12 +8294,7 @@ class EegOptimizerPanel extends HTMLElement {
     // anderen schlank bleibt.
     const verbraucherTab = `
       <div class="card" style="margin-bottom:16px">
-        <h3 class="settings-karte-titel" style="margin:0 0 4px">Heizstab (nur Fronius Ohmpilot)${BETA_BADGE}</h3>
-        <div class="help-text" style="margin-bottom:16px">
-          Überschuss, den weder Batterie noch Netz aufnehmen, geht in den
-          Heizstab statt abgeregelt zu werden. Unterstützt wird derzeit
-          ausschließlich der Fronius Ohmpilot, direkt per Modbus TCP.
-        </div>
+        <h3 class="settings-karte-titel" style="margin:0 0 16px">Heizstab${BETA_BADGE}</h3>
         ${this._heizstabFields(d, "settings_")}
       </div>
       <div class="card" style="margin-bottom:16px">
@@ -8368,7 +8373,7 @@ class EegOptimizerPanel extends HTMLElement {
       : "";
 
     return `
-      <div style="max-width:600px;margin:0 auto">
+      <div class="settings-wrap">
         ${tabBar}
         <div class="help-text" style="margin:-4px 0 12px;text-align:right">${anleitungLink("einstellungen", "Einstellungen & Expertenmodus")}</div>
         ${tabContent}
@@ -10738,6 +10743,29 @@ class EegOptimizerPanel extends HTMLElement {
         .toolbar button:hover { background: rgba(255, 255, 255, 0.1); }
         .toolbar ha-icon { --mdc-icon-size: 24px; }
         .content { padding: 16px; max-width: 900px; margin: 0 auto; }
+        /* Die Einstellungen nutzen die volle Inhaltsbreite. Mit 600 px brach
+           die Flächentabelle der PV-Prognose in zwei Zeilen um, obwohl
+           daneben Platz war. Auf dem Telefon ist .content ohnehin schmaler. */
+        .settings-wrap { margin: 0 auto; }
+        /* Eine Fläche = eine Zeile: Name breiter, vier Zahlen, Entfernen.
+           Umgebrochen wird nach der Breite der Tabelle, nicht des Fensters —
+           die HA-Seitenleiste nimmt je nach Gerät 0 bis 256 px weg. Unter
+           760 px drei Spalten, unter 460 px zwei; der Knopf füllt die Lücke
+           neben „Grenze". */
+        .flaechen { container-type: inline-size; }
+        .flaeche-zeile {
+          display: grid;
+          grid-template-columns: minmax(0, 1.6fr) repeat(4, minmax(0, 1fr)) auto;
+          gap: 8px; align-items: end; margin-bottom: 8px; padding: 8px;
+          border: 1px solid var(--divider-color); border-radius: 6px;
+        }
+        .flaeche-zeile label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        @container (max-width: 760px) {
+          .flaeche-zeile { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+        }
+        @container (max-width: 460px) {
+          .flaeche-zeile { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        }
         .card {
           background: var(--card-background-color, #fff);
           border-radius: var(--ha-card-border-radius, 12px);
