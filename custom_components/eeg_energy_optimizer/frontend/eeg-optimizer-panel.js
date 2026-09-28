@@ -4481,9 +4481,11 @@ class EegOptimizerPanel extends HTMLElement {
           Gemeinschaftssatz gibt es nur für Energie, die die Gemeinschaft
           laut Bedarfsprognose auch aufnimmt — der Rest geht zum Basistarif
           bzw. Börsenpreis an den Restabnehmer.${eegZuteilung}
-          Gezählt werden die nächsten ${stunden}&nbsp;h — weiter draußen ist
-          der Geldwert eines Slots mehr Prognose als Plan. Das Diagramm zeigt
-          den ganzen gerechneten Fahrplan.
+          Gezählt werden die nächsten ${stunden}&nbsp;h: mindestens 24, dann bis
+          Mitternacht, damit jeder Tag ganz drin ist (der Puffer des Heizstabs
+          nimmt je Tag nur eine bestimmte Wärme auf). Weiter draußen ist der
+          Geldwert eines Slots mehr Prognose als Plan. Das Diagramm zeigt den
+          ganzen gerechneten Fahrplan.
           Endbestand: Restenergie über dem Mindest-Ladestand am Ende dieser
           ${stunden}&nbsp;h (mit Optimierung ${fmtDe(m.rest_kwh ?? 0, 1)}&nbsp;kWh,
           ohne ${fmtDe(o.rest_kwh ?? 0, 1)}&nbsp;kWh), gutgeschrieben mit dem

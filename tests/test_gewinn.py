@@ -599,6 +599,27 @@ def test_gewinn_fenster_verlaengert_kurze_plaene_nicht():
     assert sched._gewinn_slotzahl(_Kurz(), 0) == 0
 
 
+def test_gewinn_fenster_endet_an_mitternacht():
+    """Mindestens 24 h, dann bis zur nächsten Mitternacht — das Pufferbudget
+    gilt je Kalendertag und muss auf beiden Seiten ganz im Fenster liegen."""
+    class _Res:
+        time_res_s = 900
+
+    start = datetime(2026, 9, 28, 11, 45, tzinfo=TZ)
+    slots = [{"t": (start + timedelta(minutes=15 * i)).isoformat()} for i in range(192)]
+    n = sched._gewinn_slotzahl(_Res(), len(slots), slots)
+    # 11:45 heute → Mitternacht übermorgen: 36¼ h
+    assert n == 145
+    assert slots[n]["t"].startswith("2026-09-30T00:00")
+    # Start genau an Mitternacht: 24 h reichen, die Mitternacht danach zählt
+    mitternacht = datetime(2026, 9, 28, 0, 0, tzinfo=TZ)
+    slots = [{"t": (mitternacht + timedelta(minutes=15 * i)).isoformat()} for i in range(192)]
+    assert sched._gewinn_slotzahl(_Res(), len(slots), slots) == 96
+    # Reicht der Plan nicht bis Mitternacht: 24 h wie bisher
+    kurz = [{"t": (start + timedelta(minutes=15 * i)).isoformat()} for i in range(140)]
+    assert sched._gewinn_slotzahl(_Res(), len(kurz), kurz) == 96
+
+
 # ---------------------------------------------------------------------------
 # Bezugspreis: ein Preis rund um die Uhr, im SNAP-Fenster ein zweiter
 # ---------------------------------------------------------------------------

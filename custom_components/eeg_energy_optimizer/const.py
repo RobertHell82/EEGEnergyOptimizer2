@@ -287,12 +287,21 @@ SCHEDULE_BATTERY_FULL_SOC_PCT = 99.0
 
 SCHEDULE_FAILSAFE_MINUTES = 15
 
-# Über wie viele Stunden der ausgewiesene Optimierungsgewinn gerechnet wird.
-# Der Fahrplan selbst schaut weiter voraus (er braucht die zweite Nacht, um
-# heute richtig zu entscheiden) — der Gewinn wird aber nur über den Teil
-# ausgewiesen, den die Prognosen tragen: je weiter hinten ein Slot liegt,
-# desto mehr ist sein Geldwert Prognose und nicht Plan. Beide Seiten des
-# Vergleichs werden über dasselbe Fenster bewertet.
+# Über wie viele Stunden der ausgewiesene Optimierungsgewinn MINDESTENS
+# gerechnet wird. Der Fahrplan selbst schaut weiter voraus (er braucht die
+# zweite Nacht, um heute richtig zu entscheiden) — der Gewinn wird aber nur
+# über den Teil ausgewiesen, den die Prognosen tragen: je weiter hinten ein
+# Slot liegt, desto mehr ist sein Geldwert Prognose und nicht Plan. Beide
+# Seiten des Vergleichs werden über dasselbe Fenster bewertet.
+#
+# Das Fenster endet an der ersten Mitternacht nach diesen 24 Stunden
+# (``_gewinn_slotzahl``): Das Pufferbudget des Heizstabs gilt je
+# Kalendertag, und ein Schnitt mitten im Tag zählte die Wärme dessen, der
+# sie früher am Tag erzeugt. Grünbach, 28.09.2026, Schnitt 11:45: das LP
+# entlud nachts, lud morgens die Batterie und heizte erst am Nachmittag;
+# der Standardbetrieb mit voller Batterie heizte 5,5 kWh am Vormittag — im
+# Fenster, das LP draußen. Mit dem Tagesende sind beide Tagesbudgets ganz
+# drin.
 GEWINN_HORIZONT_H = 24.0
 
 # ---------------------------------------------------------------------------

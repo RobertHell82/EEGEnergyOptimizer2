@@ -2085,11 +2085,17 @@ _PANEL_COLUMNS = (
 )
 
 
-def _gewinn_slotzahl(inputs: ScheduleInputs, vorhanden: int) -> int:
+def _gewinn_slotzahl(
+    inputs: ScheduleInputs, vorhanden: int, slots: list[dict[str, Any]] | None = None
+) -> int:
     """Wie viele Slots in das Bewertungsfenster des Gewinns fallen.
 
     Mindestens einer, hoechstens alle — ein kurzer Horizont wird nicht
-    kuenstlich verlaengert, ein langer nur bis GEWINN_HORIZONT_H bewertet.
+    kuenstlich verlaengert. Ein langer wird mindestens GEWINN_HORIZONT_H
+    bewertet und dann bis zur naechsten Mitternacht (Ortszeit der Slots),
+    damit das Pufferbudget je Kalendertag auf beiden Seiten vollstaendig im
+    Fenster liegt (siehe const.py). Reicht der Plan nicht bis dahin, bleibt
+    es bei GEWINN_HORIZONT_H.
     """
     if vorhanden <= 0:
         return 0
@@ -2097,6 +2103,14 @@ def _gewinn_slotzahl(inputs: ScheduleInputs, vorhanden: int) -> int:
     if res_s <= 0:
         return vorhanden
     passt = int(round(GEWINN_HORIZONT_H * 3600.0 / res_s))
+    if slots:
+        for index in range(max(1, passt), min(vorhanden, len(slots))):
+            try:
+                stempel = datetime.fromisoformat(str(slots[index]["t"]))
+            except (KeyError, ValueError):
+                break
+            if stempel.hour == 0 and stempel.minute == 0:
+                return index
     return max(1, min(vorhanden, passt))
 
 
@@ -2167,13 +2181,14 @@ def solve(inputs: ScheduleInputs) -> dict[str, Any]:
         )
         result["referenz_slots"] = referenz
         # Bewertet wird nur das vordere Stueck des Horizonts (siehe
-        # GEWINN_HORIZONT_H); gezeichnet wird weiterhin alles. Die Referenz
+        # GEWINN_HORIZONT_H: mindestens 24 h, dann bis Mitternacht);
+        # gezeichnet wird weiterhin alles. Die Referenz
         # dafuer wird eigens gerechnet, mit dem Plan-Ladestand am Schnitt als
         # Ziel: Nur mit gleichem Endstand kuerzt sich der Randeffekt heraus
         # (siehe simuliere_standardbetrieb). Ein Schnitt durch die lange
         # Referenz haette ihn zurueckgeholt — sie steht dort typischerweise
         # voller da als der Plan.
-        gewinn_slots = slots[:_gewinn_slotzahl(inputs, len(slots))]
+        gewinn_slots = slots[:_gewinn_slotzahl(inputs, len(slots), slots)]
         if gewinn_slots is slots or len(gewinn_slots) == len(slots):
             gewinn_referenz = referenz
         else:
