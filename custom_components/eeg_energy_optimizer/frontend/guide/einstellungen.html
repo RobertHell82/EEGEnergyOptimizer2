@@ -2,7 +2,7 @@
      Quelle: docs/guides/einstellungen.md
      Neu generieren mit: python scripts/build_guides.py -->
 <h2 class="guide-title">Einstellungen und Expertenmodus</h2>
-<p>Die Einstellungen öffnest du über das Zahnrad oben rechts im Dashboard. Sie sind in Tabs gegliedert. Die Tabs <strong>Tarife</strong> und <strong>Anlage</strong> enthalten dieselben Felder wie die gleichnamigen Schritte des Einrichtungsassistenten. Du musst den Assistenten also nicht noch einmal durchlaufen, nur um einen Preis oder den Mindest-Ladestand zu ändern.</p>
+<p>Die Einstellungen öffnest du über das Zahnrad oben rechts im Dashboard. Sie sind in Tabs gegliedert. Die Tabs <strong>Tarife</strong>, <strong>Anlage</strong> und <strong>Prognose</strong> enthalten dieselben Felder wie die entsprechenden Schritte des Einrichtungsassistenten. Du musst den Assistenten also nicht noch einmal durchlaufen, nur um einen Preis oder den Mindest-Ladestand zu ändern.</p>
 <h3>Die Tabs</h3>
 <table>
 <thead>
@@ -18,11 +18,15 @@
 </tr>
 <tr>
 <td><strong>Anlage</strong></td>
-<td>Karten <strong>Anlage</strong> (Einspeisegrenze), <strong>PV-Prognose</strong>, <strong>Batterie</strong> (Mindest- und Maximum-Ladestand); mit eigener PV-Prognose oder eingeschaltetem Prognosevergleich zusätzlich die Flächentabelle. Entspricht dem Assistentenschritt „Anlage &amp; Batterie“</td>
+<td>Karten <strong>Anlage</strong> (Einspeisegrenze) und <strong>Batterie</strong> (Mindest- und Maximum-Ladestand). Entspricht dem Assistentenschritt „Anlage &amp; Batterie“</td>
 </tr>
 <tr>
-<td><strong>Heizstab</strong></td>
-<td>Steuerung eines Fronius Ohmpilot (siehe Anleitung „Heizstab“). Der Tab erscheint <strong>nur im Expertenmodus</strong> und kommt im Assistenten nicht vor</td>
+<td><strong>Prognose</strong></td>
+<td>Die steuernde Quelle der PV-Prognose mit ihren Sensoren, der Schalter <strong>Prognosevergleich</strong> und, wenn die eigene Berechnung steuert oder mitläuft, die Flächentabelle der Anlage. Entspricht dem Assistentenschritt „PV-Prognose“</td>
+</tr>
+<tr>
+<td><strong>Verbraucher</strong></td>
+<td>Karten <strong>Heizstab</strong> (Fronius Ohmpilot, siehe Anleitung „Heizstab“) und <strong>Wallbox</strong> (siehe Anleitung „Wallbox“). Der Tab erscheint <strong>nur im Expertenmodus</strong> und kommt im Assistenten nicht vor</td>
 </tr>
 <tr>
 <td><strong>System</strong></td>
@@ -35,8 +39,9 @@
 <p>Zusätzlich sichtbar werden:</p>
 <ul>
 <li><strong>Tab Tarife:</strong> <em>Alterungskosten der Batterie (ct/kWh)</em></li>
-<li><strong>Tab Anlage:</strong> die Gerätedaten <em>AC-Grenzleistung des Wechselrichters</em>, <em>PV-Spitzenleistung</em> und <em>Batterie-Leistungsgrenze</em>, dazu <em>Sicherheitspuffer auf die Prognose (%)</em> und die Karte <strong>Wallbox</strong></li>
-<li><strong>Tab Heizstab</strong> als Ganzes</li>
+<li><strong>Tab Anlage:</strong> die Gerätedaten <em>AC-Grenzleistung des Wechselrichters</em>, <em>PV-Spitzenleistung</em> und <em>Batterie-Leistungsgrenze</em>, dazu <em>Sicherheitspuffer auf die Prognose (%)</em></li>
+<li><strong>Tab Prognose:</strong> bei Solcast die <em>Weiteren Prognose-Sensoren</em> (PV-Prognose heute gesamt, Tag 3 bis Tag 7)</li>
+<li><strong>Tab Verbraucher</strong> als Ganzes, mit Heizstab und Wallbox</li>
 <li><strong>Tab System:</strong> die Karten <strong>Verbrauchsprofil</strong> (Rückblick in Wochen) und <strong>Tagesbilanz</strong></li>
 <li><strong>Dashboard:</strong> die Karte <strong>Gesetzte Steuerwerte</strong> unter dem Optimierungsplan, in der aufgeklappten Karte <strong>Verbrauchsprofil</strong> Datenpunkte, Fenster, letzte Berechnung und der Knopf <strong>Verbrauchsprofil neu berechnen</strong>, bei einer Wallbox der Handbetrieb (Laden/Entladen) in der Statuskarte</li>
 <li><strong>Assistent:</strong> Der Assistent hat oben einen eigenen Haken <em>Expertenmodus</em>. Damit erscheinen bei Solcast die <em>Weiteren Prognose-Sensoren</em> (PV-Prognose heute gesamt, Tag 3 bis Tag 7) und je nach Wechselrichter ein zweiter PV- bzw. Batterie-Sensor</li>
@@ -46,7 +51,7 @@
 
 <h3>Sensoren ändern</h3>
 <p>Die Karte <strong>Anlage und Sensoren</strong> im Tab <strong>System</strong> zeigt nur an, welcher Wechselrichter und welche Sensoren zugeordnet sind. Ändern kannst du sie hier nicht. Dafür gibt es den Knopf <strong>Einrichtung erneut durchlaufen</strong>: Er startet den Assistenten direkt beim Schritt „Wechselrichter“, und alle Felder sind mit deiner aktuellen Konfiguration vorbefüllt. Der Grund für den Umweg: Nur der Assistent erkennt Sensoren automatisch und testet die Verbindung zum Wechselrichter.</p>
-<p>Es gibt eine Ausnahme: die <strong>steuernde Quelle</strong> der PV-Prognose im Tab <strong>Anlage</strong>. Wechselst du dort auf Solcast oder Forecast.Solar, erscheinen die beiden Prognose-Sensoren gleich darunter und sind aus der Erkennung vorbelegt. Ohne diese Sensoren wäre der Wechsel wertlos.</p>
+<p>Es gibt eine Ausnahme: die Sensoren der PV-Prognose im Tab <strong>Prognose</strong>. Wechselst du dort die steuernde Quelle auf Solcast oder Forecast.Solar, erscheinen ihre Sensoren gleich darunter und sind aus der Erkennung vorbelegt; du kannst sie dort auch ändern. Ohne diese Sensoren wäre der Wechsel wertlos.</p>
 <h3>Speichern</h3>
 <p>Der Knopf <strong>Speichern</strong> unter den Tabs übernimmt die Änderungen aus <strong>allen</strong> Tabs auf einmal. Danach bist du wieder im Dashboard. Fehlt ein Pflichtwert (AC-Grenzleistung, PV-Spitzenleistung, Höhe der Einspeisegrenze, die Sensoren einer fremden Prognosequelle, gültige PV-Flächen, Adresse und Leistung des Heizstabs), wird nichts gespeichert. Über dem Knopf steht dann, was fehlt.</p>
 <p>Die meisten Änderungen wirken <strong>sofort</strong>: Der Fahrplan wird gleich neu gerechnet, die Steuerung behält ihren Zustand. Einen geänderten Rückblick des Verbrauchsprofils rechnet die Integration im Hintergrund neu.</p>

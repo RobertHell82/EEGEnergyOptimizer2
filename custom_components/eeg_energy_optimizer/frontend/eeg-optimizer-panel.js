@@ -685,10 +685,10 @@ class EegOptimizerPanel extends HTMLElement {
     this._statusViewVariant = "values";
     this._forecastOpen = this._loadPref("forecast_open", "1", ["0", "1"]) === "1";
     this._settingsTab = this._loadPref("settings_tab", "tarife",
-      ["tarife", "anlage", "system",
+      ["tarife", "anlage", "prognose", "verbraucher", "system",
        // Aliasse aus Vorversionen — werden in _renderSettings abgebildet
        "fahrplan", "wechselrichter", "batterie", "gemeinschaft", "advanced",
-       "einspeisegrenze", "telemetry"]);
+       "einspeisegrenze", "telemetry", "heizstab"]);
     this._profileRefreshing = false;
     this._profileRefreshResult = null;
     // Welche Bedarfskurven im Fahrplan-Diagramm liegen: "all", ein
@@ -7669,6 +7669,12 @@ class EegOptimizerPanel extends HTMLElement {
         ${this._entityPickerHtml("settings_forecast_remaining_entity", d.forecast_remaining_entity, "Sensor PV-Prognose verbleibend heute *", "Verbleibende PV-Produktion für heute in kWh.", "sensor")}
         ${this._entityPickerHtml("settings_forecast_tomorrow_entity", d.forecast_tomorrow_entity, "Sensor PV-Prognose morgen *", "Prognostizierte PV-Produktion für morgen in kWh.", "sensor")}
       ` : ""}
+      ${d.forecast_source === "solcast_solar" && d.expert_mode ? `
+        <div style="margin:16px 0 8px;font-weight:500">Weitere Prognose-Sensoren (optional)</div>
+        <div class="help-text" style="margin-bottom:12px">Werden beim Quellenwechsel automatisch erkannt. Nur ändern, wenn die Erkennung nicht passt.</div>
+        ${this._entityPickerHtml("settings_forecast_today_entity", d.forecast_today_entity, "PV-Prognose heute (gesamt)", "Gesamte PV-Produktion für heute in kWh, z.B. sensor.solcast_pv_forecast_prognose_heute.", "sensor")}
+        ${[3, 4, 5, 6, 7].map(n => this._entityPickerHtml(`settings_forecast_day${n}_entity`, d[`forecast_day${n}_entity`], `PV-Prognose Tag ${n}`, `z.B. sensor.solcast_pv_forecast_prognose_tag_${n}`, "sensor")).join("")}
+      ` : ""}
       <div style="margin-top:8px">${this._vergleichFeature(d, "settings_")}</div>`;
   }
 
@@ -8137,8 +8143,9 @@ class EegOptimizerPanel extends HTMLElement {
     const d = this._settingsData;
     const isExpert = d.expert_mode;
 
-    // Vier Tabs (Heizstab nur im Expertenmodus): die zwei Parameter-Tabs entsprechen 1:1 den beiden
-    // Parameter-Schritten des Wizards (gleiche Feld-Renderer), „System" trägt
+    // Fünf Tabs (Verbraucher nur im Expertenmodus): „Tarife", „Anlage" und
+    // „Prognose" entsprechen den Parameter-Schritten des Wizards (gleiche
+    // Feld-Renderer), „System" trägt
     // alles Übrige. Aus Vorversionen gemerkte Tab-Namen werden auf die neuen
     // abgebildet, statt stumm auf den ersten Tab zu springen.
     const TAB_ALIAS = {
@@ -8148,11 +8155,13 @@ class EegOptimizerPanel extends HTMLElement {
       telemetry: "system", wechselrichter: "system",
       batterie: "anlage", einspeisegrenze: "anlage",
       advanced: "system",
+      // Heizstab und Wallbox teilen sich seit 2.1.18 den Tab „Verbraucher".
+      heizstab: "verbraucher",
     };
     let activeTab = TAB_ALIAS[this._settingsTab] || this._settingsTab || "tarife";
-    // Den Expertenmodus abzuschalten, während man im Heizstab-Tab steht,
+    // Den Expertenmodus abzuschalten, während man im Verbraucher-Tab steht,
     // ließe sonst einen Inhalt ohne Reiter stehen.
-    if (activeTab === "heizstab" && !isExpert) activeTab = "tarife";
+    if (activeTab === "verbraucher" && !isExpert) activeTab = "tarife";
 
     const tabBar = `
       <div class="settings-tabs" role="tablist">
@@ -8164,10 +8173,14 @@ class EegOptimizerPanel extends HTMLElement {
           <ha-icon icon="mdi:battery-charging-medium" style="--mdc-icon-size:18px"></ha-icon>
           <span>Anlage</span>
         </button>
+        <button class="settings-tab ${activeTab === "prognose" ? "active" : ""}" data-action="set-settings-tab" data-tab="prognose" role="tab">
+          <ha-icon icon="mdi:weather-partly-cloudy" style="--mdc-icon-size:18px"></ha-icon>
+          <span>Prognose</span>
+        </button>
         ${isExpert ? `
-        <button class="settings-tab ${activeTab === "heizstab" ? "active" : ""}" data-action="set-settings-tab" data-tab="heizstab" role="tab">
-          <ha-icon icon="mdi:heating-coil" style="--mdc-icon-size:18px"></ha-icon>
-          <span>Heizstab</span>
+        <button class="settings-tab ${activeTab === "verbraucher" ? "active" : ""}" data-action="set-settings-tab" data-tab="verbraucher" role="tab">
+          <ha-icon icon="mdi:power-plug-outline" style="--mdc-icon-size:18px"></ha-icon>
+          <span>Verbraucher</span>
         </button>` : ""}
         <button class="settings-tab ${activeTab === "system" ? "active" : ""}" data-action="set-settings-tab" data-tab="system" role="tab">
           <ha-icon icon="mdi:tune" style="--mdc-icon-size:18px"></ha-icon>
@@ -8200,6 +8213,40 @@ class EegOptimizerPanel extends HTMLElement {
         ${this._anlageFields(d, "settings_")}
       </div>
       <div class="card" style="margin-bottom:16px">
+        <h3 class="settings-karte-titel" style="margin:0 0 4px">Batterie</h3>
+        <div class="help-text" style="margin-bottom:16px">${anleitungLink("anlage_batterie", "Anlage & Batterie")}</div>
+        ${this._batterieOptFields(d, "settings_")}
+      </div>`;
+
+    // --- Tab: Verbraucher (nur Expertenmodus, nicht im Assistenten) ---
+    // Heizstab und Wallbox sind Zubehör, keine Voraussetzung für den
+    // Fahrplan — sie teilen sich einen Tab, damit „Anlage" für alle
+    // anderen schlank bleibt.
+    const verbraucherTab = `
+      <div class="card" style="margin-bottom:16px">
+        <h3 class="settings-karte-titel" style="margin:0 0 4px">Heizstab (nur Fronius Ohmpilot)${BETA_BADGE}</h3>
+        <div class="help-text" style="margin-bottom:16px">
+          Überschuss, den weder Batterie noch Netz aufnehmen, geht in den
+          Heizstab statt abgeregelt zu werden. Unterstützt wird derzeit
+          ausschließlich der Fronius Ohmpilot, direkt per Modbus TCP.
+        </div>
+        ${this._heizstabFields(d, "settings_")}
+      </div>
+      <div class="card" style="margin-bottom:16px">
+        <h3 class="settings-karte-titel" style="margin:0 0 4px">Wallbox${BETA_BADGE}</h3>
+        <div class="help-text" style="margin-bottom:16px">
+          Zeigt das angesteckte Fahrzeug an. Noch ohne Steuerung — Laden und
+          Entladen des Autos folgen in einem späteren Schritt.
+          ${anleitungLink("wallbox", "Wallbox")}
+        </div>
+        ${this._wallboxFields(d, "settings_")}
+      </div>`;
+
+    // --- Tab: Prognose (== Wizard-Schritt PV-Prognose) ---
+    // Steuernde Quelle mit ihren Sensoren, Prognosevergleich und — wenn die
+    // eigene Berechnung steuert oder mitläuft — die Flächen der Anlage.
+    const prognoseTab = `
+      <div class="card" style="margin-bottom:16px">
         <h3 class="settings-karte-titel" style="margin:0 0 16px">PV-Prognose</h3>
         ${this._prognoseQuelleFelder(d)}
       </div>
@@ -8211,36 +8258,7 @@ class EegOptimizerPanel extends HTMLElement {
           nach dem Speichern; „Prognose berechnen" zeigt vorher, was sie ergeben.
         </div>
         ${this._pvPrognoseFelder(d, "settings_")}
-      </div>` : ""}
-      <div class="card" style="margin-bottom:16px">
-        <h3 class="settings-karte-titel" style="margin:0 0 4px">Batterie</h3>
-        <div class="help-text" style="margin-bottom:16px">${anleitungLink("anlage_batterie", "Anlage & Batterie")}</div>
-        ${this._batterieOptFields(d, "settings_")}
-      </div>
-      ${isExpert ? `
-      <div class="card" style="margin-bottom:16px">
-        <h3 class="settings-karte-titel" style="margin:0 0 4px">Wallbox${BETA_BADGE}</h3>
-        <div class="help-text" style="margin-bottom:16px">
-          Zeigt das angesteckte Fahrzeug an. Noch ohne Steuerung — Laden und
-          Entladen des Autos folgen in einem späteren Schritt.
-          ${anleitungLink("wallbox", "Wallbox")}
-        </div>
-        ${this._wallboxFields(d, "settings_")}
       </div>` : ""}`;
-
-    // --- Tab: Heizstab (nur in den Einstellungen, nicht im Assistenten) ---
-    // Ein Heizstab ist die Ausnahme, nicht die Regel — er bekommt seinen
-    // eigenen Tab, damit „Anlage" für alle anderen schlank bleibt.
-    const heizstabTab = `
-      <div class="card" style="margin-bottom:16px">
-        <h3 class="settings-karte-titel" style="margin:0 0 4px">Heizstab (nur Fronius Ohmpilot)${BETA_BADGE}</h3>
-        <div class="help-text" style="margin-bottom:16px">
-          Überschuss, den weder Batterie noch Netz aufnehmen, geht in den
-          Heizstab statt abgeregelt zu werden. Unterstützt wird derzeit
-          ausschließlich der Fronius Ohmpilot, direkt per Modbus TCP.
-        </div>
-        ${this._heizstabFields(d, "settings_")}
-      </div>`;
 
     // --- Tab: System ---
     // Reihenfolge auf Nutzerwunsch: Verbrauchsprofil (Experte) ganz oben,
@@ -8274,7 +8292,8 @@ class EegOptimizerPanel extends HTMLElement {
     let tabContent;
     switch (activeTab) {
       case "anlage":  tabContent = anlageTab; break;
-      case "heizstab": tabContent = heizstabTab; break;
+      case "prognose": tabContent = prognoseTab; break;
+      case "verbraucher": tabContent = verbraucherTab; break;
       case "system":  tabContent = systemTab; break;
       case "tarife":
       default:        tabContent = tarifeTab; break;

@@ -46,7 +46,7 @@ Gegenüber Solcast fehlt der Satelliten-Nowcast für die nächsten Stunden — b
 
 ## Prognosevergleich: beide Quellen nebeneinander
 
-Ob die eigene Berechnung auf deiner Anlage so gut ist wie Solcast, sagen nur Zahlen von deiner Anlage. Dafür gibt es den Schalter **Prognosevergleich** — im Assistenten beim Schritt „PV-Prognose“ und in den **Einstellungen → Anlage**:
+Ob die eigene Berechnung auf deiner Anlage so gut ist wie Solcast, sagen nur Zahlen von deiner Anlage. Dafür gibt es den Schalter **Prognosevergleich** — im Assistenten beim Schritt „PV-Prognose“ und in den **Einstellungen → Prognose**:
 
 - Steuert **Solcast** (oder Forecast.Solar), läuft die eigene Berechnung mit — trage dafür in derselben Karte deine Flächen ein.
 - Steuert die **eigene Berechnung**, wird Solcast bzw. Forecast.Solar mitgelesen; die Integration muss dafür installiert sein.
@@ -55,7 +55,7 @@ Jeden Morgen ab 5 Uhr werden beide Prognosen für den Tag festgehalten, im Lauf 
 
 Lief Home Assistant am Morgen nicht, werden die Prognosen erst beim nächsten Start festgehalten. Nach 8 Uhr haben sie den halben Tag schon gesehen — solche Tage stehen mit † in der Tabelle, zählen aber nicht in die Zusammenfassung und nicht in den p10.
 
-Die steuernde Quelle selbst lässt sich in den Einstellungen unter **Anlage → PV-Prognose** wechseln; für Solcast und Forecast.Solar werden die Sensoren dabei vorbelegt.
+Die steuernde Quelle selbst lässt sich in den Einstellungen im Tab **Prognose** wechseln; für Solcast und Forecast.Solar werden die Sensoren dabei vorbelegt und lassen sich dort auch ändern.
 
 ### Sensoren
 

@@ -48,14 +48,14 @@
 <p>Was das Modell <strong>nicht</strong> kennt: Verschattung durch Bäume, Nachbargebäude oder Gauben, Schnee auf den Modulen, und ein Ost-West-Dach an einem Wechselrichter mit einem einzigen MPP-Tracker. In diesen Fällen liegen die Tagessummen meist noch richtig, der Tagesverlauf nicht.</p>
 <p>Gegenüber Solcast fehlt der Satelliten-Nowcast für die nächsten Stunden — bei durchbrochener Bewölkung ist Solcast dort im Vorteil. Für den Fahrplan zählt aber vor allem, wie viel Energie heute noch und morgen kommt, und da sind Wettermodell-Prognosen gleichauf.</p>
 <h3>Prognosevergleich: beide Quellen nebeneinander</h3>
-<p>Ob die eigene Berechnung auf deiner Anlage so gut ist wie Solcast, sagen nur Zahlen von deiner Anlage. Dafür gibt es den Schalter <strong>Prognosevergleich</strong> — im Assistenten beim Schritt „PV-Prognose“ und in den <strong>Einstellungen → Anlage</strong>:</p>
+<p>Ob die eigene Berechnung auf deiner Anlage so gut ist wie Solcast, sagen nur Zahlen von deiner Anlage. Dafür gibt es den Schalter <strong>Prognosevergleich</strong> — im Assistenten beim Schritt „PV-Prognose“ und in den <strong>Einstellungen → Prognose</strong>:</p>
 <ul>
 <li>Steuert <strong>Solcast</strong> (oder Forecast.Solar), läuft die eigene Berechnung mit — trage dafür in derselben Karte deine Flächen ein.</li>
 <li>Steuert die <strong>eigene Berechnung</strong>, wird Solcast bzw. Forecast.Solar mitgelesen; die Integration muss dafür installiert sein.</li>
 </ul>
 <p>Jeden Morgen ab 5 Uhr werden beide Prognosen für den Tag festgehalten, im Lauf des Tages kommt die gemessene PV-Leistung dazu. Die Karte <strong>Prognosevergleich</strong> im Dashboard zeigt für einen wählbaren Tag drei Linien — Fremdprognose, eigene Berechnung, Messung — und darunter die letzten Tage mit Tagessumme je Quelle, Abweichung und wer näher an der Messung lag. Aufgehoben werden 30 Tage.</p>
 <p>Lief Home Assistant am Morgen nicht, werden die Prognosen erst beim nächsten Start festgehalten. Nach 8 Uhr haben sie den halben Tag schon gesehen — solche Tage stehen mit † in der Tabelle, zählen aber nicht in die Zusammenfassung und nicht in den p10.</p>
-<p>Die steuernde Quelle selbst lässt sich in den Einstellungen unter <strong>Anlage → PV-Prognose</strong> wechseln; für Solcast und Forecast.Solar werden die Sensoren dabei vorbelegt.</p>
+<p>Die steuernde Quelle selbst lässt sich in den Einstellungen im Tab <strong>Prognose</strong> wechseln; für Solcast und Forecast.Solar werden die Sensoren dabei vorbelegt und lassen sich dort auch ändern.</p>
 <h4>Sensoren</h4>
 <p>Steuert die eigene Berechnung oder läuft sie als Vergleich mit, legt die Integration neun Sensoren an: <strong>Eigene PV-Prognose Leistung</strong> (kW, die laufende Viertelstunde, das Gegenstück zu „PV-Leistung“), <strong>verbleibend heute</strong>, <strong>heute</strong>, <strong>morgen</strong> und <strong>Tag 3</strong> bis <strong>Tag 7</strong> (kWh). Sie haben dieselbe Form wie die Tagessensoren von Solcast und lassen sich in jedem Home-Assistant-Diagramm neben Solcast und die gemessene PV legen. Mit eingeschaltetem Vergleich zeigt das Wochendiagramm im Dashboard außerdem je Tag einen dritten Balken für die mitlaufende Quelle.</p>
 <h4>Der p10 der eigenen Prognose</h4>

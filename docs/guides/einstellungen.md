@@ -1,14 +1,15 @@
 # Einstellungen und Expertenmodus
 
-Die Einstellungen öffnest du über das Zahnrad oben rechts im Dashboard. Sie sind in Tabs gegliedert. Die Tabs **Tarife** und **Anlage** enthalten dieselben Felder wie die gleichnamigen Schritte des Einrichtungsassistenten. Du musst den Assistenten also nicht noch einmal durchlaufen, nur um einen Preis oder den Mindest-Ladestand zu ändern.
+Die Einstellungen öffnest du über das Zahnrad oben rechts im Dashboard. Sie sind in Tabs gegliedert. Die Tabs **Tarife**, **Anlage** und **Prognose** enthalten dieselben Felder wie die entsprechenden Schritte des Einrichtungsassistenten. Du musst den Assistenten also nicht noch einmal durchlaufen, nur um einen Preis oder den Mindest-Ladestand zu ändern.
 
 ## Die Tabs
 
 | Tab | Was dort steht |
 |---|---|
 | **Tarife** | Karten **Vergütung und Kosten** (Standardvergütung, Nachtsatz, Bezugspreis, Netzbereich) und **Energiegemeinschaft**. Entspricht dem Assistentenschritt „Tarife & Gemeinschaft“ |
-| **Anlage** | Karten **Anlage** (Einspeisegrenze), **PV-Prognose**, **Batterie** (Mindest- und Maximum-Ladestand); mit eigener PV-Prognose oder eingeschaltetem Prognosevergleich zusätzlich die Flächentabelle. Entspricht dem Assistentenschritt „Anlage & Batterie“ |
-| **Heizstab** | Steuerung eines Fronius Ohmpilot (siehe Anleitung „Heizstab“). Der Tab erscheint **nur im Expertenmodus** und kommt im Assistenten nicht vor |
+| **Anlage** | Karten **Anlage** (Einspeisegrenze) und **Batterie** (Mindest- und Maximum-Ladestand). Entspricht dem Assistentenschritt „Anlage & Batterie“ |
+| **Prognose** | Die steuernde Quelle der PV-Prognose mit ihren Sensoren, der Schalter **Prognosevergleich** und, wenn die eigene Berechnung steuert oder mitläuft, die Flächentabelle der Anlage. Entspricht dem Assistentenschritt „PV-Prognose“ |
+| **Verbraucher** | Karten **Heizstab** (Fronius Ohmpilot, siehe Anleitung „Heizstab“) und **Wallbox** (siehe Anleitung „Wallbox“). Der Tab erscheint **nur im Expertenmodus** und kommt im Assistenten nicht vor |
 | **System** | Übersicht über Anlage und Sensoren, EEG-Statistik, Fahrplan-Archiv und ganz unten der Schalter **Expertenmodus** |
 
 ## Expertenmodus
@@ -18,8 +19,9 @@ Der Schalter steht im Tab **System** ganz unten. Er blendet zusätzliche Optione
 Zusätzlich sichtbar werden:
 
 - **Tab Tarife:** *Alterungskosten der Batterie (ct/kWh)*
-- **Tab Anlage:** die Gerätedaten *AC-Grenzleistung des Wechselrichters*, *PV-Spitzenleistung* und *Batterie-Leistungsgrenze*, dazu *Sicherheitspuffer auf die Prognose (%)* und die Karte **Wallbox**
-- **Tab Heizstab** als Ganzes
+- **Tab Anlage:** die Gerätedaten *AC-Grenzleistung des Wechselrichters*, *PV-Spitzenleistung* und *Batterie-Leistungsgrenze*, dazu *Sicherheitspuffer auf die Prognose (%)*
+- **Tab Prognose:** bei Solcast die *Weiteren Prognose-Sensoren* (PV-Prognose heute gesamt, Tag 3 bis Tag 7)
+- **Tab Verbraucher** als Ganzes, mit Heizstab und Wallbox
 - **Tab System:** die Karten **Verbrauchsprofil** (Rückblick in Wochen) und **Tagesbilanz**
 - **Dashboard:** die Karte **Gesetzte Steuerwerte** unter dem Optimierungsplan, in der aufgeklappten Karte **Verbrauchsprofil** Datenpunkte, Fenster, letzte Berechnung und der Knopf **Verbrauchsprofil neu berechnen**, bei einer Wallbox der Handbetrieb (Laden/Entladen) in der Statuskarte
 - **Assistent:** Der Assistent hat oben einen eigenen Haken *Expertenmodus*. Damit erscheinen bei Solcast die *Weiteren Prognose-Sensoren* (PV-Prognose heute gesamt, Tag 3 bis Tag 7) und je nach Wechselrichter ein zweiter PV- bzw. Batterie-Sensor
@@ -33,7 +35,7 @@ _Die Gerätedaten stehen im Assistenten immer da. Du trägst sie einmal aus dem 
 
 Die Karte **Anlage und Sensoren** im Tab **System** zeigt nur an, welcher Wechselrichter und welche Sensoren zugeordnet sind. Ändern kannst du sie hier nicht. Dafür gibt es den Knopf **Einrichtung erneut durchlaufen**: Er startet den Assistenten direkt beim Schritt „Wechselrichter“, und alle Felder sind mit deiner aktuellen Konfiguration vorbefüllt. Der Grund für den Umweg: Nur der Assistent erkennt Sensoren automatisch und testet die Verbindung zum Wechselrichter.
 
-Es gibt eine Ausnahme: die **steuernde Quelle** der PV-Prognose im Tab **Anlage**. Wechselst du dort auf Solcast oder Forecast.Solar, erscheinen die beiden Prognose-Sensoren gleich darunter und sind aus der Erkennung vorbelegt. Ohne diese Sensoren wäre der Wechsel wertlos.
+Es gibt eine Ausnahme: die Sensoren der PV-Prognose im Tab **Prognose**. Wechselst du dort die steuernde Quelle auf Solcast oder Forecast.Solar, erscheinen ihre Sensoren gleich darunter und sind aus der Erkennung vorbelegt; du kannst sie dort auch ändern. Ohne diese Sensoren wäre der Wechsel wertlos.
 
 ## Speichern
 

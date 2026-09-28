@@ -16,7 +16,7 @@ Mit einer **Ambibox** (ambiCHARGE) zeigt der Optimizer das angesteckte Auto dire
 
 ## Einrichtung
 
-Die Wallbox steht in den **Einstellungen** im Tab **Anlage**, in der Karte **Wallbox**. Die Karte erscheint erst, wenn im Tab **System** der **Expertenmodus** eingeschaltet ist. Im Einrichtungsassistenten kommt sie nicht vor — das Auto ist Zubehör, keine Voraussetzung für den Fahrplan.
+Die Wallbox steht in den **Einstellungen** im Tab **Verbraucher**, in der Karte **Wallbox**. Der Tab erscheint erst, wenn im Tab **System** der **Expertenmodus** eingeschaltet ist. Im Einrichtungsassistenten kommt sie nicht vor — das Auto ist Zubehör, keine Voraussetzung für den Fahrplan.
 
 | Feld | Bedeutung |
 |---|---|

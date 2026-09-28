@@ -64,7 +64,7 @@ _Die Obergrenze ist allein die **Maximaltemperatur**: Ist sie erreicht, nimmt de
 
 ## Konfiguration
 
-Alle Felder stehen in den **Einstellungen** im eigenen Tab **Heizstab**. Der Tab erscheint erst, wenn im Tab **System** der **Expertenmodus** eingeschaltet ist. Im Einrichtungsassistenten kommt der Heizstab nicht vor — er ist die Ausnahme, nicht die Regel.
+Alle Felder stehen in den **Einstellungen** im Tab **Verbraucher**, Karte **Heizstab**. Der Tab erscheint erst, wenn im Tab **System** der **Expertenmodus** eingeschaltet ist. Im Einrichtungsassistenten kommt der Heizstab nicht vor — er ist die Ausnahme, nicht die Regel.
 
 | Feld | Bedeutung |
 |---|---|

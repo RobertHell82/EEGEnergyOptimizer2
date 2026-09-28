@@ -544,7 +544,7 @@ the event loop is long enough for HA to flag a blocking call.
   the buffer counts at the full heat value** — the former "temperature of the
   other heat source" (Zusatzwärme) distinction was removed in 2.1.1-dev6
   because it contradicted the plan. Config keys `heizstab_*` live in their
-  own settings tab **Heizstab**; host/port/max/enabled trigger a full reload,
+  settings tab **Verbraucher** (shared with the wallbox); host/port/max/enabled trigger a full reload,
   the rest hot-reload. Foreign control (a second writer on the Ohmpilot) is
   detected after 3 min of "draws more than set"; the opposite case ("delivers
   less than set" for 2 min, `folgt_nicht`) is detected too. Both are shown in
@@ -576,7 +576,7 @@ the event loop is long enough for HA to flag a blocking call.
 ### Wallbox / Ambibox (read-only, step 1)
 
 `wallbox_type` selects the driver the way `inverter_type` does; currently only
-`ambibox`. Configured **exclusively in the settings** (tab "Anlage", expert
+`ambibox`. Configured **exclusively in the settings** (tab "Verbraucher", expert
 mode only) — deliberately not in the wizard: the car is an accessory, not a
 prerequisite for the schedule.
 
@@ -678,7 +678,7 @@ sensors (assigned once), steps 4–5 are the parameters:
    before anything is saved). The surface inputs carry `data-flaeche` /
    `data-key` / `data-scope` instead of `data-field`, because the settings
    save re-reads every `data-field` flat and a list does not fit; the same
-   renderer (`_pvPrognoseFelder`) serves the settings card in **Anlage**.
+   renderer (`_pvPrognoseFelder`) serves the settings card in **Prognose**.
    Leaving the step pre-fills `pv_peak_kwp` with the kWp sum when empty.
    Pre-selected when neither forecast integration is installed. Each row
    also has an optional "Grenze (kW)" (`max_kw`, the AC limit of that
@@ -687,12 +687,14 @@ sensors (assigned once), steps 4–5 are the parameters:
    the result; the settings preview and the live provider always clip.
    The step also carries the **Prognosevergleich** feature card; with the
    switch on and a foreign source steering, the surface table appears
-   below it. Settings tab **Anlage** carries the "PV-Prognose" card: the
-   steering source as a select (switching fills the Solcast/Forecast.Solar
-   sensors from detection, shows them as pickers — the one exception to
-   "sensor mappings are wizard-only", because a source switch is useless
-   without them — and reloads on save), plus the same feature card; the surface table appears there
-   when the own forecast steers *or* runs as the comparison source
+   below it. Settings tab **Prognose** mirrors this step: the "PV-Prognose"
+   card with the steering source as a select (switching fills the
+   Solcast/Forecast.Solar sensors from detection and shows them as pickers,
+   in expert mode also Solcast's today/day 3–7 sensors — the one exception
+   to "sensor mappings are wizard-only", because a source switch is useless
+   without them — and reloads on save), plus the same feature card; the
+   surface table appears there when the own forecast steers *or* runs as
+   the comparison source
 5. Anlage & Batterie — AC power limit, PV peak power (both mandatory, checked
    in the wizard *and* on save), export limit, battery power limit, minimum
    state of charge, maximum state of charge (always visible, no toggle —
@@ -708,10 +710,11 @@ sensors (assigned once), steps 4–5 are the parameters:
    behind a button; expert mode: battery aging cost
 7. Zusammenfassung
 
-Settings live in four tabs (Heizstab only in expert mode): **Tarife** and **Anlage** are exactly the two
-parameter wizard steps (same field renderers, `settings_` prefix) — **Anlage**
-(the *Heizstab* card lives in its own fourth tab **Heizstab**, shown in expert mode only —
-`_heizstabFields`, settings only, not in the wizard); **System**
+Settings live in five tabs (Verbraucher only in expert mode): **Tarife**, **Anlage** and **Prognose** are exactly the
+parameter wizard steps (same field renderers, `settings_` prefix); **Verbraucher**
+holds the *Heizstab* and *Wallbox* cards, expert mode only —
+`_heizstabFields` / `_wallboxFields`, settings only, not in the wizard (a
+remembered `heizstab` tab maps to it); **System**
 holds the expert-mode switch, a read-only sensor overview (with the
 restart-wizard button — sensor mappings are wizard-only by design), telemetry
 opt-in, schedule archive, and (expert) balance card + profile lookback. In the
