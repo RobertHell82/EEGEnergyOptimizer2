@@ -10,6 +10,17 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
+## [2.1.18] - 2026-09-28
+
+### Geändert
+
+- **Die PV-Prognose hat in den Einstellungen einen eigenen Tab.** Bisher stand sie im Tab „Anlage“ zwischen Einspeisegrenze und Batterie, wo man sie kaum vermutete. Der Tab „Prognose“ entspricht dem Assistentenschritt: die steuernde Quelle mit ihren Sensoren, der Prognosevergleich und die Flächen der eigenen Berechnung samt „Prognose berechnen“. Bei Solcast lassen sich im Expertenmodus jetzt auch die Sensoren für heute gesamt und Tag 3 bis 7 ändern, das ging bisher nur im Assistenten.
+- **Heizstab und Wallbox stehen gemeinsam im Tab „Verbraucher“.** Der Heizstab hatte einen eigenen Tab, die Wallbox eine Karte im Tab „Anlage“. Beide sind Zubehör und keine Voraussetzung für den Fahrplan; der Tab erscheint wie bisher nur im Expertenmodus.
+
+### Behoben
+
+- **Die Einstellungen merken sich den zuletzt offenen Tab.** Nach einem Neuladen sprang das Panel vom Heizstab-Tab zurück auf „Tarife“, weil die Merkliste ihn nicht kannte.
+
 ## [2.1.17] - 2026-09-27
 
 ### Behoben
