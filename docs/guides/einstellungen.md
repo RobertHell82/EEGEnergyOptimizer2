@@ -35,7 +35,7 @@ _Die Gerätedaten stehen im Assistenten immer da. Du trägst sie einmal aus dem 
 
 Die Karte **Anlage und Sensoren** im Tab **System** zeigt nur an, welcher Wechselrichter und welche Sensoren zugeordnet sind. Ändern kannst du sie hier nicht. Dafür gibt es den Knopf **Einrichtung erneut durchlaufen**: Er startet den Assistenten direkt beim Schritt „Wechselrichter“, und alle Felder sind mit deiner aktuellen Konfiguration vorbefüllt. Der Grund für den Umweg: Nur der Assistent erkennt Sensoren automatisch und testet die Verbindung zum Wechselrichter.
 
-Es gibt eine Ausnahme: die Sensoren der PV-Prognose im Tab **Prognose**. Wechselst du dort die steuernde Quelle auf Solcast oder Forecast.Solar, erscheinen ihre Sensoren gleich darunter und sind aus der Erkennung vorbelegt; du kannst sie dort auch ändern. Ohne diese Sensoren wäre der Wechsel wertlos.
+Es gibt eine Ausnahme: die Sensoren der PV-Prognose im Tab **Prognose**. Die steuernde Quelle wählst du dort wie im Assistenten über die drei Karten. Bei Solcast und Forecast.Solar stehen die Sensoren darunter, zugeklappt unter **Prognose-Sensoren**; die Zeile zeigt, welche gerade zugeordnet sind. Ein Wechsel der Quelle belegt sie aus der Erkennung vor, aufgeklappt kannst du sie ändern. Fehlt ein Pflichtsensor, ist der Bereich von selbst offen. Ohne diese Sensoren wäre der Wechsel wertlos.
 
 ## Speichern
 

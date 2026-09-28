@@ -2081,6 +2081,23 @@ class EegOptimizerPanel extends HTMLElement {
         });
         break;
       }
+      case "select-settings-forecast": {
+        // Einstellungen: Quellenkarte statt Auswahlliste. Nur ein echter
+        // Wechsel belegt die Sensoren neu — ein Klick auf die schon gewählte
+        // Karte darf von Hand gesetzte Sensoren nicht überschreiben.
+        const value = dataset?.value;
+        if (value && value !== this._settingsData.forecast_source) {
+          this._settingsData.forecast_source = value;
+          this._applyForecastDefaults(value, this._settingsData);
+          if (value === "eigen") this._ensurePvPrognoseStatus();
+          this._render();
+        }
+        break;
+      }
+      case "toggle-prognose-sensoren":
+        this._prognoseSensorenOffen = !this._prognoseSensorenOffen;
+        this._render();
+        break;
       case "select-forecast": {
         const value = dataset?.value;
         if (value) {
@@ -7646,36 +7663,79 @@ class EegOptimizerPanel extends HTMLElement {
   }
 
   _prognoseQuelleFelder(d) {
-    // Einstellungen: die steuernde Quelle wählen. Für Solcast und
-    // Forecast.Solar die beiden Sensoren dazu (vorbelegt aus der Erkennung),
-    // für die eigene Berechnung die Flächenkarte darunter.
+    // Einstellungen: die steuernde Quelle als dieselben Karten wie im
+    // Assistenten, nur kompakter. Für Solcast und Forecast.Solar folgen die
+    // Sensoren dazu (vorbelegt aus der Erkennung) — zugeklappt, weil man sie
+    // selten ändert; für die eigene Berechnung die Flächenkarte darunter.
     const pq = this._prerequisites;
-    const opt = (wert, label) => {
+    const karte = (wert, bild, titel) => {
+      const gewaehlt = d.forecast_source === wert;
       const fehlt = pq && wert !== "eigen" && !pq[wert];
-      return `<option value="${wert}" ${d.forecast_source === wert ? "selected" : ""}>${label}${fehlt ? " (nicht installiert)" : ""}</option>`;
+      // Ohne Prüfergebnis kein Urteil — „Installiert" wäre geraten.
+      const badge = wert === "eigen"
+        ? `<span class="status-badge installed">Ohne Zusatz</span>`
+        : !pq ? ""
+          : fehlt
+            ? `<span class="status-badge missing">Nicht installiert</span>`
+            : `<span class="status-badge installed">Installiert</span>`;
+      return `
+        <div class="card forecast-option ${gewaehlt ? "selected" : ""}" data-action="select-settings-forecast" data-value="${wert}"
+             role="button" aria-pressed="${gewaehlt}"
+             style="padding:10px 8px;margin:0;cursor:pointer;text-align:center;display:flex;flex-direction:column;align-items:center;gap:6px">
+          <div style="height:36px;display:flex;align-items:center;justify-content:center">${bild}</div>
+          <div style="font-weight:500;font-size:14px;line-height:1.2">${titel}</div>
+          ${badge}
+        </div>`;
     };
+    const logo = (name, alt) => `<img src="https://brands.home-assistant.io/${name}/logo.png" alt="${alt}" style="max-width:80px;max-height:36px;height:auto" onerror="this.style.display='none'">`;
     const fremd = d.forecast_source === "solcast_solar" || d.forecast_source === "forecast_solar";
+
+    // Zugeklappt nur, solange die Pflichtsensoren stehen — fehlt einer,
+    // gehören die Felder sofort in den Blick.
+    const pflichtFehlt = fremd && (!String(d.forecast_remaining_entity || "").trim()
+      || !String(d.forecast_tomorrow_entity || "").trim());
+    const offen = this._prognoseSensorenOffen || pflichtFehlt;
+    const kurz = (id) => {
+      if (!id) return "—";
+      return this._escapeHtml(this._hass?.states?.[id]?.attributes?.friendly_name || id);
+    };
+    const zusatz = d.forecast_source === "solcast_solar" && d.expert_mode;
+
+    // Die Felder bleiben zugeklappt im DOM (display:none): das Speichern
+    // liest alle data-field-Eingaben nach, auch die nicht sichtbaren.
+    const sensoren = fremd ? `
+      <div style="margin-top:12px;border-top:1px solid var(--divider-color,#e0e0e0);padding-top:8px">
+        <div data-action="toggle-prognose-sensoren" style="display:flex;justify-content:space-between;align-items:center;cursor:pointer;user-select:none;gap:8px">
+          <div style="min-width:0">
+            <div style="font-weight:500">Prognose-Sensoren</div>
+            ${offen ? "" : `<div class="help-text" style="margin:2px 0 0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Heute: ${kurz(d.forecast_remaining_entity)} · Morgen: ${kurz(d.forecast_tomorrow_entity)}</div>`}
+          </div>
+          <ha-icon icon="mdi:chevron-${offen ? "up" : "down"}" style="--mdc-icon-size:22px;color:var(--secondary-text-color);flex:none"></ha-icon>
+        </div>
+        <div style="${offen ? "" : "display:none;"}margin-top:12px">
+          ${this._entityPickerHtml("settings_forecast_remaining_entity", d.forecast_remaining_entity, "Sensor PV-Prognose verbleibend heute *", "Verbleibende PV-Produktion für heute in kWh.", "sensor")}
+          ${this._entityPickerHtml("settings_forecast_tomorrow_entity", d.forecast_tomorrow_entity, "Sensor PV-Prognose morgen *", "Prognostizierte PV-Produktion für morgen in kWh.", "sensor")}
+          ${zusatz ? `
+            <div style="margin:16px 0 8px;font-weight:500">Weitere Prognose-Sensoren (optional)</div>
+            <div class="help-text" style="margin-bottom:12px">Werden beim Quellenwechsel automatisch erkannt. Nur ändern, wenn die Erkennung nicht passt.</div>
+            ${this._entityPickerHtml("settings_forecast_today_entity", d.forecast_today_entity, "PV-Prognose heute (gesamt)", "Gesamte PV-Produktion für heute in kWh, z.B. sensor.solcast_pv_forecast_prognose_heute.", "sensor")}
+            ${[3, 4, 5, 6, 7].map(n => this._entityPickerHtml(`settings_forecast_day${n}_entity`, d[`forecast_day${n}_entity`], `PV-Prognose Tag ${n}`, `z.B. sensor.solcast_pv_forecast_prognose_tag_${n}`, "sensor")).join("")}
+          ` : ""}
+        </div>
+      </div>` : "";
+
     return `
-      <div class="field-group">
+      <div class="field-group" style="margin-bottom:0">
         <label>Steuernde Quelle</label>
-        <select data-field="settings_forecast_source">
-          ${opt("solcast_solar", "Solcast Solar")}
-          ${opt("forecast_solar", "Forecast.Solar")}
-          ${opt("eigen", "Eigene Berechnung (Open-Meteo)")}
-        </select>
+        <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px">
+          ${karte("solcast_solar", logo("solcast_solar", "Solcast"), "Solcast Solar")}
+          ${karte("forecast_solar", logo("forecast_solar", "Forecast.Solar"), "Forecast.Solar")}
+          ${karte("eigen", `<ha-icon icon="mdi:calculator-variant-outline" style="--mdc-icon-size:32px;color:var(--primary-color)"></ha-icon>`, "Eigene Berechnung")}
+        </div>
         <div class="help-text">Aus dieser Quelle rechnet der Fahrplan. Ein Wechsel lädt die Integration nach dem Speichern neu.</div>
       </div>
-      ${fremd ? `
-        ${this._entityPickerHtml("settings_forecast_remaining_entity", d.forecast_remaining_entity, "Sensor PV-Prognose verbleibend heute *", "Verbleibende PV-Produktion für heute in kWh.", "sensor")}
-        ${this._entityPickerHtml("settings_forecast_tomorrow_entity", d.forecast_tomorrow_entity, "Sensor PV-Prognose morgen *", "Prognostizierte PV-Produktion für morgen in kWh.", "sensor")}
-      ` : ""}
-      ${d.forecast_source === "solcast_solar" && d.expert_mode ? `
-        <div style="margin:16px 0 8px;font-weight:500">Weitere Prognose-Sensoren (optional)</div>
-        <div class="help-text" style="margin-bottom:12px">Werden beim Quellenwechsel automatisch erkannt. Nur ändern, wenn die Erkennung nicht passt.</div>
-        ${this._entityPickerHtml("settings_forecast_today_entity", d.forecast_today_entity, "PV-Prognose heute (gesamt)", "Gesamte PV-Produktion für heute in kWh, z.B. sensor.solcast_pv_forecast_prognose_heute.", "sensor")}
-        ${[3, 4, 5, 6, 7].map(n => this._entityPickerHtml(`settings_forecast_day${n}_entity`, d[`forecast_day${n}_entity`], `PV-Prognose Tag ${n}`, `z.B. sensor.solcast_pv_forecast_prognose_tag_${n}`, "sensor")).join("")}
-      ` : ""}
-      <div style="margin-top:8px">${this._vergleichFeature(d, "settings_")}</div>`;
+      ${sensoren}
+      <div style="margin-top:12px">${this._vergleichFeature(d, "settings_")}</div>`;
   }
 
   _vergleichUrteil(z, fremdKurz) {

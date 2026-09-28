@@ -688,9 +688,12 @@ sensors (assigned once), steps 4–5 are the parameters:
    The step also carries the **Prognosevergleich** feature card; with the
    switch on and a foreign source steering, the surface table appears
    below it. Settings tab **Prognose** mirrors this step: the "PV-Prognose"
-   card with the steering source as a select (switching fills the
-   Solcast/Forecast.Solar sensors from detection and shows them as pickers,
-   in expert mode also Solcast's today/day 3–7 sensors — the one exception
+   card with the steering source as the wizard's three cards in compact form
+   (`select-settings-forecast`; only a real switch fills the
+   Solcast/Forecast.Solar sensors from detection), the sensors as pickers
+   collapsed under "Prognose-Sensoren" (kept in the DOM with display:none,
+   because the save re-reads every data-field; open by itself while a
+   mandatory one is missing), in expert mode also Solcast's today/day 3–7 sensors — the one exception
    to "sensor mappings are wizard-only", because a source switch is useless
    without them — and reloads on save), plus the same feature card; the
    surface table appears there when the own forecast steers *or* runs as
