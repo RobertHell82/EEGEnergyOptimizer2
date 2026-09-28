@@ -10,6 +10,36 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
+## [2.1.24] - 2026-09-28
+
+Eine Runde Sicherheit und Robustheit: Drei unabhängige Prüfungen haben den Code auf Schwachstellen, Fehler und veraltete Doku durchgesehen, vier Umsetzungen haben die Befunde behoben, und eine Gegenlesung sowie das Nachrechnen aller 2100 archivierten Fahrpläne aus Grünbach und Traun haben sie geprüft. Mit den echten Eingaben rechnet die neue Version exakt denselben Fahrplan wie die alte.
+
+### Behoben
+
+- **Das Panel setzt fremde Texte nicht mehr ungeprüft ein.** Namen von Energiegemeinschaften aus PeakShare, Namen und Zustände beliebiger Entitäten in der Sensorauswahl, Antworten der Modbus-Geräte beim Verbindungstest und Fehlermeldungen landeten als HTML im Panel. Ein präparierter Name hätte dort Code ausführen können, in der Sitzung eines Admins. Alle 25 Stellen escapen jetzt; der Link zur Verordnung lässt nur http und https zu.
+- **Huawei stoppt eine Zwangsentladung auch, wenn das Zurücksetzen des Ladelimits scheitert.** Beide Befehle standen im selben Block: Lehnte das Gerät das Ladelimit ab, wurde der Stopp nie gesendet — bei Not-Aus, Failsafe, Modus Aus und beim Entladen der Integration. Jetzt kommt der Stopp zuerst und für sich.
+- **Der Heizstab heizt nicht mehr ungeregelt weiter, wenn die Regelung hängt.** Der Ohmpilot bekam alle 20 Sekunden den letzten Sollwert, egal wie alt er war. Ist die letzte Vorgabe älter als 90 Sekunden oder wirft der Regelschritt, geht er auf 0.
+- **Die Steuerung läuft nicht mehr doppelt.** Timer, Pause und Einstellungsänderung konnten den Steuerungslauf gleichzeitig starten; jetzt schützt ihn eine Sperre. Beim Entladen der Integration und beim Herunterfahren von Home Assistant wird zuerst stillgelegt und ein eigener Eingriff freigegeben, damit kein Befehl im Gerät stehen bleibt. Nach einem Neustart gibt der erste Lauf einmal frei, damit keine Zwangsentladung aus der vorigen Sitzung unbeaufsichtigt weiterläuft.
+- **„Telemetrie deaktivieren“ stoppt jetzt alles.** Störungsmeldungen gingen nach dem Abschalten weiter, bis Home Assistant neu startete. Die Einwilligung wird jetzt in jedem Sendepfad geprüft, beim Abschalten wird der Puffer geleert. Störungsmeldungen enthalten keine Entitäts-ID mehr. Standardmäßig bleibt die Telemetrie eingeschaltet.
+- **Unplausible Tarife werden verworfen statt gespeichert.** Ein Tabellen- oder Kommafehler bei OeMAG, aWATTar SUNNY, Energie AG, der Börse oder den Netzentgelten konnte den Fahrplan tagelang mit einem falschen Preis steuern. Jede Quelle hat jetzt einen Wertebereich (Monatstarife −5 bis 60 ct, Börse −0,50 bis 5 €/kWh, Netzentgelt 0,5 bis 40 ct); was außerhalb liegt, wird nicht übernommen, der letzte gültige Wert bleibt. Werte wie „NaN“ oder „unendlich“ werden überall abgewiesen, und der Fahrplan rechnet mit ihnen nicht mehr still einen falschen Plan, sondern meldet den Fehler.
+- **Der Einspeisepreis liegt für jede Quelle unter dem Bezugspreis, je Viertelstunde.** Die Pflicht-Grenze galt bisher nicht für Monatstarife und echte Börsenpreise und rechnete mit dem Tagesbezugspreis statt mit dem Sommer-Niedertarif. Ohne sie „kauft“ das Modell Strom und verkauft ihn im selben Slot teurer. Die Gewinnrechnung bewertet weiter mit dem echten Preis.
+- **Ein hängender Netzzähler gilt nicht mehr als Messung.** Bricht die Verbindung ab, bleibt der letzte Wert stehen, ohne als „nicht verfügbar“ zu gelten — ein eingefrorenes „Einspeisung am Limit“ trieb Heizstab und Ladelimit hoch. Hat der Netzzähler seit fünf Minuten nichts geschrieben, zählt er als fehlend.
+- **Die Tagesbilanz friert das Pufferbudget des Heizstabs je Tag ein.** Der Vergleich mit dem Standardbetrieb erlaubte ihm so viel Wärme, wie beim Tageswechsel um 04:00 im ausgekühlten Puffer Platz war.
+- **Die Kalibrierung der PV-Prognose erkennt Abregelung zuverlässiger.** Sie prüfte das Halbstundenmittel der Einspeisung; klebte die Einspeisung nur eine Viertelstunde an der Grenze, lernte sie einen zu kleinen Faktor. Jetzt zählt das Maximum, bei Nulleinspeisung auch eine Batterie an ihrer Ladeleistung. Am Rand der gelernten Sonnenstände läuft der Faktor stetig auf 1.
+- **Weitere Absicherungen:** Die Wallbox-Leistung im Handtest ist nach oben begrenzt, und der Test bricht ab, wenn das Fahrzeug in die Gegenrichtung arbeitet. Fronius verwirft eine unplausible Nennladeleistung. Für Nicht-Admins liefert die Konfiguration keine Geräteadressen mehr, und sie können Abrufe bei fremden Diensten nicht in Schleife auslösen. Antworten externer Dienste sind auf 5 MB begrenzt.
+
+### Hinzugefügt
+
+- **Das Fahrplan-Archiv enthält alles, um einen Plan exakt nachzurechnen:** den unteren Prognosepfad, den Basistarif vor dem Deckel, Tarife und Bedarf der Gemeinschaften und den Zustand des Heizstabs samt seinen Einstellungen (ohne Adresse).
+
+### Geändert
+
+- **Die Netzkosten im ⓘ der Bezugsspitze stehen je Monat,** nicht mehr je Jahr: 3,38 € je kW bis 10 kW und 6,76 € darüber im Endausbau, zum Start 2027 rund 1,90 € (je Netzbereich 1,50 bis 2,60 €), inklusive USt.
+
+### Entfernt
+
+- **Die Karten „Einspeise-Statistik“ und „Gesetzte Steuerwerte“** sind weg, auch aus dem Expertenmodus. Der Sensor „Entladung ins Netz“ läuft weiter.
+
 ## [2.1.23] - 2026-09-28
 
 ### Behoben
