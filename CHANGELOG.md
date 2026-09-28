@@ -10,6 +10,17 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
+## [2.1.21] - 2026-09-28
+
+### Geändert
+
+- **Die eigene PV-Prognose rechnet mit drei Wettermodellen statt einem.** Bisher kam die Einstrahlung allein aus ICON vom Deutschen Wetterdienst. In Traun (Linzer Becken) hat ICON am 27.09. Hochnebel vorhergesagt, der nie kam, und am 28.09. bei wolkenlosem Himmel Dunst angenommen. Die Prognose lag morgens 40 % unter der Messung, mittags noch 15 %; die Kurve wirkte dadurch verschoben. ECMWF und Météo-France lagen am selben Morgen deutlich näher. Jetzt zählt der Mittelwert aus ICON, ECMWF und Météo-France. Fällt ein Modell aus oder endet sein Vorhersagezeitraum (Météo-France nach gut vier Tagen), mitteln die übrigen weiter.
+- **Der Prognosevergleich hält gut ein Jahr fest statt 30 Tage.** Abgeschlossene Tage stehen in einem eigenen Speicher, der nur einmal am Tag geschrieben wird. Abweichung, Fehler und der empirische p10 rechnen weiter über die letzten 30 Tage, sonst mischten sich Sommer und Winter. Aufgezeichnet wird jetzt auch, wenn die eigene Prognose steuert und der Vergleich ausgeschaltet ist.
+
+### Hinzugefügt
+
+- **Die eigene PV-Prognose kalibriert sich an der Messung.** Sie merkt sich je Sonnenstand einen Korrekturfaktor, also was Verschattung, Horizont oder Dunst am Standort ausmachen. Ein Baum im Südosten verschattet immer dieselbe Himmelsgegend, egal zu welcher Uhrzeit die Sonne dort steht. Gelernt wird aus den Tagen des Prognosevergleichs, vorsichtig: wenige Daten verschieben den Faktor nur ein Stück, er bleibt zwischen 0,6 und 1,5, und Sonnenstände, die noch nie gemessen wurden, bleiben unverändert. Zeiten mit Abregelung (Einspeisegrenze, AC-Grenze) und Tage mit ganz anderem Wetter zählen nicht. Nach dem heutigen Vormittag in Traun hebt sie den Morgen um 7 bis 10 % an; Mittag und Nachmittag bleiben, bis sie dort gemessen hat. Ändern sich Flächen, Verluste, AC-Grenze oder Wettermodelle, beginnt sie von vorn. Wie weit sie ist, zeigt die Karte „Prognosevergleich“.
+
 ## [2.1.20] - 2026-09-28
 
 ### Behoben
