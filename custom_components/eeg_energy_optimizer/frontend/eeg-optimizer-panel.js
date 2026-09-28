@@ -720,8 +720,6 @@ class EegOptimizerPanel extends HTMLElement {
     this._scheduleOpen = true;
     this._scheduleData = null;
     this._scheduleLoaded = false;
-    // Transparenz-Ansicht: welche Stellgröße gerade auf welchem Wert steht.
-    this._controlState = null;
     // Ambibox: Ergebnis des Verbindungstests aus den Einstellungen. Der
     // Fahrzeugzustand kommt nicht von hier, sondern aus den Sensoren —
     // die schreibt der Controller mit jedem Lesevorgang fort, und das
@@ -733,10 +731,6 @@ class EegOptimizerPanel extends HTMLElement {
     this._ambiboxManualMin = 15;
     this._ambiboxManualBusy = false;
     this._ambiboxManualMeldung = null;
-    // Zeitstempel des Guard-Laufs, zu dem die Steuerwerte zuletzt geladen
-    // wurden — ändert er sich, zieht die Karte nach (siehe _ensureControlState).
-    this._controlStateStamp = null;
-    this._controlStateBusy = false;
     this._scheduleBusy = false;
     // Ist-Verlauf im Optimierungsplan: "off" | "12h" | "yesterday".
     // Standard ist der Plan allein — der Recorder wird erst auf Wunsch
@@ -2013,9 +2007,6 @@ class EegOptimizerPanel extends HTMLElement {
           });
         break;
       }
-      case "refresh-control-state":
-        this._loadControlState();
-        break;
       case "ambibox-charge":
         this._ambiboxManual("charge");
         break;
@@ -2950,22 +2941,6 @@ class EegOptimizerPanel extends HTMLElement {
     } catch (e) {
       console.error("Fahrplan konnte nicht geladen werden:", e);
     }
-  }
-
-  async _loadControlState() {
-    if (!this._hass || this._controlStateBusy) return;
-    this._controlStateBusy = true;
-    try {
-      this._controlState = await this._hass.callWS({
-        type: "eeg_optimizer/get_control_state",
-      });
-    } catch (e) {
-      console.error("Steuerwerte konnten nicht geladen werden:", e);
-      this._controlState = { error: e.message || String(e), rows: [] };
-    } finally {
-      this._controlStateBusy = false;
-    }
-    this._render();
   }
 
   async _refreshSchedule() {
@@ -8456,30 +8431,6 @@ class EegOptimizerPanel extends HTMLElement {
     return String(decisionState?.attributes?.status || "").startsWith("Startphase");
   }
 
-  // Steuerwerte laden und mit jedem Guard-Lauf nachziehen. Bis 2.1.0-dev4
-  // wurde genau einmal geladen, weitere Stände holte nur der Knopf: Die
-  // Karte war eine Momentaufnahme und widersprach nach einem Moduswechsel
-  // minutenlang der Statuskarte darüber (dort stand schon „Laden begrenzt",
-  // hier noch der Standardwert aus dem Anzeige-Modus). Auslöser fürs
-  // Nachziehen ist der Zeitstempel des letzten Guard-Laufs im
-  // Fahrplan-Status-Sensor — den bekommt das Panel ohnehin alle 30 s; ein
-  // WebSocket-Aufruf je Lauf, und nur solange die Karte sichtbar ist
-  // (Expertenmodus). Der Knopf (refresh-control-state) bleibt für sofort.
-  _ensureControlState(decisionState) {
-    if (!this._hass) return;
-    const stamp = decisionState?.attributes?.letzte_aktualisierung || null;
-    if (!this._controlStateRequested) {
-      this._controlStateRequested = true;
-      this._controlStateStamp = stamp;
-      this._loadControlState();
-      return;
-    }
-    if (stamp && stamp !== this._controlStateStamp && !this._controlStateBusy) {
-      this._controlStateStamp = stamp;
-      this._loadControlState();
-    }
-  }
-
   // Dauer in Klartext — für „Abfahrt in ...". Sekundengenau wäre hier
   // Scheingenauigkeit: Die Angabe kommt aus einer Planung, nicht aus einer
   // Messung.
@@ -8734,100 +8685,6 @@ class EegOptimizerPanel extends HTMLElement {
         </div>
         ${meldungBox}
       </div>`;
-  }
-
-  _renderControlStateKarte(decisionState) {
-    // Transparenz-Ansicht: was steht im Wechselrichter, und was haben wir
-    // zuletzt geschrieben. Weichen beide ab, hat entweder jemand anderes
-    // gestellt oder ein Schreibbefehl kam nicht an. Eigene Karte unter dem
-    // Optimierungsplan, immer aufgeklappt — nur im Expertenmodus, für die
-    // Fehlersuche gedacht, nicht für den Alltag. In der Startphase leer:
-    // es wurde noch nichts geschrieben, und die Entitäten laden evtl. noch.
-    if (this._istStartphase(decisionState)) return "";
-    this._ensureControlState(decisionState);
-    const head = `
-      <div class="card">
-        <h3 style="margin:0">
-          <ha-icon icon="mdi:tune-variant" style="--mdc-icon-size:20px;color:var(--primary-color,#03a9f4);vertical-align:middle"></ha-icon>
-          Gesetzte Steuerwerte
-        </h3>`;
-    // Der Aktualisieren-Knopf gehört in jeden Pfad außer dem Lade-Hinweis —
-    // ohne ihn gäbe es nach einem Fehler keinen Weg mehr, neu zu laden.
-    const refreshBtn = `
-      <button class="btn-link" data-action="refresh-control-state" style="font-size:12px;margin-top:6px">
-        <ha-icon icon="mdi:refresh" style="--mdc-icon-size:14px;vertical-align:middle"></ha-icon> Aktualisieren
-      </button>`;
-    const foot = `</div>`;
-
-    const cs = this._controlState;
-    if (!cs) {
-      return head + `<p style="font-size:13px;color:var(--secondary-text-color);margin:8px 0 0">Lade Steuerwerte…</p>` + foot;
-    }
-    if (cs.error) {
-      return head + `<p style="font-size:13px;color:var(--error-color,#f44336);margin:8px 0 0">${this._escapeHtml(cs.error)}</p>` + refreshBtn + foot;
-    }
-    if (!cs.rows || !cs.rows.length) {
-      return head + `<p style="font-size:13px;color:var(--secondary-text-color);margin:8px 0 0">
-        Keine Stellgrößen gefunden. Bei Treibern, die die Optimierung nicht steuert, ist das erwartet.
-      </p>` + refreshBtn + foot;
-    }
-
-    const rows = cs.rows.map(r => {
-      // Ist-Wert der Entität ist in W, unser Schreibwert in kW — für den
-      // Vergleich auf kW normieren, sonst liest sich die Zeile widersprüchlich.
-      const raw = parseFloat(r.value);
-      const isW = (r.unit || "").toUpperCase() === "W";
-      const istKw = isNaN(raw) ? null : (isW ? raw / 1000 : raw);
-      // kW auf zwei Stellen wie die Soll-Spalte — sonst steht "1,5 kW"
-      // neben "1,50 kW" und liest sich wie eine Abweichung.
-      const einheit = isW ? "kW" : (r.unit || "");
-      const nachkomma = (isW || einheit.toLowerCase() === "kw") ? 2 : 1;
-      const istText = isNaN(raw)
-        ? this._escapeHtml(String(r.value ?? "?"))
-        : `${fmtDe(isW ? istKw : raw, nachkomma)} ${this._escapeHtml(einheit)}`;
-      let soll = "—";
-      let abweichung = false;
-      if (r.written != null) {
-        soll = `${fmtDe(r.written, 2)} ${this._escapeHtml(r.written_unit || "")}`;
-        abweichung = istKw != null && Math.abs(istKw - r.written) > 0.25;
-      } else if (r.role === "charge_limit" && r.max != null && istKw != null) {
-        // Nichts geschrieben = Standardwert erwartet (Maximum der Entität).
-        const maxKw = isW ? r.max / 1000 : r.max;
-        soll = `Standard (${fmtDe(maxKw, 2)} kW)`;
-        abweichung = Math.abs(istKw - maxKw) > 0.25;
-      }
-      const colour = abweichung ? "var(--warning-color,#ff9800)" : "inherit";
-      return `<tr>
-        <td style="padding:4px 10px 4px 0">${this._escapeHtml(r.label || "")}
-          ${r.entity_id ? `<div style="font-size:11px;color:var(--secondary-text-color);font-family:monospace;word-break:break-all">${this._escapeHtml(r.entity_id)}</div>` : ""}
-        </td>
-        <td style="padding:4px 10px 4px 0;font-variant-numeric:tabular-nums;color:${colour}">${istText}</td>
-        <td style="padding:4px 0;font-variant-numeric:tabular-nums;color:var(--secondary-text-color)">${soll}</td>
-      </tr>`;
-    }).join("");
-
-    const hint = cs.mode !== "Ein"
-      ? `<p style="font-size:12px;color:var(--secondary-text-color);margin:8px 0 0">
-           Im Anzeige-Modus schreiben wir nichts — die Werte unten sind die Standardwerte des Geräts.
-         </p>`
-      : "";
-
-    return head + `
-      <div style="overflow-x:auto;margin-top:8px">
-        <table style="font-size:13px;border-collapse:collapse;width:100%">
-          <thead>
-            <tr style="color:var(--secondary-text-color);font-size:11px;text-transform:uppercase;letter-spacing:.06em">
-              <th style="text-align:left;padding:0 10px 4px 0">Stellgröße</th>
-              <th style="text-align:left;padding:0 10px 4px 0">Im Gerät</th>
-              <th style="text-align:left;padding:0 0 4px">Von uns gesetzt</th>
-            </tr>
-          </thead>
-          <tbody>${rows}</tbody>
-        </table>
-      </div>
-      ${cs.target_soc != null ? `<div style="font-size:13px;margin-top:6px">Ziel-Ladestand der Entladung: <strong>${Math.round(cs.target_soc)} %</strong></div>` : ""}
-      ${hint}
-      ${refreshBtn}` + foot;
   }
 
   _renderActivityTimeline() {
@@ -9942,8 +9799,6 @@ class EegOptimizerPanel extends HTMLElement {
         <!-- Optimierungsgewinn: was die Optimierung gegenüber Standardbetrieb bringt -->
         ${this._renderGewinnKarte()}
         ${this._renderPrognosevergleichKarte()}
-
-        ${this._config?.expert_mode ? this._renderControlStateKarte(decisionState) : ""}
 
 
         <!-- Charts (or loading hint if no consumption data yet) -->

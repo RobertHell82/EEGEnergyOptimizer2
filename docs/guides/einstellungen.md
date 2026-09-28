@@ -23,7 +23,7 @@ Zusätzlich sichtbar werden:
 - **Tab Prognose:** bei Solcast die *Weiteren Prognose-Sensoren* (PV-Prognose heute gesamt, Tag 3 bis Tag 7)
 - **Tab Verbraucher** als Ganzes, mit Heizstab und Wallbox
 - **Tab System:** die Karten **Verbrauchsprofil** (Rückblick in Wochen) und **Tagesbilanz**
-- **Dashboard:** die Karte **Gesetzte Steuerwerte** nach den Karten Optimierungsgewinn und Prognosevergleich, in der aufgeklappten Karte **Verbrauchsprofil** Datenpunkte, Fenster, letzte Berechnung und der Knopf **Verbrauchsprofil neu berechnen**, bei einer Wallbox der Handbetrieb (Laden/Entladen) in der Statuskarte
+- **Dashboard:** in der aufgeklappten Karte **Verbrauchsprofil** Datenpunkte, Fenster, letzte Berechnung und der Knopf **Verbrauchsprofil neu berechnen**, bei einer Wallbox der Handbetrieb (Laden/Entladen) in der Statuskarte
 - **Assistent:** Der Assistent hat oben einen eigenen Haken *Expertenmodus*. Damit erscheinen bei Solcast die *Weiteren Prognose-Sensoren* (PV-Prognose heute gesamt, Tag 3 bis Tag 7) und je nach Wechselrichter ein zweiter PV- bzw. Batterie-Sensor
 
 _Die Gerätedaten stehen im Assistenten immer da. Du trägst sie einmal aus dem Datenblatt ein; danach ändern sie sich nicht mehr. Deshalb sind sie in den Einstellungen im Expertenmodus versteckt._

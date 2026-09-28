@@ -251,7 +251,7 @@ of every single command and fails on a new, unclassified one.
 | `eeg_optimizer/probe_sma` | Probe SMA Modbus TCP during setup |
 | `eeg_optimizer/get_schedule` | Current plan — slots, header values, prices; plus `referenz_slots` (simulated standard operation) and `gewinn` (profit breakdown vs. standard operation, real money flows) |
 | `eeg_optimizer/refresh_schedule` | Recompute the plan now |
-| `eeg_optimizer/get_control_state` | What the executor last wrote vs. what the driver reports |
+| `eeg_optimizer/get_control_state` | What the executor last wrote vs. what the driver reports — no panel card any more, kept for debugging |
 | `eeg_optimizer/get_schedule_archive` | List archived plans (ZIP download goes through the HTTP view) |
 | `eeg_optimizer/get_activity_log` | Paginated activity log (offset, limit) |
 | `eeg_optimizer/get_peakshare_communities` | List of PeakShare community names for dropdown |
@@ -748,11 +748,9 @@ value turns orange when the running quarter's projection exceeds the peak. It re
 leistungsspitze sensors, not the Hausverbrauch attributes — it is not part of
 the one-point-in-time power set. During the executor's startup grace period (status
 "Startphase — …") the status card shows only that hint — no setpoints,
-reasons, warnings, or job line. The "Gesetzte Steuerwerte" transparency view
-is its own always-expanded card after the Optimierungsgewinn and Prognosevergleich cards (expert mode
-only, hidden during the startup phase); it reloads with every guard cycle,
-keyed on the status sensor's `letzte_aktualisierung`, so it never contradicts
-the status card above for longer than one cycle.
+reasons, warnings, or job line. The "Gesetzte Steuerwerte" card is gone
+(2.1.24, also from expert mode — the user did not want it in the panel);
+`get_control_state` stays as a WebSocket command for debugging.
 
 Config entry version: 29 (migrations in `__init__.py`). The own forecast
 added no migration: `pv_flaechen` / `pv_verluste_pct` are optional keys,

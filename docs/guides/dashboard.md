@@ -83,10 +83,6 @@ Fährst du mit der Maus über das Diagramm oder tippst darauf, zeigt ein Fenster
 
 Diese Karte vergleicht den Plan mit einem simulierten **Standardbetrieb**: PV-Überschuss lädt zuerst die Batterie, ein Defizit entlädt sie bis zum Mindest-Ladestand; ein Heizstab bekommt, was sonst abgeregelt würde, höchstens so viel, wie der Puffer je Tag aufnimmt. Die Zahl im Kopf ist der erwartete Mehrerlös — auf Prognosebasis, kein Messwert. Gezählt werden mindestens 24 Stunden und dann bis zur nächsten Mitternacht (mittags also rund 36 Stunden), damit jeder Tag samt Pufferbudget ganz im Fenster liegt; die Stundenzahl steht in der Überschrift. Aufgeklappt stehen die Geldposten beider Betriebsarten nebeneinander und ein Diagramm, wie die Einspeisung ohne Optimierung aussähe.
 
-### Gesetzte Steuerwerte (Expertenmodus)
-
-Mit eingeschaltetem Expertenmodus zeigt diese Karte je Stellgröße, was **im Gerät** steht und was der Optimizer **gesetzt** hat. Weichen beide deutlich ab, ist der Wert orange — dann hat jemand anderes gestellt oder ein Schreibbefehl kam nicht an. Hat der Optimizer nichts gesetzt, wird beim Ladelimit der Standardwert des Geräts erwartet. Die Karte zieht mit jedem Steuerungslauf nach und fehlt in der Startphase.
-
 ## Was deine PV bringt
 
 Die Karte zeigt die **Ersparnis durch PV** für heute, diesen Monat und dieses Jahr: nicht gekaufter Strom plus Einspeiseerlös, mit Heizstab auch die Wärme. Das ist eine **Messung** — jede Kilowattstunde ist gemessen, die Preise werden je Viertelstunde festgehalten, wie sie zu diesem Zeitpunkt galten. „Woraus setzt sich das zusammen?" zeigt die Posten des Tages. Wie viel der Einspeisung zum Satz der Energiegemeinschaft zählt, beruht auf deren Bedarfsprognose; endgültig steht es erst mit der EEG-Abrechnung fest.
@@ -128,4 +124,4 @@ _Hatte eine Viertelstunde Messlücken, ist ihr Wert eine Untergrenze. Sie zählt
 **Treiber wird nicht gesteuert.** Der Zustand „Nur Anzeige" und der blaue Hinweis „Dieser Wechselrichter wird nicht gesteuert" bedeuten, dass für dein Gerät keine Steuerung freigegeben ist. Bei den sechs unterstützten Wechselrichtern kommt das nicht vor — siehe „Stand der Unterstützung“ in der Doku. Der Plan wird trotzdem gerechnet und angezeigt; am Wechselrichter ändert sich nichts, auch nicht im Modus Ein.
 
 > [!NOTE]
-> **Ein fehlgeschlagener Steuerbefehl wird nicht in jedem Lauf wiederholt.** Die Statuskarte meldet ihn orange als „Letzter Steuerbefehl fehlgeschlagen", und der Optimizer wartet zwischen zwei Versuchen immer länger. Hält das an, zeigt die Karte **Gesetzte Steuerwerte** im Expertenmodus, was wirklich im Gerät steht.
+> **Ein fehlgeschlagener Steuerbefehl wird nicht in jedem Lauf wiederholt.** Die Statuskarte meldet ihn orange als „Letzter Steuerbefehl fehlgeschlagen", und der Optimizer wartet zwischen zwei Versuchen immer länger. Hält das an, hilft das Fahrplan-Archiv (Einstellungen → System) bei der Fehlersuche.
