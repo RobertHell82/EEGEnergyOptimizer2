@@ -228,6 +228,8 @@ class SolaXInverter(InverterBase):
         (siehe SolaXStateStore). Bei Reboot mitten im Block (aktueller State = 0)
         wird der Cache NICHT überschrieben.
         """
+        if self._nicht_endlich(power_kw):
+            return False
         try:
             await self._ensure_original_cached()
 
@@ -298,6 +300,8 @@ class SolaXInverter(InverterBase):
 
         Uses "Enabled Battery Control" with negative active_power.
         """
+        if self._nicht_endlich(power_kw, target_soc):
+            return False
         try:
             # Entladeboden absenken, BEVOR der Befehl läuft — sonst stoppt der
             # Wechselrichter an seinem eigenen Wert, ohne das zu melden.

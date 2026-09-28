@@ -419,6 +419,8 @@ class KostalInverter(InverterBase):
         power_kw>0: partial charge limit (Einspeisebegrenzung).
         The keepalive rewrites the value until stop.
         """
+        if self._nicht_endlich(power_kw):
+            return False
         async with self._lock:
             return await self._set_charge_limit_locked(power_kw)
 
@@ -493,6 +495,8 @@ class KostalInverter(InverterBase):
         which re-evaluates the SOC every 30 s and calls async_stop_forcible().
         The watchdog fallback to internal automatic covers the HA-crash case.
         """
+        if self._nicht_endlich(power_kw, target_soc):
+            return False
         async with self._lock:
             return await self._set_discharge_locked(power_kw)
 

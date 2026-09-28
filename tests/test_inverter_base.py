@@ -136,3 +136,51 @@ class TestScheduleControlInterface:
         assert inv.get_charge_limit_max_kw() is None
         assert inv.get_max_discharge_power_kw() is None
         assert inv.get_backup_reserve_soc_pct() is None
+
+
+class TestNichtEndlich:
+    """NaN/Inf wird vor jedem Schreiben abgewiesen, mit Grund."""
+
+    def _inv(self, mock_hass):
+        class Voll(InverterBase):
+            async def async_set_charge_limit(self, power_kw):
+                return True
+
+            async def async_set_discharge(self, power_kw, target_soc=None):
+                return True
+
+            async def async_stop_forcible(self):
+                return True
+
+            @property
+            def is_available(self):
+                return True
+
+        return Voll(mock_hass, {})
+
+    @pytest.mark.parametrize("werte", [
+        (float("nan"),), (float("inf"),), (2.0, float("-inf")), ("x",),
+    ])
+    def test_nicht_endlich_wird_erkannt(self, mock_hass, werte):
+        inv = self._inv(mock_hass)
+        assert inv._nicht_endlich(*werte) is True
+        assert inv.last_write_error == "Sollwert nicht endlich"
+
+    def test_endlich_und_none_sind_erlaubt(self, mock_hass):
+        inv = self._inv(mock_hass)
+        assert inv._nicht_endlich(2.5, None, 0) is False
+        assert inv.last_write_error is None
+
+
+@pytest.mark.parametrize("aufruf", [
+    ("async_set_charge_limit", (float("nan"),)),
+    ("async_set_discharge", (float("inf"), 20)),
+    ("async_set_discharge", (2.0, float("nan"))),
+])
+async def test_huawei_schreibt_keinen_nicht_endlichen_sollwert(mock_hass, aufruf):
+    from custom_components.eeg_energy_optimizer.inverter.huawei import HuaweiInverter
+
+    inv = HuaweiInverter(mock_hass, {"huawei_device_id": "dev"})
+    name, args = aufruf
+    assert await getattr(inv, name)(*args) is False
+    mock_hass.services.async_call.assert_not_called()

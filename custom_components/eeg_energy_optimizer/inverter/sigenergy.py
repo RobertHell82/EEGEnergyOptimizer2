@@ -320,6 +320,8 @@ class SigenergyInverter(InverterBase):
         Reihenfolge: erst das Limit, dann der Modus — sonst liefe ein
         Moduswechsel einen Moment mit einem alten, höheren Limit.
         """
+        if self._nicht_endlich(power_kw):
+            return False
         try:
             await self._ensure_remote_ems()
             await self._set_number("ess_max_charging_limit", max(0.0, float(power_kw)))
@@ -338,6 +340,8 @@ class SigenergyInverter(InverterBase):
         das Gerät bekommt keinen SOC — den Cut-Off (40048) schreiben wir
         bewusst nicht, solange sein Verhalten am Gerät nicht geprüft ist.
         """
+        if self._nicht_endlich(power_kw, target_soc):
+            return False
         try:
             await self._ensure_remote_ems()
             await self._set_number("ess_max_discharging_limit", max(0.0, abs(float(power_kw))))

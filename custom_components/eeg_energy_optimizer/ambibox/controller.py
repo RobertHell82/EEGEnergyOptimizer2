@@ -23,6 +23,7 @@ wie das Gerät das Vorzeichen setzt.
 from __future__ import annotations
 
 import logging
+import math
 import time
 from dataclasses import dataclass, field
 from typing import Any, Callable
@@ -67,6 +68,16 @@ SESSION_STATE_CHARGE_LOOP = 5
 BATTERY_STATES = {0: "Ruhezustand", 1: "Bereit", 2: "Lädt", 3: "Entlädt"}
 BATTERY_STATE_CHARGE = 2
 BATTERY_STATE_DISCHARGE = 3
+
+# Obergrenze des Handtests, wenn die Wallbox ihren Stellbereich (Max
+# Charge/Discharge Power) nicht meldet: 11 kW, die Nennleistung der Box.
+# Das Panel begrenzt zwar schon, aber der WebSocket-Befehl nimmt jede Zahl.
+AMBIBOX_MANUAL_FALLBACK_MAX_KW = 11.0
+# So lange nach dem Start darf der Battery State noch in die Gegenrichtung
+# zeigen (Anlauf, ein Lesetakt Verzug). Danach heißt Gegenrichtung: die Box
+# versteht das Vorzeichen anders als eingestellt — dann sofort abbrechen,
+# statt den Test in die falsche Richtung zu Ende laufen zu lassen.
+AMBIBOX_RICHTUNG_ANLAUF_S = 60.0
 
 CONTROL_MODES = {
     0: "Nicht steuerbar",
@@ -263,6 +274,7 @@ class AmbiboxController:
         self._manuell_richtung: str | None = None
         self._manuell_kw: float = 0.0
         self._manuell_bis: float | None = None
+        self._manuell_seit: float | None = None
         self._manuell_fehler: str | None = None
         self._letzter_sollwert_w: int | None = None
 
@@ -438,8 +450,30 @@ class AmbiboxController:
             return False, f"Unbekannte Richtung: {richtung}"
         if self._treiber is None:
             return False, "Keine Verbindung zur Wallbox konfiguriert."
-        if kw <= 0:
+        try:
+            kw = float(kw)
+        except (TypeError, ValueError):
+            return False, "Die Leistung muss eine Zahl sein."
+        if not math.isfinite(kw) or kw <= 0:
             return False, "Die Leistung muss größer als 0 kW sein."
+        # Serverseitig begrenzen: auf den Stellbereich, den die Wallbox für
+        # diese Richtung meldet, sonst auf die Nennleistung. Ablehnen statt
+        # stillschweigend kappen — bei einem Test soll klar sein, was lief.
+        gemeldet = (
+            self._zustand.max_charge_kw if richtung == "laden"
+            else self._zustand.max_discharge_kw
+        )
+        obergrenze = (
+            gemeldet if gemeldet is not None and gemeldet > 0
+            else AMBIBOX_MANUAL_FALLBACK_MAX_KW
+        )
+        if kw > obergrenze + 1e-9:
+            return False, (
+                f"Höchstens {obergrenze:.1f} kW — "
+                + ("so viel meldet die Wallbox für diese Richtung."
+                   if gemeldet is not None and gemeldet > 0
+                   else "die Wallbox meldet keinen Stellbereich.")
+            )
         # Ohne angestecktes Fahrzeug gibt es nichts zu steuern. Das ist keine
         # Förmlichkeit: Ein Sollwert ins Leere ließe sich nicht auswerten,
         # und genau die Auswertung ist der Zweck dieses Wegs.
@@ -472,6 +506,7 @@ class AmbiboxController:
         self._manuell_richtung = richtung
         self._manuell_kw = abs(float(kw))
         self._manuell_bis = time.time() + minuten * 60
+        self._manuell_seit = time.time()
         self._manuell_fehler = None
         self._letzter_sollwert_w = watt
         _LOGGER.info(
@@ -487,6 +522,7 @@ class AmbiboxController:
         self._manuell_richtung = None
         self._manuell_kw = 0.0
         self._manuell_bis = None
+        self._manuell_seit = None
         if self._treiber is None:
             return False
         # Erst 0 W, dann Stop Charge: Welcher der beiden Wege die Box
@@ -519,12 +555,36 @@ class AmbiboxController:
         if self._gelesen and not self._zustand.verbunden:
             await self.async_manuell_stopp("Fahrzeug nicht mehr angesteckt")
             return
+        if self._gegenrichtung():
+            self._manuell_fehler = (
+                "Die Wallbox arbeitet in Gegenrichtung — Vorzeichen-Einstellung prüfen."
+            )
+            await self.async_manuell_stopp("Battery State widerspricht der Richtung")
+            return
         watt = self._sollwert_watt(self._manuell_richtung or "laden", self._manuell_kw)
         if not await self._treiber.async_write_target_power(watt):
             self._manuell_fehler = self._treiber.last_error or "Schreiben fehlgeschlagen"
             self._melden()
         else:
             self._letzter_sollwert_w = watt
+
+    def _gegenrichtung(self) -> bool:
+        """Meldet die Box nach der Anlaufzeit die entgegengesetzte Richtung?
+
+        Nur die Gegenrichtung zählt, nicht Ruhe/Bereit: Dass eine Vorgabe
+        nicht ausgeführt wird, ist eine Beobachtung, die der Test liefern
+        soll. Gegenrichtung dagegen bewegt Energie, die niemand wollte.
+        """
+        if not self._gelesen or self._manuell_seit is None:
+            return False
+        if time.time() - self._manuell_seit < AMBIBOX_RICHTUNG_ANLAUF_S:
+            return False
+        state = self._zustand.battery_state
+        if self._manuell_richtung == "laden":
+            return state == BATTERY_STATE_DISCHARGE
+        if self._manuell_richtung == "entladen":
+            return state == BATTERY_STATE_CHARGE
+        return False
 
     # -- Beobachter -------------------------------------------------------
 

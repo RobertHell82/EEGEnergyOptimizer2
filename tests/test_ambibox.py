@@ -642,3 +642,84 @@ async def test_status_zeigt_den_laufenden_test():
     assert st["manuell_kw"] == 2.5
     assert st["manuell_sollwert_w"] == 2500  # negative Konvention: entladen positiv
     assert st["vorzeichen"] == "negative"
+
+
+# ---------------------------------------------------------------------------
+# Handtest: Obergrenze und Gegenrichtung (M5)
+# ---------------------------------------------------------------------------
+
+
+async def test_leistung_ueber_dem_gemeldeten_stellbereich_wird_abgelehnt():
+    """Der WebSocket-Befehl nimmt jede Zahl — begrenzt wird hier, auf das,
+    was die Box je Richtung meldet (Standardblock: 11 kW laden, 10 kW
+    entladen)."""
+    controller = await _bereiter_controller()
+    ok, meldung = await controller.async_manuell_start("entladen", 10.5, 15)
+    assert ok is False
+    assert "10.0 kW" in meldung
+    controller._treiber.async_write_target_power.assert_not_awaited()
+    ok2, _ = await controller.async_manuell_start("laden", 10.5, 15)
+    assert ok2 is True
+
+
+async def test_ohne_gemeldeten_stellbereich_gilt_die_nennleistung():
+    from custom_components.eeg_energy_optimizer.ambibox.controller import (
+        AMBIBOX_MANUAL_FALLBACK_MAX_KW,
+    )
+
+    controller = await _bereiter_controller(
+        _standardblock({mb.OFF_MAX_CHARGE_POWER: ("I", 0)})
+    )
+    ok, meldung = await controller.async_manuell_start(
+        "laden", AMBIBOX_MANUAL_FALLBACK_MAX_KW + 1, 15
+    )
+    assert ok is False
+    assert "keinen Stellbereich" in meldung
+
+
+@pytest.mark.parametrize("kw", [float("nan"), float("inf"), "viel"])
+async def test_nicht_endliche_leistung_wird_abgelehnt(kw):
+    controller = await _bereiter_controller()
+    ok, _ = await controller.async_manuell_start("laden", kw, 15)
+    assert ok is False
+    controller._treiber.async_write_target_power.assert_not_awaited()
+
+
+async def test_gegenrichtung_bricht_nach_der_anlaufzeit_ab(monkeypatch):
+    """Laden befohlen, die Box meldet DISCHARGE: das Vorzeichen ist falsch
+    verstanden — abbrechen statt den Test zu Ende laufen zu lassen."""
+    from custom_components.eeg_energy_optimizer.ambibox import controller as mod
+
+    jetzt = [1000.0]
+    monkeypatch.setattr(mod.time, "time", lambda: jetzt[0])
+    controller = await _bereiter_controller(
+        _standardblock({mb.OFF_BATTERY_STATE: ("I", 3)})  # DISCHARGE
+    )
+    await controller.async_manuell_start("laden", 3.0, 15)
+
+    # In der Anlaufzeit noch kein Urteil.
+    jetzt[0] += mod.AMBIBOX_RICHTUNG_ANLAUF_S - 1
+    await controller.async_keepalive()
+    assert controller.manuell_aktiv is True
+
+    jetzt[0] += 2
+    await controller.async_keepalive()
+    assert controller.manuell_aktiv is False
+    controller._treiber.async_write_target_power.assert_awaited_with(0)
+    assert "Gegenrichtung" in controller.status()["manuell_fehler"]
+
+
+async def test_ruhezustand_ist_keine_gegenrichtung(monkeypatch):
+    """Führt die Box die Vorgabe nicht aus, ist das eine Beobachtung, die der
+    Test liefern soll — kein Abbruchgrund."""
+    from custom_components.eeg_energy_optimizer.ambibox import controller as mod
+
+    jetzt = [1000.0]
+    monkeypatch.setattr(mod.time, "time", lambda: jetzt[0])
+    controller = await _bereiter_controller(
+        _standardblock({mb.OFF_BATTERY_STATE: ("I", 1)})  # IDLE
+    )
+    await controller.async_manuell_start("laden", 3.0, 15)
+    jetzt[0] += mod.AMBIBOX_RICHTUNG_ANLAUF_S + 5
+    await controller.async_keepalive()
+    assert controller.manuell_aktiv is True

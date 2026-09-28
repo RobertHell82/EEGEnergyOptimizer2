@@ -244,6 +244,11 @@ _MINRSV_SAFETY_MARGIN_PCT = 5.0
 # from a corrupted Modbus response and would compress every charge/discharge
 # percentage calculation toward zero, making the battery appear inert.
 _WCHAMAX_SANITY_LIMIT = 25000
+# Und nach unten: Die kleinste BYD-/Fronius-Batterie am Gen24 lädt mit gut
+# 1 kW. Ein Wert von wenigen Watt (Registermüll, falscher Skalenfaktor)
+# ließe jeden Sollwert auf 100 % springen — aus „0,3 kW entladen" würde
+# volle Leistung. Lieber unbekannt als falsch.
+_WCHAMAX_MIN_W = 500
 
 
 class FroniusStateStore:
@@ -624,13 +629,13 @@ class FroniusInverter(InverterBase):
             if len(regs) > _OFFSET_MINRSVPCT:
                 self._note_idle_minrsvpct(regs[_OFFSET_MINRSVPCT])
             raw = int(round(regs[0] * (10 ** self._sf_wchamax)))
-            if raw == 0 or raw > _WCHAMAX_SANITY_LIMIT:
+            if raw < _WCHAMAX_MIN_W or raw > _WCHAMAX_SANITY_LIMIT:
                 # Implausible value — likely a corrupted Modbus response or
                 # wrong SunSpec model layout. Don't cache, force a re-read on
                 # the next cycle. Zero is also handled by callers as "unknown".
                 _LOGGER.warning(
-                    "Fronius: WChaMax=%d W outside plausible range (1..%d) — ignoring",
-                    raw, _WCHAMAX_SANITY_LIMIT,
+                    "Fronius: WChaMax=%d W outside plausible range (%d..%d) — ignoring",
+                    raw, _WCHAMAX_MIN_W, _WCHAMAX_SANITY_LIMIT,
                 )
                 return None
 
@@ -829,6 +834,8 @@ class FroniusInverter(InverterBase):
         Arms the inverter's fallback timer and starts the keepalive, so a
         crashed Home Assistant cannot leave charging blocked indefinitely.
         """
+        if self._nicht_endlich(power_kw):
+            return False
         async with self._lock:
             return await self._set_charge_limit_locked(power_kw)
 
@@ -910,6 +917,8 @@ class FroniusInverter(InverterBase):
         Optionally sets MinRsvPct as a SOC floor; the previous MinRsvPct is
         snapshotted on first call so async_stop_forcible() can restore it.
         """
+        if self._nicht_endlich(power_kw, target_soc):
+            return False
         async with self._lock:
             return await self._set_discharge_locked(power_kw, target_soc)
 

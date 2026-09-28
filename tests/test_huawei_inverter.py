@@ -7,7 +7,7 @@ A missing charge entity no longer fails construction — it is re-resolved
 lazily on each control call, and charge limiting degrades to a no-op with
 warning. Forced discharge still goes via the huawei_solar service
 `forcible_discharge_soc`. Stopping is a two-call sequence:
-restore the max charge power and then stop_forcible_charge.
+stop_forcible_charge first, then restore the max charge power.
 """
 
 import time
@@ -198,31 +198,60 @@ class TestAsyncSetDischarge:
 
 
 class TestAsyncStopForcible:
-    """Stop is a two-call sequence: restore max charge power, then stop_forcible_charge."""
+    """Stop is a two-call sequence: stop_forcible_charge, then restore max charge power."""
 
-    async def test_restores_max_then_stops_forcible(self, inverter, mock_hass):
-        """First call restores the entity max value, second stops the service."""
+    async def test_stops_forcible_then_restores_max(self, inverter, mock_hass):
+        """First call stops the forced mode, second restores the entity max value."""
         result = await inverter.async_stop_forcible()
         assert result is True
 
         calls = mock_hass.services.async_call.call_args_list
         assert len(calls) == 2
 
-        # Call 1: number.set_value back to the entity's hardware max
+        # Call 1: huawei_solar service to stop forcible discharge
         assert calls[0].args == (
-            "number",
-            "set_value",
-            {"entity_id": CHARGE_ENTITY, "value": 5000.0},
-        )
-        assert calls[0].kwargs == {"blocking": True}
-
-        # Call 2: huawei_solar service to stop forcible discharge
-        assert calls[1].args == (
             HUAWEI_DOMAIN,
             "stop_forcible_charge",
             {"device_id": "test_device"},
         )
+        assert calls[0].kwargs == {"blocking": True}
+
+        # Call 2: number.set_value back to the entity's hardware max
+        assert calls[1].args == (
+            "number",
+            "set_value",
+            {"entity_id": CHARGE_ENTITY, "value": 5000.0},
+        )
         assert calls[1].kwargs == {"blocking": True}
+
+    async def test_abgelehntes_ladelimit_haelt_den_stopp_nicht_auf(self, inverter, mock_hass):
+        """Scheitert number.set_value, ist die Zwangsentladung trotzdem gestoppt.
+
+        Bisher standen beide Aufrufe in einem try, das Ladelimit zuerst —
+        ein abgelehnter Wert ließ die Entladung bis zum Ziel-Ladestand laufen.
+        Die Freigabe meldet trotzdem False, damit der Executor das Limit
+        erneut versucht.
+        """
+        async def _call(domain, service, data, blocking=True):
+            if domain == "number":
+                raise RuntimeError("abgelehnt")
+
+        mock_hass.services.async_call = AsyncMock(side_effect=_call)
+        result = await inverter.async_stop_forcible()
+        assert result is False
+        services = [c.args[1] for c in mock_hass.services.async_call.call_args_list]
+        assert services == ["stop_forcible_charge", "set_value"]
+        assert inverter.last_write_error == "number.set_value: RuntimeError"
+
+    async def test_gescheiterter_stopp_ist_der_gemeldete_grund(self, inverter, mock_hass):
+        """Stopp scheitert → False; der Grund nennt den Stopp, nicht das Limit."""
+        async def _call(domain, service, data, blocking=True):
+            raise RuntimeError("weg")
+
+        mock_hass.services.async_call = AsyncMock(side_effect=_call)
+        result = await inverter.async_stop_forcible()
+        assert result is False
+        assert inverter.last_write_error == "stop_forcible_charge: RuntimeError"
 
     async def test_returns_false_on_exception(self, inverter, mock_hass):
         mock_hass.services.async_call = AsyncMock(side_effect=Exception("boom"))

@@ -612,6 +612,8 @@ class HuaweiInverter(InverterBase):
         without a resolvable charge entity is skipped (logged); a partial
         failure returns False so the optimizer treats it conservatively.
         """
+        if self._nicht_endlich(power_kw):
+            return False
         if len(self._device_ids) > 1:
             distribution = self._compute_charge_distribution(power_kw)
             if distribution is None:
@@ -671,6 +673,8 @@ class HuaweiInverter(InverterBase):
         energy, capped at its max discharge power. Falls back to an equal
         split when any battery sensor is unavailable.
         """
+        if self._nicht_endlich(power_kw, target_soc):
+            return False
         soc = max(int(target_soc) if target_soc is not None else 12, 12)
         distribution = self._compute_discharge_distribution(power_kw)
         if distribution is None:
@@ -713,12 +717,31 @@ class HuaweiInverter(InverterBase):
     async def async_stop_forcible(self) -> bool:
         """Stop forced charge/discharge on all devices, return to automatic mode.
 
-        Per device: restore max charge power (if entity available), then stop
-        any forcible charge/discharge. Each device is handled independently so
-        a partial Modbus failure does not block the rest.
+        Per device: stop any forcible charge/discharge FIRST, then restore
+        max charge power (if entity available). Each step has its own try —
+        a rejected charge-limit value must never keep a running forced
+        discharge alive. Each device is handled independently so a partial
+        Modbus failure does not block the rest. The release counts as failed
+        if either step fails on any device (the caller retries).
         """
         all_ok = True
+        stopp_fehler: str | None = None
         for did in self._device_ids:
+            # Zuerst der Stopp, in eigenem try: Er ist der Teil, der Energie
+            # bewegt. Scheiterte bisher das Zurücksetzen des Ladelimits davor,
+            # lief die Zwangsentladung bis zum Ziel-Ladestand weiter.
+            try:
+                await self._hass.services.async_call(
+                    HUAWEI_DOMAIN,
+                    "stop_forcible_charge",
+                    {"device_id": did},
+                    blocking=True,
+                )
+            except Exception as exc:
+                _LOGGER.exception("Huawei: Failed to stop forcible mode on %s", did)
+                all_ok = False
+                stopp_fehler = f"stop_forcible_charge: {type(exc).__name__}"
+                self._fehler(stopp_fehler)
             entity_id = self._ensure_charge_entity(did)
             if entity_id is None:
                 # Ohne Number-Entität bleibt ein zuvor gesetztes Ladelimit
@@ -729,28 +752,23 @@ class HuaweiInverter(InverterBase):
                 )
                 all_ok = False
                 self._fehler("Ladeleistungs-Entität nicht auflösbar")
+                continue
             try:
-                # Restore max charge power (skip if the entity is unavailable —
-                # stopping the forcible mode must still go through)
-                if entity_id is not None:
-                    max_power = self._get_max_charge_power(entity_id)
-                    await self._hass.services.async_call(
-                        "number",
-                        "set_value",
-                        {"entity_id": entity_id, "value": max_power},
-                        blocking=True,
-                    )
-                # Stop forcible charge/discharge if active
+                max_power = self._get_max_charge_power(entity_id)
                 await self._hass.services.async_call(
-                    HUAWEI_DOMAIN,
-                    "stop_forcible_charge",
-                    {"device_id": did},
+                    "number",
+                    "set_value",
+                    {"entity_id": entity_id, "value": max_power},
                     blocking=True,
                 )
             except Exception as exc:
-                _LOGGER.exception("Huawei: Failed to stop forcible mode on %s", did)
+                _LOGGER.exception("Huawei: Failed to restore charge limit on %s", did)
                 all_ok = False
-                self._fehler(f"stop_forcible_charge: {type(exc).__name__}")
+                self._fehler(f"number.set_value: {type(exc).__name__}")
+        if stopp_fehler is not None:
+            # Der gescheiterte Stopp ist der schwerere Grund — er soll in der
+            # Telemetrie stehen, nicht ein späterer Ladelimit-Fehler.
+            self._fehler(stopp_fehler)
         return self._erfolg() if all_ok else False
 
     @property

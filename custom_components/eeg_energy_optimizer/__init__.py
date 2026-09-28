@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import collections
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -101,6 +102,16 @@ try:
     from homeassistant.util import dt as dt_util
 except ImportError:  # pragma: no cover — only triggered outside HA
     dt_util = None  # type: ignore[assignment]
+
+try:
+    from homeassistant.const import EVENT_HOMEASSISTANT_STOP
+except ImportError:  # pragma: no cover — only triggered outside HA
+    EVENT_HOMEASSISTANT_STOP = "homeassistant_stop"  # type: ignore[assignment]
+
+# So lange wartet das Entladen / der HA-Stopp auf einen laufenden Guard-Lauf,
+# bevor es trotzdem freigibt. Ein Lauf dauert normalerweise unter einer
+# Sekunde; hängt ein Modbus-Aufruf, soll das Herunterfahren nicht mithängen.
+GUARD_STOPP_WARTEN_S = 20.0
 
 
 # ---------------------------------------------------------------------------
@@ -1636,7 +1647,19 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # ----------------------------------------------------------
         telemetry_buffer = TelemetryBuffer(hass)
         await telemetry_buffer.load()
-        reporter = TelemetryReporter(hass, telemetry_buffer)
+        def _telemetry_an() -> bool:
+            """Einwilligung JETZT — aus der aktuellen Config, nicht der beim Start.
+
+            „Deaktivieren" ist ein Hot-Reload: ``data["config"]`` wird
+            ersetzt, das lokale ``config`` dieser Closures nicht. Ein
+            ``config.get(...)`` hier sähe bis zum Neustart den alten Wert.
+            """
+            aktuell = data.get("config")
+            if not isinstance(aktuell, dict):
+                aktuell = config
+            return bool(aktuell.get(CONF_TELEMETRY_ENABLED, False))
+
+        reporter = TelemetryReporter(hass, telemetry_buffer, enabled=_telemetry_an)
         data["telemetry_buffer"] = telemetry_buffer
         data["telemetry_reporter"] = reporter
         # (category, message_hash) -> last-emit datetime (UTC)
@@ -1671,6 +1694,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             sie heilen nicht von selbst, und stündlich dieselbe Meldung wäre nur
             Lärm. Transiente Fehler behalten das Stundenfenster.
             """
+            # Ohne Einwilligung nicht einmal zählen: der Executor-Callback und
+            # die Watchdogs rufen hierher, auch wenn der Nutzer abgeschaltet hat.
+            if not _telemetry_an():
+                return
             key = (category, message_hash)
             now_ts = _now_utc()
             senden, verschluckt = _dedup_pruefen(
@@ -1746,11 +1773,21 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     if since is None:
                         data["telemetry_sensor_unavail_since"][role] = now_ts
                     elif (now_ts - since).total_seconds() >= SENSOR_UNAVAIL_THRESHOLD_S:
+                        # Keine entity_id: sie ist frei benannt und damit
+                        # identifizierend (const.py schließt sie aus). Ob
+                        # die Entität fehlt oder nur keinen Wert hat, reicht
+                        # für die Diagnose.
                         _emit_failure_dedup(
                             category="sensor_unavailable",
                             severity="warning",
                             message_hash=role,
-                            context={"sensor_role": role, "entity_id": eid},
+                            context={
+                                "sensor_role": role,
+                                "zustand": (
+                                    "fehlt" if state is None
+                                    else (getattr(state, "state", None) or "leer")
+                                ),
+                            },
                             dedup_window_s=FAILURE_PERSISTENT_DEDUP_WINDOW_S,
                         )
                 else:
@@ -1857,7 +1894,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         prognosevergleich = Prognosevergleich(hass, entry.entry_id)
         await prognosevergleich.async_load()
         data["prognosevergleich"] = prognosevergleich
-        pvprognose_provider.kalibrieren(prognosevergleich.lerntage())
+        # Die Kalibrierung ist eine Verfeinerung — das Setup darf an ihr nie
+        # scheitern (ein kaputter Lerntag im Store hielte sonst die ganze
+        # Steuerung an). Der Takt versucht es ohnehin erneut.
+        try:
+            pvprognose_provider.kalibrieren(prognosevergleich.lerntage())
+        except Exception:  # noqa: BLE001
+            _LOGGER.debug("PV-Prognose: Kalibrierung beim Start übersprungen", exc_info=True)
 
         # Befristeter Eingriff (Pause). Persistent, damit ein
         # Neustart mitten in der Pause die Steuerung nicht wieder anwirft.
@@ -1938,7 +1981,26 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             hass.bus.async_fire("eeg_optimizer_activity", entry_data)
             hass.async_create_task(_save_activity_log())
 
+        # Ein Guard-Lauf zur Zeit. Er wird von fünf Stellen angestoßen (Timer,
+        # Update-Listener, Pause-Service, WS set_override/clear_override,
+        # Setup) und schreibt dazwischen mehrfach an den Wechselrichter —
+        # zwei überlappende Läufe konnten sich gegenseitig Freigabe und
+        # Entladung überschreiben und die Zustände des Executors verwirren.
+        guard_lock = asyncio.Lock()
+        data["guard_lock"] = guard_lock
+
         async def _guard_cycle(_now=None):
+            """Guard-Lauf unter der Sperre (siehe ``_unter_guard_sperre``).
+
+            Der Timer übergibt einen Zeitpunkt, direkte Aufrufe (Pause,
+            Override, Einstellungen, Setup) nicht — daran hängt, ob ein
+            laufender Lauf übersprungen oder abgewartet wird.
+            """
+            await _unter_guard_sperre(
+                data, guard_lock, _guard_cycle_lauf, vom_timer=_now is not None
+            )
+
+        async def _guard_cycle_lauf():
             """30-Sekunden-Takt: Fahrplan gegen die Messwerte halten und steuern.
 
             Der Executor entscheidet selbst, ob geschrieben wird (Modus Ein,
@@ -1990,7 +2052,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             # ----------------------------------------------------------
             # Telemetrie-Watchdogs (D-16) — Sensor-Unavailability + Forecast
             # ----------------------------------------------------------
-            cfg_enabled = config.get(CONF_TELEMETRY_ENABLED, False)
+            cfg_enabled = _telemetry_an()
             telemetry_active = (
                 cfg_enabled
                 and reporter.is_configured
@@ -2102,6 +2164,20 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         data["_run_cycle"] = _guard_cycle
 
         _register_override_services(hass)
+
+        # HA-Stopp: nichts stehen lassen. Beim Herunterfahren wird die
+        # Integration nicht entladen — ohne diesen Listener liefe eine
+        # Zwangsentladung (Huawei hat keinen Watchdog) weiter, bis nach dem
+        # Neustart der erste Lauf im Modus Ein freigibt.
+        async def _bei_ha_stopp(_event=None):
+            await _stilllegen_und_freigeben(hass, data)
+
+        try:
+            entry.async_on_unload(
+                hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, _bei_ha_stopp)
+            )
+        except Exception:  # pragma: no cover — Testumgebung ohne Bus
+            _LOGGER.debug("HA-Stopp-Listener nicht registriert", exc_info=True)
 
         if async_track_time_interval is not None:
             unsub = async_track_time_interval(
@@ -2297,7 +2373,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             if cfg_enabled and reporter.is_configured:
                 async def _telemetry_flush(_now=None):
                     if not (
-                        reporter.is_configured and telemetry_buffer.identity_known()
+                        _telemetry_an()
+                        and reporter.is_configured
+                        and telemetry_buffer.identity_known()
                     ):
                         return
 
@@ -2617,7 +2695,21 @@ async def _async_update_listener(
     # Period, Not-Aus-Sperre, zuletzt geschriebene Werte) und bekommt nur
     # die neue Config — er liest sie bei jedem Zugriff. Der ScheduleRunner
     # liest die Config ohnehin je Rechenlauf aus hass.data.
+    telemetrie_war_an = bool(
+        (data.get("config") or {}).get(CONF_TELEMETRY_ENABLED, False)
+    )
     data["config"] = config
+    if telemetrie_war_an and not config.get(CONF_TELEMETRY_ENABLED, False):
+        # Deaktiviert: den Puffer sofort leeren, nicht erst beim nächsten
+        # Sendeversuch. Die Sendepfade prüfen die Einwilligung ohnehin live
+        # (TelemetryReporter.is_enabled) — das hier räumt nur auf.
+        reporter = data.get("telemetry_reporter")
+        if reporter is not None and hasattr(reporter, "async_deaktiviert"):
+            try:
+                await reporter.async_deaktiviert()
+            except Exception:  # pragma: no cover — defensive
+                _LOGGER.exception("Telemetry: Puffer beim Deaktivieren nicht geleert")
+        data["telemetry_snapshot_queue"] = []
     executor = data.get("executor")
     if executor is not None:
         coordinator = data.get("coordinator")
@@ -2675,6 +2767,112 @@ async def _async_update_listener(
             await cycle_fn()
 
 
+async def _unter_guard_sperre(
+    data: dict, lock: asyncio.Lock, lauf: Any, *, vom_timer: bool
+) -> bool:
+    """Einen Guard-Lauf unter der Sperre ausführen; ``True``, wenn er lief.
+
+    Der Timer ÜBERSPRINGT, solange ein Lauf läuft — in 30 s kommt der
+    nächste, ein Stau hülfe niemandem. Direkte Aufrufe WARTEN: der Nutzer
+    hat gerade geklickt, sein Lauf soll stattfinden. Die Sperre sitzt im
+    aufgerufenen Lauf selbst, damit sie auch für Aufrufer greift, die ihn
+    über ``data["_run_cycle"]`` holen (websocket_api.py).
+    """
+    if data.get("stopping"):
+        return False
+    if vom_timer and lock.locked():
+        _LOGGER.debug("Guard-Lauf übersprungen — der vorige läuft noch")
+        return False
+    async with lock:
+        # Nach dem Warten erneut prüfen: das Entladen kann begonnen haben,
+        # während dieser Aufruf auf die Sperre wartete.
+        if data.get("stopping"):
+            return False
+        await lauf()
+        return True
+
+
+async def _stilllegen(data: dict) -> None:
+    """Ab sofort schreibt kein Guard-Lauf und kein Heizstab-Schritt mehr.
+
+    Das Flag ``stopping`` greift in ``_guard_cycle`` vor UND nach dem
+    Warten auf die Sperre; Executor und Heizstab legen sich zusätzlich
+    selbst still, weil ihre eigenen Takte (20-s-Schreiber, Nachschreiben)
+    nicht über den Guard-Lauf gehen. Danach wird auf einen gerade laufenden
+    Guard-Lauf gewartet — sonst schriebe er nach der Freigabe noch einen
+    Befehl hinterher.
+    """
+    data["stopping"] = True
+    executor = data.get("executor")
+    if executor is not None:
+        executor.stilllegen()
+    heizstab = data.get("heizstab")
+    if heizstab is not None:
+        heizstab.stilllegen()
+    lock = data.get("guard_lock")
+    if lock is not None and lock.locked():
+        async def _warten() -> None:
+            async with lock:
+                pass
+        try:
+            await asyncio.wait_for(_warten(), timeout=GUARD_STOPP_WARTEN_S)
+        except (asyncio.TimeoutError, TimeoutError):
+            _LOGGER.warning(
+                "EEG Energy Optimizer: Guard-Lauf nach %.0f s nicht beendet — "
+                "es wird trotzdem freigegeben", GUARD_STOPP_WARTEN_S,
+            )
+
+
+async def _freigeben(data: dict, *, nur_bei_eingriff: bool) -> None:
+    """Wechselrichter freigeben, Heizstab auf 0, Wallbox-Handtest beenden.
+
+    Jeder Schritt in eigenem try — ein Fehler beim Wechselrichter darf den
+    Heizstab nicht weiterheizen lassen.
+    """
+    # Fahrplan-Steuerung freigeben: erzwungene Entladung stoppen und das
+    # Ladelimit zurücksetzen — sonst bleibt das letzte geschriebene Limit
+    # im Wechselrichter stehen (Risiko 2 des Umbauplans).
+    executor = data.get("executor")
+    if executor is not None and (
+        not nur_bei_eingriff or getattr(executor, "hat_eingriff", True)
+    ):
+        try:
+            await executor.async_release()
+        except Exception:
+            _LOGGER.exception(
+                "EEG Energy Optimizer: error releasing schedule executor"
+            )
+    # Heizstab: 0 W schreiben und die Modbus-Verbindung schließen — sonst
+    # heizt er bis zum Watchdog des Ohmpilot (50 s) weiter.
+    heizstab = data.get("heizstab")
+    if heizstab is not None:
+        try:
+            await heizstab.async_shutdown()
+        except Exception:
+            _LOGGER.exception("EEG Energy Optimizer: error shutting down heizstab")
+    # Ambibox: ein laufender Handtest wird beendet, dann die Verbindung
+    # geschlossen — sonst lädt oder entlädt das Auto weiter.
+    ambibox = data.get("ambibox")
+    if ambibox is not None:
+        try:
+            await ambibox.async_shutdown()
+        except Exception:
+            _LOGGER.exception("EEG Energy Optimizer: error shutting down ambibox")
+
+
+async def _stilllegen_und_freigeben(hass: Any, data: dict) -> None:
+    """HA fährt herunter: stilllegen, dann freigeben, was wir gesetzt haben.
+
+    Nur bei eigenem Eingriff — im Modus Aus ist bereits freigegeben, und
+    ein Stopp-Befehl träfe dann womöglich etwas, das der Nutzer selbst am
+    Wechselrichter eingestellt hat. Die Integration bleibt geladen; nach
+    dem Neustart stellt der erste Lauf ohnehin einen sauberen Zustand her.
+    """
+    _LOGGER.info("EEG Energy Optimizer: HA wird gestoppt — Steuerung wird freigegeben")
+    await _stilllegen(data)
+    await _freigeben(data, nur_bei_eingriff=True)
+
+
 async def async_unload_entry(
     hass: HomeAssistant, entry: ConfigEntry
 ) -> bool:
@@ -2684,6 +2882,11 @@ async def async_unload_entry(
     async_remove_panel(hass, PANEL_URL_PATH)
 
     data = hass.data.get(DOMAIN, {}).get(entry.entry_id, {})
+    # Zuerst stilllegen: Die Timer werden erst NACH dieser Funktion
+    # abgemeldet (async_on_unload), und das Entladen der Plattformen kann
+    # dauern. Ein Guard-Lauf in dieser Lücke schriebe nach der Freigabe
+    # unten wieder einen Befehl, der dann ohne Steuerung stehen bliebe.
+    await _stilllegen(data)
     platforms_loaded = data.get("platforms_loaded", False)
 
     if platforms_loaded:
@@ -2720,37 +2923,15 @@ async def async_unload_entry(
                 _LOGGER.exception(
                     "EEG Energy Optimizer: error flushing Leistungsspitze"
                 )
-        # Fahrplan-Steuerung freigeben: erzwungene Entladung stoppen und das
-        # Ladelimit zurücksetzen — sonst bleibt das letzte geschriebene Limit
-        # im Wechselrichter stehen (Risiko 2 des Umbauplans).
-        executor = data.get("executor")
-        if executor is not None:
-            try:
-                await executor.async_release()
-            except Exception:
-                _LOGGER.exception(
-                    "EEG Energy Optimizer: error releasing schedule executor on unload"
-                )
-        # Heizstab: 0 W schreiben und die Modbus-Verbindung schließen — sonst
-        # heizt er bis zum Watchdog des Ohmpilot (50 s) weiter.
-        heizstab = data.get("heizstab")
-        if heizstab is not None:
-            try:
-                await heizstab.async_shutdown()
-            except Exception:
-                _LOGGER.exception(
-                    "EEG Energy Optimizer: error shutting down heizstab on unload"
-                )
-        # Ambibox: die Modbus-Verbindung schließen. Geschrieben wird nichts,
-        # es bleibt also nichts stehen — nur der Socket muss weg.
-        ambibox = data.get("ambibox")
-        if ambibox is not None:
-            try:
-                await ambibox.async_shutdown()
-            except Exception:
-                _LOGGER.exception(
-                    "EEG Energy Optimizer: error shutting down ambibox on unload"
-                )
+
+    # Freigeben IMMER, auch wenn das Entladen der Plattformen scheiterte:
+    # Stillgelegt ist der Eintrag ab oben ohnehin, es steuert ihn also
+    # niemand mehr — ein stehengebliebener Befehl liefe unbeaufsichtigt
+    # weiter. Der Eintrag bleibt dann passiv (freigegeben, Heizstab 0), bis
+    # ein erneutes Laden oder ein Neustart ihn neu aufsetzt.
+    await _freigeben(data, nur_bei_eingriff=False)
+
+    if unload_ok:
         # Close inverter resources (e.g. Fronius pymodbus TCP socket)
         # before dropping the entry. Other inverters use HA-managed
         # services/entities and do not need explicit cleanup.

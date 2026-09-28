@@ -66,6 +66,9 @@ def _make_executor(mock_hass, mock_inverter, config=None):
     # Grace Period für die Tests hinter uns lassen — eigene Tests setzen
     # _created_at gezielt zurück.
     ex._created_at = NOW - timedelta(minutes=10)
+    # Die Freigabe beim Start (Modus Ein) prüfen eigene Tests — sonst
+    # stünde in jedem Test ein zusätzlicher stop_forcible am Anfang.
+    ex._start_release_pending = False
     return ex
 
 
@@ -1306,6 +1309,9 @@ def _make_executor_mit_heizstab(mock_hass, mock_inverter, config, **hz):
     controller, treiber = _heizstab(config, **hz)
     ex = ScheduleExecutor(mock_hass, "entry1", config, mock_inverter, heizstab=controller)
     ex._created_at = NOW - timedelta(minutes=10)
+    # Die Freigabe beim Start (Modus Ein) prüfen eigene Tests — sonst
+    # stünde in jedem Test ein zusätzlicher stop_forcible am Anfang.
+    ex._start_release_pending = False
     return ex, controller, treiber
 
 
@@ -1957,3 +1963,115 @@ async def test_bremse_erlischt_nach_erfolg(mock_hass, mock_inverter):
     assert ex._write_fail_runs == 0
     assert ex._write_retry_wait == 0
     assert ex._write_fail_kind is None
+
+
+# ---------------------------------------------------------------------------
+# Sauberer Ausgangszustand nach dem Start (Audit M4)
+# ---------------------------------------------------------------------------
+
+
+def _executor_frisch_gestartet(mock_hass, mock_inverter):
+    """Wie nach einem Neustart: Startfreigabe steht aus, Startphase vorbei."""
+    ex = ScheduleExecutor(mock_hass, "entry1", dict(CFG_BASE), mock_inverter)
+    ex._created_at = NOW - timedelta(minutes=10)
+    return ex
+
+
+async def test_erster_lauf_im_modus_ein_gibt_vor_dem_plan_frei(mock_hass, mock_inverter):
+    """Nach dem Start ist ``_active_kind`` None — eine Huawei-Zwangsentladung
+    der Vorsession liefe unter einem Ladelimit weiter. Also erst freigeben,
+    dann im selben Lauf den Plan schreiben."""
+    ex = _executor_frisch_gestartet(mock_hass, mock_inverter)
+    reihenfolge = []
+    mock_inverter.async_stop_forcible.side_effect = lambda: reihenfolge.append("stop") or True
+    mock_inverter.async_set_charge_limit.side_effect = (
+        lambda kw: reihenfolge.append("limit") or True
+    )
+    with _messwerte(export=0.0, haus=0.5, pv=3.0):
+        await ex.async_guard_cycle(_state(_slot(0, battery_p=0.0, grid_p=3.0)), MODE_EIN, now=NOW)
+        assert reihenfolge == ["stop", "limit"]
+        # Nur einmal: der zweite Lauf gibt nicht erneut frei.
+        await ex.async_guard_cycle(_state(_slot(0, battery_p=0.0, grid_p=3.0)), MODE_EIN, now=NOW)
+    assert mock_inverter.async_stop_forcible.call_count == 1
+
+
+async def test_startfreigabe_wartet_die_startphase_ab(mock_hass, mock_inverter):
+    ex = _executor_frisch_gestartet(mock_hass, mock_inverter)
+    ex._created_at = NOW
+    with _messwerte(export=0.0, haus=0.5, pv=3.0):
+        await ex.async_guard_cycle(_state(_slot(0, battery_p=0.0, grid_p=3.0)), MODE_EIN, now=NOW)
+    mock_inverter.async_stop_forcible.assert_not_called()
+    assert ex._start_release_pending is True
+
+
+async def test_gescheiterte_startfreigabe_schreibt_den_plan_nicht(mock_hass, mock_inverter):
+    """Eine jetzt begonnene Entladung stoppte der nächste Versuch gleich
+    wieder — also bis zum Erfolg (oder zur Obergrenze) keinen Plan."""
+    ex = _executor_frisch_gestartet(mock_hass, mock_inverter)
+    mock_inverter.async_stop_forcible.return_value = False
+    plan = _state(_slot(0, battery_p=2.6, grid_p=2.0, soc=43.0))
+    with _messwerte(export=0.0, haus=0.5, pv=0.0):
+        for _ in range(sx.START_RELEASE_MAX_VERSUCHE - 1):
+            await ex.async_guard_cycle(plan, MODE_EIN, now=NOW)
+            mock_inverter.async_set_discharge.assert_not_called()
+            assert "Freigabe fehlgeschlagen" in ex.last_status
+        # Nach der Obergrenze übernimmt der Plan trotzdem — ein Treiber mit
+        # dauerhaft kaputtem Stopp soll die Steuerung nicht lahmlegen.
+        await ex.async_guard_cycle(plan, MODE_EIN, now=NOW)
+    assert mock_inverter.async_set_discharge.call_count == 1
+    assert ex._start_release_pending is False
+
+
+async def test_erster_lauf_im_modus_aus_nutzt_den_anzeige_pfad(mock_hass, mock_inverter):
+    """Im Modus Aus gibt ``_display_release_pending`` frei — die Startfreigabe
+    des Modus Ein darf dann nicht noch einmal nachkommen."""
+    ex = _executor_frisch_gestartet(mock_hass, mock_inverter)
+    with _messwerte(export=0.0, haus=0.5, pv=3.0):
+        await ex.async_guard_cycle(None, MODE_AUS, now=NOW)
+        assert mock_inverter.async_stop_forcible.call_count == 1
+        await ex.async_guard_cycle(_state(_slot(0, battery_p=0.0, grid_p=3.0)), MODE_EIN, now=NOW)
+    assert mock_inverter.async_stop_forcible.call_count == 1
+    assert mock_inverter.async_set_charge_limit.call_count == 1
+
+
+# ---------------------------------------------------------------------------
+# Stilllegen beim Entladen / HA-Stopp (Audit M2/M3)
+# ---------------------------------------------------------------------------
+
+
+async def test_stillgelegt_schreibt_der_guard_lauf_nichts(mock_hass, mock_inverter):
+    ex = _make_executor(mock_hass, mock_inverter)
+    ex.stilllegen()
+    with _messwerte(export=0.0, haus=0.5, pv=3.0):
+        await ex.async_guard_cycle(_state(_slot(0, battery_p=0.0, grid_p=3.0)), MODE_EIN, now=NOW)
+    mock_inverter.async_set_charge_limit.assert_not_called()
+    mock_inverter.async_stop_forcible.assert_not_called()
+    # Die Freigabe selbst bleibt möglich — für genau diesen Fall ist sie da.
+    assert await ex.async_release() is True
+
+
+async def test_hat_eingriff(mock_hass, mock_inverter):
+    ex = _make_executor(mock_hass, mock_inverter)
+    assert ex.hat_eingriff is False
+    with _messwerte(export=0.0, haus=0.5, pv=3.0):
+        await ex.async_guard_cycle(_state(_slot(0, battery_p=0.0, grid_p=3.0)), MODE_EIN, now=NOW)
+    assert ex.hat_eingriff is True
+    await ex.async_release()
+    assert ex.hat_eingriff is False
+
+
+# ---------------------------------------------------------------------------
+# Heizstab: Fehler im Schritt heißt 0 (Audit H5)
+# ---------------------------------------------------------------------------
+
+
+async def test_heizstab_fehler_im_schritt_setzt_null(mock_hass, mock_inverter):
+    cfg = _cfg_heizstab()
+    ex, hz, treiber = _make_executor_mit_heizstab(mock_hass, mock_inverter, cfg)
+    await hz.async_set_sollwert(3.0, "Plan")
+    hz.regeln = MagicMock(side_effect=RuntimeError("kaputt"))
+    with _messwerte(export=0.0, haus=0.5, pv=8.0):
+        await ex.async_guard_cycle(_state(_slot(0, battery_p=-1.0)), MODE_EIN, now=NOW)
+    assert hz.sollwert_kw == 0.0
+    assert hz.grund == "Regelung fehlgeschlagen"
+    treiber.async_set_power.assert_awaited_with(0)

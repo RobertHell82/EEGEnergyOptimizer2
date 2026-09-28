@@ -1007,6 +1007,9 @@ async def test_folgt_nicht_erst_nach_der_karenzzeit(monkeypatch):
 
     jetzt = [1000.0]
     monkeypatch.setattr(mod.time, "time", lambda: jetzt[0])
+    # Im Betrieb erneuert der Guard-Lauf die Vorgabe alle 30 s; hier
+    # vergehen Minuten ohne ihn, die Altersfrist gehört nicht zum Thema.
+    monkeypatch.setattr(mod, "HEIZSTAB_SOLLWERT_MAX_ALTER_S", float("inf"))
     t = _treiber(power_w=0, temp=60.0)
     hz = HeizstabController(MagicMock(), _cfg(), t)
     hz.sollwert_kw = 2.62
@@ -1167,6 +1170,9 @@ async def test_beide_warnungen_werden_genau_einmal_geloggt(monkeypatch, caplog):
 
     jetzt = [1000.0]
     monkeypatch.setattr(mod.time, "time", lambda: jetzt[0])
+    # Im Betrieb erneuert der Guard-Lauf die Vorgabe alle 30 s; hier
+    # vergehen Minuten ohne ihn, die Altersfrist gehört nicht zum Thema.
+    monkeypatch.setattr(mod, "HEIZSTAB_SOLLWERT_MAX_ALTER_S", float("inf"))
 
     # Fremdsteuerung: Sollwert 0, Geraet zieht 2,4 kW
     t = _treiber(power_w=2400, temp=60.0)
@@ -1204,3 +1210,68 @@ async def test_beide_warnungen_werden_genau_einmal_geloggt(monkeypatch, caplog):
     jetzt[0] += HEIZSTAB_FOLGT_NICHT_MINUTEN * 60 + 1
     await hz2.async_lesen()
     assert hz2.status()["folgt_nicht_zaehler"] == 2
+
+
+# ---------------------------------------------------------------------------
+# Altersfrist der Vorgabe und Stilllegen (Audit H5 / M2)
+# ---------------------------------------------------------------------------
+
+
+async def test_veraltete_vorgabe_schreibt_null_statt_des_letzten_werts(monkeypatch):
+    """Hängt oder wirft der Guard-Lauf, darf der 20-s-Takt den letzten
+    Sollwert nicht beliebig lange am Leben halten."""
+    from custom_components.eeg_energy_optimizer.heizstab import controller as mod
+
+    jetzt = [1000.0]
+    monkeypatch.setattr(mod.time, "time", lambda: jetzt[0])
+    t = _treiber(power_w=3000, temp=50.0)
+    hz = HeizstabController(MagicMock(), _cfg(), t)
+    await hz.async_set_sollwert(3.0, "Plan")
+    t.async_set_power.reset_mock()
+
+    jetzt[0] += mod.HEIZSTAB_SOLLWERT_MAX_ALTER_S - 1
+    await hz.async_schreiben()
+    t.async_set_power.assert_awaited_once_with(3000)   # noch frisch
+
+    jetzt[0] += 2
+    await hz.async_schreiben()
+    t.async_set_power.assert_awaited_with(0)
+    assert hz.sollwert_kw == 0.0
+    assert "Regelung ausgefallen" in hz.grund
+
+    # Die nächste Vorgabe gilt wieder.
+    await hz.async_set_sollwert(2.0, "Plan")
+    t.async_set_power.assert_awaited_with(2000)
+
+
+async def test_stillgelegt_schreibt_nur_noch_null():
+    t = _treiber(power_w=0, temp=50.0)
+    hz = HeizstabController(MagicMock(), _cfg(), t)
+    await hz.async_set_sollwert(3.0, "Plan")
+    hz.stilllegen()
+    await hz.async_set_sollwert(4.0, "verspäteter Lauf")
+    await hz.async_schreiben()
+    assert hz.sollwert_kw == 0.0
+    t.async_set_power.assert_awaited_with(0)
+
+
+async def test_nach_dem_shutdown_wird_nicht_mehr_geschrieben():
+    """Ein verspäteter Takt öffnete die geschlossene Verbindung sonst neu."""
+    t = _treiber(power_w=0, temp=50.0)
+    hz = HeizstabController(MagicMock(), _cfg(), t)
+    await hz.async_shutdown()
+    t.async_set_power.reset_mock()
+    assert await hz.async_schreiben() is False
+    await hz.async_shutdown()   # zweimal (HA-Stopp, dann Entladen) schadet nicht
+    t.async_set_power.assert_not_awaited()
+    t.async_close.assert_awaited_once()
+
+
+@pytest.mark.parametrize("kw", [float("nan"), float("inf")])
+async def test_nicht_endlicher_sollwert_wird_null(kw):
+    t = _treiber(power_w=0, temp=50.0)
+    hz = HeizstabController(MagicMock(), _cfg(), t)
+    hz.sollwert_kw = 1.0
+    await hz.async_set_sollwert(kw, "Rechenfehler")
+    assert hz.sollwert_kw == 0.0
+    t.async_set_power.assert_awaited_with(0)

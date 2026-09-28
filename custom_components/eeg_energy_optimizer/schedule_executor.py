@@ -94,6 +94,10 @@ RELEASE_GRUND_BATTERIE_VOLL = "Normalbetrieb (Batterie voll)"
 # speist den Überschuss von selbst ein.
 _MIN_DISCHARGE_KW = 0.05
 
+# Fehlgeschlagene Freigaben beim Start, nach denen der Fahrplan trotzdem
+# übernimmt (siehe ``_start_release_pending``).
+START_RELEASE_MAX_VERSUCHE = 3
+
 
 @dataclass
 class PlanAction:
@@ -277,6 +281,18 @@ class ScheduleExecutor:
         # unterscheiden, ob nichts zurückzunehmen ist oder ob der Versuch
         # misslang, und die Wiederholung unterbliebe (siehe async_release).
         self._release_pending = False
+        # Erster Lauf im Modus Ein nach einem Neustart: einmal freigeben,
+        # bevor der Plan geschrieben wird. ``_active_kind`` ist nach dem
+        # Start ``None`` und weiß nichts von einer Zwangsentladung der
+        # Vorsession — bei Huawei liefe sie weiter, denn ein Ladelimit
+        # stoppt sie nicht, und ``_apply_charge_limit`` stoppt nur, was es
+        # selbst begonnen hat. Das Gegenstück im Modus Aus ist
+        # ``_display_release_pending``.
+        self._start_release_pending = True
+        self._start_release_versuche = 0
+        # Entladen / HA-Stopp läuft: kein Guard-Lauf schreibt mehr etwas.
+        # ``async_release`` bleibt erlaubt, sie ist genau dafür da.
+        self._stillgelegt = False
         # Aktive Pause (Ablaufzeit, ggf. Ziel-Ladestand) — nur für den
         # Statustext; die Wirkung ist dieselbe wie Modus Aus.
         self._pause_bis: datetime | None = None
@@ -296,6 +312,36 @@ class ScheduleExecutor:
     def _supported(self) -> bool:
         return self._inverter is not None and bool(
             getattr(self._inverter, "supports_schedule_control", False)
+        )
+
+    def stilllegen(self) -> None:
+        """Ab sofort schreibt kein Guard-Lauf mehr (Entladen, HA-Stopp).
+
+        Synchron, damit es am Anfang von ``async_unload_entry`` sofort
+        greift — ein Timer-Lauf, der während des Entladens noch feuert,
+        darf nach der Freigabe keinen neuen Befehl setzen.
+        """
+        self._stillgelegt = True
+        if self._heizstab is not None:
+            self._heizstab.stilllegen()
+
+    @property
+    def stillgelegt(self) -> bool:
+        return self._stillgelegt
+
+    @property
+    def hat_eingriff(self) -> bool:
+        """Steht (vermutlich) ein Befehl von uns im Gerät?
+
+        Auch eine fehlgeschlagene Freigabe und die noch ausstehenden
+        Freigaben nach dem Start zählen: in diesen Fällen ist unbekannt, ob
+        etwas steht, und Freigeben ist die sichere Seite.
+        """
+        return (
+            self._active_kind not in (None, "release")
+            or self._release_pending
+            or self._start_release_pending
+            or self._display_release_pending
         )
 
     def update_config(self, config: dict) -> None:
@@ -487,6 +533,9 @@ class ScheduleExecutor:
         Watchdog des Ohmpilot mit dem letzten Wert da.
         """
         now = now or _now_local()
+        if self._stillgelegt:
+            self.last_status = "Integration wird gestoppt — keine Steuerbefehle"
+            return
         if self._heizstab is not None:
             # Hysteresen fortschreiben, BEVOR die Absicht übersetzt wird —
             # unter der Mindesttemperatur wird eine Entladung unterdrückt.
@@ -537,6 +586,9 @@ class ScheduleExecutor:
             # unten aus, bevor geschrieben wird). Nachgeholt wird die Freigabe
             # erst nach Startphase und Verfügbarkeitsprüfung, siehe unten.
             self._display_release_pending = True
+        if self._last_mode is None and mode != MODE_EIN:
+            # Die Startfreigabe übernimmt dann der Pfad des Modus Aus.
+            self._start_release_pending = False
         self._last_mode = mode
 
         # Fahrplan-Frische und Absicht (auch im Test-Modus, für die Anzeige).
@@ -648,6 +700,36 @@ class ScheduleExecutor:
         if not getattr(self._inverter, "is_available", False):
             self.last_status = "Wechselrichter nicht verfügbar"
             return
+
+        # Sauberer Ausgangszustand nach dem Start: erst freigeben, dann den
+        # Plan schreiben — im selben Lauf, damit nach der Startphase kein
+        # zusätzlicher Takt ohne Steuerung vergeht. Scheitert die Freigabe,
+        # wird der Plan in diesem Lauf NICHT geschrieben: Eine jetzt
+        # begonnene Entladung würde der nächste Versuch sonst gleich wieder
+        # stoppen. Nach START_RELEASE_MAX_VERSUCHE Fehlschlägen wird ohne
+        # weitergesteuert — ein Treiber, dessen Stopp dauerhaft scheitert,
+        # soll nicht die ganze Steuerung lahmlegen (jeder Fehlschlag ist
+        # über async_release gemeldet).
+        if self._start_release_pending:
+            if await self.async_release():
+                self._start_release_pending = False
+                _LOGGER.info(
+                    "Executor: Start im Modus Ein — Steuerwerte der Vorsession "
+                    "zurückgenommen, der Fahrplan übernimmt"
+                )
+            else:
+                self._start_release_versuche += 1
+                if self._start_release_versuche < START_RELEASE_MAX_VERSUCHE:
+                    self.last_status = (
+                        "Startphase: Freigabe fehlgeschlagen — wird wiederholt"
+                    )
+                    return
+                self._start_release_pending = False
+                _LOGGER.warning(
+                    "Executor: Freigabe beim Start %d-mal fehlgeschlagen — "
+                    "der Fahrplan übernimmt ohne sauberen Ausgangszustand",
+                    self._start_release_versuche,
+                )
 
         # Not-Aus: läuft eine Entladung, wird der Netzbezug IMMER überwacht —
         # auch wenn der Fahrplan gerade fehlt. Sensor nicht lesbar → fail-open
@@ -1053,6 +1135,12 @@ class ScheduleExecutor:
             await hz.async_set_sollwert(soll, grund)
         except Exception:  # noqa: BLE001 — der Heizstab darf den Takt nie kippen
             _LOGGER.exception("Executor: Heizstab-Schritt fehlgeschlagen")
+            # Ohne gültige Regelung kein Sollwert: sonst hielte der 20-s-Takt
+            # den letzten Wert am Leben, bis die Altersfrist greift.
+            try:
+                await hz.async_set_sollwert(0.0, "Regelung fehlgeschlagen")
+            except Exception:  # noqa: BLE001
+                _LOGGER.debug("Heizstab: 0 nach Fehler nicht gesetzt", exc_info=True)
 
     # ------------------------------------------------------------------
     # Fahrplan-Frische

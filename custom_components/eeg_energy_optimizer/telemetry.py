@@ -12,7 +12,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, Callable
 
 from .const import (
     TELEMETRY_BACKEND_URL,
@@ -77,9 +77,20 @@ class TelemetryReporter:
     werden, BEVOR der Reporter instantiiert wird.
     """
 
-    def __init__(self, hass: Any, buffer: TelemetryBuffer) -> None:
+    def __init__(
+        self,
+        hass: Any,
+        buffer: TelemetryBuffer,
+        enabled: Callable[[], bool] | None = None,
+    ) -> None:
         self._hass = hass
         self._buffer = buffer
+        # Einwilligung, bei JEDEM Senden live abgefragt (__init__.py reicht
+        # eine Funktion über die aktuelle Config herein). Ein beim Start
+        # gelesenes Flag reichte nicht: „Deaktivieren" ist ein Hot-Reload,
+        # die Closures im Setup sähen bis zum Neustart den alten Wert.
+        # None = keine Prüfung (Tests, die den Reporter allein bauen).
+        self._enabled = enabled
         # Werte zur Konstruktionszeit ablesen — Tests setzen sie via monkeypatch
         # auf dem Modul, bevor TelemetryReporter() aufgerufen wird.
         self._url = (TELEMETRY_BACKEND_URL or "").rstrip("/")
@@ -96,6 +107,39 @@ class TelemetryReporter:
     @property
     def is_configured(self) -> bool:
         return bool(self._url and self._bootstrap)
+
+    @property
+    def is_enabled(self) -> bool:
+        """Hat der Nutzer der Telemetrie zugestimmt (jetzt, nicht beim Start)?"""
+        if self._enabled is None:
+            return True
+        try:
+            return bool(self._enabled())
+        except Exception:  # noqa: BLE001 — im Zweifel nicht senden
+            return False
+
+    async def async_deaktiviert(self) -> None:
+        """Nach dem Abschalten: Puffer leeren, Backoff vergessen.
+
+        Was gepuffert war, wurde unter der alten Einwilligung gesammelt —
+        nach einem späteren Wiedereinschalten dürfte es nicht nachträglich
+        hinausgehen. Die Identität bleibt (D-32), nur ``forget`` löscht sie.
+        """
+        await self._buffer.clear_buffer()
+        self._consecutive_failures = 0
+        self._next_attempt_at = None
+
+    async def _gesperrt(self) -> bool:
+        """Sendepfad-Gate: ohne Einwilligung nichts senden, nichts puffern.
+
+        Leert nebenbei den Puffer, falls noch etwas darin liegt — so wirkt
+        das Deaktivieren auch dort, wo niemand ``async_deaktiviert`` ruft.
+        """
+        if self.is_enabled:
+            return False
+        if self._buffer.size() > 0:
+            await self.async_deaktiviert()
+        return True
 
     # ------------------------------------------------------------------
     # Profile shaping (used by register + update_profile)
@@ -202,6 +246,8 @@ class TelemetryReporter:
         """Drain up to TELEMETRY_FLUSH_BATCH events FIFO. Returns count drained."""
         if not self.is_configured or not self._buffer.identity_known():
             return 0
+        if await self._gesperrt():
+            return 0
         batch = self._buffer.peek_batch(TELEMETRY_FLUSH_BATCH)
         drained = 0
         for entry in batch:
@@ -224,6 +270,9 @@ class TelemetryReporter:
             return
         if not self._buffer.identity_known():
             _LOGGER.debug("Telemetry: skip %s — no identity", endpoint)
+            return
+        if await self._gesperrt():
+            _LOGGER.debug("Telemetry: skip %s — disabled", endpoint)
             return
         # Backoff-Gate: während der Sperre direkt in den Buffer.
         if self._next_attempt_at is not None and _now_utc() < self._next_attempt_at:

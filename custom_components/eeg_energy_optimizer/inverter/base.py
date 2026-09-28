@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from abc import ABC, abstractmethod
 from typing import Any
 
@@ -42,6 +43,26 @@ class InverterBase(ABC):
         self._fehler("…")`` schreiben können statt zweier Zeilen.
         """
         self.last_write_error = grund
+        return False
+
+    def _nicht_endlich(self, *werte: float | None) -> bool:
+        """Ist ein Sollwert NaN oder unendlich? Dann Grund merken, ``True``.
+
+        Vor jedem Schreiben geprüft: ein NaN aus einer Rechnung mit einem
+        fehlenden Messwert würde sonst je nach Treiber als 0, als Maximum
+        oder als Ausnahme mitten in einer Registerfolge enden. ``None``
+        heißt „nicht angegeben" und ist erlaubt.
+        """
+        for wert in werte:
+            if wert is None:
+                continue
+            try:
+                endlich = math.isfinite(float(wert))
+            except (TypeError, ValueError):
+                endlich = False
+            if not endlich:
+                self._fehler("Sollwert nicht endlich")
+                return True
         return False
 
     def _erfolg(self) -> bool:

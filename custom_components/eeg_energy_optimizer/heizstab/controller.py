@@ -63,6 +63,7 @@ ist, die Messung, wie viel wirklich da ist.
 from __future__ import annotations
 
 import logging
+import math
 import time
 from typing import Any, Callable
 
@@ -109,6 +110,14 @@ _LOGGER = logging.getLogger(__name__)
 # Unter dieser Änderung wird nicht sofort geschrieben — der 20-s-Schreiber
 # bringt den Wert ohnehin mit dem nächsten Watchdog-Takt.
 _SOFORT_SCHREIBEN_AB_KW = 0.05
+
+# So alt darf die letzte Vorgabe des Guard-Laufs höchstens sein, bevor der
+# Schreibtakt sie nicht mehr erneuert, sondern 0 schreibt. Der Guard-Lauf
+# kommt alle 30 s; 90 s sind drei verpasste Läufe. Ohne diese Schranke hält
+# der 20-s-Takt einen Sollwert beliebig lange am Leben, auch wenn niemand
+# mehr regelt (Guard-Lauf hängt oder wirft) — der Heizstab heizte dann
+# ungeregelt weiter, notfalls aus Netz oder Batterie.
+HEIZSTAB_SOLLWERT_MAX_ALTER_S = 90.0
 
 
 def normalisiere_host(roh: Any) -> str:
@@ -307,6 +316,14 @@ class HeizstabController:
         self._netz_fehlt_laeufe = 0
         # Wer bei neuen Messwerten Bescheid haben will (Sensoren, Push-Modell).
         self._listener: list[Callable[[], None]] = []
+        # Wann kam die letzte Vorgabe aus dem Guard-Lauf? Ab dem Anlegen
+        # gezählt, damit die Frist auch greift, wenn nie ein Lauf kommt.
+        self._vorgabe_um: float = time.time()
+        # Stillgelegt (Entladen / HA-Stopp läuft): nur noch 0 W. Beendet
+        # (Verbindung geschlossen): gar nicht mehr schreiben, sonst öffnete
+        # ein verspäteter Takt die Verbindung neu.
+        self._stillgelegt = False
+        self._beendet = False
 
     # ------------------------------------------------------------------
     # Konfiguration
@@ -677,6 +694,9 @@ class HeizstabController:
         aktuellen Wert immer wieder — das ist der Watchdog des Ohmpilot.
         """
         kw = max(0.0, float(kw))
+        if not math.isfinite(kw) or self._stillgelegt:  # NaN/Inf oder stillgelegt → aus
+            kw = 0.0
+        self._vorgabe_um = time.time()
         # Frist neu setzen, wenn dieser Lauf angehoben hat; sonst abbauen.
         # Der Wechselrichter bekommt so einen Takt Zeit, die PV nachzuführen,
         # bevor eine Lücke wieder als „zu viel Heizstab" gilt.
@@ -701,8 +721,18 @@ class HeizstabController:
 
     async def async_schreiben(self) -> bool:
         """Aktuellen Sollwert an den Treiber schreiben (Watchdog-Takt)."""
-        if self._treiber is None:
+        if self._treiber is None or self._beendet:
             return False
+        if self._stillgelegt:
+            self.sollwert_kw = 0.0
+        elif self.sollwert_kw > 0.0 and self.vorgabe_veraltet:
+            _LOGGER.warning(
+                "Heizstab: seit %.0f s keine Vorgabe aus dem Guard-Lauf — "
+                "Sollwert %.2f kW wird nicht mehr erneuert, 0 W geschrieben",
+                time.time() - self._vorgabe_um, self.sollwert_kw,
+            )
+            self.sollwert_kw = 0.0
+            self.grund = "Regelung ausgefallen — keine aktuelle Vorgabe"
         try:
             ok = bool(await self._treiber.async_set_power(int(round(self.sollwert_kw * 1000))))
         except Exception:  # noqa: BLE001 — der Takt darf nie sterben
@@ -712,6 +742,22 @@ class HeizstabController:
         if not ok:
             self.write_failures += 1
         return ok
+
+    @property
+    def vorgabe_veraltet(self) -> bool:
+        """Ist die letzte Vorgabe des Guard-Laufs älter als die Frist?"""
+        return time.time() - self._vorgabe_um > HEIZSTAB_SOLLWERT_MAX_ALTER_S
+
+    def stilllegen(self) -> None:
+        """Ab sofort nur noch 0 W — beim Entladen und beim HA-Stopp.
+
+        Synchron und ohne Schreiben, damit es am Anfang des Entladens
+        sofort greift: Jeder Takt, der danach noch läuft (Guard-Lauf,
+        20-s-Schreiber, Nachschreiben), schreibt nur noch 0.
+        """
+        self._stillgelegt = True
+        self.sollwert_kw = 0.0
+        self.grund = "Integration gestoppt"
 
     @property
     def fremdsteuerung(self) -> bool:
@@ -858,10 +904,10 @@ class HeizstabController:
 
         Ohne das liefe der Heizstab noch bis zum Watchdog (50 s) weiter.
         """
-        self.sollwert_kw = 0.0
-        self.grund = "Integration gestoppt"
-        if self._treiber is None:
+        self.stilllegen()
+        if self._treiber is None or self._beendet:
             return
+        self._beendet = True
         try:
             await self._treiber.async_set_power(0)
         except Exception:  # noqa: BLE001

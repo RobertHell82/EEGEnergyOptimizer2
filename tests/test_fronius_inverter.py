@@ -24,6 +24,7 @@ from custom_components.eeg_energy_optimizer.inverter.fronius import (
     _SUNSPEC_ID_WORD0,
     _SUNSPEC_ID_WORD1,
     _SUNSPEC_MODEL_124,
+    _WCHAMAX_MIN_W,
     _WCHAMAX_SANITY_LIMIT,
 )
 
@@ -506,6 +507,29 @@ class TestWChaMaxSanityCheck:
         result = await inverter._read_wchamax()
         assert result is None
         assert inverter._wchamax is None  # not cached
+
+    async def test_winziger_wchamax_wird_verworfen(self, inverter, mock_modbus_client):
+        """Wenige Watt sind Registermüll — damit gerechnet, würde jeder
+        Sollwert zu 100 %, aus 0,3 kW Entladung würde volle Leistung."""
+        inverter._wchamax = None
+        inverter._wchamax_date = None
+        mock_modbus_client.read_holding_registers = AsyncMock(
+            return_value=_ok_response([_WCHAMAX_MIN_W - 1])
+        )
+        assert await inverter._read_wchamax() is None
+        assert inverter._wchamax is None
+
+    async def test_nicht_endlicher_sollwert_wird_nicht_geschrieben(
+        self, inverter, mock_modbus_client
+    ):
+        mock_modbus_client.write_register = AsyncMock()
+        mock_modbus_client.write_registers = AsyncMock()
+        assert await inverter.async_set_charge_limit(float("nan")) is False
+        assert await inverter.async_set_discharge(float("inf"), 20) is False
+        assert await inverter.async_set_discharge(2.0, float("nan")) is False
+        assert inverter.last_write_error == "Sollwert nicht endlich"
+        mock_modbus_client.write_register.assert_not_called()
+        mock_modbus_client.write_registers.assert_not_called()
 
     async def test_oversized_wchamax_rejected(self, inverter, mock_modbus_client):
         inverter._wchamax = None

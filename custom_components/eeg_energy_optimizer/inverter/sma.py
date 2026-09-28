@@ -403,6 +403,8 @@ class SMAInverter(InverterBase):
         The keepalive rewrites the block until stop. No stuck-register
         guards needed: every write is a complete 6-parameter block.
         """
+        if self._nicht_endlich(power_kw):
+            return False
         async with self._lock:
             watts = int(max(power_kw, 0.0) * 1000.0)
             block = _block_charge_limit(watts)
@@ -429,6 +431,8 @@ class SMAInverter(InverterBase):
         accepted for interface compatibility; enforcement happens in the
         optimizer (30 s cycle), the watchdog covers the HA-crash case.
         """
+        if self._nicht_endlich(power_kw, target_soc):
+            return False
         async with self._lock:
             watts = int(max(power_kw, 0.0) * 1000.0)
             block = _block_discharge(watts)

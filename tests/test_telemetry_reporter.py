@@ -636,3 +636,56 @@ async def test_flush_buffer_no_identity_returns_zero(hass, shared_backing, monke
     # No identity set → flush_buffer is a no-op
     n = await reporter.flush_buffer()
     assert n == 0
+
+
+# ---------------------------------------------------------------------------
+# Deaktivieren stoppt alles — live geprüft, nicht beim Start gelesen
+# ---------------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_deaktiviert_sendet_nichts_und_leert_den_puffer(hass, shared_backing, monkeypatch):
+    """„Deaktivieren" ist ein Hot-Reload — die Einwilligung wird deshalb bei
+    jedem Senden abgefragt. Ohne sie: kein Request, nichts gepuffert, und
+    was noch im Puffer lag, geht nicht mehr hinaus."""
+    tm = _import_reporter()
+    monkeypatch.setattr(tm, "TELEMETRY_BACKEND_URL", "https://eeg.example")
+    monkeypatch.setattr(tm, "TELEMETRY_BOOTSTRAP_TOKEN", "boot-tok")
+
+    buf = await _make_buffer(hass, shared_backing)
+    await buf.set_identity("u", "k", "2026-01-01T00:00:00+00:00")
+    await buf.append("/v1/failure", {"ts": "alt"})
+    session = _make_session()
+    monkeypatch.setattr(tm, "async_get_clientsession", lambda h: session)
+
+    an = [False]
+    reporter = tm.TelemetryReporter(hass, buf, enabled=lambda: an[0])
+    await reporter.send_failure({"ts": "x", "category": "c", "severity": "warning"})
+    assert await reporter.flush_buffer() == 0
+
+    assert session.post.call_count == 0
+    assert buf.size() == 0
+
+    # Wieder eingeschaltet: es wird gesendet, der alte Puffer bleibt leer.
+    an[0] = True
+    await reporter.send_failure({"ts": "y", "category": "c", "severity": "warning"})
+    assert session.post.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_async_deaktiviert_leert_den_puffer(hass, shared_backing, monkeypatch):
+    tm = _import_reporter()
+    buf = await _make_buffer(hass, shared_backing)
+    await buf.append("/v1/failure", {"ts": "alt"})
+    reporter = tm.TelemetryReporter(hass, buf, enabled=lambda: False)
+    await reporter.async_deaktiviert()
+    assert buf.size() == 0
+
+
+def test_einwilligung_die_wirft_gilt_als_aus(hass):
+    tm = _import_reporter()
+
+    def _kaputt():
+        raise RuntimeError("config weg")
+
+    reporter = tm.TelemetryReporter(hass, MagicMock(), enabled=_kaputt)
+    assert reporter.is_enabled is False
+    assert tm.TelemetryReporter(hass, MagicMock()).is_enabled is True
