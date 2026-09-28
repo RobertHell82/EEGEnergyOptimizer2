@@ -10,6 +10,12 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
+## [2.1.25] - 2026-09-28
+
+### Geändert
+
+- **Die eigene PV-Prognose trägt das Logo des Vereins Energiewende Ansfelden und ist als Beta gekennzeichnet.** In der Quellenwahl des Assistenten und in den Einstellungen (Tab „Prognose“) steht statt des Rechner-Symbols das Vereinslogo, am Titel „Eigene Berechnung“ ein Kennzeichen „BETA“ — die Berechnung ist neu, ihre Kalibrierung lernt noch.
+
 ## [2.1.24] - 2026-09-28
 
 Eine Runde Sicherheit und Robustheit: Drei unabhängige Prüfungen haben den Code auf Schwachstellen, Fehler und veraltete Doku durchgesehen, vier Umsetzungen haben die Befunde behoben, und eine Gegenlesung sowie das Nachrechnen aller 2100 archivierten Fahrpläne aus Grünbach und Traun haben sie geprüft. Mit den echten Eingaben rechnet die neue Version exakt denselben Fahrplan wie die alte.
