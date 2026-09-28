@@ -118,7 +118,6 @@ _Hatte eine Viertelstunde Messlücken, ist ihr Wert eine Untergrenze. Sie zählt
 - **Prognosevergleich** — nur mit eingeschaltetem Vergleich: Fremdprognose, eigene Berechnung und Messung nebeneinander. Mehr dazu in der Anleitung „Eigene PV-Prognose".
 - **Einspeise-Statistik** — wie viel Energie bei gesteuerten Entladungen aus der Batterie ins Netz ging („Entladung ins Netz"), mit Anzahl und Dauer, für Woche, Monat, Jahr oder gesamt.
 - **Verbrauchsprofil** — der gelernte Verbrauch, umschaltbar zwischen Stundenverlauf und Tag / Nacht.
-- **Energiebedarf** der Gemeinschaft — nur mit PeakShare als Bedarfsquelle: Bedarf und Überschuss je Stunde aus der PeakShare-Prognose. Die Karte ist Anzeige; gesteuert wird nach dem Optimierungsplan.
 - **Aktivitätsprotokoll** — jeder Zustandswechsel der Steuerung mit Zeit und Klartext, filterbar nach Laden, Entladung und Normalbetrieb. „Alle Einträge" zeigt zusätzlich das stündliche Lebenszeichen, „Mehr laden" holt ältere Einträge.
 
 ## Wenn etwas nicht stimmt

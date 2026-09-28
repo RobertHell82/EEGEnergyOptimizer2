@@ -709,7 +709,6 @@ class EegOptimizerPanel extends HTMLElement {
     this._feedinStatsLoaded = false;
     this._feedinStatsOpen = false;
     this._feedinStatsPeriod = "month";
-    this._peakshareDataOpen = false;
     this._peakshareData = null;
     this._peakshareDataLoaded = false;
 
@@ -866,8 +865,6 @@ class EegOptimizerPanel extends HTMLElement {
       // Fahrplan-Diagramm: Werte des Slots unter dem Zeiger
       const hit = e.target.closest?.(".sched-hit");
       if (hit) this._showSchedTooltip(hit, e);
-      const dot = e.target.closest(".ps-dot, .ps-dot-hit");
-      if (dot) this._zeigePsTooltip(dot);
       const legendItem = e.target.closest(".wl-legend");
       if (!legendItem) return;
       const idx = legendItem.dataset.idx;
@@ -888,8 +885,6 @@ class EegOptimizerPanel extends HTMLElement {
         const dot = svg?.querySelector(".sched-cursor-soc");
         if (dot) dot.style.visibility = "hidden";
       }
-      const dot = e.target.closest(".ps-dot, .ps-dot-hit");
-      if (dot) this._versteckePsTooltip();
       const legendItem = e.target.closest(".wl-legend");
       if (!legendItem) return;
       const svg = legendItem.closest("svg");
@@ -897,7 +892,7 @@ class EegOptimizerPanel extends HTMLElement {
       svg.querySelectorAll(".wl").forEach(g => g.classList.remove("wl-legend-hover"));
     });
 
-    // Touch: die Werte in Fahrplan und Bedarfskurve holt man sich mit dem
+    // Touch: die Werte im Fahrplan holt man sich mit dem
     // Finger. Nur Maus-Ereignisse genuegten dafuer nicht — iOS erzeugt beim
     // Tippen ein einmaliges mouseover (der Tooltip blieb danach stehen) und
     // beim Wischen gar kein mousemove. Zeiger-Ereignisse koennen beides:
@@ -908,11 +903,8 @@ class EegOptimizerPanel extends HTMLElement {
       if (e.pointerType === "mouse") return;
       const hit = e.target.closest?.(".sched-hit");
       if (hit) { this._schedScrub = true; this._showSchedTooltip(hit, e); return; }
-      const dot = e.target.closest?.(".ps-dot, .ps-dot-hit");
-      if (dot) { this._zeigePsTooltip(dot); return; }
       // Daneben tippen raeumt die Werteanzeige wieder ab.
       this._versteckeSchedTooltip();
-      this._versteckePsTooltip();
     }, { passive: true });
 
     this._shadow.addEventListener("pointermove", (e) => {
@@ -933,7 +925,6 @@ class EegOptimizerPanel extends HTMLElement {
     this._onScrollHide = () => {
       if (this._schedScrub) return;
       this._versteckeSchedTooltip();
-      this._versteckePsTooltip();
     };
     window.addEventListener("scroll", this._onScrollHide, { passive: true, capture: true });
 
@@ -2253,13 +2244,6 @@ class EegOptimizerPanel extends HTMLElement {
           });
         break;
       }
-      case "toggle-peakshare-data":
-        this._peakshareDataOpen = !this._peakshareDataOpen;
-        if (this._peakshareDataOpen && !this._peakshareDataLoaded) {
-          this._loadPeakShareData();
-        }
-        this._render();
-        break;
       case "refresh-control-state":
         this._loadControlState();
         break;
@@ -3058,7 +3042,7 @@ class EegOptimizerPanel extends HTMLElement {
           || "enable_peakshare" in changed || "eeg_demand_source" in changed) {
         this._peakshareDataLoaded = false;
         this._peakshareData = null;
-        if (this._peakshareDataOpen) this._loadPeakShareData();
+        if (this._peakshareAktiv()) this._loadPeakShareData();
       }
       this._view = "dashboard";
       this._render();
@@ -4714,207 +4698,6 @@ class EegOptimizerPanel extends HTMLElement {
     return String(text).replace(/[&<>"']/g, ch => (
       { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]
     ));
-  }
-
-  _renderPeakShareDashboard() {
-    const d = this._peakshareData;
-    // Beide konfigurierten Gemeinschaften gehoeren ins selbe Bild: der
-    // Fahrplan rechnet mit beiden, also soll man sie auch nebeneinander
-    // lesen koennen. `communities` traegt sie, `intervals` ist die erste
-    // davon und dient nur noch als Rueckfall.
-    const rohSerien = (d?.communities?.length
-      ? d.communities
-      : (d?.intervals ? [{ name: d.community || "Gemeinschaft", intervals: d.intervals }] : []))
-      .filter(s => Array.isArray(s?.intervals) && s.intervals.length);
-    if (!d || !rohSerien.length) {
-      return `<p style="color:var(--secondary-text-color);font-size:14px">Keine PeakShare-Daten verfügbar. Die Daten werden beim nächsten API-Abruf geladen.</p>`;
-    }
-
-    const cacheAge = d.cache_age_minutes != null ? d.cache_age_minutes : null;
-    const cacheText = cacheAge != null ? (cacheAge < 60 ? `vor ${cacheAge} Min` : `vor ${Math.round(cacheAge / 60)}h`) : "---";
-    // Kein eigenes Entladefenster mehr — die Steuerung uebernimmt der
-    // Fahrplan. Die Prognose bleibt als Anzeige und ist Grundlage der
-    // EEG-Preisfunktion.
-    const planHtml = `<div style="background:var(--secondary-text-color)22;padding:10px 14px;border-radius:10px;margin-bottom:12px;font-size:14px;color:var(--secondary-text-color)">
-      <ha-icon icon="mdi:information-outline" style="--mdc-icon-size:18px;vertical-align:middle"></ha-icon>
-      Anzeige — gesteuert wird nach dem Optimierungsplan.
-    </div>`;
-
-    // V2 liefert 192 Viertelstunden je Gemeinschaft. Fuer diese Uebersicht
-    // werden sie auf Stunden summiert: 192 Punkte samt Tippzielen waeren
-    // weder lesbar noch bedienbar, und die Einheit bleibt kWh je Stunde.
-    // Dieselben Farben wie im Optimierungsplan — eine Gemeinschaft soll in
-    // beiden Diagrammen dieselbe Farbe haben.
-    const farben = ["#8e24aa", "#00897b"];
-    const serien = rohSerien.map((s, i) => {
-      const jeStunde = new Map();
-      for (const iv of s.intervals) {
-        if (!iv?.timestamp || iv.saldoKwh == null) continue;
-        const t = new Date(iv.timestamp).getTime();
-        if (isNaN(t)) continue;
-        const k = Math.floor(t / 3600000);
-        jeStunde.set(k, (jeStunde.get(k) || 0) + Number(iv.saldoKwh));
-      }
-      return { name: s.name || `Gemeinschaft ${i + 1}`,
-               farbe: farben[i % farben.length], jeStunde };
-    }).filter(s => s.jeStunde.size);
-    if (!serien.length) return planHtml + `<p style="color:var(--secondary-text-color);font-size:13px">Keine Stundendaten vorhanden</p>`;
-
-    // Gemeinsame Zeitachse ueber alle Serien — fehlt einer Gemeinschaft eine
-    // Stunde, bleibt ihre Kurve dort auf der Nulllinie statt die Achse zu
-    // verschieben.
-    const stunden = [...new Set(serien.flatMap(s => [...s.jeStunde.keys()]))].sort((a, b) => a - b);
-
-    // viewBox == Anzeigebreite (siehe _cw()): Schrift in echten Pixeln.
-    const schmal = !!this._narrow;
-    const width = this._cw("ps");
-    const height = schmal ? 235 : 310;
-    const padding = { top: schmal ? 22 : 25, right: schmal ? 10 : 20,
-                      bottom: schmal ? 50 : 58, left: schmal ? 32 : 55 };
-    const fsAxis = schmal ? 10 : 12;
-    const fsDay = schmal ? 11 : 12;
-    const chartW = width - padding.left - padding.right;
-    const chartH = height - padding.top - padding.bottom;
-
-    // Bedarf ueber der Nulllinie, Ueberschuss darunter. Die Nulllinie liegt
-    // nach dem Verhaeltnis der beiden Spitzen: solange keine Seite unter ein
-    // Viertel der Hoehe faellt, ist der Massstab auf beiden Seiten derselbe
-    // (kWh je Pixel) und beide nutzen ihren Platz.
-    //
-    // Bei sehr schiefem Verhaeltnis greift die Viertel-Grenze, und dann ist
-    // der Massstab NICHT mehr gleich — an der Anlage gemessen 1242 kWh
-    // Ueberschuss gegen 127 kWh Bedarf, ohne Grenze blieben dem Bedarf rund
-    // 20 Pixel. Die Lesbarkeit der kleineren Seite wiegt schwerer als die
-    // exakte Vergleichbarkeit, und die Achsenbeschriftung nennt beide
-    // Endwerte, sodass der Massstabswechsel ablesbar bleibt.
-    const alleSalden = serien.flatMap(s => [...s.jeStunde.values()]);
-    const maxBedarf = Math.max(0, ...alleSalden.map(v => Math.max(0, v)));
-    const maxUeber = Math.max(0, ...alleSalden.map(v => Math.max(0, -v)));
-    const spanne = (maxBedarf + maxUeber) || 1;
-    const anteilOben = Math.min(0.75, Math.max(0.25, maxBedarf / spanne));
-    const nullY = padding.top + chartH * anteilOben;
-    const obenPx = nullY - padding.top;
-    const untenPx = padding.top + chartH - nullY;
-    const yWert = (saldo) => (saldo >= 0
-      ? nullY - (saldo / (maxBedarf * 1.05 || 1)) * obenPx
-      : nullY + (-saldo / (maxUeber * 1.05 || 1)) * untenPx);
-    const xStunde = (i) => padding.left + (i / Math.max(stunden.length - 1, 1)) * chartW;
-
-    const _fmtDay = (dt) => dt.toLocaleDateString("de-DE", {weekday: "short", day: "2-digit", month: "2-digit"});
-    const _fmtDayShort = (dt) => dt.toLocaleDateString("de-DE", {day: "2-digit", month: "2-digit"});
-    const _dayKey = (dt) => `${dt.getFullYear()}-${dt.getMonth()}-${dt.getDate()}`;
-    const achse = stunden.map((k, i) => {
-      const dt = new Date(k * 3600000);
-      return { x: xStunde(i), hour: dt.getHours(),
-               dayLabel: _fmtDay(dt), dayShort: _fmtDayShort(dt), dayKey: _dayKey(dt) };
-    });
-
-    // Je Serie eine durchgehende Kurve, die durch die Nulllinie laeuft. Die
-    // Flaeche hat dort ihre Basis und kippt von selbst auf die andere Seite.
-    // Gefuellt wird nur die erste — zwei Flaechen uebereinander werden Matsch.
-    let areaFill = "", lineEl = "", dots = "";
-    serien.forEach((serie, idx) => {
-      const punkte = stunden.map((k, i) => ({
-        x: xStunde(i), saldo: serie.jeStunde.get(k) ?? 0,
-      }));
-      let linie = `M ${punkte[0].x},${yWert(punkte[0].saldo)}`;
-      for (let i = 1; i < punkte.length; i++) linie += ` L ${punkte[i].x},${yWert(punkte[i].saldo)}`;
-      if (idx === 0) {
-        const flaeche = `M ${punkte[0].x},${nullY}`
-          + punkte.map(pt => ` L ${pt.x},${yWert(pt.saldo)}`).join("")
-          + ` L ${punkte[punkte.length - 1].x},${nullY} Z`;
-        areaFill += `<path d="${flaeche}" fill="${serie.farbe}" fill-opacity="0.1"/>`;
-      }
-      lineEl += `<path d="${linie}" fill="none" stroke="${serie.farbe}" stroke-width="2.5" stroke-linejoin="round"/>`;
-    });
-    lineEl += `<line x1="${padding.left}" y1="${nullY}" x2="${width - padding.right}" y2="${nullY}" stroke="var(--divider-color)" stroke-width="1.4"/>`;
-
-    // Punkte samt Tippziel. Jedes Ziel traegt die Werte ALLER Serien dieser
-    // Stunde — bei zwei Gemeinschaften liegen die Punkte oft uebereinander,
-    // und dann ist es gleichgueltig, welchen man trifft.
-    achse.forEach((a, i) => {
-      const werte = serien.map(s => {
-        const saldo = s.jeStunde.get(stunden[i]);
-        return saldo == null ? null : {
-          n: s.name, f: s.farbe, u: saldo < 0 ? 1 : 0,
-          v: fmtDe(Math.abs(saldo), Math.abs(saldo) >= 100 ? 0 : 1),
-        };
-      }).filter(Boolean);
-      if (!werte.length) return;
-      const daten = `data-hour="${String(a.hour).padStart(2, "0")}:00" data-day="${a.dayLabel}"`
-        + ` data-eegj="${this._escapeHtml(JSON.stringify(werte))}"`;
-      serien.forEach(s => {
-        const saldo = s.jeStunde.get(stunden[i]);
-        if (saldo == null) return;
-        const y = yWert(saldo);
-        dots += `<circle class="ps-dot" cx="${a.x}" cy="${y}" r="3.5" fill="${s.farbe}" stroke="var(--card-background-color,#fff)" stroke-width="1.5" ${daten} style="cursor:pointer"></circle>`;
-        dots += `<circle class="ps-dot-hit" cx="${a.x}" cy="${y}" r="11" fill="transparent" ${daten} style="cursor:pointer"></circle>`;
-      });
-    });
-
-    // Tagesgrenze um Mitternacht
-    let dayMarkers = "";
-    for (let i = 1; i < achse.length; i++) {
-      if (achse[i].dayKey !== achse[i - 1].dayKey) {
-        const mx = (achse[i - 1].x + achse[i].x) / 2;
-        dayMarkers += `<line x1="${mx}" y1="${padding.top + 4}" x2="${mx}" y2="${padding.top + chartH}" stroke="var(--secondary-text-color)" stroke-opacity="0.35" stroke-width="1" stroke-dasharray="2,3"/>`;
-      }
-    }
-
-    // X-Achse: Uhrzeit, darunter der Tag
-    let xLabels = "";
-    const labelEvery = Math.max(2, Math.ceil(achse.length / Math.max(2, Math.floor(chartW / 42))));
-    achse.forEach((a, i) => {
-      if (i % labelEvery === 0) {
-        xLabels += `<text x="${a.x}" y="${padding.top + chartH + 14}" text-anchor="middle" font-size="${fsAxis}" fill="var(--secondary-text-color)">${String(a.hour).padStart(2, "0")}:00</text>`;
-      }
-    });
-    const dayRanges = [];
-    let curStart = 0;
-    for (let i = 1; i <= achse.length; i++) {
-      if (i === achse.length || achse[i].dayKey !== achse[curStart].dayKey) {
-        dayRanges.push({start: curStart, end: i - 1, label: achse[curStart].dayLabel});
-        curStart = i;
-      }
-    }
-    dayRanges.forEach(r => {
-      const mx = (achse[r.start].x + achse[r.end].x) / 2;
-      // Am Handy nur Tag und Monat — der Wochentag davor sprengt die Spalte.
-      const text = schmal ? (achse[r.start].dayShort || r.label) : r.label;
-      xLabels += `<text x="${mx}" y="${padding.top + chartH + 30}" text-anchor="middle" font-size="${fsDay}" fill="var(--primary-text-color)" font-weight="500">${text}</text>`;
-    });
-
-    // Y-Raster: von der Bedarfsspitze bis zur Ueberschussspitze
-    let yLines = "";
-    for (const val of [maxBedarf, maxBedarf / 2, 0, -maxUeber / 2, -maxUeber]) {
-      if (val === 0 && maxBedarf <= 0 && maxUeber <= 0) continue;
-      const y = yWert(val);
-      yLines += `<line x1="${padding.left}" y1="${y}" x2="${width - padding.right}" y2="${y}" stroke="var(--divider-color)" stroke-dasharray="4"/>`;
-      yLines += `<text x="${padding.left - 5}" y="${y + 4}" text-anchor="end" font-size="${fsAxis}" fill="var(--secondary-text-color)">${fmtDe(val, 0)}</text>`;
-    }
-
-    const yAchseX = schmal ? 9 : 14;
-    const yLabel = `<text x="${yAchseX}" y="${padding.top + chartH / 2}" text-anchor="middle" font-size="${fsAxis}" fill="var(--secondary-text-color)" transform="rotate(-90,${yAchseX},${padding.top + chartH / 2})">kWh</text>`;
-
-    // Legende: je Gemeinschaft ein Eintrag, untereinander. Nebeneinander
-    // sprengen zwei Namen am Handy die Breite.
-    const legX = schmal ? padding.left : width - 280;
-    let legendHtml = "";
-    serien.forEach((s, i) => {
-      const y = (schmal ? 3 : 6) + i * (schmal ? 13 : 14);
-      legendHtml += `
-      <rect x="${legX}" y="${y}" width="9" height="9" fill="${s.farbe}" rx="2"/>
-      <text x="${legX + 13}" y="${y + 8}" font-size="${fsDay}" fill="var(--primary-text-color)">${this._escapeHtml(s.name)}</text>`;
-    });
-
-    const titelNamen = serien.map(s => s.name).join(" und ");
-    const chartTitle = schmal
-      ? `<div style="font-size:12px;color:var(--secondary-text-color);margin-bottom:4px">Quelle: PeakShare, ${cacheText}</div>`
-      : `<div style="font-size:14px;font-weight:500;color:var(--primary-text-color);margin-bottom:4px">Bedarf und Überschuss — ${this._escapeHtml(titelNamen)} <span style="font-weight:400;font-size:12px;color:var(--secondary-text-color)">(Quelle: PeakShare, ${cacheText})</span></div>`;
-    const chartHtml = `<svg data-cw="ps" viewBox="0 0 ${width} ${height}" style="width:100%;height:auto;overflow:visible">${yLines}${yLabel}${areaFill}${dayMarkers}${lineEl}${dots}${xLabels}${legendHtml}</svg>`;
-    const tooltipHtml = `<div class="ps-tooltip" style="position:absolute;display:none;pointer-events:none;background:var(--card-background-color,#fff);color:var(--primary-text-color);border:1px solid var(--divider-color);border-radius:8px;padding:6px 10px;font-size:12px;box-shadow:0 2px 8px rgba(0,0,0,0.18);transform:translate(-50%,-100%);white-space:nowrap;z-index:10"></div>`;
-
-    return planHtml + `<div class="chart-card ps-chart-card" style="margin-top:4px;position:relative;padding:0">${chartTitle}${chartHtml}${tooltipHtml}</div>`;
   }
 
   async _loadMoreActivity() {
@@ -10476,28 +10259,6 @@ class EegOptimizerPanel extends HTMLElement {
           })() : ""}
         </div>
 
-        ${this._peakshareAktiv() ? (() => {
-          // Beide konfigurierten Gemeinschaften in der Ueberschrift, in der
-          // Reihenfolge der Konfiguration. Das Praefix folgt dem Namen: eine
-          // Gemeinschaft namens "BEG" bleibt BEG, jede andere ist eine EEG.
-          const psNamen = [this._config?.peakshare_community,
-                           this._config?.peakshare_community_2]
-            .filter(Boolean)
-            .map(n => (String(n).toUpperCase().startsWith("BEG") ? String(n) : `EEG ${n}`));
-          const psDisplay = psNamen.length ? psNamen.join(" / ") : "BEG";
-          return `
-        <!-- PeakShare Energiebedarf (collapsible) -->
-        <div class="card">
-          <div data-action="toggle-peakshare-data" style="display:flex;justify-content:space-between;align-items:center;cursor:pointer;user-select:none">
-            <h3 style="margin:0">
-              <ha-icon icon="mdi:transmission-tower" style="--mdc-icon-size:20px;color:var(--primary-color,#03a9f4);vertical-align:middle"></ha-icon>
-              Energiebedarf ${psDisplay}
-            </h3>
-            <ha-icon icon="mdi:chevron-${this._peakshareDataOpen ? "up" : "down"}" style="--mdc-icon-size:24px;color:var(--secondary-text-color)"></ha-icon>
-          </div>
-          ${this._peakshareDataOpen ? this._renderPeakShareDashboard() : ""}
-        </div>`;
-        })() : ""}
         `}
 
         <!-- Activity Timeline (collapsible) -->
@@ -10544,34 +10305,6 @@ class EegOptimizerPanel extends HTMLElement {
     if (tt) tt.style.display = "none";
     this._shadow.querySelectorAll(".sched-cursor").forEach(el => { el.style.visibility = "hidden"; });
     this._shadow.querySelectorAll(".sched-cursor-soc").forEach(el => { el.style.visibility = "hidden"; });
-  }
-
-  _versteckePsTooltip() {
-    this._shadow.querySelectorAll(".ps-tooltip").forEach(tt => { tt.style.display = "none"; });
-  }
-
-  // Werte eines Punktes der Bedarfskurve anzeigen (Maus wie Finger).
-  _zeigePsTooltip(dot) {
-    const wrapper = dot.closest(".ps-chart-card");
-    const tt = wrapper?.querySelector(".ps-tooltip");
-    if (!tt) return;
-    const dotRect = dot.getBoundingClientRect();
-    const wrapRect = wrapper.getBoundingClientRect();
-    const dayLine = dot.dataset.day ? `<div style="color:var(--secondary-text-color);font-size:11px;margin-bottom:2px">${dot.dataset.day}</div>` : "";
-    // Alle Gemeinschaften dieser Stunde, nicht nur die getroffene: bei zwei
-    // Serien liegen die Punkte oft uebereinander.
-    let serien = [];
-    try { serien = JSON.parse(dot.dataset.eegj || "[]"); } catch (e) { serien = []; }
-    const chip = (farbe) => `<span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${farbe};margin-right:5px"></span>`;
-    const zeilen = serien.map(e =>
-      `<div style="display:flex;gap:8px;justify-content:space-between">
-         <span style="color:var(--secondary-text-color)">${chip(e.f)}${e.u ? "Ueberschuss" : "Bedarf"} ${this._escapeHtml(e.n)}</span>
-         <strong>${e.v} kWh</strong>
-       </div>`).join("");
-    tt.innerHTML = `${dayLine}<div style="font-weight:600;margin-bottom:2px">${dot.dataset.hour}</div>${zeilen}`;
-    tt.style.display = "block";
-    tt.style.left = `${dotRect.left - wrapRect.left + dotRect.width / 2}px`;
-    tt.style.top = `${dotRect.top - wrapRect.top - 8}px`;
   }
 
   /* ── Diagrammbreiten ──────────────────────────── */
