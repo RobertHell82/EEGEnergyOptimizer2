@@ -45,9 +45,9 @@ Was das Modell von sich aus **nicht** kennt: Verschattung durch Bäume, Nachbarg
 - Sie beginnt mit dem ersten gemessenen Tag und wird mit jedem weiteren Tag sicherer; einzelne Ausreißer ziehen sie nur ein Stück.
 - Einen Sonnenstand, den sie noch nie gesehen hat (im Herbst zum Beispiel die tiefe Wintersonne), lässt sie unverändert. Ganz fertig ist sie nach einem Jahr.
 - Tage mit ganz anderem Wetter als vorhergesagt und Zeiten, in denen die Anlage abgeregelt war (Einspeisegrenze erreicht, Wechselrichter am Anschlag), zählen nicht — sie sagen nichts über die Module.
-- Änderst du Flächen, Verluste oder die AC-Grenze, beginnt sie von vorn.
+- Änderst du Flächen, Verluste oder die AC-Grenze, beginnt sie von vorn — ebenso, wenn die Integration andere Wettermodelle verwendet.
 
-Sie lernt immer, wenn die eigene Berechnung steuert. Wie weit sie ist, zeigt die Karte **Prognosevergleich** im Dashboard — die erscheint, wenn du den Prognosevergleich einschaltest.
+Sie lernt immer, wenn die eigene Berechnung steuert. Wie weit sie ist, zeigt die Karte **Prognosevergleich** im Dashboard — die erscheint, wenn du den Prognosevergleich einschaltest. Ohne den Schalter lernt sie trotzdem, nur ist ihr Stand dann nirgends zu sehen.
 
 Schnee auf den Modulen und ein Ost-West-Dach an einem Wechselrichter mit einem einzigen MPP-Tracker kann auch die Kalibrierung nicht abbilden.
 
@@ -60,7 +60,7 @@ Ob die eigene Berechnung auf deiner Anlage so gut ist wie Solcast, sagen nur Zah
 - Steuert **Solcast** (oder Forecast.Solar), läuft die eigene Berechnung mit — trage dafür in derselben Karte deine Flächen ein.
 - Steuert die **eigene Berechnung**, wird Solcast bzw. Forecast.Solar mitgelesen; die Integration muss dafür installiert sein.
 
-Jeden Morgen ab 5 Uhr werden beide Prognosen für den Tag festgehalten, im Lauf des Tages kommt die gemessene PV-Leistung dazu. Die Karte **Prognosevergleich** im Dashboard zeigt für einen wählbaren Tag drei Linien — Fremdprognose, eigene Berechnung, Messung — und darunter die letzten Tage mit Tagessumme je Quelle, Abweichung und wer näher an der Messung lag. Aufgehoben werden 30 Tage.
+Jeden Morgen ab 5 Uhr werden beide Prognosen für den Tag festgehalten, im Lauf des Tages kommt die gemessene PV-Leistung dazu. Die Karte **Prognosevergleich** im Dashboard zeigt für einen wählbaren Tag drei Linien — Fremdprognose, eigene Berechnung, Messung — und darunter die letzten Tage mit Tagessumme je Quelle, Abweichung und wer näher an der Messung lag. Aufgehoben wird gut ein Jahr, denn die Kalibrierung lernt aus diesen Tagen; Abweichung, Fehler und p10 rechnen über die letzten 30 Tage. Steuert die eigene Berechnung, wird auch ohne den Schalter aufgezeichnet — die Kalibrierung braucht die Tage.
 
 Lief Home Assistant am Morgen nicht, werden die Prognosen erst beim nächsten Start festgehalten. Nach 8 Uhr haben sie den halben Tag schon gesehen — solche Tage stehen mit † in der Tabelle, zählen aber nicht in die Zusammenfassung und nicht in den p10.
 

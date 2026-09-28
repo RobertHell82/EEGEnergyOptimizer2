@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**EEG Energy Optimizer** — a Home Assistant custom integration for grid-friendly battery management, optimized for energy communities (Energiegemeinschaften / EEG) in the DACH region. It computes a 36-hour charge/discharge schedule with a linear program (Harald Geyer's `opt()`, vendored under `chamo/`) and steers the battery so that feed-in lands in the hours the community actually needs it.
+**EEG Energy Optimizer** — a Home Assistant custom integration for grid-friendly battery management, optimized for energy communities (Energiegemeinschaften / EEG) in the DACH region. It computes a 48-hour charge/discharge schedule with a linear program (Harald Geyer's `opt()`, vendored under `chamo/`) and steers the battery so that feed-in lands in the hours the community actually needs it.
 
 This repository is the **chamo prototype** — a clone of the main integration with the same domain, so only one of the two can be installed per HA instance. Adjustments go through the parameters `schedule.py` hands to `opt()`; the two exceptions that touch Harald's code are marked `LOCAL CHANGE` and listed in `chamo/README.md`.
 
@@ -89,6 +89,7 @@ schedule_executor.py: ScheduleExecutor (execution, 30 s)
 | `schedule_executor.py` | Execution — `plan_action()` + `ScheduleExecutor.async_guard_cycle()`; the **only** place that writes inverter commands |
 | `eeg_price.py` | Synthetic feed-in tariff from community demand — turns PeakShare demand into a price surcharge. Quote mode (`eeg_demand_source = "quote"`, for communities without PeakShare): fixed day/night acceptance quota per community (`peakshare_quote_pct[_2]`, `peakshare_quote_night_pct[_2]`) → blended price `Anteil · Quote · (Wert − Basistarif)` instead of the demand-normalised signal; the same quota replaces the saldo in `bewerte_geldfluesse` (declared assumption, the one exception to "no invented revenue"); PeakShare is not fetched in quote mode |
 | `netzentgelt.py` | Grid usage tariff (Netzebene 7) per grid area, read from the regulation instead of typed in: RIS OGD API (`data.bka.gv.at`) → paragraph HTML → table `LP \| AP \| SNAP \| WiNAP`. The user picks one of the 14 grid areas (ElWG Anlage I); the provider returns AP plus the time-variable rates, net cents → gross €/kWh. Two regulations, one parser: SNE-V 2018 § 5 until 31.12.2026, SNE-T-V (to the SNE-G-V) from 2027 — columns found by name, one row per area or the 2018 sub-rows (`nicht gemessene Leistung` = household). Built-in `SNAPSHOT` (SNE-V 2018 idF BGBl. II 305/2025) covers first start and every fetch failure; `schedule_netzbereich = "manual"` keeps a hand-typed fee. **TODO 2027: put the published SNE-T-V's `Gesetzesnummer`/paragraph into `QUELLEN` and refresh `SNAPSHOT`.** |
+| `spot.py` | Optional base tariff: EPEX day-ahead spot price via the aWATTar API (free, no key, €/MWh); negative prices stay negative, a cent and/or percent fee on top (`spot_feedin_fee`, `spot_feedin_fee_pct`) |
 | `oemag.py` | Optional base tariff: OeMAG monthly market price, scraped from the HTML table (no API), cached across restarts; also reads the per-month calculation basis + balancing-energy cost for the estimator |
 | `oemag_schaetzung.py` | Estimate of the OeMAG tariff for the *current* month (source `oemag_estimate`): aWATTar day-ahead prices weighted by Austrian solar generation (Energy-Charts), clamped to 60–100 % of the E-Control quarterly price (scraped; fallback derived from clamped months of the OeMAG table), minus balancing cost. Validated 2025-01…2026-08: MAE 0.21 ct |
 | `awattar_sunny.py` | Optional base tariff: aWATTar SUNNY fixed monthly feed-in price (source `awattar_sunny`). No API — reads the yearly tab of aWATTar's published price sheet (Google Sheet, gviz CSV) and falls back to the tariff page; two contract variants (`awattar_sunny_vertrag` = `neu`/`alt`, contracts after/until 25.02.2026) because the sheet carries two SUNNY columns; cached across restarts, hourly retry while the current month is missing |
@@ -98,15 +99,17 @@ schedule_executor.py: ScheduleExecutor (execution, 30 s)
 | `heizstab/controller.py` | Heater control — `HeizstabController` (`regeln()`: comfort → discharge → max temperature → plan (`plan_kw`) → surplus rule `naechster_sollwert`; temperature hysteresis, saturation, `puffer_budget_kwh` for the LP, 20-s watchdog write (plus an immediate rewrite when the device reads 0 W under a standing setpoint), 10-s read, 6-h time sync, detection of both foreign control and a device that does not follow), `create_heizstab()` factory |
 | `heizstab/ohmpilot_modbus.py` | Fronius Ohmpilot driver via direct Modbus TCP (setpoint 40599 int32 W big-endian, actual power 40800, temperature 40808 in 0.1 °C, unix time 40400; 50-s device watchdog). Taken over from HA_Optimierung_Gruenbach, registers verified on the device there |
 | `leistungsspitze.py` | Measures the basis of the 2027 capacity charge (SNE-G-V § 6): grid **import** energy per fixed quarter-hour (UTC-floored, :00/:15/:30/:45) ÷ 0.25 h, commercially rounded, and the month's maximum (local calendar month, 24 months of history, `Store`). Integrates `max(0, −grid)` — export never offsets import. Sample points = every state change of the grid sensor plus a 10-s sampling; a value counts only while the source's `last_reported` is younger than `HALTEN_MAX_S` (a hung Modbus link keeps its last state without going `unavailable`). A quarter with gaps is a lower bound, still counted, flagged `vollstaendig=False`. Measures only, steers nothing. `netzkosten_monat(kw)` turns a peak into € per month incl. 20 % VAT from E-Control's **guide values** (14.07.2026, not tariffs): final stage 33.82 €/kW·a up to 10 kW, 67.64 above (the highest known rates), start 2027 ≈ 19 €/kW·a (15–26 by grid area), billed at least 2 kW; exposed as attribute `netzkosten_monat` of *Bezugsspitze Monat* and shown in the status card's ⓘ. **TODO 2027: replace with the SNE-T-V rates per grid area.** Created in `async_setup_entry` **before** the platforms so the sensors can subscribe |
+| `statistics.py` | Counter behind the *Entladung ins Netz* sensor — battery energy that reached the grid during a controlled discharge (store `…_feedin_stats`, format kept since 1.5.x). The panel card that showed it is gone (2.1.24) |
+| `tagesbilanz.py` | Daily outcome for the telemetry (`/v1/outcome`): forecast vs. measurement of the finished day, with the plans of the evening before and two days before (built nightly 00:15 or via `tagesbilanz_jetzt`) |
 | `schedule_archive.py` | Rolling archive of computed plans (7 days, gzip, ~8 KB each) for after-the-fact debugging |
 | `schedule_archive_view.py` | HTTP view that packs archive + settings + measured history into a downloadable ZIP |
 | `chamo/` | Harald Geyer's LP optimizer (`opt_highs.py`, `timetableopt`) plus a HiGHS adapter. `opt_highs.py` carries three local additions, all marked `LOCAL CHANGE` and documented in `chamo/README.md`: the heater as a valued sink (`heater_p`, 2.1.1-dev2), the blackout reserve capped at what is reachable **without buying** and a solver-status check after `optimize()` — everything else is upstream |
-| `sensor.py` | 25 sensors (+4 conditional): consumption profile, forecasts, power flows, plan values, grid discharge energy, register writes, Fahrplan-Status, money balance |
+| `sensor.py` | 26 sensors (+ up to 21 conditional): consumption profile, forecasts, power flows, plan values, grid discharge energy, register writes, Fahrplan-Status, money balance |
 | `bilanz.py` | Energy balance in money — records 96 quarter-hours per day (energy, SOC, **frozen** prices and community balances), evaluates them with `bewerte_geldfluesse`, and derives the optimiser advantage against a simulated standard operation over the measured series. The balance day runs 04:00–04:00 (night discharge stays in one day; old midnight-based records are migrated on load). Days where the battery behaved like the reference (power deviation ≤ max(1 kWh, 10 % of throughput)) report advantage 0 with `kein_eingriff`; the raw difference stays in `vorteil_roh` |
 | `override.py` | Time-boxed user override — **Pause** (behave like mode Aus) with two end conditions: expiry time (`stunden`, 0.25–48 h) and/or target SOC (`bis_soc_pct`, 50–100 %; ends when the measured SOC reaches it, 48 h cap as safety net). Persisted via `Store` so a restart mid-pause does not resume control. Evaluated in the guard cycle in `__init__.py` (`async_tick(now, soc_pct)`); exposed as HA services `pause` / `aufheben` (`services.yaml`) |
 | `coordinator.py` | Loads hourly consumption averages from recorder (rolling, weekday split) |
 | `forecast_provider.py` | Abstract PV forecast provider — Solcast, Forecast.Solar (entity reads) and `EigenProvider` (wraps `pvprognose/`) |
-| `pvprognose/` | **Own PV forecast** (`forecast_source = "eigen"`), fully self-contained: `openmeteo.py` fetches `global_tilted_irradiance` + `temperature_2m` per surface from Open-Meteo as the **mean of three models** (`MODELLE`: `icon_seamless`, `ecmwf_ifs025`, `meteofrance_seamless`; per timestamp over the models that have a value — ICON alone ran 40 % low in Traun on clear mornings, basin haze/fog that never came) (15-min, 7 days, no key; azimuth converted from compass to Open-Meteo's 0 = south; values are means of the *preceding* interval and get shifted to slot starts), `modell.py` is the pure PVWatts-style model (γ = −0.4 %/K, cell = air + 0.03 K·m²/W, losses `pv_verluste_pct` default 14 %, DC sum over all `pv_flaechen`, one AC clip at `inverter_ac_limit_kw`), `provider.py` holds ONE 7-day 15-min AC series in a `Store` (fetched in the 30-min cycle, `FRISCH_S` 25 min; failures keep the old series, older than 48 h counts as no forecast so the schedule fails loudly), serves `halbstunden()` for the schedule (Solcast raster, **no p10 → `min_production=None` → 60 % worst-case factor like Forecast.Solar**), `rest_heute_kwh()`/`morgen_kwh()` for the sensors and `tage_kwh()` for the week chart; `berechne_einmalig()` backs the panel's "Prognose berechnen" with unsaved surfaces (uncalibrated). **Calibration** (`kalibrierung.py`): one factor per sun-position cell (10° azimuth × 5° elevation, NOAA sun position), energy-weighted Σmeasured/Σforecast, shrunk towards 1 with `SCHRUMPF_KWH` = 3 kWh, clamped 0.6–1.5, bilinear between cells *with* data, 1 where the sun was never seen. Learns from the Prognosevergleich days whose `eigen_kennung` matches (`modellkennung()` = surfaces + losses + AC limit + weather models — any change starts over); skips curtailment (export ≥ limit − 0.5 kW; below a 1-kW limit only with SOC ≥ 95 %; PV or forecast within 0.5 kW of the AC limit), weather days (day ratio outside 0.6–1.6), slots < 0.3 kW and single slots with ratio outside ⅓–3. `leistungsreihe(…, faktor)` applies it per surface **before** both clips. The provider keeps the weather per surface (`_paare`, persisted as `wetter`) and two series: calibrated for everyone, raw (`roh=True`) only for the Prognosevergleich — learning from the calibrated one would learn its own correction. No historical-forecast backfill, by decision (28.09.2026): it learns from the recorded days only |
+| `pvprognose/` | **Own PV forecast** (`forecast_source = "eigen"`), fully self-contained: `openmeteo.py` fetches `global_tilted_irradiance` + `temperature_2m` per surface from Open-Meteo as the **mean of three models** (`MODELLE`: `icon_seamless`, `ecmwf_ifs025`, `meteofrance_seamless`; per timestamp over the models that have a value — ICON alone ran 40 % low in Traun on clear mornings, basin haze/fog that never came) (15-min, 7 days, no key; azimuth converted from compass to Open-Meteo's 0 = south; values are means of the *preceding* interval and get shifted to slot starts), `modell.py` is the pure PVWatts-style model (γ = −0.4 %/K, cell = air + 0.03 K·m²/W, losses `pv_verluste_pct` default 14 %, DC sum over all `pv_flaechen`, an optional clip per surface at its `max_kw`, then one plant-wide AC clip at `inverter_ac_limit_kw`), `provider.py` holds the weather per surface and two 7-day 15-min AC series derived from it (raw and calibrated, see below) in a `Store` (fetched in the 30-min cycle, `FRISCH_S` 25 min; failures keep the old series, older than 48 h counts as no forecast so the schedule fails loudly), serves `halbstunden()` for the schedule (Solcast raster, **no p10 → `min_production=None` → 60 % worst-case factor like Forecast.Solar**), `rest_heute_kwh()`/`morgen_kwh()` for the sensors and `tage_kwh()` for the week chart; `berechne_einmalig()` backs the panel's "Prognose berechnen" with unsaved surfaces (uncalibrated). **Calibration** (`kalibrierung.py`): one factor per sun-position cell (10° azimuth × 5° elevation, NOAA sun position), energy-weighted Σmeasured/Σforecast, shrunk towards 1 with `SCHRUMPF_KWH` = 3 kWh, clamped 0.6–1.5, bilinear between cells *with* data, 1 where the sun was never seen. Learns from the Prognosevergleich days whose `eigen_kennung` matches (`modellkennung()` = surfaces + losses + AC limit + weather models — any change starts over); skips curtailment (export ≥ limit − 0.5 kW; below a 1-kW limit only with SOC ≥ 95 %; PV or forecast within 0.5 kW of the AC limit), weather days (day ratio outside 0.6–1.6), slots < 0.3 kW and single slots with ratio outside ⅓–3. `leistungsreihe(…, faktor)` applies it per surface **before** both clips. The provider keeps the weather per surface (`_paare`, persisted as `wetter`) and two series: calibrated for everyone, raw (`roh=True`) only for the Prognosevergleich — learning from the calibrated one would learn its own correction. No historical-forecast backfill, by decision (28.09.2026): it learns from the recorded days only |
 | `config_flow.py` | Single-click config flow (full setup happens in panel) |
 | `peakshare.py` | PeakShareProvider — fetches + caches community demand forecasts (half-hourly refresh; hourly values, `opt()` resamples to 15 min itself) |
 | `telemetry.py`, `telemetry_buffer.py` | Opt-in reporting — profile, failures, half-hourly snapshots (`/v1/snapshot`: SOC, PV/house/grid/battery kW, mode, executor state, plan min-SOC) and a daily outcome (`/v1/outcome`, `tagesbilanz.py`), ring buffer with backoff. README and the panel's privacy details list all four; keep them in sync when a payload changes. Snapshots are taken on the half-hour grid but **offset by `TELEMETRY_SNAPSHOT_OFFSET_MIN`**: `_collect_snapshot()` runs in the same guard cycle *after* the executor wrote, and the plain grid hit exactly the cycle that writes on a slot change (slots turn at :00/:15/:30/:45) — Huawei briefly drops the battery when `forcible_discharge_soc` is rewritten, so the power columns systematically recorded the gap we cause ourselves. Weismann, 21.09.2026: the grid meter read ~0 W at the grid start in 9 of 10 half-hours while the window averaged 271–661 W. `soc_pct` is unaffected; for power questions use the plant's own history, not the snapshots |
@@ -118,6 +121,7 @@ schedule_executor.py: ScheduleExecutor (execution, 30 s)
 | `inverter/kostal.py` | Kostal Plenticore implementation via direct Modbus TCP (proprietary registers 1034/1038, watchdog keepalive task) |
 | `inverter/sma.py` | SMA Smart Energy / Sunny Boy Storage implementation via direct Modbus TCP (CmpBMS 6-parameter method, complete-block writes, watchdog keepalive task; `discharge_is_grid_setpoint=True`, charge limit read from the active block) |
 | `inverter/solax.py` | SolaX Gen4+ implementation via solax_modbus Mode 1 |
+| `inverter/sigenergy.py` | Sigenergy SigenStor via the HA integration `sigen` (Remote EMS: switch/select/number entities) |
 | `inverter/__init__.py` | Factory function `create_inverter()` |
 | `select.py` | Mode select entity (Ein/Aus), restores state across restarts (a stored „Test“ from before 1.5.52 maps to Aus) |
 | `const.py` | All constants, defaults, mode enums, state names |
@@ -125,7 +129,7 @@ schedule_executor.py: ScheduleExecutor (execution, 30 s)
 | `ambibox/controller.py` | Interprets those registers into an `AutoZustand`, polls every 15 s, pushes to sensors/panel; owns the manual charge/discharge test (keepalive, time limit, stop) |
 | `frontend/eeg-optimizer-panel.js` | Dashboard + onboarding panel (plain HTMLElement, Shadow DOM) |
 
-### Sensors (26 always + up to 8 conditional)
+### Sensors (26 always + up to 21 conditional)
 
 | # | Sensor | Update | Description |
 |---|--------|--------|-------------|
@@ -140,7 +144,7 @@ schedule_executor.py: ScheduleExecutor (execution, 30 s)
 | 15 | Fahrplan Batterieleistung | fast | **Planned** battery power for the current slot — same cadence as the measured one, so recorder history makes plan and reality comparable |
 | 16 | Fahrplan Netzleistung | fast | **Planned** grid power for the current slot |
 | 17 | Entladung ins Netz | fast | Battery energy that actually reached the grid (kWh, TOTAL with `last_reset`) — fed by `statistics.py`; the feed-in statistics card that read it is gone (2.1.24) |
-| 18 | Fahrplan-Status | 30s | Executor state ("Laden begrenzt auf 2,0 kW", "Einspeisung 2,80 kW bis 43 %" (planned export; "Entladung …" only without a plan value), "Laden blockiert", "Normalbetrieb", "Anzeige-Modus") + plan/written-value attributes |
+| 18 | Fahrplan-Status | 30s | Executor state ("Laden begrenzt auf 2,0 kW", "Einspeisung 2,80 kW bis 43 %" (planned export; "Entladung …" only without a plan value), "Laden blockiert", "Normalbetrieb", "Anzeige-Modus", "Nur Anzeige") + plan/written-value attributes |
 | 19–21 | Ersparnis durch PV — heute / Monat / Jahr | fast | Avoided grid purchase + feed-in revenue (MONETARY, TOTAL). A **measurement**: every kWh is metered, prices come frozen per quarter-hour from `bilanz.py` |
 | 22–24 | Ersparnis durch Optimierung — heute / Monat / Jahr | fast | Actual vs. simulated standard operation over the **measured** PV/load series (MONETARY, TOTAL). A **model**, not a measurement — `None` when the day's starting SOC is unknown |
 | 25 | Netzbezug Viertelstunde | quarter-hour close + fast | Mean grid import of the last **completed** quarter-hour (comparable 1:1 with the grid operator's smart-meter portal); running quarter in unrecorded attributes `laufend_bisher_kw` / `laufend_hochrechnung_kw` |
@@ -202,8 +206,8 @@ three intents. `Fahrplan-Status` shows what actually happened:
   the plan**, there is no independent floor. Guard 2 tracks the setpoint from
   planned export + measured house load.
 - **Normalbetrieb** — inverter released to its own automatic mode.
-- **Anzeige-Modus** / **Treiber wird nicht gesteuert** — mode is Aus (or a pause runs), or the
-  driver has `supports_schedule_control=False`. Plan is computed and shown,
+- **Anzeige-Modus** / **Nur Anzeige** — mode is Aus (or a pause runs), or the
+  driver has `supports_schedule_control=False` (status text „Treiber wird nicht gesteuert — Plan nur Anzeige“). Plan is computed and shown,
   nothing is written.
 - **Failsafe / Not-Aus** — no fresh plan for 15 min releases the inverter;
   grid import above 1 kW in three consecutive runs blocks discharge until the
@@ -308,7 +312,8 @@ Implementations:
   ├── FroniusInverter — via direct Modbus TCP (SunSpec Model 124, pymodbus; scale factors read from the device; InOutWRte_RvrtTms armed at 300s as the inverter-side failsafe, fed by a 60s keepalive)
   ├── KostalInverter — via direct Modbus TCP (proprietary registers, port 1502, unit 71; cyclic keepalive feeds the inverter watchdog, timeout = failsafe fallback to internal automatic)
   ├── SMAInverter — via direct Modbus TCP (CmpBMS external battery management, port 502, unit 3; every command writes the complete 6-register block, 60s keepalive, 300s watchdog fallback; discharge = grid-exchange setpoint GridWSpt → house load auto-compensated, so the executor hands over the planned export (`discharge_is_grid_setpoint`))
-  └── SolaXInverter — via HA solax_modbus Mode 1
+  ├── SolaXInverter — via HA solax_modbus Mode 1
+  └── SigenergyInverter — via HA sigen integration (Remote EMS entities)
 ```
 
 **Multi-Inverter / Multi-Battery (Master/Slave):** Huawei supports setups
@@ -340,6 +345,7 @@ read **and** control every battery:
 - **kostal_plenticore** (after_dependency) — Kostal sensor data via REST
 - **sma** (after_dependency) — SMA sensor data via WebConnect (directional pairs → synthetic combined sensors)
 - **solax_modbus** (after_dependency) — SolaX inverter control
+- **sigen** (after_dependency) — Sigenergy control (Remote EMS)
 - **solcast_solar**, **forecast_solar** (after_dependency) — PV forecasts
 
 Python requirements (`manifest.json`): `pymodbus>=3.6.0` for the direct-Modbus
@@ -363,7 +369,8 @@ the event loop is long enough for HA to flag a blocking call.
 - **`HAConfig` is the almost-only lever**: every intervention of ours is
   expressed as a parameter `opt()` already understands — except where the
   model itself was wrong, and that is exactly twice (heater, blackout
-  reserve; `chamo/README.md`). Reach for a parameter first: a divergence
+  reserve; `chamo/README.md` — a third `LOCAL CHANGE`, the solver-status
+  check, changes no model). Reach for a parameter first: a divergence
   costs on every upstream merge, forever.
 - **The blackout reserve must never force a purchase**: `bor`
   is capped at the fill level reachable *without buying* — house first,
@@ -505,7 +512,7 @@ the event loop is long enough for HA to flag a blocking call.
 - **Heizstab (heater)**: A Fronius Ohmpilot as a second sink. Since
   2.1.1-dev2 it is a **valued LP variable** (`heater_p` ≤ `discard_p` in
   `opt_highs.py`, objective += heat × `heizstab_waermewert`, capped per slot
-  by `heizstab_max_kw` and over the horizon by `heizstab_budget_kwh` from
+  by `heizstab_max_kw` and per calendar day by `heizstab_budget_kwh` from
   buffer volume × (max temperature − measured temperature)). **Hard bound since 2.1.1-dev25: `heater_p` ≤ PV production − house load/η per slot — the battery never feeds the heater.** Without it the LP fed the house from the battery and the heater from PV (Grünbach 14.09.2026: 3.38 kW heat next to 2.02 kW discharge), because it valued the stored kWh only at the feed-in price. The executor mirrors this: planned heat in a slot that also plans discharge is not executed (`_heizstab_plan_kw`). With heat value
   > feed-in price the model deliberately curtails feed-in in favour of the
   buffer; without volume or heat value it falls back to "heater takes what
@@ -666,7 +673,7 @@ The config flow is a single-click setup that creates a config entry with `setup_
 
 Wizard steps (`RENDERERS` map in the panel — the step methods are called
 dynamically by name, so they look unreferenced to a grep). Steps 1–3 are the
-sensors (assigned once), steps 4–5 are the parameters:
+sensors (assigned once), steps 4–6 are the parameters:
 
 1. Willkommen — prerequisite checks (inverter integration installed?)
 2. Wechselrichter — type selection, auto-detection / Modbus probe, power
@@ -706,7 +713,7 @@ sensors (assigned once), steps 4–5 are the parameters:
    in the wizard *and* on save), export limit, battery power limit, minimum
    state of charge, maximum state of charge (always visible, no toggle —
    100 = charge to full, the value alone carries the state since v27)
-6. Tarife & Gemeinschaft — base tariff (manual, OeMAG published month, OeMAG current-month estimate, spot with cent and/or percent fee, or aWATTar SUNNY monthly tariff with contract variant; manual also takes a
+6. Tarife & Gemeinschaft — base tariff (manual, OeMAG published month, OeMAG current-month estimate, spot with cent and/or percent fee, aWATTar SUNNY monthly tariff with contract variant, or Energie AG „Team Sonne Float“ (published or estimated, with discount and price variant); manual also takes a
    night rate `schedule_feedin_price_night`), consumption price, community
    shares/prices/weights, demand source PeakShare forecast or fixed acceptance
    quota (`eeg_demand_source`; quotas per community, day mandatory in quote
@@ -742,7 +749,7 @@ leistungsspitze sensors, not the Hausverbrauch attributes — it is not part of
 the one-point-in-time power set. During the executor's startup grace period (status
 "Startphase — …") the status card shows only that hint — no setpoints,
 reasons, warnings, or job line. The "Gesetzte Steuerwerte" transparency view
-is its own always-expanded card below the Optimierungsplan card (expert mode
+is its own always-expanded card after the Optimierungsgewinn and Prognosevergleich cards (expert mode
 only, hidden during the startup phase); it reloads with every guard cycle,
 keyed on the status sensor's `letzte_aktualisierung`, so it never contradicts
 the status card above for longer than one cycle.
@@ -761,15 +768,16 @@ absent for every other source.
   written only in mode "Ein" and only for a driver with
   `supports_schedule_control=True`
 - Treat `chamo/` as upstream code: it is Harald Geyer's, and every line we
-  change costs on every merge with him. Two divergences exist (heater,
-  blackout reserve) — both marked `LOCAL CHANGE`, both explained in
-  `chamo/README.md`, both reported upstream. A third one needs a reason of
+  change costs on every merge with him. Two divergences change the model
+  (heater, blackout reserve) — both marked `LOCAL CHANGE`, both explained in
+  `chamo/README.md`, both reported upstream; a third `LOCAL CHANGE` only
+  checks the solver status. A third one needs a reason of
   the same weight: the model is provably wrong, and no parameter can express
   the fix. `tests/test_chamo_highs_adapter.py` compares HiGHS against GLPK
   column by column and stays valid (it loads the same file twice).
   `chamo/opt_test.py` has a syntax error upstream and is never imported
 - Before deleting seemingly unused panel code, check for **dynamic** dispatch:
-  `_renderStep0`–`_renderStep6` run through the `RENDERERS` map,
+  `_renderStepWillkommen` … `_renderStepZusammenfassung` run through the `RENDERERS` map,
   `toggle-telemetry` / `forget-telemetry` are handled before the switch,
   `.toast-*` classes are assembled as `toast-${type}`, and `guide-alert`
   classes live in the generated guide HTML

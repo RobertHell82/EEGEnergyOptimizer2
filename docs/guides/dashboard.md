@@ -65,7 +65,7 @@ Die Zeilen darunter zeigen, was am Wechselrichter steht (Batterie-Sollwert, Ziel
 
 Kommt eine befohlene Entladung nicht an — die Batterie gibt über drei Minuten weniger als die Hälfte des Sollwerts ab und mehr als 0,3 kW zu wenig —, setzt der Optimizer den Befehl neu auf und meldet „Guard 3: Entladung wirkungslos (x statt y kW) — neu aufgesetzt". Das geschieht höchstens zweimal je Viertelstunde und nie, wenn die Batterie ihren Ziel-Ladestand erreicht hat.
 
-**Bezugsspitze.** Die Zeile „Bezugsspitze *Monat*" zeigt den höchsten Viertelstunden-Netzbezug des laufenden Monats (siehe unten). Das ⓘ daneben nennt den Zeitpunkt, die laufende und die letzte abgeschlossene Viertelstunde und die Vormonate. Orange wird der Wert, wenn die Hochrechnung der laufenden Viertelstunde über der bisherigen Monatsspitze liegt — dann entsteht gerade eine neue.
+**Bezugsspitze.** Die Zeile „Bezugsspitze *Monat*" zeigt den höchsten Viertelstunden-Netzbezug des laufenden Monats (siehe unten). Das ⓘ daneben nennt den Zeitpunkt, die laufende und die letzte abgeschlossene Viertelstunde, die Vormonate und was die Spitze an Netzkosten bedeutet (siehe unten). Orange wird der Wert, wenn die Hochrechnung der laufenden Viertelstunde über der bisherigen Monatsspitze liegt — dann entsteht gerade eine neue.
 
 **Zeitstempel.** Ganz unten stehen die letzten Läufe von Plan, Steuerung, Verbrauchsprofil und, mit PeakShare, dem Abruf der Bedarfsprognose. Rot mit ⚠ heißt: Dieser Teil läuft nicht im erwarteten Takt oder der Plan konnte nicht gerechnet werden; ein Tipp darauf nennt den Grund.
 
@@ -81,7 +81,7 @@ Fährst du mit der Maus über das Diagramm oder tippst darauf, zeigt ein Fenster
 
 ### Optimierungsgewinn
 
-Die Karte darunter vergleicht den Plan mit einem simulierten **Standardbetrieb**: PV-Überschuss lädt zuerst die Batterie, ein Defizit entlädt sie bis zum Mindest-Ladestand. Die Zahl im Kopf ist der erwartete Mehrerlös über die nächsten Stunden — auf Prognosebasis, kein Messwert. Aufgeklappt stehen die Geldposten beider Betriebsarten nebeneinander und ein Diagramm, wie die Einspeisung ohne Optimierung aussähe.
+Diese Karte vergleicht den Plan mit einem simulierten **Standardbetrieb**: PV-Überschuss lädt zuerst die Batterie, ein Defizit entlädt sie bis zum Mindest-Ladestand; ein Heizstab bekommt, was sonst abgeregelt würde, höchstens so viel, wie der Puffer je Tag aufnimmt. Die Zahl im Kopf ist der erwartete Mehrerlös — auf Prognosebasis, kein Messwert. Gezählt werden mindestens 24 Stunden und dann bis zur nächsten Mitternacht (mittags also rund 36 Stunden), damit jeder Tag samt Pufferbudget ganz im Fenster liegt; die Stundenzahl steht in der Überschrift. Aufgeklappt stehen die Geldposten beider Betriebsarten nebeneinander und ein Diagramm, wie die Einspeisung ohne Optimierung aussähe.
 
 ### Gesetzte Steuerwerte (Expertenmodus)
 

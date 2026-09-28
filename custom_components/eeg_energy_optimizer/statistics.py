@@ -1,4 +1,7 @@
-"""Einspeise-Statistik — wie viel ging während einer gesteuerten Entladung ins Netz?
+"""Zähler für „Entladung ins Netz“ — wie viel ging während einer gesteuerten Entladung ins Netz?
+
+Die Panel-Karte „Einspeise-Statistik“, die ihn las, ist mit 2.1.24 entfallen;
+Zähler und Sensor laufen weiter.
 
 Kehrt mit 1.5.37 zurück, nachdem sie mit 1.5.1 zusammen mit der
 Zustands-Heuristik entfernt wurde. Drei Dinge sind bewusst wie vorher, eines
