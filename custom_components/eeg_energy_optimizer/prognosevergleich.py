@@ -13,16 +13,33 @@ dem Recorder (``schedule_archive.async_ist_verlauf``), zu Halbstunden
 verdichtet, bei jedem Takt nachgezogen — der laufende Tag zeigt so im Panel
 schon seinen bisherigen Verlauf.
 
-Aufgehoben werden ``TAGE_AUFBEWAHRUNG`` Tage. Aus ihnen entstehen je Quelle
-Tagessumme, Abweichung und mittlerer Fehler über die Tagstunden, sowie der
-**empirische p10**: das 10-%-Quantil des Verhältnisses gemessen zu
-prognostiziert über die vollständigen Tage — ab ``P10_MIN_TAGE`` Tagen, denn
-ein Quantil aus fünf Werten ist Zufall. ``schedule.py`` nimmt ihn für die
-eigene Prognose, wenn kein Solcast-p10 zum Leihen da ist.
+Aufgehoben werden ``TAGE_AUFBEWAHRUNG`` Tage — gut ein Jahr, weil die
+Kalibrierung der eigenen Prognose (``pvprognose/kalibrierung.py``) aus
+genau diesen Tagen lernt und jeden Sonnenstand einmal gesehen haben soll.
+Ausgewertet werden die letzten ``TAGE_AUSWERTUNG``: je Quelle Tagessumme,
+Abweichung und mittlerer Fehler über die Tagstunden, sowie der **empirische
+p10**: das 10-%-Quantil des Verhältnisses gemessen zu prognostiziert über
+die vollständigen Tage — ab ``P10_MIN_TAGE`` Tagen, denn ein Quantil aus
+fünf Werten ist Zufall. Ein Jahr darin würde Sommer und Winter mischen.
+``schedule.py`` nimmt den p10 für die eigene Prognose, wenn kein Solcast-p10
+zum Leihen da ist.
 
-Was der Vergleich NICHT ist: eine Steuerung. Er liest, rechnet und zeigt.
-Die steuernde Quelle bleibt ``forecast_source``; ob die andere mitläuft,
-sagt ``pv_prognose_vergleich``.
+Zwei Speicher: Ein Jahr Tage sind einige Megabyte, und der Takt schreibt
+alle 30 Minuten. Die abgeschlossenen Tage (``_ist_archiv``) stehen deshalb
+im Archiv-Store, der nur geschrieben wird, wenn ein Tag hineinwandert —
+einmal am Tag; der laufende Store hält nur, was sich noch ändert.
+
+Neben den beiden Prognosen hält ein Tag fest, was die Kalibrierung braucht:
+``eigen_roh`` (die eigene Prognose OHNE Kalibrierung — aus der kalibrierten
+lernte sie ihre eigene Korrektur nach), ``eigen_kennung`` (Anlage und
+Wettermodelle, mit denen sie gerechnet wurde) und zur Messung die
+Einspeisung (``netz``) und den Ladestand (``soc``), an denen eine Abregelung
+zu erkennen ist.
+
+Was der Vergleich NICHT ist: eine Steuerung. Er liest, rechnet und zeigt —
+und gibt der eigenen Prognose die Lerndaten. Aufgezeichnet wird, wenn der
+Schalter ``pv_prognose_vergleich`` an ist ODER die eigene Prognose steuert
+(sonst lernte sie nie).
 
 Zeitraster: Slot-Anfänge als UTC-ISO-Strings, 30 Minuten, von lokaler
 Mitternacht bis lokaler Mitternacht — 48 Slots, an den Umstellungstagen
@@ -52,7 +69,11 @@ except ImportError:  # Testumgebung
     _lokal = lambda dt: dt.astimezone()  # noqa: E731
     Store = None  # type: ignore[assignment,misc]
 
-TAGE_AUFBEWAHRUNG = 30
+TAGE_AUFBEWAHRUNG = 400
+TAGE_AUSWERTUNG = 30
+# Ein Tag wandert ins Archiv, wenn er vollständig ist oder so alt, dass keine
+# Messung mehr nachkommt.
+ARCHIV_AB_TAGEN = 2
 FESTHALTEN_AB_STUNDE = 5
 # Wird eine Prognose erst nach dieser Stunde festgehalten (Home Assistant lief
 # um 5 Uhr nicht), hat sie den halben Tag schon gesehen: Der Tag heißt dann
@@ -79,6 +100,16 @@ _SLOT = timedelta(minutes=SLOT_MIN)
 
 def vergleich_aktiv(config: dict[str, Any]) -> bool:
     return bool(config.get(CONF_PV_PROGNOSE_VERGLEICH))
+
+
+def aufzeichnung_noetig(config: dict[str, Any]) -> bool:
+    """Vergleich eingeschaltet — oder die eigene Prognose steuert und braucht
+    die Tage für ihre Kalibrierung."""
+    from .const import CONF_FORECAST_SOURCE, FORECAST_SOURCE_EIGEN
+
+    return vergleich_aktiv(config) or (
+        str(config.get(CONF_FORECAST_SOURCE) or "").lower() == FORECAST_SOURCE_EIGEN
+    )
 
 
 def tagesslots(datum: str) -> list[datetime]:
@@ -252,9 +283,13 @@ class Prognosevergleich:
         self._hass = hass
         self._entry_id = entry_id
         self._store = None
+        self._archiv_store = None
         if Store is not None:
             self._store = Store(hass, 1, f"{DOMAIN}_{entry_id}_prognosevergleich")
+            self._archiv_store = Store(hass, 1, f"{DOMAIN}_{entry_id}_prognosevergleich_archiv")
         self._tage: dict[str, dict[str, Any]] = {}
+        # Welche Tage das Archiv zuletzt geschrieben hat — nur bei Änderung neu.
+        self._archiv_stand: frozenset[str] = frozenset()
         self._letzter_fehler: str | None = None
 
     # -- Speicher -------------------------------------------------------
@@ -262,20 +297,36 @@ class Prognosevergleich:
     async def async_load(self) -> None:
         if self._store is None:
             return
-        try:
-            stored = await self._store.async_load()
-        except Exception:  # noqa: BLE001
-            return
-        if isinstance(stored, dict) and isinstance(stored.get("tage"), dict):
-            self._tage = {
-                str(k): v for k, v in stored["tage"].items() if isinstance(v, dict)
-            }
+        for store, archiv in ((self._archiv_store, True), (self._store, False)):
+            if store is None:
+                continue
+            try:
+                stored = await store.async_load()
+            except Exception:  # noqa: BLE001
+                continue
+            if isinstance(stored, dict) and isinstance(stored.get("tage"), dict):
+                tage = {str(k): v for k, v in stored["tage"].items() if isinstance(v, dict)}
+                self._tage.update(tage)
+                if archiv:
+                    self._archiv_stand = frozenset(tage)
 
-    async def async_save(self) -> None:
+    def _ist_archiv(self, datum: str, jetzt: datetime) -> bool:
+        tag = self._tage.get(datum) or {}
+        grenze = (_lokal(jetzt).date() - timedelta(days=ARCHIV_AB_TAGEN)).isoformat()
+        heute = _lokal(jetzt).date().isoformat()
+        return datum < heute and (bool(tag.get("vollstaendig")) or datum <= grenze)
+
+    async def async_save(self, jetzt: datetime | None = None) -> None:
         if self._store is None:
             return
+        jetzt = jetzt or _utcnow()
+        archiv = {d: t for d, t in self._tage.items() if self._ist_archiv(d, jetzt)}
+        laufend = {d: t for d, t in self._tage.items() if d not in archiv}
         try:
-            await self._store.async_save({"tage": self._tage})
+            if self._archiv_store is not None and frozenset(archiv) != self._archiv_stand:
+                await self._archiv_store.async_save({"tage": archiv})
+                self._archiv_stand = frozenset(archiv)
+            await self._store.async_save({"tage": laufend})
         except Exception:  # noqa: BLE001
             _LOGGER.debug("Prognosevergleich konnte nicht gespeichert werden")
 
@@ -305,6 +356,8 @@ class Prognosevergleich:
         fremd_name: str | None,
         fremd: dict[str, float] | None,
         eigen: dict[str, float] | None,
+        eigen_roh: dict[str, float] | None = None,
+        eigen_kennung: str | None = None,
     ) -> bool:
         """Prognosen des Tages eintragen — je Quelle nur einmal. True bei Neuem.
 
@@ -328,6 +381,14 @@ class Prognosevergleich:
             tag["eigen"] = eigen
             tag["festgehalten_eigen"] = jetzt.isoformat()
             neu = True
+        # Die Lerndaten der Kalibrierung dürfen auch später kommen: eine
+        # Prognose vom Mittag ist für den Faktor so gut wie eine vom Morgen
+        # (Wetterzufall filtert die Kalibrierung ohnehin), nur der Vergleich
+        # mit Solcast wäre unfair — und der liest ``eigen``, nicht das hier.
+        if eigen_roh and eigen_kennung and tag.get("eigen_roh") is None:
+            tag["eigen_roh"] = eigen_roh
+            tag["eigen_kennung"] = eigen_kennung
+            neu = True
         if neu:
             if not tag.get("festgehalten"):
                 tag["festgehalten"] = jetzt.isoformat()
@@ -336,12 +397,21 @@ class Prognosevergleich:
         return neu
 
     def messung_eintragen(
-        self, datum: str, gemessen: dict[str, float], bis: datetime | None
+        self,
+        datum: str,
+        gemessen: dict[str, float],
+        bis: datetime | None,
+        netz: dict[str, float] | None = None,
+        soc: dict[str, float] | None = None,
     ) -> None:
         if not gemessen:
             return
         tag = self._tag(datum)
         tag["gemessen"] = gemessen
+        if netz is not None:
+            tag["netz"] = netz
+        if soc is not None:
+            tag["soc"] = soc
         tag["gemessen_bis"] = bis.isoformat() if bis else None
         if bis is not None and tag["slots"]:
             ende = datetime.fromisoformat(tag["slots"][-1]) + _SLOT
@@ -366,13 +436,21 @@ class Prognosevergleich:
         tag = self._tage.get(datum) or {}
         return tag.get("fremd") is not None, tag.get("eigen") is not None
 
+    def lerntage(self) -> list[dict[str, Any]]:
+        """Alle Tage für die Kalibrierung — sie filtert selbst."""
+        return list(self._tage.values())
+
+    def _auswertung(self) -> list[dict[str, Any]]:
+        """Die letzten ``TAGE_AUSWERTUNG`` Tage — Grundlage aller Kennzahlen."""
+        return [self._tage[d] for d in sorted(self._tage)[-TAGE_AUSWERTUNG:]]
+
     def uebersicht(self) -> list[dict[str, Any]]:
-        """Kennzahlen aller Tage, neueste zuerst."""
-        return [statistik_tag(self._tage[d]) for d in sorted(self._tage, reverse=True)]
+        """Kennzahlen der ausgewerteten Tage, neueste zuerst."""
+        return [statistik_tag(t) for t in reversed(self._auswertung())]
 
     def _tagesverhaeltnisse(self, quelle: str) -> list[float]:
         werte: list[float] = []
-        for tag in self._tage.values():
+        for tag in self._auswertung():
             if not tag.get("vollstaendig") or tag.get("spaet"):
                 continue
             reihe = tag.get(quelle)
@@ -395,10 +473,10 @@ class Prognosevergleich:
     def zusammenfassung(self) -> dict[str, Any]:
         """Über alle vollständigen Tage: Bias, Fehler, wer öfter näher lag."""
         tage = [
-            statistik_tag(t) for t in self._tage.values()
+            statistik_tag(t) for t in self._auswertung()
             if t.get("vollstaendig") and not t.get("spaet")
         ]
-        spaet = sum(1 for t in self._tage.values() if t.get("vollstaendig") and t.get("spaet"))
+        spaet = sum(1 for t in self._auswertung() if t.get("vollstaendig") and t.get("spaet"))
         ergebnis: dict[str, Any] = {
             "tage": len(tage), "spaet_ausgelassen": spaet, "quellen": {}, "naeher": {},
         }
@@ -474,13 +552,17 @@ class Prognosevergleich:
         gestern = (lokal.date() - timedelta(days=1)).isoformat()
         geaendert = False
 
+        provider = (self._hass.data.get(DOMAIN, {}).get(self._entry_id) or {}).get("pvprognose")
         if lokal.hour >= FESTHALTEN_AB_STUNDE:
             hat_fremd, hat_eigen = self.hat_prognosen(heute)
-            if not (hat_fremd and hat_eigen):
+            hat_roh = (self._tage.get(heute) or {}).get("eigen_roh") is not None
+            if not (hat_fremd and hat_eigen and hat_roh):
                 slots = tagesslots(heute)
                 fremd_name: str | None = None
                 fremd: dict[str, float] | None = None
                 eigen: dict[str, float] | None = None
+                eigen_roh: dict[str, float] | None = None
+                kennung: str | None = None
                 if not hat_fremd:
                     try:
                         detailed = sched._solcast_detailed(self._hass, config)
@@ -494,14 +576,19 @@ class Prognosevergleich:
                                 fremd_name = "forecast_solar"
                     except Exception as err:  # noqa: BLE001
                         self._letzter_fehler = f"Fremdprognose: {err}"
-                if not hat_eigen:
-                    provider = (self._hass.data.get(DOMAIN, {}).get(self._entry_id) or {}).get("pvprognose")
-                    if provider is not None:
-                        try:
+                if provider is not None:
+                    try:
+                        if not hat_eigen:
                             eigen = reihe_exakt(provider.halbstunden(jetzt), slots)
-                        except Exception as err:  # noqa: BLE001
-                            self._letzter_fehler = f"Eigene Prognose: {err}"
-                if self.festhalten(heute, jetzt, fremd_name, fremd or None, eigen or None):
+                        if not hat_roh:
+                            eigen_roh = reihe_exakt(provider.halbstunden(jetzt, roh=True), slots)
+                            kennung = provider.modellkennung()
+                    except Exception as err:  # noqa: BLE001
+                        self._letzter_fehler = f"Eigene Prognose: {err}"
+                if self.festhalten(
+                    heute, jetzt, fremd_name, fremd or None, eigen or None,
+                    eigen_roh or None, kennung if isinstance(kennung, str) else None,
+                ):
                     geaendert = True
 
         # Messung: heute laufend, gestern bis es vollständig ist.
@@ -518,16 +605,25 @@ class Prognosevergleich:
                 verlauf = await async_ist_verlauf(
                     self._hass, self._entry_id, slots[0], slots[-1] + _SLOT
                 )
-                punkte = (verlauf.get("reihen") or {}).get("pv_leistung") or []
+                reihen = verlauf.get("reihen") or {}
             except Exception as err:  # noqa: BLE001
                 self._letzter_fehler = f"Messung: {err}"
                 continue
-            gemessen, bis = messung_aus_punkten(punkte, slots)
+            gemessen, bis = messung_aus_punkten(reihen.get("pv_leistung") or [], slots)
             if gemessen:
-                self.messung_eintragen(datum, gemessen, bis)
+                # Netzleistung positiv = Einspeisung; messung_aus_punkten
+                # schneidet unter 0 ab, übrig bleibt genau der Export.
+                netz, _ = messung_aus_punkten(reihen.get("netzleistung") or [], slots)
+                soc, _ = messung_aus_punkten(reihen.get("ladestand") or [], slots)
+                self.messung_eintragen(datum, gemessen, bis, netz, soc)
                 geaendert = True
 
         vorher = len(self._tage)
         self.aufraeumen(jetzt)
         if geaendert or len(self._tage) != vorher:
-            await self.async_save()
+            await self.async_save(jetzt)
+        if geaendert and provider is not None:
+            try:
+                provider.kalibrieren(self.lerntage())
+            except Exception:  # noqa: BLE001 — die Kalibrierung darf den Takt nicht kippen
+                _LOGGER.debug("Kalibrierung der eigenen Prognose fehlgeschlagen", exc_info=True)

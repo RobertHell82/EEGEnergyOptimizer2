@@ -45,7 +45,15 @@
 
 <h3>Was das Modell kann und was nicht</h3>
 <p>Die Rechnung folgt dem PVWatts-Ansatz: Einstrahlung auf die Modulebene (von Open-Meteo aus Direkt- und Diffusstrahlung für deine Neigung und Ausrichtung berechnet, gemittelt über drei Wettermodelle: ICON vom Deutschen Wetterdienst, ECMWF und Météo-France — liegt ein Modell daneben, etwa mit Nebel, der nicht kommt, fällt es weniger ins Gewicht), Temperaturkorrektur der Zellen (−0,4 % je Kelvin), pauschale Verluste, Deckel auf die AC-Grenze.</p>
-<p>Was das Modell <strong>nicht</strong> kennt: Verschattung durch Bäume, Nachbargebäude oder Gauben, Schnee auf den Modulen, und ein Ost-West-Dach an einem Wechselrichter mit einem einzigen MPP-Tracker. In diesen Fällen liegen die Tagessummen meist noch richtig, der Tagesverlauf nicht.</p>
+<p>Was das Modell von sich aus <strong>nicht</strong> kennt: Verschattung durch Bäume, Nachbargebäude oder Gauben, den Horizont, und die Eigenheiten deines Standorts (etwa Dunst am Morgen in einem Becken). Das lernt die <strong>Kalibrierung</strong>: Sie vergleicht jeden Tag die Prognose mit dem, was deine Anlage wirklich erzeugt hat, und merkt sich je Sonnenstand einen Korrekturfaktor. Ein Baum im Südosten verschattet immer dieselbe Himmelsgegend, egal zu welcher Uhrzeit die Sonne dort steht.</p>
+<ul>
+<li>Sie beginnt mit dem ersten gemessenen Tag und wird mit jedem weiteren Tag sicherer; einzelne Ausreißer ziehen sie nur ein Stück.</li>
+<li>Einen Sonnenstand, den sie noch nie gesehen hat (im Herbst zum Beispiel die tiefe Wintersonne), lässt sie unverändert. Ganz fertig ist sie nach einem Jahr.</li>
+<li>Tage mit ganz anderem Wetter als vorhergesagt und Zeiten, in denen die Anlage abgeregelt war (Einspeisegrenze erreicht, Wechselrichter am Anschlag), zählen nicht — sie sagen nichts über die Module.</li>
+<li>Änderst du Flächen, Verluste oder die AC-Grenze, beginnt sie von vorn.</li>
+</ul>
+<p>Sie lernt immer, wenn die eigene Berechnung steuert. Wie weit sie ist, zeigt die Karte <strong>Prognosevergleich</strong> im Dashboard — die erscheint, wenn du den Prognosevergleich einschaltest.</p>
+<p>Schnee auf den Modulen und ein Ost-West-Dach an einem Wechselrichter mit einem einzigen MPP-Tracker kann auch die Kalibrierung nicht abbilden.</p>
 <p>Gegenüber Solcast fehlt der Satelliten-Nowcast für die nächsten Stunden — bei durchbrochener Bewölkung ist Solcast dort im Vorteil. Für den Fahrplan zählt aber vor allem, wie viel Energie heute noch und morgen kommt, und da sind Wettermodell-Prognosen gleichauf.</p>
 <h3>Prognosevergleich: beide Quellen nebeneinander</h3>
 <p>Ob die eigene Berechnung auf deiner Anlage so gut ist wie Solcast, sagen nur Zahlen von deiner Anlage. Dafür gibt es den Schalter <strong>Prognosevergleich</strong> — im Assistenten beim Schritt „PV-Prognose“ und in den <strong>Einstellungen → Prognose</strong>:</p>

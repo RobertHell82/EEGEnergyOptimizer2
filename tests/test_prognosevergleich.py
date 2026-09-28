@@ -226,14 +226,43 @@ def test_p10_faktor_ist_begrenzt_und_ignoriert_leere_tage():
     assert faktor == 0.2
 
 
-def test_aufraeumen_haelt_dreissig_tage():
+def test_aufraeumen_haelt_gut_ein_jahr():
+    """Die Kalibrierung lernt aus einem Jahr; ausgewertet werden 30 Tage."""
     v = _vergleich()
-    alt = (JETZT.date() - timedelta(days=31)).isoformat()
-    frisch = (JETZT.date() - timedelta(days=29)).isoformat()
+    alt = (JETZT.date() - timedelta(days=pv.TAGE_AUFBEWAHRUNG + 1)).isoformat()
+    frisch = (JETZT.date() - timedelta(days=pv.TAGE_AUFBEWAHRUNG - 1)).isoformat()
     v._tage[alt] = _tag_mit(1, 1, 1, alt)
     v._tage[frisch] = _tag_mit(1, 1, 1, frisch)
     v.aufraeumen(JETZT)
     assert v.tage() == [frisch]
+    assert pv.TAGE_AUFBEWAHRUNG >= 366
+
+
+def test_auswertung_nur_ueber_die_letzten_dreissig_tage():
+    v = _vergleich()
+    for i in range(40):
+        d = (JETZT.date() - timedelta(days=i + 1)).isoformat()
+        v._tage[d] = _tag_mit(1.0, 0.7, 0.9, d)
+    assert len(v.uebersicht()) == pv.TAGE_AUSWERTUNG
+    assert v.zusammenfassung()["tage"] <= pv.TAGE_AUSWERTUNG
+    assert len(v.lerntage()) == 40
+
+
+async def test_abgeschlossene_tage_gehen_ins_archiv():
+    """Das Archiv wird nur geschrieben, wenn ein Tag hineinwandert."""
+    v = _vergleich()
+    v._store = MagicMock(async_save=AsyncMock())
+    v._archiv_store = MagicMock(async_save=AsyncMock())
+    gestern = (JETZT.date() - timedelta(days=1)).isoformat()
+    v._tage[gestern] = _tag_mit(1.0, 0.7, 0.9, gestern)
+    v._tage[gestern]["vollstaendig"] = True
+    v._tage[HEUTE] = _tag_mit(1.0, 0.7, 0.9, HEUTE)
+    await v.async_save(JETZT)
+    assert list(v._archiv_store.async_save.await_args.args[0]["tage"]) == [gestern]
+    assert list(v._store.async_save.await_args.args[0]["tage"]) == [HEUTE]
+    await v.async_save(JETZT)
+    assert v._archiv_store.async_save.await_count == 1
+    assert v._store.async_save.await_count == 2
 
 
 def test_status_liefert_uebersicht_und_gewaehlten_tag():

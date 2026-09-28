@@ -24,24 +24,31 @@ zwei Tagen Ausfall noch ab. Erst ab ``MAX_ALTER_S`` gilt sie als nicht mehr
 vorhanden — dann gibt es keinen Fahrplan, und das soll laut sein, nicht ein
 stiller Plan auf uraltem Wetter.
 
-**Kalibrierung — vorgesehen, noch nicht gebaut.** Das Modell kennt weder
-Horizont noch Verschattung noch Schnee. Beides steht in der eigenen
-Erzeugungshistorie: Das Verhältnis gemessen zu modelliert, gebinnt nach
-Sonnenstand und über Wochen gemittelt, ergibt je Bin einen Korrekturfaktor,
-der genau die Abweichungen einfängt, die kein Rechenmodell weiß. Der Ort
-dafür ist EIN Faktor je Zeitpunkt zwischen ``leistungsreihe()`` und dieser
-Klasse — nichts anderes muss sich ändern. Bis dahin gilt: Tagessummen
-stimmen erfahrungsgemäß, der Verlauf im Verschattungsfall nicht.
+**Kalibrierung** (``kalibrierung.py``): Der Provider hält zwei Reihen, die
+rohe und die kalibrierte, und rechnet beide aus denselben Wetterdaten
+(``_paare``, mitgespeichert, damit eine neue Kalibrierung ohne Abruf und
+auch nach einem Neustart sofort greift). Alles, was die Integration liest,
+bekommt die kalibrierte; die rohe (``roh=True``) braucht nur der
+Prognosevergleich, denn gelernt wird aus ihr — aus der kalibrierten lernte
+die Kalibrierung ihre eigene Korrektur nach. Ohne Lerndaten sind beide
+gleich.
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from ..const import CONF_INVERTER_AC_LIMIT_KW, DOMAIN
+from ..const import (
+    CONF_GRID_EXPORT_LIMIT_ENABLED,
+    CONF_GRID_EXPORT_LIMIT_KW,
+    CONF_INVERTER_AC_LIMIT_KW,
+    DOMAIN,
+)
+from .kalibrierung import Kalibrierung, lerne
 from .modell import (
     Flaeche,
     Leistungsreihe,
@@ -53,7 +60,7 @@ from .modell import (
     tagessummen,
     verluste_aus_config,
 )
-from .openmeteo import Wetterreihe, baue_url, hole_wetter
+from .openmeteo import MODELLE, Wetterreihe, baue_url, hole_wetter
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -95,15 +102,13 @@ def standort(hass: Any) -> tuple[float, float] | None:
     return breite, laenge
 
 
-async def hole_reihe(
+async def hole_paare(
     session: Any,
     breite: float,
     laenge: float,
     flaechen: list[Flaeche],
-    verluste_pct: float,
-    ac_limit_kw: float | None,
-) -> Leistungsreihe:
-    """Alle Flächen abrufen und zur Anlagenleistung verrechnen.
+) -> list[tuple[Flaeche, Wetterreihe]]:
+    """Das Wetter aller Flächen abrufen.
 
     Nacheinander, nicht parallel: höchstens acht Flächen, je etwa eine
     Sekunde — und Open-Meteo dankt es mit weniger gleichzeitigen Anfragen.
@@ -112,7 +117,7 @@ async def hole_reihe(
     for flaeche in flaechen:
         wetter = await hole_wetter(session, baue_url(breite, laenge, flaeche.neigung, flaeche.azimut))
         paare.append((flaeche, wetter))
-    return leistungsreihe(paare, verluste_pct, ac_limit_kw)
+    return paare
 
 
 def _zusammenfassung(reihe: Leistungsreihe, jetzt: datetime) -> dict[str, Any]:
@@ -159,7 +164,8 @@ async def berechne_einmalig(
         else verluste_aus_config({})
     )
     session = async_get_clientsession(hass)
-    reihe = await hole_reihe(session, ort[0], ort[1], flaechen, verluste, ac_limit_kw)
+    paare = await hole_paare(session, ort[0], ort[1], flaechen)
+    reihe = leistungsreihe(paare, verluste, ac_limit_kw)
     if reihe.leer():
         raise RuntimeError("Open-Meteo lieferte keine Werte")
     jetzt = _utcnow()
@@ -187,6 +193,10 @@ class PvPrognoseProvider:
         if Store is not None:
             self._store = Store(hass, 1, f"{DOMAIN}_{entry_id}_pvprognose")
         self._reihe = Leistungsreihe([], [])
+        self._reihe_kal: Leistungsreihe | None = None
+        self._paare: list[tuple[Flaeche, Wetterreihe]] = []
+        self._kalibrierung: Kalibrierung | None = None
+        self._export_grenze_kw: float | None = None
         self._geholt: datetime | None = None
         self._fehler: str | None = None
         self._fehler_gemeldet = False
@@ -206,6 +216,13 @@ class PvPrognoseProvider:
         except (TypeError, ValueError):
             ac = 0.0
         self._ac_limit_kw = ac if ac > 0 else None
+        grenze: float | None = None
+        if config.get(CONF_GRID_EXPORT_LIMIT_ENABLED):
+            try:
+                grenze = max(0.0, float(config.get(CONF_GRID_EXPORT_LIMIT_KW) or 0.0))
+            except (TypeError, ValueError):
+                grenze = None
+        self._export_grenze_kw = grenze
 
     def _kennung(self) -> dict[str, Any]:
         """Womit die gespeicherte Reihe gerechnet wurde — passt sie nicht
@@ -215,6 +232,39 @@ class PvPrognoseProvider:
             "verluste_pct": self._verluste_pct,
             "ac_limit_kw": self._ac_limit_kw,
         }
+
+    def modellkennung(self) -> str:
+        """Kennung für die Lerndaten: Anlage UND Wettermodelle. Ändert sich
+        eines davon, beginnt die Kalibrierung von vorn."""
+        return json.dumps({**self._kennung(), "modelle": list(MODELLE)}, sort_keys=True)
+
+    # -- Kalibrierung ---------------------------------------------------
+
+    def kalibrieren(self, tage: list[dict[str, Any]]) -> None:
+        """Aus den Tagen des Prognosevergleichs lernen und neu rechnen."""
+        ort = standort(self._hass)
+        if ort is None:
+            return
+        self._kalibrierung = lerne(
+            tage, ort[0], ort[1], self.modellkennung(), self._export_grenze_kw, self._ac_limit_kw
+        )
+        self._neu_rechnen()
+
+    def _neu_rechnen(self) -> None:
+        if not self._paare:
+            return
+        self._reihe = leistungsreihe(self._paare, self._verluste_pct, self._ac_limit_kw)
+        kal = self._kalibrierung
+        self._reihe_kal = (
+            leistungsreihe(self._paare, self._verluste_pct, self._ac_limit_kw, kal.faktor)
+            if kal is not None and kal.aktiv
+            else None
+        )
+
+    def kalibrierung_status(self) -> dict[str, Any]:
+        if self._kalibrierung is None:
+            return {"aktiv": False, "tage": 0, "slots": 0, "felder": 0}
+        return self._kalibrierung.status()
 
     @property
     def flaechen(self) -> list[Flaeche]:
@@ -235,17 +285,19 @@ class PvPrognoseProvider:
             return None
         return max(0.0, ((jetzt or _utcnow()) - self._geholt).total_seconds())
 
-    def reihe(self, jetzt: datetime | None = None) -> Leistungsreihe | None:
-        """Die Leistungsreihe — None ohne Daten oder wenn sie zu alt ist."""
+    def reihe(self, jetzt: datetime | None = None, roh: bool = False) -> Leistungsreihe | None:
+        """Die (kalibrierte) Leistungsreihe — None ohne Daten oder wenn sie zu alt ist."""
         if not self.hat_daten:
             return None
         alter = self.alter_s(jetzt)
         if alter is not None and alter > MAX_ALTER_S:
             return None
+        if not roh and self._reihe_kal is not None:
+            return self._reihe_kal
         return self._reihe
 
-    def halbstunden(self, jetzt: datetime | None = None) -> dict[datetime, float]:
-        reihe = self.reihe(jetzt)
+    def halbstunden(self, jetzt: datetime | None = None, roh: bool = False) -> dict[datetime, float]:
+        reihe = self.reihe(jetzt, roh)
         return halbstunden(reihe) if reihe is not None else {}
 
     def tage_kwh(self, jetzt: datetime | None = None) -> list[float] | None:
@@ -295,6 +347,7 @@ class PvPrognoseProvider:
             "kwp_gesamt": self.kwp_gesamt,
             "verluste_pct": self._verluste_pct,
             "ac_limit_kw": self._ac_limit_kw,
+            "kalibrierung": self.kalibrierung_status(),
             "tage_kwh": None,
             "rest_heute_kwh": None,
             "morgen_kwh": None,
@@ -332,9 +385,25 @@ class PvPrognoseProvider:
             self._reihe = Leistungsreihe(ende=ende, kw=kw)
             self._geholt = datetime.fromisoformat(geholt)
             self._fehler = stored.get("fehler")
-        except (TypeError, ValueError):
+            # Das Wetter je Fläche (ab 2.1.21): mit ihm greift eine neue
+            # Kalibrierung sofort; ohne bleibt die Reihe roh bis zum Abruf.
+            wetter = stored.get("wetter")
+            if isinstance(wetter, list) and wetter and len(wetter) == len(self._flaechen):
+                self._paare = [
+                    (
+                        flaeche,
+                        Wetterreihe(
+                            ende=[datetime.fromisoformat(t) for t in w["ende"]],
+                            gti_w_m2=[float(g) for g in w["gti"]],
+                            temp_c=[None if t is None else float(t) for t in w["temp"]],
+                        ),
+                    )
+                    for flaeche, w in zip(self._flaechen, wetter)
+                ]
+        except (TypeError, ValueError, KeyError):
             _LOGGER.debug("PV-Prognose: gespeicherter Stand unlesbar — verworfen")
             self._reihe = Leistungsreihe([], [])
+            self._paare = []
             self._geholt = None
 
     async def _async_save(self) -> None:
@@ -347,6 +416,14 @@ class PvPrognoseProvider:
                     "geholt": self._geholt.isoformat() if self._geholt else None,
                     "ende": [t.isoformat() for t in self._reihe.ende],
                     "kw": self._reihe.kw,
+                    "wetter": [
+                        {
+                            "ende": [t.isoformat() for t in w.ende],
+                            "gti": w.gti_w_m2,
+                            "temp": w.temp_c,
+                        }
+                        for _, w in self._paare
+                    ],
                     "fehler": self._fehler,
                 }
             )
@@ -373,9 +450,8 @@ class PvPrognoseProvider:
                     return False
             session = async_get_clientsession(self._hass)
             try:
-                reihe = await hole_reihe(
-                    session, ort[0], ort[1], self._flaechen, self._verluste_pct, self._ac_limit_kw
-                )
+                paare = await hole_paare(session, ort[0], ort[1], self._flaechen)
+                reihe = leistungsreihe(paare, self._verluste_pct, self._ac_limit_kw)
                 if reihe.leer():
                     raise RuntimeError("Open-Meteo lieferte keine Werte")
             except Exception as err:  # noqa: BLE001 — jeder Fehler heißt: alte Reihe behalten
@@ -394,7 +470,8 @@ class PvPrognoseProvider:
                 await self._async_save()
                 return False
 
-            self._reihe = reihe
+            self._paare = paare
+            self._neu_rechnen()
             self._geholt = _utcnow()
             if self._fehler_gemeldet:
                 _LOGGER.info("PV-Prognose (Open-Meteo) wieder abrufbar")

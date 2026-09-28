@@ -1844,12 +1844,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # Prognosevergleich (prognosevergleich.py): zwei Prognosen und die
         # Messung je Tag. Immer angelegt, damit die Aufzeichnung beim
         # Einschalten des Schalters ohne Neustart weitergeht; geschrieben
-        # wird nur mit pv_prognose_vergleich (im Fremddaten-Takt).
+        # wird mit pv_prognose_vergleich oder steuernder eigener Prognose
+        # (im Fremddaten-Takt). Seine Tage sind die Lerndaten der
+        # Kalibrierung — die greift damit schon vor dem ersten Takt.
         from .prognosevergleich import Prognosevergleich
 
         prognosevergleich = Prognosevergleich(hass, entry.entry_id)
         await prognosevergleich.async_load()
         data["prognosevergleich"] = prognosevergleich
+        pvprognose_provider.kalibrieren(prognosevergleich.lerntage())
 
         # Befristeter Eingriff (Pause). Persistent, damit ein
         # Neustart mitten in der Pause die Steuerung nicht wieder anwirft.
@@ -2251,9 +2254,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
                 # Prognosevergleich: morgens beide Prognosen festhalten, die
                 # Messung nachziehen — nach den Abrufen, damit die eigene
-                # Reihe frisch ist.
+                # Reihe frisch ist. Auch ohne Schalter, wenn die eigene
+                # Prognose steuert: sie lernt aus diesen Tagen.
+                from .prognosevergleich import aufzeichnung_noetig
+
                 vergleich = data.get("prognosevergleich")
-                if vergleich is not None and vergleich_aktiv(cfg):
+                if vergleich is not None and aufzeichnung_noetig(cfg):
                     try:
                         await vergleich.async_tick(cfg)
                     except Exception:

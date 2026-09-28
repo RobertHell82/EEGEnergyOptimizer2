@@ -7819,9 +7819,15 @@ class EegOptimizerPanel extends HTMLElement {
         ? ` Empirischer p10 der eigenen Prognose: Faktor ${fmtDe(ze.p10_faktor, 2)} aus ${ze.p10_tage} Tagen.`
         : ` Empirischer p10 ab ${v.p10_min_tage || 14} vollständigen Tagen (bisher ${ze.p10_tage || 0}).`)
       : "";
-    const zusammen = z.tage
+    const kal = v.kalibrierung;
+    const kalZeile = kal
+      ? `<div class="help-text" style="margin-top:6px">${kal.aktiv
+        ? `Kalibrierung der eigenen Prognose: gelernt aus ${kal.tage} ${kal.tage === 1 ? "Tag" : "Tagen"} (${kal.slots} Halbstunden), Faktor je Sonnenstand ${fmtDe(kal.faktor_min, 2)} bis ${fmtDe(kal.faktor_max, 2)}.`
+        : "Kalibrierung der eigenen Prognose: noch keine Lerndaten — sie beginnt mit dem ersten gemessenen Tag."}</div>`
+      : "";
+    const zusammen = (z.tage
       ? `<div class="help-text" style="margin-top:10px"><strong>${z.tage} vollständige Tage${z.spaet_ausgelassen ? `, ${z.spaet_ausgelassen} spät festgehaltene ausgelassen` : ""}.</strong> ${[zq(z.quellen?.fremd, fremdKurz), zq(ze, "Eigene")].filter(Boolean).join(" · ")}.${naeher}${p10}</div>`
-      : `<div class="help-text" style="margin-top:10px">Noch kein vollständiger Tag — die Auswertung beginnt mit der ersten ganzen Messung.</div>`;
+      : `<div class="help-text" style="margin-top:10px">Noch kein vollständiger Tag — die Auswertung beginnt mit der ersten ganzen Messung.</div>`) + kalZeile;
     const zelle = `style="padding:4px 6px;border-bottom:1px solid var(--divider-color);white-space:nowrap"`;
     const rechts = `style="padding:4px 6px;border-bottom:1px solid var(--divider-color);text-align:right;white-space:nowrap"`;
     const zeilen = (v.uebersicht || []).slice(0, 14).map((u) => {

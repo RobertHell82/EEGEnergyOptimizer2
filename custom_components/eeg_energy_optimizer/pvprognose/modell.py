@@ -17,10 +17,9 @@ die trägt ``inverter_ac_limit_kw`` ohnehin.
 Was das Modell NICHT kennt und wo die Prognose deshalb systematisch
 danebenliegen kann: Verschattung durch Horizont, Bäume oder Gauben, Schnee
 auf den Modulen, eine Ost-West-Anlage auf einem Wechselrichter mit engem
-MPPT-Fenster. Für genau diese Fälle ist eine Kalibrierung an der eigenen
-Erzeugungshistorie vorgesehen (siehe Modul-Doku in ``provider.py``); bis
-dahin gilt: die Tagessummen stimmen erfahrungsgemäß, der Verlauf im
-Verschattungsfall nicht.
+MPPT-Fenster. Für genau diese Fälle gibt es die Kalibrierung an der eigenen
+Messung (``kalibrierung.py``): ein Faktor je Zeitpunkt, den
+``leistungsreihe()`` je Fläche auf die Leistung legt, vor beiden Deckeln.
 
 Alle Funktionen hier sind rein — keine HA-Objekte, keine Uhr, kein Netz.
 """
@@ -210,8 +209,13 @@ def leistungsreihe(
     paare: list[tuple[Flaeche, Wetterreihe]],
     verluste_pct: float,
     ac_limit_kw: float | None,
+    faktor: Callable[[datetime], float] | None = None,
 ) -> Leistungsreihe:
     """Flächen addieren, Verluste abziehen, deckeln — je Fläche und gesamt.
+
+    ``faktor`` (Kalibrierung) bekommt die Intervallmitte und wirkt je Fläche
+    VOR den Deckeln: eine Korrektur nach oben darf die Grenze nicht
+    überspringen, eine nach unten nicht an einem Deckel verpuffen.
 
     Die Verluste gehen je Fläche ab (linear, also dasselbe wie ein Faktor
     auf die Summe), damit die optionale Grenze je Fläche (``max_kw``, ihr
@@ -222,13 +226,18 @@ def leistungsreihe(
     """
     if not paare:
         return Leistungsreihe([], [])
-    faktor = max(0.0, 1.0 - float(verluste_pct) / 100.0)
+    verlust = max(0.0, 1.0 - float(verluste_pct) / 100.0)
     summen: dict[datetime, float] = {}
     zaehler: dict[datetime, int] = {}
+    korrektur: dict[datetime, float] = {}
     for flaeche, wetter in paare:
         grenze = flaeche.max_kw if flaeche.max_kw and flaeche.max_kw > 0 else None
         for ende, gti, temp in zip(wetter.ende, wetter.gti_w_m2, wetter.temp_c):
-            p = dc_kw(gti, temp, flaeche.kwp) * faktor
+            p = dc_kw(gti, temp, flaeche.kwp) * verlust
+            if faktor is not None and p > 0:
+                if ende not in korrektur:
+                    korrektur[ende] = faktor(ende - _SCHRITT / 2)
+                p *= korrektur[ende]
             if grenze is not None:
                 p = min(p, grenze)
             summen[ende] = summen.get(ende, 0.0) + p

@@ -2361,6 +2361,8 @@ async def ws_get_prognosevergleich(
         return
     ergebnis = vergleich.status(msg.get("datum"))
     ergebnis["aktiv"] = aktiv
+    provider = data.get("pvprognose")
+    ergebnis["kalibrierung"] = provider.kalibrierung_status() if provider is not None else None
     connection.send_result(msg["id"], ergebnis)
 
 
