@@ -2699,6 +2699,11 @@ async def ws_telemetry_enable(
         if not already_active:
             new_data = {**entry.data, CONF_TELEMETRY_ENABLED: True}
             hass.config_entries.async_update_entry(entry, data=new_data)
+            # Die Sendepfade lesen die Einwilligung live aus data["config"];
+            # das setzt sonst erst der Update-Listener. Ohne diese Zeile hinge
+            # das Profil unten davon ab, dass HA den Listener sofort ausführt.
+            if data is not None and isinstance(data.get("config"), dict):
+                data["config"] = {**data["config"], CONF_TELEMETRY_ENABLED: True}
         ident = buffer.get_identity() or {}
         try:
             profile = _build_telemetry_profile(

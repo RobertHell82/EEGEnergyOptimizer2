@@ -388,7 +388,15 @@ def read_power_kw(
 
 
 def _live_kw(hass: Any, entity_id: str) -> float | None:
-    """``read_power_kw`` für Live-Messungen: veraltete Zustände zählen als fehlend."""
+    """``read_power_kw`` mit Altersgrenze — NUR für den Netzzähler.
+
+    Ein Netzzähler steht im Betrieb nie minutenlang auf demselben Wert; tut er
+    es doch, hängt die Verbindung, und ein eingefrorenes „Einspeisung am
+    Limit“ täuscht Guard 1, Not-Aus und Heizstab. PV und Batterie stehen
+    dagegen nachts legitim still, und Template-/MQTT-Sensoren schreiben einen
+    unveränderten Wert nicht neu — mit derselben Grenze wurde dort der
+    Hausverbrauch 0 oder unbekannt (Gegenlesung 28.09.2026).
+    """
     return read_power_kw(hass, entity_id, max_alter_s=MESSWERT_MAX_ALTER_S)
 
 
@@ -410,8 +418,8 @@ def compute_pv_now_kw(hass: Any, config: dict) -> float | None:
     pv_id = config.get(CONF_PV_POWER_SENSOR, "")
     pv_2_id = config.get(CONF_PV_POWER_SENSOR_2, "")
 
-    pv_raw = _live_kw(hass, pv_id) if pv_id else None
-    pv_2_raw = _live_kw(hass, pv_2_id) if pv_2_id else None
+    pv_raw = read_power_kw(hass, pv_id) if pv_id else None
+    pv_2_raw = read_power_kw(hass, pv_2_id) if pv_2_id else None
 
     # Beide Quellen unverfügbar → kein Wert (Backend bekommt None, nicht 0)
     if pv_raw is None and pv_2_raw is None:
@@ -452,12 +460,12 @@ def compute_battery_now_kw(hass: Any, config: dict) -> float | None:
     bat_id = config.get(CONF_BATTERY_POWER_SENSOR, "")
     bat_2_id = config.get(CONF_BATTERY_POWER_SENSOR_2, "")
 
-    battery_power = _live_kw(hass, bat_id)
+    battery_power = read_power_kw(hass, bat_id)
     if battery_power is None:
         return None
 
     if bat_2_id:
-        bat2 = _live_kw(hass, bat_2_id)
+        bat2 = read_power_kw(hass, bat_2_id)
         if bat2 is not None:
             battery_power += bat2
 
@@ -539,8 +547,8 @@ def compute_house_load_kw(hass: Any, config: dict) -> float | None:
     bat_2_id = config.get(CONF_BATTERY_POWER_SENSOR_2, "")
     grid_id = config.get(CONF_GRID_POWER_SENSOR, "")
 
-    pv_power = _live_kw(hass, pv_id)
-    battery_power = _live_kw(hass, bat_id)
+    pv_power = read_power_kw(hass, pv_id)
+    battery_power = read_power_kw(hass, bat_id)
     grid_power = _live_kw(hass, grid_id)
 
     # PV-Sensor nachts nicht verfügbar (Inverter offline) → PV = 0 kW
@@ -551,14 +559,14 @@ def compute_house_load_kw(hass: Any, config: dict) -> float | None:
 
     # Optionaler zweiter PV-Sensor (z. B. SolaX-Generator über Meter 2)
     if pv_2_id:
-        pv2 = _live_kw(hass, pv_2_id)
+        pv2 = read_power_kw(hass, pv_2_id)
         if pv2 is not None:
             pv_power += pv2
 
     # Zweite Batterie (Huawei Master/Slave): roher, vorzeichenbehafteter Wert,
     # exakt wie im HausverbrauchSensor.
     if bat_2_id:
-        bat2 = _live_kw(hass, bat_2_id)
+        bat2 = read_power_kw(hass, bat_2_id)
         if bat2 is not None:
             battery_power += bat2
 

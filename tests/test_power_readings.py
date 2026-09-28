@@ -863,6 +863,34 @@ def test_live_pfade_verwerfen_einen_eingefrorenen_netzzaehler():
     assert compute_battery_now_kw(hass, config) is not None
 
 
+def test_stillstehende_pv_und_batterie_bleiben_messwerte():
+    """Gegenlesung 28.09.2026: Mit der Altersgrenze auf allen Quellen wurde
+    ein PV-Wert, den die Quelle 400 s nicht neu schrieb, zu „fehlt“ — und
+    der Hausverbrauch fiel in den Nachtzweig (PV = 0) auf 0 statt 2 kW.
+    Template- und MQTT-Sensoren schreiben einen unveränderten Wert nicht neu;
+    nur der Netzzähler steht im Betrieb nie minutenlang still."""
+    jetzt = datetime.now(tz=timezone.utc)
+    def z(wert, alter):
+        return SimpleNamespace(
+            state=wert, attributes={"unit_of_measurement": "kW"},
+            last_reported=jetzt - timedelta(seconds=alter),
+        )
+    config = {
+        CONF_INVERTER_TYPE: "fronius_gen24",
+        CONF_PV_POWER_SENSOR: "sensor.pv",
+        CONF_GRID_POWER_SENSOR: "sensor.netz",
+        CONF_BATTERY_POWER_SENSOR: "sensor.bat",
+    }
+    hass = _make_hass({
+        "sensor.pv": z("5.0", 400),      # steht, ist aber richtig
+        "sensor.bat": z("2.0", 400),     # lädt konstant
+        "sensor.netz": z("1.0", 5),      # frisch
+    })
+    assert compute_pv_now_kw(hass, config) == pytest.approx(5.0)
+    assert compute_battery_now_kw(hass, config) is not None
+    assert compute_house_load_kw(hass, config) == pytest.approx(2.0, abs=0.01)
+
+
 def test_backfill_faktor_vergleicht_die_ha_einheit_exakt():
     """HA rechnet nur um, wenn die Metadaten-Einheit exakt ein Schlüssel
     seines Konverters ist — 'w' oder ' kW ' kommen unverändert zurück."""
