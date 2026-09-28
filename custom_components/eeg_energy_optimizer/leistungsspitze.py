@@ -143,10 +143,18 @@ def netzkosten_monat(kw: float | None) -> dict[str, Any] | None:
         + max(0.0, verrechnet - LEISTUNGSPREIS_STUFE_KW) * darueber
     )
     start = verrechnet * LEISTUNGSPREIS_START_EUR_KW_JAHR
+    # Die Sätze gehen je MONAT und brutto hinaus: dieselbe Einheit wie der
+    # Betrag daneben — Jahressätze neben einem Monatsbetrag verwirren.
+    je_monat = lambda satz: round(satz / 12 * LEISTUNGSPREIS_UST, 2)  # noqa: E731
     return {
         "verrechnet_kw": round(verrechnet, 2),
         "endstufe_eur": round(endstufe / 12 * LEISTUNGSPREIS_UST, 2),
         "start_eur": round(start / 12 * LEISTUNGSPREIS_UST, 2),
+        "satz_bis_eur_kw_monat": je_monat(bis),
+        "satz_darueber_eur_kw_monat": je_monat(darueber),
+        "stufe_kw": LEISTUNGSPREIS_STUFE_KW,
+        "start_satz_eur_kw_monat": je_monat(LEISTUNGSPREIS_START_EUR_KW_JAHR),
+        "start_spanne_eur_kw_monat": [je_monat(x) for x in LEISTUNGSPREIS_START_SPANNE],
         "quelle": LEISTUNGSPREIS_QUELLE,
     }
 

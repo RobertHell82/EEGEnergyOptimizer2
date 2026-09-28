@@ -289,6 +289,11 @@ def test_netzkosten_monat_endstufe_und_start():
     assert k["endstufe_eur"] == pytest.approx(5 * 33.82 / 12 * 1.2, abs=0.01)
     assert k["start_eur"] == pytest.approx(5 * 19.0 / 12 * 1.2, abs=0.01)
     assert k["verrechnet_kw"] == 5.0
+    # Sätze je Monat und brutto — keine Jahressätze neben einem Monatsbetrag
+    assert k["satz_bis_eur_kw_monat"] == 3.38
+    assert k["satz_darueber_eur_kw_monat"] == 6.76
+    assert k["start_satz_eur_kw_monat"] == 1.9
+    assert k["start_spanne_eur_kw_monat"] == [1.5, 2.6]
 
 
 def test_netzkosten_monat_mindestens_zwei_kw_und_stufe():
