@@ -41,11 +41,13 @@ from __future__ import annotations
 
 import html as html_entities
 import logging
+import math
 import re
 from datetime import datetime, timezone
 from typing import Any
 
 from .const import DOMAIN
+from .oemag import ist_monatswert, lies_text, ohne_elemente, ohne_tags
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -90,6 +92,10 @@ UNTERGRENZE_EUR = {VARIANTE_FLOAT: 0.0, VARIANTE_LOYAL: 0.02}
 # Abschlag laut Preisblatt. Er ist VPI-wertgesichert, steigt also irgendwann —
 # deshalb ist er einstellbar und steht hier nur als Vorgabe.
 DEFAULT_ABSCHLAG_EUR = 0.015
+# Obergrenze für den eingestellten Abschlag (auch in save_config geprüft) —
+# dieselbe wie am Panel-Feld (20 ct). Auch nach Jahrzehnten Wertsicherung
+# bliebe er weit darunter; sie fängt nur, was am Panel vorbei kommt.
+ABSCHLAG_MAX_EUR = 0.20
 
 _MONATE = {
     "jänner": 1, "januar": 1, "jaenner": 1,
@@ -136,13 +142,16 @@ def aktueller_schluessel() -> int:
     return monatsschluessel(jetzt.year, jetzt.month)
 
 
+def _ohne_skripte(text: str) -> str:
+    """``<script>`` und ``<style>`` samt Inhalt weg — linear, siehe ``oemag.ohne_elemente``."""
+    return ohne_elemente(text, ("script", "style"))
+
+
 def nur_text(roh: str | None) -> str:
     """HTML → Fließtext, wie in ``oemag.py``: Skripte raus, Tags raus,
     Entities auflösen, Leerraum eindampfen."""
-    text = re.sub(
-        r"<(script|style)[^>]*>.*?</\1>", " ", roh or "", flags=re.S | re.I
-    )
-    text = html_entities.unescape(re.sub(r"<[^>]+>", " ", text))
+    text = _ohne_skripte(roh or "")
+    text = html_entities.unescape(ohne_tags(text))
     return re.sub(r"\s+", " ", text.replace("\xa0", " ")).strip()
 
 
@@ -265,7 +274,7 @@ class EnergieAgProvider:
         veröffentlichten Wert.
         """
         roh = getattr(self._schaetzer, "roh", None) if self._schaetzer else None
-        if roh is None:
+        if roh is None or not ist_monatswert(roh):
             return None
         return tarif_aus_referenzwert(
             float(roh), _abschlag(abschlag), _variante(variante)
@@ -303,6 +312,8 @@ class EnergieAgProvider:
                 ergebnis[variante] = None
         # Die Hochrechnung des laufenden Monats, wenn der Schätzer läuft.
         roh = getattr(self._schaetzer, "roh", None) if self._schaetzer else None
+        if roh is not None and not ist_monatswert(roh):
+            roh = None
         ergebnis["schaetzung"] = None if roh is None else {
             "referenzwert": round(float(roh), 6),
             **{
@@ -334,7 +345,9 @@ class EnergieAgProvider:
             stored = await self._store.async_load()
             if stored and isinstance(stored, dict):
                 self._werte = {
-                    int(k): float(v) for k, v in (stored.get("werte") or {}).items()
+                    int(k): float(v)
+                    for k, v in (stored.get("werte") or {}).items()
+                    if ist_monatswert(v)
                 }
                 geholt = stored.get("geholt")
                 if geholt:
@@ -365,7 +378,7 @@ class EnergieAgProvider:
             ) as resp:
                 if resp.status != 200:
                     raise RuntimeError(f"HTTP {resp.status}")
-                seite = await resp.text()
+                seite = await lies_text(resp)
         except Exception as err:  # noqa: BLE001 — jeder Fehler heißt: alter Wert bleibt
             self._fehler = f"E-Control: {err}"
             _LOGGER.warning(
@@ -385,6 +398,16 @@ class EnergieAgProvider:
             return
 
         jahr, monat, referenzwert = gelesen
+        if not ist_monatswert(referenzwert):
+            self._fehler = (
+                f"E-Control: Referenzmarktwert unplausibel ({referenzwert * 100:.3f} ct/kWh)"
+            )
+            _LOGGER.warning(
+                "%s — es gilt weiter %s",
+                self._fehler,
+                "der zuletzt gelesene Wert" if self.hat_daten() else "die Handeingabe",
+            )
+            return
         self._werte[monatsschluessel(jahr, monat)] = referenzwert
         self._fehler = None
         self._geholt = jetzt
@@ -428,7 +451,11 @@ def _abschlag(roh: Any) -> float:
         wert = float(roh)
     except (TypeError, ValueError):
         return DEFAULT_ABSCHLAG_EUR
-    return max(0.0, wert)
+    # max(0.0, nan) ist 0.0 und inf bliebe inf — beides kein Abschlag, den
+    # jemand eingetragen hat.
+    if not math.isfinite(wert):
+        return DEFAULT_ABSCHLAG_EUR
+    return min(max(0.0, wert), ABSCHLAG_MAX_EUR)
 
 
 def _ct_wert(text: str | None) -> float | None:
@@ -445,6 +472,7 @@ def _ct_wert(text: str | None) -> float | None:
         # entschärfen: „1.234,5" → „1234.5".
         t = t.replace(".", "").replace(",", ".")
     try:
-        return round(float(t) / 100.0, 6)
+        wert = float(t)
     except ValueError:
         return None
+    return round(wert / 100.0, 6) if math.isfinite(wert) else None

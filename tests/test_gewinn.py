@@ -876,12 +876,16 @@ def test_gemeinschaft_mit_reinem_nachttarif_zaehlt():
     assert eeg_price.gemeinschaften_aus_config(config)
 
 
-def test_deckel_kappt_echte_boersenpreise_nicht():
-    """Der Deckel soll Scheinhandel verhindern, nicht die Börse zensieren.
+def test_deckel_gilt_auch_fuer_echte_boersenpreise():
+    """Der Pflicht-Deckel gilt für jede Quelle, auch für den echten Börsenpreis.
 
-    Bei Quelle Spot lag der Abendpreis über dem Bezugspreis; der Deckel
-    machte 42, 35 und 25 ct für das Modell ununterscheidbar, während die
-    Gewinnbewertung weiter mit dem echten Preis rechnete.
+    Bis 2.1.23 blieb ein Spotpreis über dem Bezugspreis ungedeckelt, damit
+    42, 35 und 25 ct für das Modell unterscheidbar blieben. Unterscheiden
+    konnte das LP sie trotzdem nicht: Der Scheinhandel (Kauf zum Bezugspreis,
+    Verkauf im selben Slot teurer) füllte die Exportgrenze, und eine entladene
+    Kilowattstunde ersetzte dann nur Zukauf — sie war dem Modell überall den
+    Bezugspreis wert. Das Modell steuert deshalb mit dem gedeckelten Preis;
+    die Gewinnbewertung rechnet weiter mit dem echten.
     """
     pytest.importorskip("pandas")
 
@@ -896,8 +900,13 @@ def test_deckel_kappt_echte_boersenpreise_nicht():
     )
     reihe = sched.HAConfig(inputs).feedin_price(stamps[0])
 
+    grenze = round(0.247 - eeg_price.DECKEL_ABSTAND, 4)
     werte = [round(float(v), 4) for v in list(reihe)[:4]]
-    assert werte == [0.42, 0.35, 0.25, 0.10], f"Börsenpreise gekappt: {werte}"
+    assert werte == [grenze, grenze, grenze, 0.10]
+
+    # Bewertet wird mit dem echten Börsenpreis, nicht mit dem gedeckelten.
+    slots = [{"t": s.isoformat()} for s in stamps]
+    assert sched._basistarif_je_slot(slots, inputs) == [0.42, 0.35, 0.25, 0.10]
 
 
 def test_ohne_snap_bleibt_der_skalar():

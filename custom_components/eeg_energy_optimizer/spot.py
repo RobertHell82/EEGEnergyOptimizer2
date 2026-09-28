@@ -37,6 +37,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from .const import DOMAIN
+from .oemag import im_band, lies_json
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -73,8 +74,24 @@ FETCH_PAST_SECONDS = 48 * 3600
 # nicht.
 FETCH_FUTURE_SECONDS = 48 * 3600
 KEEP_PAST_SECONDS = 7 * 24 * 3600
+# Weiter als so viel nach vorn gibt es keine Börsenpreise; was darüber
+# hinaus in einer Antwort steht, ist ein Fehler und bliebe sonst ewig im
+# Speicher (weggeräumt wird nur die Vergangenheit).
+KEEP_FUTURE_SECONDS = 7 * 24 * 3600
 # Ein Tag in Viertelstunden — Schrittweite der Fortschreibung.
 _TAG_SLOTS = 96
+# Höchstzahl gelesener Einträge je Antwort. Die Hochrechnung holt einen
+# ganzen Monat plus zwei Tage in Viertelstunden (~3200); das Zehnfache
+# begrenzt nur den Fall, dass am anderen Ende etwas durchdreht.
+MAX_EINTRAEGE = 10_000
+
+# Plausibilitätsband je Viertelstunde in €/kWh. Die Grenzen sind die der
+# europäischen Day-Ahead-Kopplung (SDAC: −500 bis +4000 €/MWh, die Obergrenze
+# steigt automatisch, wenn Preise sich ihr nähern) — also mit Luft nach oben.
+# Negative Preise sind echt und bleiben; ein Wert außerhalb kann an der Börse
+# nicht entstanden sein, er ist ein Lesefehler (etwa €/MWh ohne Umrechnung).
+SPOT_MIN_EUR = -0.5
+SPOT_MAX_EUR = 5.0
 
 
 def parse_marketdata(payload: Any) -> dict[int, float]:
@@ -85,22 +102,38 @@ def parse_marketdata(payload: Any) -> dict[int, float]:
     seines Zeitraums — Stunden- wie 15-Minuten-Einträge landen so im selben
     Raster. Negative Preise bleiben erhalten.
     """
+    return parse_marketdata_gezaehlt(payload)[0]
+
+
+def parse_marketdata_gezaehlt(payload: Any) -> tuple[dict[int, float], int]:
+    """Wie ``parse_marketdata``, dazu die Zahl verworfener Preise.
+
+    Verworfen wird, was keine endliche Zahl ist oder außerhalb des
+    Plausibilitätsbands liegt. Der Slot fehlt dann und wird fortgeschrieben
+    wie jeder andere fehlende — ein erfundener Preis steuert nicht.
+    """
     daten = (payload or {}).get("data") if isinstance(payload, dict) else None
     preise: dict[int, float] = {}
-    for eintrag in daten or []:
+    verworfen = 0
+    if not isinstance(daten, list):
+        return preise, verworfen
+    for eintrag in daten[:MAX_EINTRAEGE]:
         if not isinstance(eintrag, dict):
             continue
         try:
             start = int(eintrag["start_timestamp"]) // 1000
             ende = int(eintrag["end_timestamp"]) // 1000
             preis = float(eintrag["marketprice"]) / 1000.0  # Eur/MWh → €/kWh
-        except (KeyError, TypeError, ValueError):
+        except (KeyError, TypeError, ValueError, OverflowError):
             continue
         if ende <= start or ende - start > 24 * 3600:
             continue
+        if not im_band(preis, SPOT_MIN_EUR, SPOT_MAX_EUR):
+            verworfen += 1
+            continue
         for slot in range(start // 900, ende // 900):
             preise[slot] = preis
-    return preise
+    return preise, verworfen
 
 
 def reihe_fuer(
@@ -196,7 +229,11 @@ class SpotProvider:
             stored = await self._store.async_load()
             if stored and isinstance(stored, dict):
                 roh = stored.get("preise") or {}
-                self._preise = {int(k): float(v) for k, v in roh.items()}
+                self._preise = {
+                    int(k): float(v)
+                    for k, v in roh.items()
+                    if im_band(v, SPOT_MIN_EUR, SPOT_MAX_EUR)
+                }
                 geholt = stored.get("geholt")
                 if geholt:
                     self._geholt = datetime.fromisoformat(geholt)
@@ -230,7 +267,7 @@ class SpotProvider:
             ) as resp:
                 if resp.status != 200:
                     raise RuntimeError(f"HTTP {resp.status}")
-                payload = await resp.json()
+                payload = await lies_json(resp)
         except Exception as err:
             self._fehler = str(err)
             _LOGGER.warning(
@@ -241,23 +278,37 @@ class SpotProvider:
             )
             return
 
-        neu = parse_marketdata(payload)
+        neu, verworfen = parse_marketdata_gezaehlt(payload)
         if not neu:
-            self._fehler = "Antwort ohne Preisdaten"
+            self._fehler = (
+                f"{verworfen} Preise außerhalb des Plausibilitätsbands verworfen"
+                if verworfen else "Antwort ohne Preisdaten"
+            )
             _LOGGER.warning(
-                "Spot-API gelesen, aber keine Preise erkannt — Format geändert?"
+                "Spot-API gelesen, aber keine Preise übernommen (%s) — Format geändert?",
+                self._fehler,
             )
             return
 
         # Neue Werte über die alten legen, Uraltes wegräumen. So überstehen
         # die Vortage einen Abruf, der nur die Zukunft liefert.
         grenze = int((jetzt.timestamp() - KEEP_PAST_SECONDS) // 900)
+        vorn = int((jetzt.timestamp() + KEEP_FUTURE_SECONDS) // 900)
         self._preise = {
             k: v
             for k, v in {**self._preise, **neu}.items()
-            if k >= grenze
+            if grenze <= k <= vorn
         }
-        self._geholt, self._fehler = jetzt, None
+        # Einzelne verworfene Slots kosten nur die Fortschreibung an dieser
+        # Stelle; die übrigen Preise der Antwort sind gut. Stehen bleibt der
+        # Hinweis trotzdem, damit ein wiederkehrender Ausreißer auffällt.
+        self._geholt = jetzt
+        self._fehler = (
+            f"{verworfen} Preise außerhalb des Plausibilitätsbands verworfen"
+            if verworfen else None
+        )
+        if verworfen:
+            _LOGGER.warning("Spotpreise: %s", self._fehler)
         _LOGGER.debug(
             "Spotpreise (%s): %d Slots, bis %s",
             self._market,

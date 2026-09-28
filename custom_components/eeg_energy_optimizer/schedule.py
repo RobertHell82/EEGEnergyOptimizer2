@@ -22,6 +22,7 @@ und Nachführen (30 s, Event-Loop, Messwerte) verschiedene Takte haben.
 from __future__ import annotations
 
 import logging
+import math
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -658,6 +659,8 @@ class HAConfig:
             serie is None
             and (nacht is None or nacht == self._inputs.feedin_price)
             and not hat_bonus
+            and self._inputs.feedin_price
+            <= _tiefster_bezugspreis(self._inputs) - eeg_price.DECKEL_ABSTAND
         ):
             return self._inputs.feedin_price
 
@@ -684,32 +687,47 @@ class HAConfig:
                 if i < len(bonus):
                     preis += bonus[i]
                 werte.append(preis)
-            # Der Deckel soll den SCHEINHANDEL verhindern (über dem
-            # Bezugspreis kauft das LP Strom, um ihn im selben Slot teurer zu
-            # verkaufen) — er darf aber keinen ECHTEN Börsenpreis kappen.
-            # Sonst wurden an teuren Abenden 42, 35 und 25 ct für das Modell
-            # ununterscheidbar, und bewerte_geldfluesse verrechnete gegen
-            # einen anderen Preis als den, gegen den geplant wurde. Deshalb
-            # ist die Grenze je Slot mindestens der echte Basistarif.
-            deckel_je_slot = [
-                max(self._inputs.consumption_price, b + eeg_price.DECKEL_ABSTAND)
-                for b in basis_je_slot
+            # Der Deckel verhindert den SCHEINHANDEL: Liegt der Einspeisepreis
+            # über dem Bezugspreis, kauft das LP Strom, um ihn im selben Slot
+            # teurer zu verkaufen (grid_p zeigt nur die Differenz). Das gilt
+            # für JEDE Quelle, auch für einen echten Börsen- oder Monatstarif
+            # — physikalisch gibt es an einem Zählpunkt nicht gleichzeitig
+            # Bezug und Einspeisung. Ungedeckelt füllt der Scheinhandel die
+            # Exportgrenze, und eine entladene Kilowattstunde ersetzt dann nur
+            # noch Zukauf: Sie ist dem Modell den Bezugspreis wert, nicht den
+            # hohen Einspeisepreis. Gedeckelt ist sie ihm praktisch dasselbe
+            # wert — der Deckel nimmt dem Modell keine Unterscheidung, nur den
+            # Phantomgewinn (nachgerechnet: Spot 42/35/30 ct gegen 26,2 ct
+            # Bezug, 18–21 Uhr; gedeckelt 2,23 kW Entladung, ungedeckelt
+            # 2,12 kW). Die Gewinnbewertung (bewerte_geldfluesse) rechnet
+            # weiter mit dem echten Basistarif je Slot.
+            #
+            # Grenze ist der Bezugspreis DES SLOTS (SNAP-/WiNAP-Fenster), nicht
+            # der Tagessatz: Im Fenster ist Bezug billiger, und genau dort
+            # läge der Einspeisepreis sonst darüber.
+            grenzen = [
+                bezugspreis_zu(self._inputs, stamp) - eeg_price.DECKEL_ABSTAND
+                for stamp in index
             ]
             gedeckelt = 0
+            schon_basis = 0
             hoechster = max(werte, default=0.0)
-            for i, (wert, deckel) in enumerate(zip(werte, deckel_je_slot)):
-                grenze = deckel - eeg_price.DECKEL_ABSTAND
+            for i, (wert, grenze) in enumerate(zip(werte, grenzen)):
                 if wert > grenze:
                     werte[i] = grenze
                     gedeckelt += 1
+                    if basis_je_slot[i] > grenze:
+                        schon_basis += 1
             if _preishinweis_faellig("deckel", bool(gedeckelt)):
                 # Kein stiller Eingriff: greift der Deckel, ist die
                 # Konfiguration zu erklären und nicht der Fahrplan.
                 _LOGGER.warning(
-                    "Einspeisepreis in %d Zeitpunkten auf den Bezugspreis gedeckelt "
-                    "(höchster Wert %.3f, Bezugspreis %.3f €/kWh) — Gewichtung der "
-                    "Gemeinschaften prüfen",
-                    gedeckelt, hoechster, self._inputs.consumption_price,
+                    "Einspeisepreis in %d Zeitpunkten unter den Bezugspreis "
+                    "gedeckelt (höchster Wert %.3f, tiefster Bezugspreis %.3f €/kWh)"
+                    " — %s",
+                    gedeckelt, hoechster, min(grenzen) + eeg_price.DECKEL_ABSTAND,
+                    f"in {schon_basis} davon liegt schon der Basistarif darüber"
+                    if schon_basis else "Gewichtung der Gemeinschaften prüfen",
                 )
             # Boden je Slot: die FIKTION des Gemeinschafts-Abschlags darf den
             # Preis nicht unter null drücken — ein ECHT negativer Börsenpreis
@@ -830,6 +848,30 @@ def bezugspreis_zu(inputs: ScheduleInputs, stamp: datetime) -> float:
     return inputs.consumption_price
 
 
+def _tiefster_bezugspreis(inputs: ScheduleInputs) -> float:
+    """Der niedrigste Bezugspreis, der irgendwo im Horizont gelten kann."""
+    preise = [inputs.consumption_price]
+    for name in ("consumption_price_snap", "consumption_price_winap"):
+        wert = getattr(inputs, name, None)
+        if wert is not None:
+            preise.append(float(wert))
+    return min(preise)
+
+
+def _endlicher_preis(wert: Any) -> float | None:
+    """Preis eines Anbieters (€/kWh) als endliche Zahl, sonst None.
+
+    ``if preis:`` hielte NaN für einen gültigen Tarif — NaN ist wahr.
+    """
+    if wert is None or isinstance(wert, bool):
+        return None
+    try:
+        zahl = float(wert)
+    except (TypeError, ValueError):
+        return None
+    return zahl if math.isfinite(zahl) else None
+
+
 def _preis_oder_none(wert: Any) -> float | None:
     """Ein Panel-Zahlenfeld lesen: leer, 0 oder Unsinn heißt „nicht gesetzt".
 
@@ -840,7 +882,9 @@ def _preis_oder_none(wert: Any) -> float | None:
         zahl = float(wert) if wert not in (None, "") else None
     except (TypeError, ValueError):
         return None
-    return zahl if zahl is not None and zahl > 0 else None
+    if zahl is None or not math.isfinite(zahl):
+        return None
+    return zahl if zahl > 0 else None
 
 
 def bezugspreis_gesamt(
@@ -998,9 +1042,11 @@ def _read_float(hass: HomeAssistant, entity_id: str | None) -> float | None:
     if state is None or state.state in ("unknown", "unavailable", ""):
         return None
     try:
-        return float(state.state)
+        wert = float(state.state)
     except (ValueError, TypeError):
         return None
+    # Ein Sensor, der „nan" meldet, ist nicht lesbar — nicht 0 und nicht voll.
+    return wert if math.isfinite(wert) else None
 
 
 def _batteriewerte_mit_puffer(
@@ -1824,14 +1870,16 @@ async def async_collect_inputs(
         oemag_preis = None
         if quelle_basis == FEEDIN_SOURCE_OEMAG_ESTIMATE:
             schaetzer = data.get("oemag_schaetzung")
-            oemag_preis = schaetzer.preis if schaetzer is not None else None
+            oemag_preis = _endlicher_preis(
+                schaetzer.preis if schaetzer is not None else None
+            )
             if not oemag_preis:
                 _LOGGER.debug(
                     "OeMAG-Hochrechnung nicht verfügbar, es gilt der veröffentlichte Monat"
                 )
         if not oemag_preis:
             oemag = data.get("oemag")
-            oemag_preis = oemag.preis if oemag is not None else None
+            oemag_preis = _endlicher_preis(oemag.preis if oemag is not None else None)
         if oemag_preis:
             feedin_tag = float(oemag_preis)
         else:
@@ -1853,7 +1901,9 @@ async def async_collect_inputs(
         vertrag = str(
             config.get(CONF_AWATTAR_SUNNY_VERTRAG) or DEFAULT_AWATTAR_SUNNY_VERTRAG
         ).lower()
-        sunny_preis = sunny.preis_fuer(vertrag) if sunny is not None else None
+        sunny_preis = _endlicher_preis(
+            sunny.preis_fuer(vertrag) if sunny is not None else None
+        )
         if sunny_preis is not None:
             feedin_tag = float(sunny_preis)
         else:
@@ -1884,8 +1934,9 @@ async def async_collect_inputs(
                     "Energie-AG-Hochrechnung nicht verfügbar, es gilt der "
                     "veröffentlichte Monat"
                 )
+        eag_preis = _endlicher_preis(eag_preis)
         if eag_preis is None and energie_ag is not None:
-            eag_preis = energie_ag.preis_fuer(variante, abschlag)
+            eag_preis = _endlicher_preis(energie_ag.preis_fuer(variante, abschlag))
         if eag_preis is not None:
             feedin_tag = float(eag_preis)
         else:
@@ -1910,14 +1961,10 @@ async def async_collect_inputs(
             spot.reihe_fuer(stamps) if spot is not None else (None, 0)
         )
         if roh_reihe:
-            try:
-                fee = float(config.get(CONF_SPOT_FEEDIN_FEE) or 0)
-            except (TypeError, ValueError):
-                fee = 0.0
-            try:
-                fee_pct = float(config.get(CONF_SPOT_FEEDIN_FEE_PCT) or 0) / 100.0
-            except (TypeError, ValueError):
-                fee_pct = 0.0
+            # Nicht-endliche Abschläge zählen wie unlesbare als null — sie
+            # machten sonst jeden Slot der Reihe zu NaN.
+            fee = _endlicher_preis(config.get(CONF_SPOT_FEEDIN_FEE) or 0) or 0.0
+            fee_pct = (_endlicher_preis(config.get(CONF_SPOT_FEEDIN_FEE_PCT) or 0) or 0.0) / 100.0
             # Der Prozentabschlag geht vom BETRAG ab (aWATTar SUNNY Spot
             # 60min: 19 % auf |Preis|) — bei negativem Börsenpreis wird die
             # Einspeisung dadurch noch teurer, genau wie im Tarif.
@@ -2059,6 +2106,17 @@ async def async_collect_inputs(
             getattr(data.get("heizstab"), "maxtemp_c", 0.0) or 0.0
         ),
     )
+    # Schon hier und nicht erst in solve(): Der Runner merkt sich die Inputs
+    # (last_inputs), und die Energiebilanz friert daraus die Preise ein —
+    # ein NaN darf dort gar nicht erst ankommen.
+    kaputt = nicht_endliche_eingaenge(inputs)
+    if _preishinweis_faellig("nicht_endlich", bool(kaputt)):
+        _LOGGER.warning(
+            "Nicht-endliche Eingänge für den Fahrplan (%s) — kein Plan, bis sie "
+            "wieder endlich sind", ", ".join(kaputt),
+        )
+    if kaputt:
+        return None, "Nicht-endliche Eingänge für den Fahrplan: " + ", ".join(kaputt)
     return inputs, None
 
 
@@ -2114,9 +2172,62 @@ def _gewinn_slotzahl(
     return max(1, min(vorhanden, passt))
 
 
+_ENDLICH_SKALARE = (
+    "battery_free_kwh", "battery_capacity_kwh", "battery_power_limit_kw", "soc_pct",
+    "ac_limit_kw", "feedin_limit_kw", "feedin_price", "feedin_price_night",
+    "consumption_price", "consumption_price_snap", "consumption_price_winap",
+    "battery_cost", "min_soc_pct", "max_soc_pct", "worst_case_factor",
+    "heizstab_max_kw", "heizstab_waermewert", "heizstab_budget_kwh",
+)
+_ENDLICH_REIHEN = (
+    "consumption_kw", "production_kw", "min_production_kw", "eeg_bonus",
+    "feedin_price_series",
+)
+
+
+def nicht_endliche_eingaenge(inputs: ScheduleInputs) -> list[str]:
+    """Namen der LP-Eingänge, die NaN oder ±unendlich tragen.
+
+    HiGHS rechnet mit NaN weiter oder bricht mit einer Meldung ab, die nichts
+    über die Ursache sagt; im schlimmsten Fall entsteht ein Plan aus Unsinn,
+    den der Executor dann fährt. Deshalb vorher hinsehen — ``None`` heißt
+    „nicht gesetzt" und ist erlaubt.
+    """
+    def endlich(wert: Any) -> bool:
+        try:
+            return math.isfinite(float(wert))
+        except (TypeError, ValueError):
+            return False
+
+    kaputt: list[str] = []
+    for name in _ENDLICH_SKALARE:
+        wert = getattr(inputs, name, None)
+        if wert is not None and not endlich(wert):
+            kaputt.append(name)
+    for name in _ENDLICH_REIHEN:
+        reihe = getattr(inputs, name, None)
+        if reihe is None:
+            continue
+        stellen = [i for i, w in enumerate(reihe) if not endlich(w)]
+        if stellen:
+            kaputt.append(f"{name}[{stellen[0]}]" + (
+                f" (+{len(stellen) - 1})" if len(stellen) > 1 else ""
+            ))
+    return kaputt
+
+
 def solve(inputs: ScheduleInputs) -> dict[str, Any]:
     """Rechnet den Fahrplan. Läuft im Executor — hier kein hass-Zugriff."""
     from .chamo import opt_highs
+
+    # Lauter Fehler statt stillem Unsinn: Der Runner fängt ihn, der Lauf
+    # zählt als gescheitert, und ohne frischen Plan übernimmt nach 15 Minuten
+    # der Failsafe — wie bei jedem anderen fehlenden Plan. Der Weg über
+    # async_collect_inputs prüft dasselbe schon vorher; hier ist die Sperre
+    # für jeden anderen Aufrufer.
+    kaputt = nicht_endliche_eingaenge(inputs)
+    if kaputt:
+        raise ValueError("Nicht-endliche Eingänge für den Fahrplan: " + ", ".join(kaputt))
 
     config = HAConfig(inputs)
     started = time.monotonic()

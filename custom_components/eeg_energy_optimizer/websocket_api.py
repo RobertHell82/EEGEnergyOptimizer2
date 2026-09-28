@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import logging
+import math
 import re
-from typing import TYPE_CHECKING
+import time
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit
 
 import voluptuous as vol
@@ -69,6 +71,7 @@ from .const import (
     INVERTER_TYPE_KOSTAL,
     INVERTER_TYPE_SMA,
 )
+from .energie_ag import ABSCHLAG_MAX_EUR as ENERGIE_AG_ABSCHLAG_MAX_EUR
 from .inverter.sigenergy import (
     SIGEN_CONTROL_ENTITY_PATTERNS,
     SIGEN_REQUIRED_CONTROLS,
@@ -493,6 +496,40 @@ def async_register_websocket_commands(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_refresh_schedule)
 
 
+def _ist_admin(connection: Any) -> bool:
+    """Ist der Benutzer dieser Verbindung Administrator?
+
+    Ohne Benutzer (kommt in HA nicht vor) gilt: nein — die Einschränkungen
+    unten sind die sichere Seite.
+    """
+    user = getattr(connection, "user", None)
+    return bool(user is not None and getattr(user, "is_admin", False))
+
+
+# Netzwerk-Endpunkte im Heimnetz: Wo der Wechselrichter, der Ohmpilot und die
+# Wallbox per Modbus erreichbar sind. Ein Nicht-Admin kann damit nichts
+# anfangen, was das Dashboard braucht (es liest Sensoren, keine Adressen), aber
+# er bekäme eine Karte der steuerbaren Geräte. Das Panel braucht die Felder
+# nur in Assistent und Einstellungen — und speichern darf dort ohnehin nur ein
+# Admin (save_config).
+_ENDPUNKT_SCHLUESSEL = frozenset({
+    CONF_FRONIUS_MODBUS_HOST, CONF_FRONIUS_MODBUS_PORT,
+    CONF_KOSTAL_MODBUS_HOST, CONF_KOSTAL_MODBUS_PORT,
+    CONF_SMA_MODBUS_HOST, CONF_SMA_MODBUS_PORT,
+    CONF_HEIZSTAB_HOST, CONF_HEIZSTAB_PORT,
+    CONF_AMBIBOX_HOST, CONF_AMBIBOX_PORT, CONF_AMBIBOX_UNIT_ID,
+})
+# Dieselbe Regel für Schlüssel, die erst später dazukommen.
+_ENDPUNKT_MUSTER = re.compile(r"(?:_host|_port|_unit_id|_slave_id|_ip)$")
+
+
+def _ohne_endpunkte(config: dict) -> dict:
+    return {
+        k: v for k, v in config.items()
+        if k not in _ENDPUNKT_SCHLUESSEL and not _ENDPUNKT_MUSTER.search(str(k))
+    }
+
+
 @websocket_api.websocket_command(
     {
         vol.Required("type"): "eeg_optimizer/get_config",
@@ -512,6 +549,8 @@ async def ws_get_config(
 
     entry = entries[0]
     config = {**entry.data, **entry.options}
+    if not _ist_admin(connection):
+        config = _ohne_endpunkte(config)
     config["entry_id"] = entry.entry_id
     config["setup_complete"] = entry.data.get("setup_complete", False)
     # Inject version from manifest. Use the shared module-level cache from
@@ -547,6 +586,14 @@ async def ws_save_config(
 
     entry = entries[0]
     new_data = {**entry.data, **msg["config"]}
+
+    # Tarife und Leistungen: dieselbe Vorsicht wie bei den Endpunkten unten.
+    # Geprüft wird nur, was diese Nachricht mitbringt — ein Altwert im Entry
+    # soll nicht jedes weitere Speichern blockieren.
+    fehler = _pruefe_zahlen(msg["config"])
+    if fehler:
+        connection.send_error(msg["id"], "invalid_config", fehler)
+        return
 
     # Fronius: server-side validation of the Modbus endpoint. The frontend
     # already checks "non-empty host", but we cannot trust the WebSocket
@@ -656,6 +703,11 @@ async def ws_save_config(
         try:
             max_kw = float(new_data.get(CONF_HEIZSTAB_MAX_KW) or 0.0)
         except (TypeError, ValueError):
+            connection.send_error(
+                msg["id"], "invalid_config", "Ungültige Heizstab-Leistung (kW)"
+            )
+            return
+        if not math.isfinite(max_kw):
             connection.send_error(
                 msg["id"], "invalid_config", "Ungültige Heizstab-Leistung (kW)"
             )
@@ -786,6 +838,11 @@ async def ws_save_config(
                 msg["id"], "invalid_config", "Ungültige Einspeisegrenze (kW)"
             )
             return
+        if not math.isfinite(limit_kw):
+            connection.send_error(
+                msg["id"], "invalid_config", "Ungültige Einspeisegrenze (kW)"
+            )
+            return
         if limit_kw <= 0:
             connection.send_error(
                 msg["id"],
@@ -820,6 +877,60 @@ async def ws_save_config(
 
     hass.config_entries.async_update_entry(entry, data=new_data)
     connection.send_result(msg["id"], {"success": True})
+
+
+# Zahlenfelder, die save_config prüft: Schlüssel → (Bezeichnung, unten,
+# oben). Preise in €/kWh (das Panel rechnet Cent vor dem Speichern um). Die
+# Bänder sind großzügig und nie enger als die min/max-Angaben der Panel-
+# Felder — sie sollen NaN/unendlich und Zahlen fangen, die am Panel vorbei
+# kommen, keine Tarife beurteilen. Ein
+# leeres Feld (None, "") und 0 bleiben erlaubt: das Panel schickt leere
+# Zahlenfelder als 0, und die Leser (schedule.py) behandeln das als „nicht
+# gesetzt".
+_ZAHLENFELDER: dict[str, tuple[str, float, float]] = {
+    "schedule_feedin_price": ("Standardvergütung", 0.0, 2.0),
+    "schedule_feedin_price_night": ("Nachtsatz der Standardvergütung", 0.0, 2.0),
+    "schedule_energy_price": ("Arbeitspreis", 0.0, 2.0),
+    "schedule_consumption_price": ("Bezugspreis", 0.0, 2.0),
+    "schedule_network_fee": ("Netzgebühr", 0.0, 2.0),
+    "schedule_grid_fee": ("Netzaufschlag", 0.0, 2.0),
+    "schedule_battery_cost": ("Alterungskosten der Batterie", 0.0, 1.0),
+    # Negativ = Aufschlag des Vermarkters (siehe CONF_SPOT_FEEDIN_FEE).
+    "spot_feedin_fee": ("Abschlag auf den Spotpreis", -0.5, 0.5),
+    "spot_feedin_fee_pct": ("Prozentabschlag auf den Spotpreis", 0.0, 100.0),
+    "energie_ag_abschlag": ("Abschlag der Energie AG", 0.0, ENERGIE_AG_ABSCHLAG_MAX_EUR),
+    "peakshare_price": ("Tagessatz der Gemeinschaft", 0.0, 2.0),
+    "peakshare_price_night": ("Nachtsatz der Gemeinschaft", 0.0, 2.0),
+    "peakshare_weight": ("Gewichtung der Gemeinschaft", 0.0, 1.0),
+    "peakshare_price_2": ("Tagessatz der zweiten Gemeinschaft", 0.0, 2.0),
+    "peakshare_price_night_2": ("Nachtsatz der zweiten Gemeinschaft", 0.0, 2.0),
+    "peakshare_weight_2": ("Gewichtung der zweiten Gemeinschaft", 0.0, 1.0),
+    "heizstab_waermewert": ("Wärmewert des Heizstabs", 0.0, 1.0),
+    # Leistungen in kW. 1 MW ist weit über jeder Anlage, für die diese
+    # Integration gedacht ist, und weit unter einem verrutschten W-Wert.
+    "inverter_ac_limit_kw": ("AC-Grenzleistung", 0.0, 1000.0),
+    "pv_peak_kwp": ("PV-Spitzenleistung", 0.0, 1000.0),
+    "discharge_power_kw": ("Batterie-Leistungsgrenze", 0.0, 1000.0),
+}
+
+
+def _pruefe_zahlen(config: dict) -> str | None:
+    """Erste Fehlermeldung für ein Zahlenfeld außerhalb seines Bands, sonst None."""
+    for schluessel, (name, unten, oben) in _ZAHLENFELDER.items():
+        if schluessel not in config:
+            continue
+        roh = config[schluessel]
+        if roh is None or roh == "":
+            continue
+        if isinstance(roh, bool):
+            return f"Ungültiger Wert für {name}"
+        try:
+            wert = float(roh)
+        except (TypeError, ValueError):
+            return f"Ungültiger Wert für {name}"
+        if not math.isfinite(wert) or not unten <= wert <= oben:
+            return f"{name} außerhalb des gültigen Bereichs ({unten:g} bis {oben:g})"
+    return None
 
 
 @websocket_api.websocket_command(
@@ -1734,11 +1845,43 @@ async def ws_probe_sma(
     connection.send_result(msg["id"], result)
 
 
+ACTIVITY_LOG_MAX_SEITE = 500
+
+# Mindestpause zwischen zwei erzwungenen Abrufen einer Quelle für Nicht-Admins.
+# „Jetzt holen" ist ein Knopf in den Einstellungen; ohne Bremse könnte jeder
+# angemeldete Benutzer per Schleife fremde Dienste (RIS, OeMAG, aWATTar,
+# Open-Meteo …) in unserem Namen fluten — die drosseln mit HTTP 429 und
+# sperren dann auch den regulären Abruf. Admins bleiben ungebremst.
+REFRESH_PAUSE_S = 60.0
+_letzter_refresh: dict[str, float] = {}
+
+
+def _refresh_erlaubt(connection: Any, msg: dict, quelle: str) -> bool:
+    """Darf ``refresh: true`` dieser Nachricht wirklich einen Abruf erzwingen?
+
+    Für Nicht-Admins höchstens einmal je ``REFRESH_PAUSE_S`` und Quelle —
+    über alle Benutzer hinweg, denn geschützt wird die Quelle. Ein
+    gedrosselter Aufruf antwortet trotzdem, mit dem vorhandenen Stand.
+    """
+    if not msg.get("refresh"):
+        return False
+    jetzt = time.monotonic()
+    if not _ist_admin(connection):
+        zuletzt = _letzter_refresh.get(quelle)
+        if zuletzt is not None and jetzt - zuletzt < REFRESH_PAUSE_S:
+            _LOGGER.debug("Abruf %s gedrosselt (Nicht-Admin, %.0f s)", quelle, jetzt - zuletzt)
+            return False
+    _letzter_refresh[quelle] = jetzt
+    return True
+
+
 @websocket_api.websocket_command(
     {
         vol.Required("type"): "eeg_optimizer/get_activity_log",
-        vol.Optional("offset", default=0): int,
-        vol.Optional("limit", default=100): int,
+        # Der Puffer fasst 5000 Einträge; mehr als 500 auf einmal braucht das
+        # Panel nie (es lädt je 100), und jede Seite wird ganz kopiert.
+        vol.Optional("offset", default=0): vol.All(int, vol.Range(min=0)),
+        vol.Optional("limit", default=100): vol.All(int, vol.Range(min=1, max=500)),
     }
 )
 @websocket_api.async_response
@@ -1760,8 +1903,10 @@ async def ws_get_activity_log(
     total = len(log)
     # Convert deque to list in reverse (newest first), then slice
     all_entries = list(reversed(log))
-    offset = msg.get("offset", 0)
-    limit = msg.get("limit", 100)
+    # Noch einmal geklemmt: Ein negativer Offset zählte in Python von hinten.
+    offset = max(0, int(msg.get("offset") or 0))
+    limit_roh = msg.get("limit")
+    limit = 100 if limit_roh is None else min(ACTIVITY_LOG_MAX_SEITE, max(1, int(limit_roh)))
     page = all_entries[offset:offset + limit]
     connection.send_result(msg["id"], {
         "entries": page,
@@ -1805,7 +1950,7 @@ async def ws_get_netzentgelte(
         )
         return
 
-    if msg.get("refresh"):
+    if _refresh_erlaubt(connection, msg, "netzentgelt"):
         await provider.async_fetch(force=True)
     connection.send_result(msg["id"], provider.status())
 
@@ -2143,7 +2288,8 @@ async def ws_get_oemag_tarif(
         )
         return
 
-    if msg.get("refresh"):
+    refresh = _refresh_erlaubt(connection, msg, "oemag")
+    if refresh:
         await provider.async_fetch(force=True)
 
     ergebnis = provider.status()
@@ -2151,7 +2297,7 @@ async def ws_get_oemag_tarif(
     ergebnis["schaetzung"] = None
     if schaetzer is not None:
         if msg.get("schaetzung"):
-            await schaetzer.async_fetch(force=bool(msg.get("refresh")))
+            await schaetzer.async_fetch(force=refresh)
         ergebnis["schaetzung"] = schaetzer.status()
     connection.send_result(msg["id"], ergebnis)
 
@@ -2184,7 +2330,7 @@ async def ws_get_spot_preis(
         )
         return
 
-    if msg.get("refresh"):
+    if _refresh_erlaubt(connection, msg, "spot"):
         await provider.async_fetch(force=True)
     elif provider.preis_jetzt() is None:
         # Erstes Öffnen im Panel: ohne Daten wäre der Status eine leere
@@ -2224,7 +2370,7 @@ async def ws_get_awattar_sunny(
         )
         return
 
-    if msg.get("refresh"):
+    if _refresh_erlaubt(connection, msg, "awattar_sunny"):
         await provider.async_fetch(force=True)
     elif not provider.hat_daten():
         await provider.async_fetch()
@@ -2267,7 +2413,7 @@ async def ws_get_energie_ag(
         )
         return
 
-    if msg.get("refresh"):
+    if _refresh_erlaubt(connection, msg, "energie_ag"):
         await provider.async_fetch(force=True)
         # Die Hochrechnung teilt sich den OeMAG-Schätzer — „Jetzt holen" soll
         # auch sie auffrischen, sonst bleibt die Vorschau leer.
@@ -2325,7 +2471,7 @@ async def ws_get_pvprognose(
             msg["id"], {"tage_kwh": None, "fehler": "Anbieter nicht geladen"}
         )
         return
-    if msg.get("refresh"):
+    if _refresh_erlaubt(connection, msg, "pvprognose"):
         await provider.async_fetch(force=True)
     connection.send_result(msg["id"], provider.status())
 

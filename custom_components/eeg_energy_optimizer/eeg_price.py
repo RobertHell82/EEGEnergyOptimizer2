@@ -89,6 +89,7 @@ hier mit: der Mischpreis ist der erwartete echte Erlös, kein Steuersignal.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
@@ -283,9 +284,11 @@ def saldo_je_intervall(intervalle: list[dict] | None) -> dict[int, float]:
         if stempel is None:
             continue
         try:
-            werte[int(stempel.timestamp() // 900)] = float(roh)
+            wert = float(roh)
         except (TypeError, ValueError):
             continue
+        if math.isfinite(wert):
+            werte[int(stempel.timestamp() // 900)] = wert
     return werte
 
 
@@ -479,9 +482,10 @@ def _zahl(roh: Any) -> float:
     if roh is None or roh == "":
         return 0.0
     try:
-        return float(roh)
+        wert = float(roh)
     except (TypeError, ValueError):
         return 0.0
+    return wert if math.isfinite(wert) else 0.0
 
 
 def _stempel(roh: Any) -> datetime | None:

@@ -96,7 +96,7 @@ async def test_fetch_fragt_start_und_ende_an(monkeypatch):
     class _Antwort:
         status = 200
 
-        async def json(self):
+        async def json(self, content_type=None):
             jetzt = datetime.now(tz=timezone.utc).replace(minute=0, second=0, microsecond=0)
             return {"data": [_eintrag(jetzt, 1, 90.0)]}
 

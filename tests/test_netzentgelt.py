@@ -308,8 +308,8 @@ def _ris_antwort(dokumente: list[dict]) -> str:
                     "ContentReference": {
                         "Urls": {
                             "ContentUrl": [
-                                {"DataType": "Xml", "Url": f"https://ogd.example/{d['nor']}.xml"},
-                                {"DataType": "Html", "Url": f"https://ogd.example/{d['nor']}.html"},
+                                {"DataType": "Xml", "Url": f"https://ogd.ris.bka.gv.at/Dokumente/Bundesnormen/{d['nor']}.xml"},
+                                {"DataType": "Html", "Url": f"https://ogd.ris.bka.gv.at/Dokumente/Bundesnormen/{d['nor']}.html"},
                             ]
                         }
                     }
@@ -370,7 +370,7 @@ async def test_provider_liest_die_tabelle_aus_dem_ris(monkeypatch):
     }
     # Titelsuche (SNE-T-V) → Gesetzesnummer (SNE-V 2018) → ein HTML …
     assert [u for u, _ in netz.aufrufe[:3]] == [
-        n.RIS_API_URL, n.RIS_API_URL, "https://ogd.example/NOR40273644.html",
+        n.RIS_API_URL, n.RIS_API_URL, "https://ogd.ris.bka.gv.at/Dokumente/Bundesnormen/NOR40273644.html",
     ]
     assert netz.aufrufe[1][1]["Gesetzesnummer"] == "20010107"
     assert netz.aufrufe[1][1]["Fassung.FassungVom"]

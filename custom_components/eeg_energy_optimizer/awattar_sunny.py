@@ -34,12 +34,14 @@ import csv
 import html as html_entities
 import io
 import logging
+import math
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
 from .const import DOMAIN
+from .oemag import ist_monatswert, lies_text, ohne_tags
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -108,6 +110,10 @@ class Tabelle:
     # Werte (Jahresanfang) ist lesbar und nur leer — eine Anmeldeseite oder
     # ein umgebautes Blatt dagegen nicht.
     kopf_erkannt: bool = False
+    # Zahlen außerhalb des Plausibilitätsbands („Monat: ct/kWh"). Nur einer
+    # davon genügt, damit der Anbieter den ganzen Tab verwirft — dann sind
+    # die Spalten anders gelesen als gemeint.
+    unplausibel: list[str] = field(default_factory=list)
 
     def leer(self) -> bool:
         return not self.neu and not self.alt
@@ -161,11 +167,17 @@ def parse_tabelle(text: str | None, jahr: int) -> Tabelle:
         schluessel = monatsschluessel(jahr, monat)
         neu = _ct_wert(zeile[neu_idx]) if neu_idx < len(zeile) else None
         if neu is not None:
-            tabelle.neu[schluessel] = neu
+            if ist_monatswert(neu):
+                tabelle.neu[schluessel] = neu
+            else:
+                tabelle.unplausibel.append(f"{monat}: {neu * 100:.3f} ct/kWh")
         if alt_idx is not None and alt_idx < len(zeile):
             alt = _ct_wert(zeile[alt_idx])
             if alt is not None:
-                tabelle.alt[schluessel] = alt
+                if ist_monatswert(alt):
+                    tabelle.alt[schluessel] = alt
+                else:
+                    tabelle.unplausibel.append(f"{monat}: {alt * 100:.3f} ct/kWh")
 
     if alt_idx is None:
         # Nur eine SUNNY-Spalte: sie gilt für alle Verträge.
@@ -182,7 +194,7 @@ def parse_tarifseite(html: str | None) -> float | None:
     """
     if not html:
         return None
-    text = html_entities.unescape(re.sub(r"<[^>]+>", " ", html))
+    text = html_entities.unescape(ohne_tags(html))
     text = re.sub(r"\s+", " ", text)
     treffer = re.search(r"(\d+(?:[.,]\d+)?)\s*Cent/kWh\s*netto", text, re.I)
     if not treffer:
@@ -296,7 +308,9 @@ class AwattarSunnyProvider:
                 roh = stored.get("tarife") or {}
                 for vertrag in VERTRAEGE:
                     self._tarife[vertrag] = {
-                        int(k): float(v) for k, v in (roh.get(vertrag) or {}).items()
+                        int(k): float(v)
+                        for k, v in (roh.get(vertrag) or {}).items()
+                        if ist_monatswert(v)
                     }
                 self._alt_bis = stored.get("alt_bis")
                 self._quelle = stored.get("quelle")
@@ -316,7 +330,7 @@ class AwattarSunnyProvider:
         ) as resp:
             if resp.status != 200:
                 raise RuntimeError(f"HTTP {resp.status}")
-            return await resp.text()
+            return await lies_text(resp)
 
     async def _hole_tabelle(self, session: Any, jahr: int) -> Tabelle | None:
         """Jahres-Tab lesen; None bei Netz- oder Formatfehler."""
@@ -328,6 +342,14 @@ class AwattarSunnyProvider:
         tabelle = parse_tabelle(text, jahr)
         if not tabelle.kopf_erkannt:
             self._fehler = f"Preistabelle {jahr}: keine SUNNY-Spalte erkannt"
+            return None
+        if tabelle.unplausibel:
+            # Wie ein unlesbarer Tab: der Rückfall (Tarifseite, gespeicherte
+            # Werte) ist besser als eine Zahl aus einer verrutschten Spalte.
+            self._fehler = (
+                f"Preistabelle {jahr}: Wert unplausibel ({tabelle.unplausibel[0]})"
+            )
+            _LOGGER.warning("aWATTar SUNNY: %s — Tab verworfen", self._fehler)
             return None
         return tabelle
 
@@ -384,6 +406,12 @@ class AwattarSunnyProvider:
             except Exception as err:  # noqa: BLE001
                 preis = None
                 self._fehler = (self._fehler + "; " if self._fehler else "") + f"Tarifseite: {err}"
+            if preis is not None and not ist_monatswert(preis):
+                self._fehler = (
+                    (self._fehler + "; " if self._fehler else "")
+                    + f"Tarifseite: Wert unplausibel ({preis * 100:.3f} ct/kWh)"
+                )
+                preis = None
             if preis is not None:
                 self._tarife[VERTRAG_NEU][schluessel] = preis
                 gelesen = True
@@ -475,6 +503,10 @@ def _ct_wert(text: str | None) -> float | None:
     if "," in t and "." not in t:
         t = t.replace(",", ".")
     try:
-        return round(float(t) / 100.0, 6)
+        wert = float(t)
     except ValueError:
         return None
+    # float() liest auch „nan" und „inf" — als Zelleninhalt kein Tarif.
+    if not math.isfinite(wert):
+        return None
+    return round(wert / 100.0, 6)

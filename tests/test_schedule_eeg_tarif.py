@@ -631,3 +631,131 @@ async def test_energie_ag_ohne_jeden_wert_gilt_die_handeingabe():
     )
     assert problem is None
     assert inputs.feedin_price == pytest.approx(BASE_CONFIG["schedule_feedin_price"])
+
+
+# ---------------------------------------------------------------------------
+# Plausibilität: NaN aus einem Anbieter, Deckel für jede Quelle
+# ---------------------------------------------------------------------------
+
+
+async def test_nan_aus_der_oemag_gilt_als_kein_tarif():
+    """``if preis:`` hielt NaN für einen Tarif (NaN ist wahr) — der ganze
+    Fahrplan hätte mit NaN gerechnet. Jetzt greift der Rückfall."""
+    inputs, problem = await _collect(
+        {**BASE_CONFIG, "schedule_feedin_source": "oemag_estimate"},
+        oemag=_Oemag(0.08997), oemag_schaetzung=_Oemag(float("nan")),
+    )
+    assert problem is None
+    assert inputs.feedin_price == pytest.approx(0.08997)
+
+    inputs, _ = await _collect(
+        {**BASE_CONFIG, "schedule_feedin_source": "oemag"},
+        oemag=_Oemag(float("inf")),
+    )
+    assert inputs.feedin_price == pytest.approx(0.082)
+
+
+async def test_nan_aus_sunny_und_energie_ag_gilt_als_kein_tarif():
+    inputs, _ = await _collect(
+        {**BASE_CONFIG, "schedule_feedin_source": "awattar_sunny"},
+        awattar_sunny=_Sunny(neu=float("nan")),
+    )
+    assert inputs.feedin_price == pytest.approx(0.082)
+
+    inputs, _ = await _collect(
+        {**BASE_CONFIG, "schedule_feedin_source": "energie_ag_estimate"},
+        energie_ag=_EnergieAg(0.0792, geschaetzt=float("nan")),
+    )
+    assert inputs.feedin_price == pytest.approx(0.0792)
+
+
+async def test_nicht_endlicher_bezugspreis_aus_der_config_zaehlt_nicht():
+    inputs, problem = await _collect(
+        {**BASE_CONFIG, "schedule_energy_price": "inf"},
+    )
+    assert problem is None
+    # Der Arbeitspreis fällt weg, es gilt der alte Gesamtpreis.
+    assert inputs.consumption_price == pytest.approx(0.25)
+
+
+def _minimal(**over) -> sched.ScheduleInputs:
+    stamps = [NOW.replace(hour=h, minute=0) for h in (9, 12, 18)]
+    basis = dict(
+        start=stamps[0], time_res_s=900, timestamps=stamps,
+        consumption_kw=[0.5] * 3, production_kw=[0.0] * 3, min_production_kw=None,
+        worst_case_factor=0.6, battery_free_kwh=6.0, battery_capacity_kwh=10.0,
+        battery_power_limit_kw=5.0, soc_pct=40.0, ac_limit_kw=10.0,
+        feedin_limit_kw=9.0, feedin_price=0.08, feedin_price_night=None,
+        night_start_hour=22, night_end_hour=6, consumption_price=0.25,
+        battery_cost=0.01,
+    )
+    basis.update(over)
+    return sched.ScheduleInputs(**basis)
+
+
+def test_deckel_gilt_auch_fuer_einen_monatstarif():
+    """Skalar-Fall: kam bisher ungedeckelt zurück. Ein Monatstarif über dem
+    Bezugspreis (2022 lag die OeMAG zeitweise darüber) führt im LP genauso zum
+    Scheinhandel wie ein zu hoher Aufschlag."""
+    pytest.importorskip("pandas")
+    inputs = _minimal(feedin_price=0.30)
+    reihe = sched.HAConfig(inputs).feedin_price(inputs.start)
+    assert list(reihe) == pytest.approx([0.249] * 3)
+
+    # Unter dem Bezugspreis bleibt es beim Skalar — wie bisher.
+    assert sched.HAConfig(_minimal()).feedin_price(NOW) == pytest.approx(0.08)
+
+
+def test_deckel_je_slot_gegen_den_snap_preis():
+    """Im SNAP-Fenster (Sommer 10–16 Uhr) ist Bezug billiger — dort muss der
+    Deckel tiefer liegen als der Tagessatz, sonst entsteht genau im Fenster
+    der Scheinhandel."""
+    pytest.importorskip("pandas")
+    inputs = _minimal(
+        consumption_price_snap=0.18,
+        eeg_bonus=[0.12, 0.12, 0.12],   # 0,08 + 0,12 = 0,20 in jedem Slot
+    )
+    werte = list(sched.HAConfig(inputs).feedin_price(inputs.start))
+    # 09:00 und 18:00 außerhalb des Fensters: 0,20 bleibt unter 0,249.
+    assert werte[0] == pytest.approx(0.20)
+    assert werte[2] == pytest.approx(0.20)
+    # 12:00 im Fenster: gedeckelt unter den SNAP-Bezugspreis.
+    assert werte[1] == pytest.approx(0.18 - sched.eeg_price.DECKEL_ABSTAND)
+
+
+def test_skalar_bleibt_nur_unter_dem_tiefsten_bezugspreis():
+    """Mit SNAP ist der Skalar nur zulässig, wenn er auch unter dem
+    verbilligten Bezugspreis liegt."""
+    pytest.importorskip("pandas")
+    inputs = _minimal(feedin_price=0.20, consumption_price_snap=0.18)
+    werte = list(sched.HAConfig(inputs).feedin_price(inputs.start))
+    assert werte == pytest.approx([0.20, 0.179, 0.20])
+
+
+def test_nicht_endliche_eingaenge_werden_benannt():
+    assert sched.nicht_endliche_eingaenge(_minimal()) == []
+    kaputt = sched.nicht_endliche_eingaenge(_minimal(
+        feedin_price=float("nan"),
+        consumption_kw=[0.5, float("inf"), float("nan")],
+        consumption_price_snap=float("-inf"),
+    ))
+    assert "feedin_price" in kaputt
+    assert "consumption_price_snap" in kaputt
+    assert "consumption_kw[1] (+1)" in kaputt
+
+
+def test_solve_bricht_bei_nan_laut_ab():
+    with pytest.raises(ValueError, match="Nicht-endliche"):
+        sched.solve(_minimal(battery_capacity_kwh=float("nan")))
+
+
+async def test_nan_in_den_eingaengen_liefert_keinen_plan():
+    """Der Weg durch async_collect_inputs: ein NaN-Aufschlag darf weder in
+    den Plan noch in ``last_inputs`` (die Energiebilanz friert daraus Preise
+    ein)."""
+    with patch.object(
+        sched, "_eeg_aufschlag", return_value=([float("nan")] * 200, None)
+    ):
+        inputs, problem = await _collect(BASE_CONFIG)
+    assert inputs is None
+    assert "Nicht-endliche" in problem and "eeg_bonus" in problem

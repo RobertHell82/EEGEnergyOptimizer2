@@ -56,12 +56,28 @@ from __future__ import annotations
 
 import html as html_entities
 import logging
+import math
 import re
 from datetime import datetime, timezone
 from typing import Any
 
 from .const import DOMAIN
-from .oemag import AUSGLEICHSENERGIE_PV_DEFAULT, KORRIDOR_UNTEN
+from .oemag import (
+    _TABLE_AUF,
+    _TABLE_ZU,
+    _TD_AUF,
+    _TD_ZU,
+    _TR_AUF,
+    _TR_ZU,
+    AUSGLEICHSENERGIE_PV_DEFAULT,
+    KORRIDOR_UNTEN,
+    bloecke,
+    im_band,
+    ist_monatswert,
+    lies_json,
+    lies_text,
+    ohne_tags,
+)
 from .spot import parse_marketdata
 
 _LOGGER = logging.getLogger(__name__)
@@ -95,6 +111,10 @@ ANKER_FRESH_SECONDS = 12 * 3600
 # ohnehin nur, wo auch Solardaten vorliegen.
 FETCH_FUTURE_SECONDS = 48 * 3600
 SLOT_SEKUNDEN = 900
+# Quartalsmarktpreis Q in €/kWh: Mittel von vier Quartalsfutures, also
+# träger als jeder Monatswert. Auch im Herbst 2022 blieb er unter 0,5 €/kWh;
+# ein Euro ist die Grenze, ab der die Zahl sicher falsch gelesen ist.
+ANKER_MAX_EUR = 1.0
 
 
 def quartal(monat: int) -> int:
@@ -126,9 +146,10 @@ def parse_solar(payload: Any) -> dict[int, float]:
         try:
             wert = float(v)
             slot = int(t) // SLOT_SEKUNDEN
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             continue
-        if wert > 0:
+        # NaN als Gewicht verdirbt das ganze Mittel, nicht nur den Slot.
+        if math.isfinite(wert) and wert > 0:
             gewichte[slot] = wert
     return gewichte
 
@@ -161,7 +182,10 @@ def tarif_aus_roh(roh: float, anker: float | None, ausgleichsenergie: float) -> 
     Korridor, der Rohwert geht dann ungebremst durch.
     """
     wert = roh
-    if anker is not None and anker > 0:
+    # ``anker > 0`` allein ließe NaN nicht durch, ``inf`` aber schon — und
+    # ``min(max(roh, …), inf)`` wäre dann der ungebremste Rohwert mit
+    # falschem Etikett.
+    if anker is not None and im_band(anker, 1e-9, ANKER_MAX_EUR):
         wert = min(max(roh, KORRIDOR_UNTEN * anker), anker)
     return round(wert - ausgleichsenergie, 6)
 
@@ -193,13 +217,13 @@ def parse_econtrol(html: str) -> tuple[int, int, float] | None:
     — die Handelstage liegen im Vorquartal, deshalb kann man ihn nicht aus
     dem Datum ablesen.
     """
-    for tabelle in re.findall(r"<table.*?</table>", html or "", re.S | re.I):
+    for tabelle in bloecke(html or "", _TABLE_AUF, _TABLE_ZU):
         jahr = q = None
         anker = None
-        for zeile in re.findall(r"<tr.*?</tr>", tabelle, re.S | re.I):
+        for zeile in bloecke(tabelle, _TR_AUF, _TR_ZU):
             zellen = [
-                html_entities.unescape(re.sub(r"<[^>]+>", " ", z)).replace("\xa0", " ").strip()
-                for z in re.findall(r"<t[dh].*?</t[dh]>", zeile, re.S | re.I)
+                html_entities.unescape(ohne_tags(z)).replace("\xa0", " ").strip()
+                for z in bloecke(zeile, _TD_AUF, _TD_ZU)
             ]
             if not zellen:
                 continue
@@ -210,8 +234,11 @@ def parse_econtrol(html: str) -> tuple[int, int, float] | None:
             kopf_l = kopf.lower()
             if "mittelwert" in kopf_l and "5 tage" in kopf_l and len(zellen) >= 2:
                 anker = _zahl(zellen[1])
-        if q is not None and jahr is not None and anker is not None and anker > 0:
-            return jahr, q, round(anker / 1000.0, 6)  # €/MWh → €/kWh
+        if (
+            q is not None and jahr is not None and anker is not None
+            and im_band(anker / 1000.0, 1e-9, ANKER_MAX_EUR)  # €/MWh → €/kWh
+        ):
+            return jahr, q, round(anker / 1000.0, 6)
     return None
 
 
@@ -326,8 +353,11 @@ class OemagSchaetzer:
             stored = await self._store.async_load()
             if not stored or not isinstance(stored, dict):
                 return
-            self._preis = stored.get("preis")
-            self._roh = stored.get("roh")
+            # Was ein Abruf heute verwerfen würde, soll auch aus einem alten
+            # Speicherstand nicht in den Fahrplan kommen.
+            preis, roh = stored.get("preis"), stored.get("roh")
+            self._preis = preis if ist_monatswert(preis) else None
+            self._roh = roh if ist_monatswert(roh) else None
             self._anker = stored.get("anker")
             self._anker_quelle = stored.get("anker_quelle")
             self._ausgleichsenergie = stored.get("ausgleichsenergie")
@@ -339,7 +369,9 @@ class OemagSchaetzer:
             if stored.get("geholt"):
                 self._geholt = datetime.fromisoformat(stored["geholt"])
             self._anker_tabelle = {
-                str(k): float(v) for k, v in (stored.get("anker_tabelle") or {}).items()
+                str(k): float(v)
+                for k, v in (stored.get("anker_tabelle") or {}).items()
+                if im_band(v, 1e-9, ANKER_MAX_EUR)
             }
             if stored.get("anker_geholt"):
                 self._anker_geholt = datetime.fromisoformat(stored["anker_geholt"])
@@ -421,6 +453,16 @@ class OemagSchaetzer:
         preise = parse_marketdata(preise_roh)
         gewichte = parse_solar(solar_roh)
         roh, anzahl = gewichtetes_mittel(preise, gewichte)
+        if roh is not None and not ist_monatswert(roh):
+            # Nicht speichern: ``roh`` ist zugleich der Referenzmarktwert,
+            # mit dem ``energie_ag_estimate`` rechnet.
+            self._fehler = f"Rohwert unplausibel ({roh * 100:.3f} ct/kWh)"
+            _LOGGER.warning(
+                "OeMAG-Hochrechnung: %s — es gilt weiter %s",
+                self._fehler,
+                f"{self._preis:.5f} €/kWh" if self.preis else "der veröffentlichte Monat",
+            )
+            return self.preis
         if roh is None:
             self._fehler = "keine Viertelstunde mit Preis und Solarerzeugung"
             _LOGGER.warning(
@@ -474,7 +516,7 @@ class OemagSchaetzer:
         ) as resp:
             if resp.status != 200:
                 raise RuntimeError(f"HTTP {resp.status} von {url.split('/')[2]}")
-            return await resp.json(content_type=None)
+            return await lies_json(resp)
 
     async def _aktualisiere_anker(
         self, session: Any, aiohttp: Any, jetzt: datetime, force: bool
@@ -493,7 +535,7 @@ class OemagSchaetzer:
             ) as resp:
                 if resp.status != 200:
                     raise RuntimeError(f"HTTP {resp.status} von e-control.at")
-                html = await resp.text()
+                html = await lies_text(resp)
         except Exception as err:
             self._anker_fehler = str(err)
             _LOGGER.debug("E-Control-Seite nicht abrufbar: %s", err)

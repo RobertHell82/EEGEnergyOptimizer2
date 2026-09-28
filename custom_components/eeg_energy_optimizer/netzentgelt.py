@@ -32,14 +32,17 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import re
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timezone
 from html import unescape
 from html.parser import HTMLParser
 from typing import Any
+from urllib.parse import urlsplit
 
 from .const import DOMAIN
+from .oemag import lies_text, ohne_elemente, ohne_tags
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -77,6 +80,25 @@ CACHE_FRESH_SECONDS = 24 * 3600
 # Wie viele Dokumente einer Titelsuche höchstens gelesen werden, bevor
 # aufgegeben wird — die Tabelle steht in genau einem Paragraphen.
 MAX_DOKUMENTE_JE_QUELLE = 4
+# Die Dokument-Adresse kommt aus der Antwort der Such-API, nicht von uns.
+# Abgerufen wird sie nur, wenn sie per https ins RIS zeigt (die Dokumente
+# liegen auf ogd.ris.bka.gv.at, siehe SNAPSHOT.url) — sonst könnte eine
+# verfälschte Suchantwort die Integration eine beliebige Adresse abrufen
+# lassen, auch eine im Heimnetz.
+RIS_DOKUMENT_HOST = "ris.bka.gv.at"
+
+# Plausibilitätsband je Netzbereich, Cent/kWh netto. Die Arbeitspreise auf
+# Netzebene 7 liegen 2026 zwischen 4,96 (Vorarlberg) und 17,73 ct
+# (Kleinwalsertal); 0,5 bis 40 ct lassen nach beiden Seiten viel Luft und
+# fangen trotzdem ein verlorenes Komma oder eine verrutschte Spalte (etwa
+# den Leistungspreis in €/kW und Jahr). SNAP und WiNAP sind Rabatte auf den
+# Arbeitspreis und können ihn nicht übersteigen. Das Netzverlustentgelt
+# liegt unter einem Cent; fünf wären ein Vielfaches des höchsten Satzes.
+AP_MIN_CT = 0.5
+AP_MAX_CT = 40.0
+VERLUST_MAX_CT = 5.0
+# Elektrizitätsabgabe (Regelsatz 1,5 ct) und Förderbeitrag (0,62 ct 2026).
+ABGABE_MAX_CT = 10.0
 
 
 # Netzbereiche laut Anlage I zum ElWG (BGBl. I Nr. 91/2025), beschriftet mit
@@ -199,12 +221,16 @@ class Tariftabelle:
         tarife = {}
         for k, t in (roh.get("tarife") or {}).items():
             if k in NETZBEREICH_LABELS and t.get("ap") is not None:
-                tarife[k] = Netztarif(
+                tarif = Netztarif(
                     ap=float(t["ap"]),
                     snap=None if t.get("snap") is None else float(t["snap"]),
                     winap=None if t.get("winap") is None else float(t["winap"]),
                     verlust=None if t.get("verlust") is None else float(t["verlust"]),
                 )
+                # Ein Speicherstand aus der Zeit vor der Prüfung soll nicht
+                # zurückbringen, was ein Abruf heute verwerfen würde.
+                if ist_plausibel(tarif):
+                    tarife[k] = tarif
         return cls(
             stand=str(roh.get("stand") or ""),
             quelle=str(roh.get("quelle") or ""),
@@ -302,6 +328,38 @@ QUELLE_FOERDERBEITRAG = Quelle(
 # ---------------------------------------------------------------------------
 # Tabelle lesen
 # ---------------------------------------------------------------------------
+
+
+def _endlich_zwischen(wert: float | None, unten: float, oben: float) -> bool:
+    return wert is not None and math.isfinite(wert) and unten <= wert <= oben
+
+
+def ist_plausibel(tarif: Netztarif) -> bool:
+    """Sind die Sätze eines Bereichs glaubhaft (siehe AP_MIN_CT …)?"""
+    if not _endlich_zwischen(tarif.ap, AP_MIN_CT, AP_MAX_CT):
+        return False
+    for rabatt in (tarif.snap, tarif.winap):
+        if rabatt is not None and not _endlich_zwischen(rabatt, 0.0, tarif.ap):
+            return False
+    if tarif.verlust is not None and not _endlich_zwischen(
+        tarif.verlust, 0.0, VERLUST_MAX_CT
+    ):
+        return False
+    return True
+
+
+def ist_ris_adresse(url: Any) -> bool:
+    """Zeigt ``url`` per https ins RIS (ris.bka.gv.at oder eine Subdomain)?"""
+    if not isinstance(url, str):
+        return False
+    try:
+        teile = urlsplit(url)
+        host = (teile.hostname or "").lower()
+    except ValueError:
+        return False
+    return teile.scheme == "https" and (
+        host == RIS_DOKUMENT_HOST or host.endswith("." + RIS_DOKUMENT_HOST)
+    )
 
 
 class _Tabellenleser(HTMLParser):
@@ -450,6 +508,14 @@ def parse_tabelle(html: str) -> dict[str, Netztarif]:
         if ap is None:
             continue
         tarif = Netztarif(ap=ap, snap=wert(snap_idx), winap=wert(winap_idx))
+        if not ist_plausibel(tarif):
+            # Die Zeile fällt heraus; der Bereich behält dann den Satz der
+            # zuletzt gültigen Tabelle bzw. des Schnappschusses.
+            _LOGGER.warning(
+                "Netzentgelte: Satz für %s unplausibel (AP %s, SNAP %s, WiNAP %s "
+                "ct/kWh) — verworfen", bereich, tarif.ap, tarif.snap, tarif.winap,
+            )
+            continue
         bisher = tarife.get(bereich)
         if bisher is None or prioritaet < bisher[0]:
             tarife[bereich] = (prioritaet, tarif)
@@ -509,7 +575,8 @@ def parse_verlust_tabelle(html: str) -> dict[str, float]:
             if key is None:
                 continue
             zahl = _zahl(zeile[spalte])
-            if zahl is not None:
+            # Unplausibel heißt nicht gelesen; dann gilt der Schnappschuss.
+            if zahl is not None and _endlich_zwischen(zahl, 0.0, VERLUST_MAX_CT):
                 werte[key] = zahl
         if werte:
             return werte
@@ -639,8 +706,10 @@ def parse_foerderbeitrag(html: str) -> tuple[float, str] | None:
 
 def _flachtext(html: str) -> str:
     """HTML zu einer Textzeile — Tags weg, Weißraum vereinheitlicht."""
-    ohne = re.sub(r"(?is)<(style|script|head)[^>]*>.*?</\1>", " ", html)
-    text = re.sub(r"<[^>]+>", " ", ohne)
+    # Linear statt re.sub(r"(?is)<(style|script|head)[^>]*>.*?</\1>") und
+    # re.sub(r"<[^>]+>") — dieselben Treffer, siehe oemag.ohne_elemente.
+    ohne = ohne_elemente(html, ("style", "script", "head"))
+    text = ohne_tags(ohne)
     text = unescape(text)
     return re.sub(r"\s+", " ", text)
 
@@ -849,6 +918,12 @@ def _dokumente_aus_antwort(antwort: dict[str, Any]) -> list[dict[str, Any]]:
                 (u["Url"] for u in urls if str(u.get("DataType", "")).lower() == "html"),
                 None,
             )
+            if html_url is not None and not ist_ris_adresse(html_url):
+                _LOGGER.warning(
+                    "Netzentgelte: Dokument-Adresse außerhalb des RIS ignoriert (%s)",
+                    str(html_url)[:200],
+                )
+                html_url = None
             eintraege.append(
                 {
                     "nor": md["Technisch"]["ID"],
@@ -975,6 +1050,12 @@ class NetzentgeltProvider:
         for key, wert in verluste.items():
             if key in tarife and wert is not None:
                 tarife[key] = replace(tarife[key], verlust=wert)
+        # Bereiche, deren Zeile diesmal unplausibel war (oder fehlte), behalten
+        # den Satz der zuletzt gültigen Tabelle — der ist gelesen, nicht
+        # eingebaut. Ohne sie greift wie bisher der Schnappschuss.
+        if self._tabelle is not None and not self._tabelle.aus_snapshot:
+            for key, alt in self._tabelle.tarife.items():
+                tarife.setdefault(key, alt)
 
         abgaben = SNAPSHOT.abgaben or Abgaben()
         elektrizitaet = (abgaben.elektrizitaet, abgaben.elektrizitaet_quelle)
@@ -988,14 +1069,14 @@ class NetzentgeltProvider:
             except Exception:  # noqa: BLE001 — ohne Übergang gilt der Regelsatz
                 html7 = None
             gelesen = parse_elektrizitaetsabgabe(html4, html7, heute)
-            if gelesen is not None:
+            if gelesen is not None and _endlich_zwischen(gelesen[0], 0.0, ABGABE_MAX_CT):
                 elektrizitaet = (gelesen[0], f"{gelesen[1]} (RIS {dok4['nor']})")
         except Exception as err:  # noqa: BLE001
             _LOGGER.debug("Elektrizitätsabgabe nicht lesbar: %s", err)
         try:
             dokf, htmlf = await self._hole_dokument(QUELLE_FOERDERBEITRAG, heute)
             gelesen = parse_foerderbeitrag(htmlf)
-            if gelesen is not None:
+            if gelesen is not None and _endlich_zwischen(gelesen[0], 0.0, ABGABE_MAX_CT):
                 foerder = (gelesen[0], f"{gelesen[1]} (RIS {dokf['nor']})")
         except Exception as err:  # noqa: BLE001
             _LOGGER.debug("Erneuerbaren-Förderbeitrag nicht lesbar: %s", err)
@@ -1091,7 +1172,7 @@ class NetzentgeltProvider:
         ) as resp:
             if resp.status != 200:
                 raise RuntimeError(f"HTTP {resp.status}")
-            return await resp.text()
+            return await lies_text(resp)
 
     async def _speichern(self) -> None:
         if self._store is None or self._tabelle is None:

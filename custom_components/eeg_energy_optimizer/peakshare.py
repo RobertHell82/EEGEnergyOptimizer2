@@ -33,10 +33,12 @@ genau die halbe Information liefern, auf der die Preisfunktion aufbaut.
 from __future__ import annotations
 
 import logging
+import math
 from datetime import datetime, timezone
 from typing import Any
 
 from .const import DOMAIN
+from .oemag import lies_json
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -93,9 +95,12 @@ def _format_stamp(stempel: datetime) -> str:
 
 def _zahl(raw: Any) -> float | None:
     try:
-        return float(raw)
+        wert = float(raw)
     except (TypeError, ValueError):
         return None
+    # NaN wäre danach „wahr" (``_zahl(x) or 0.0`` hielte es fest) und
+    # verdürbe über den Aufschlag jeden Preis des Horizonts.
+    return wert if math.isfinite(wert) else None
 
 
 def _validate_api_response(data: Any) -> bool:
@@ -301,7 +306,7 @@ class PeakShareProvider:
                     timeout=aiohttp.ClientTimeout(total=30),
                 ) as resp:
                     if resp.status == 200:
-                        data = await resp.json()
+                        data = await lies_json(resp)
                         if not _validate_api_response(data):
                             _LOGGER.warning(
                                 "PeakShare API: ungültige Antwortstruktur, "
