@@ -61,7 +61,7 @@ Mit **EEG-Statistik aktivieren** sendet deine Anlage anonymisierte Diagnose- und
 
 Alle 15 Minuten und zusätzlich bei jeder deutlichen Planänderung legt die Integration den gerechneten Fahrplan ab und bewahrt ihn **7 Tage** auf. Die Karte zeigt, wie viele Fahrpläne aus welchem Zeitraum vorliegen. **Archiv herunterladen** liefert ein ZIP mit:
 
-- allen archivierten Fahrplänen, jeweils mit sämtlichen Eingangsgrößen des Modells (PV, Verbrauch, Batterie, Preise je Viertelstunde)
+- allen archivierten Fahrplänen, jeweils mit sämtlichen Eingangsgrößen des Modells (PV samt unterer Prognose, Verbrauch, Batterie, Preise und Gemeinschaftsbedarf je Viertelstunde, Heizstab-Zustand)
 - dem gemessenen Verlauf der Leistungen im 5-Minuten-Raster
 - den Einstellungen, **ohne** Netzwerk- und Zugangsdaten
 - einer Lesehilfe

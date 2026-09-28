@@ -334,3 +334,62 @@ async def test_lies_vor_uebergeht_kaputte_dateien(tmp_path):
     # Eine Datei mit unbrauchbarem Namen wird gar nicht erst betrachtet.
     (ordner / "kaputt.json.gz").write_bytes(b"egal")
     assert await archiv.async_lies_vor(ziel) is None
+
+
+# ---------------------------------------------------------------------------
+# Eingaben und Heizstab-Einstellungen (Replay 28.09.2026)
+# ---------------------------------------------------------------------------
+
+
+async def test_heizstab_einstellungen_ohne_host_und_port():
+    gefiltert = sa.einstellungen_filtern({
+        "heizstab_enabled": True,
+        "heizstab_max_kw": 6.0,
+        "heizstab_waermewert": 0.12,
+        "heizstab_puffer_liter": 1000,
+        "heizstab_sperr_entity": "binary_sensor.holzvergaser",
+        "heizstab_host": "192.168.100.58",
+        "heizstab_port": 502,
+    })
+    assert gefiltert["heizstab_max_kw"] == 6.0
+    assert gefiltert["heizstab_sperr_entity"] == "binary_sensor.holzvergaser"
+    assert "heizstab_host" not in gefiltert
+    assert "heizstab_port" not in gefiltert
+
+
+async def test_eingaben_mit_p10_pfad_werden_abgelegt(tmp_path):
+    """Ohne p10-Pfad rechnete ein Replay die Reserve mit dem Pauschalfaktor
+    und lag in Traun im Median 1,35 kW neben dem echten Plan."""
+    from custom_components.eeg_energy_optimizer import schedule as sched
+
+    start = datetime(2026, 9, 28, 12, 0, tzinfo=timezone.utc)
+    inputs = sched.ScheduleInputs(
+        start=start, time_res_s=900, timestamps=[start],
+        consumption_kw=[0.5], production_kw=[4.0],
+        min_production_kw=[2.5], worst_case_factor=0.6,
+        battery_free_kwh=5.0, battery_capacity_kwh=10.0,
+        battery_power_limit_kw=5.0, soc_pct=50.0, ac_limit_kw=8.0,
+        feedin_limit_kw=7.5, feedin_price=0.02, feedin_price_night=None,
+        night_start_hour=20, night_end_hour=6, consumption_price=0.19,
+        battery_cost=0.01, heizstab_budget_kwh=8.3,
+        eeg_bedarf={"Pucking": {123: 1.5}},
+    )
+    archiv = sa.ScheduleArchive(_Hass(tmp_path), "abc")
+    assert await archiv.async_maybe_store(_plan(), CONFIG, start, inputs) == "start"
+    datei = next(tmp_path.glob(f"{sa.ARCHIV_ORDNER}/*/*.json.gz"))
+    eintrag = json.loads(gzip.decompress(datei.read_bytes()))
+    eingaben = eintrag["eingaben"]
+    assert eingaben["min_production_kw"] == [2.5]
+    assert eingaben["heizstab_budget_kwh"] == 8.3
+    assert eingaben["start"] == start.isoformat()
+    assert eingaben["eeg_bedarf"] == {"Pucking": {"123": 1.5}}
+    # Was der Plan schon trägt, steht nicht doppelt drin
+    assert "consumption_kw" not in eingaben and "timestamps" not in eingaben
+
+
+async def test_ohne_eingaben_bleibt_der_eintrag_wie_bisher(tmp_path):
+    archiv = sa.ScheduleArchive(_Hass(tmp_path), "abc")
+    jetzt = datetime(2026, 8, 25, 12, 0, tzinfo=timezone.utc)
+    await archiv.async_maybe_store(_plan(), CONFIG, jetzt)
+    datei = next(tmp_path.glob(f"{sa.ARCHIV_ORDNER}/*/*.json.gz"))
+    assert "eingaben" not in json.loads(gzip.decompress(datei.read_bytes()))

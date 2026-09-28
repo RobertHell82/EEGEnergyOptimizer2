@@ -65,6 +65,10 @@ EINSTELLUNGEN_PRAEFIXE = (
     "inverter_",
     "forecast_",
     "pv_",
+    # Heizstab: Leistung, Wärmewert, Puffer, Temperaturen, Sperr-Entität —
+    # ohne sie ließ sich ein archivierter Plan nicht nachrechnen (Replay
+    # 28.09.2026). Host und Port hält die Sperrliste unten zurück.
+    "heizstab_",
 )
 EINSTELLUNGEN_KEYS = frozenset({
     "enable_peakshare",
@@ -176,6 +180,44 @@ def einstellungen_filtern(config: dict[str, Any]) -> dict[str, Any]:
     return gefiltert
 
 
+# Eingaben des Laufs, die NICHT schon im Plan stehen. PV, Verbrauch und
+# Zeitachse liegen in den Slots; was fehlte, um einen Plan nachzurechnen,
+# waren vor allem der p10-Pfad der Prognose (die Reserve rechnet sonst mit
+# dem Pauschalfaktor), der Basistarif vor dem Deckel, die Gemeinschafts-
+# tarife und -salden und der Heizstab-Zustand dieses Laufs (Budget, Sperre).
+EINGABEN_AUSGELASSEN = frozenset({
+    "timestamps", "consumption_kw", "production_kw", "eeg_details",
+})
+
+
+def eingaben_fuer_archiv(inputs: Any) -> dict[str, Any] | None:
+    """ScheduleInputs als JSON-taugliches Dict, ohne das, was der Plan trägt."""
+    import dataclasses
+    import math
+
+    if inputs is None or not dataclasses.is_dataclass(inputs):
+        return None
+
+    def _wert(v: Any) -> Any:
+        if isinstance(v, datetime):
+            return v.isoformat()
+        if isinstance(v, float):
+            return v if math.isfinite(v) else None
+        if isinstance(v, dict):
+            return {str(k): _wert(x) for k, x in v.items()}
+        if isinstance(v, (list, tuple)):
+            return [_wert(x) for x in v]
+        if v is None or isinstance(v, (str, int, bool)):
+            return v
+        return str(v)
+
+    return {
+        feld.name: _wert(getattr(inputs, feld.name))
+        for feld in dataclasses.fields(inputs)
+        if feld.name not in EINGABEN_AUSGELASSEN
+    }
+
+
 def _batterie_verlauf(plan: dict[str, Any]) -> list[float]:
     """Die ersten Slots der geplanten Batterieleistung — Vergleichsgröße."""
     werte: list[float] = []
@@ -209,7 +251,11 @@ class ScheduleArchive:
     # -- Schreiben --------------------------------------------------------
 
     async def async_maybe_store(
-        self, payload: dict[str, Any], config: dict[str, Any], jetzt: datetime
+        self,
+        payload: dict[str, Any],
+        config: dict[str, Any],
+        jetzt: datetime,
+        inputs: Any = None,
     ) -> str | None:
         """Legt den Plan ab, wenn es einen Grund gibt. Gibt den Grund zurück."""
         fehler = payload.get("error")
@@ -239,6 +285,9 @@ class ScheduleArchive:
             "plan": payload,
             "einstellungen": einstellungen_filtern(config),
         }
+        eingaben = eingaben_fuer_archiv(inputs)
+        if eingaben is not None:
+            eintrag["eingaben"] = eingaben
         purge = self._purge_tag != jetzt.strftime("%Y-%m-%d")
         try:
             await self._hass.async_add_executor_job(
@@ -429,6 +478,9 @@ Zeitraum: {von} bis {bis} ({len(dateien)} Einträge)
     grund         warum dieser Lauf archiviert wurde
     version       Version der Integration
     einstellungen fahrplanrelevante Konfiguration
+    eingaben      Eingaben des Laufs, die der Plan nicht trägt (p10-Pfad
+                  min_production_kw, Basistarif feedin_price_series,
+                  Gemeinschaftstarife/-salden, Heizstab-Budget, …)
     plan          Ergebnis von ScheduleRunner.to_dict():
       start                 Beginn des Planungszeitraums
       time_res_min          Slotlänge in Minuten (15)

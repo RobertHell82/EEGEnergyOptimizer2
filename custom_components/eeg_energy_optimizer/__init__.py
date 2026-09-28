@@ -2270,6 +2270,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                         schedule_runner.to_dict(),
                         {**entry.data, **entry.options},
                         dt_util.now(),
+                        schedule_runner.last_inputs,
                     )
                 except Exception:  # noqa: BLE001 - Archivieren darf den Takt nie kippen
                     _LOGGER.debug("Fahrplan-Archiv übersprungen", exc_info=True)
