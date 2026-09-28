@@ -66,6 +66,32 @@ def test_url_traegt_neigung_azimut_und_utc():
     assert "timezone=UTC" in url
     assert "forecast_days=7" in url
     assert "minutely_15=global_tilted_irradiance,temperature_2m" in url
+    assert "models=icon_seamless,ecmwf_ifs025,meteofrance_seamless" in url
+
+
+def test_mittel_ueber_die_modelle():
+    """Je Zeitpunkt zählen die Modelle mit Wert — endet eines (Météo-France
+    nach gut vier Tagen), mitteln die übrigen weiter; hat keines einen Wert,
+    ist die Strahlung 0 und die Temperatur unbekannt."""
+    reihe = openmeteo.parse_antwort(
+        {
+            "minutely_15": {
+                "time": ["2026-09-28T07:00", "2026-09-28T07:15", "2026-09-28T07:30"],
+                "global_tilted_irradiance_icon_seamless": [333.7, 350.0, None],
+                "temperature_2m_icon_seamless": [8.0, 9.0, None],
+                "global_tilted_irradiance_ecmwf_ifs025": [409.0, 380.0, None],
+                "temperature_2m_ecmwf_ifs025": [10.0, 11.0, None],
+                "global_tilted_irradiance_meteofrance_seamless": [423.7, None, None],
+                "temperature_2m_meteofrance_seamless": [12.0, None, None],
+            }
+        }
+    )
+    assert reihe.gti_w_m2[0] == pytest.approx((333.7 + 409.0 + 423.7) / 3)
+    assert reihe.temp_c[0] == pytest.approx(10.0)
+    assert reihe.gti_w_m2[1] == pytest.approx(365.0)
+    assert reihe.temp_c[1] == pytest.approx(10.0)
+    assert reihe.gti_w_m2[2] == 0.0
+    assert reihe.temp_c[2] is None
 
 
 def test_antwort_wird_zerlegt():

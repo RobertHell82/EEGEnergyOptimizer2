@@ -44,7 +44,7 @@
 <div class="guide-alert note"><p>Die Prognose wird alle 30 Minuten aufgefrischt und überlebt Neustarts. Ist Open-Meteo einmal nicht erreichbar, rechnet der Fahrplan mit den zuletzt geholten Werten weiter; erst nach 48 Stunden ohne Abruf gibt es keinen Fahrplan mehr.</p></div>
 
 <h3>Was das Modell kann und was nicht</h3>
-<p>Die Rechnung folgt dem PVWatts-Ansatz: Einstrahlung auf die Modulebene (von Open-Meteo aus Direkt- und Diffusstrahlung für deine Neigung und Ausrichtung berechnet), Temperaturkorrektur der Zellen (−0,4 % je Kelvin), pauschale Verluste, Deckel auf die AC-Grenze.</p>
+<p>Die Rechnung folgt dem PVWatts-Ansatz: Einstrahlung auf die Modulebene (von Open-Meteo aus Direkt- und Diffusstrahlung für deine Neigung und Ausrichtung berechnet, gemittelt über drei Wettermodelle: ICON vom Deutschen Wetterdienst, ECMWF und Météo-France — liegt ein Modell daneben, etwa mit Nebel, der nicht kommt, fällt es weniger ins Gewicht), Temperaturkorrektur der Zellen (−0,4 % je Kelvin), pauschale Verluste, Deckel auf die AC-Grenze.</p>
 <p>Was das Modell <strong>nicht</strong> kennt: Verschattung durch Bäume, Nachbargebäude oder Gauben, Schnee auf den Modulen, und ein Ost-West-Dach an einem Wechselrichter mit einem einzigen MPP-Tracker. In diesen Fällen liegen die Tagessummen meist noch richtig, der Tagesverlauf nicht.</p>
 <p>Gegenüber Solcast fehlt der Satelliten-Nowcast für die nächsten Stunden — bei durchbrochener Bewölkung ist Solcast dort im Vorteil. Für den Fahrplan zählt aber vor allem, wie viel Energie heute noch und morgen kommt, und da sind Wettermodell-Prognosen gleichauf.</p>
 <h3>Prognosevergleich: beide Quellen nebeneinander</h3>
