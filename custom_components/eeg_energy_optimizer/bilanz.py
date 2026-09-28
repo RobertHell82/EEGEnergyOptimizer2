@@ -831,6 +831,25 @@ class EnergieBilanz:
             time_res_s=SLOT_SEKUNDEN,
         )
 
+    @staticmethod
+    def _heizstab_budget_tag(ist_slots: list[dict[str, Any]], inputs: Any) -> float | None:
+        """Was der Puffer an diesem Tag aufnehmen konnte: die gemessene Wärme
+        plus das, was jetzt noch Platz hat. Die Referenz darf nicht mehr
+        verheizen — sonst schreibt sie sich Wärme über der Maximaltemperatur
+        gut (siehe ``simuliere_standardbetrieb``). Ohne Heizstab mit Wärmewert
+        und Puffervolumen keine Schranke (None).
+        """
+        if (
+            float(getattr(inputs, "heizstab_max_kw", 0.0) or 0.0) <= 0
+            or float(getattr(inputs, "heizstab_waermewert", 0.0) or 0.0) <= 0
+            or float(getattr(inputs, "heizstab_puffer_liter", 0.0) or 0.0) <= 0
+            or getattr(inputs, "heizstab_temp_c", None) is None
+        ):
+            return None
+        dt_h = SLOT_SEKUNDEN / 3600.0
+        gemessen = sum(max(0.0, float(s.get("heizstab") or 0.0)) for s in ist_slots) * dt_h
+        return gemessen + max(0.0, float(getattr(inputs, "heizstab_budget_kwh", 0.0) or 0.0))
+
     def _bewerte(
         self, ist_slots: list[dict[str, Any]], slots: list[dict[str, Any]], inputs: Any
     ) -> dict[str, float] | None:
@@ -875,7 +894,9 @@ class EnergieBilanz:
 
             angepasst = self._inputs_fuer(ist_slots, slots, inputs)
             referenz_slots = simuliere_standardbetrieb(
-                ist_slots, replace(angepasst, soc_pct=start_soc)
+                ist_slots,
+                replace(angepasst, soc_pct=start_soc),
+                heizstab_budget_gesamt_kwh=self._heizstab_budget_tag(ist_slots, inputs),
             )
             referenz = bewerte_geldfluesse(referenz_slots, angepasst)
         except Exception:  # noqa: BLE001

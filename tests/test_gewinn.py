@@ -966,6 +966,36 @@ def test_standardbetrieb_gibt_abgeregeltes_dem_heizstab():
     assert ref[0]["heizstab"] == pytest.approx(min(6.0, erwartet_discard * EFF), abs=1e-3)
 
 
+def test_standardbetrieb_heizt_nicht_ueber_das_pufferbudget():
+    """Grünbach, 28.09.2026: Puffer 68,5 von 75 °C, Budget 8,3 kWh — die
+    Referenz rechnete 15,2 kWh Wärme und bekam 1,04 € für Wärme gutgeschrieben,
+    die kein Puffer aufnimmt. Jetzt dieselbe Schranke wie im LP: das Budget
+    je Kalendertag, am nächsten Tag wieder voll."""
+    inputs = _inputs(
+        soc_pct=100.0, feedin_limit_kw=4.0, ac_limit_kw=15.0,
+        heizstab_max_kw=6.0, heizstab_waermewert=0.12, heizstab_budget_kwh=3.0,
+    )
+    heute = [_slot(MITTAG, i * 15, PV=12.0, consumption=0.5) for i in range(8)]
+    morgen = [_slot(MITTAG + timedelta(days=1), i * 15, PV=12.0, consumption=0.5) for i in range(8)]
+
+    ref = sched.simuliere_standardbetrieb(heute + morgen, inputs)
+
+    kwh = [r["heizstab"] * 0.25 for r in ref]
+    assert sum(kwh[:8]) == pytest.approx(3.0, abs=1e-3)
+    assert sum(kwh[8:]) == pytest.approx(3.0, abs=1e-3)
+    # Das Budget ist nach zwei Viertelstunden weg (6 kW × ¼ h = 1,5 kWh je Slot)
+    assert ref[0]["heizstab"] == pytest.approx(6.0)
+    assert ref[2]["heizstab"] == 0.0
+    # Was der Heizstab nicht nimmt, bleibt abgeregelt — ins Netz geht nicht mehr
+    assert ref[2]["grid_p"] == pytest.approx(4.0)
+    # Eine Schranke über alle Slots (Tagesbilanz)
+    gesamt = sched.simuliere_standardbetrieb(heute + morgen, inputs, heizstab_budget_gesamt_kwh=4.5)
+    assert sum(r["heizstab"] * 0.25 for r in gesamt) == pytest.approx(4.5, abs=1e-3)
+    # Ohne Wärmewert setzt auch das LP keine Schranke — die Referenz ebenso
+    ohne_wert = sched.simuliere_standardbetrieb(heute, dataclasses.replace(inputs, heizstab_waermewert=0.0))
+    assert all(r["heizstab"] == pytest.approx(6.0) for r in ohne_wert)
+
+
 def test_standardbetrieb_ohne_heizstab_kein_heizstab():
     inputs = _inputs(soc_pct=100.0, feedin_limit_kw=4.0, ac_limit_kw=15.0)
     ref = sched.simuliere_standardbetrieb([_slot(MITTAG, 0, PV=12.0, consumption=0.5)], inputs)

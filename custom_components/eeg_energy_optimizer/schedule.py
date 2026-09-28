@@ -2415,6 +2415,7 @@ def simuliere_standardbetrieb(
     slots: list[dict[str, Any]],
     inputs: ScheduleInputs,
     ziel_soc_pct: float | None = None,
+    heizstab_budget_gesamt_kwh: float | None = None,
 ) -> list[dict[str, Any]]:
     """Was ein Standard-Wechselrichter aus denselben Prognosen machen würde.
 
@@ -2463,6 +2464,18 @@ def simuliere_standardbetrieb(
     Beide Kurven binden so spät wie möglich, greifen also nur am Horizontrand.
     Ohne Angabe bleibt es beim bisherigen Verhalten (Tagesbilanz: dort ist der
     Endstand gemessen und nicht erzwungen).
+
+    Der Heizstab bekommt, was sonst abgeregelt würde — aber nie mehr, als der
+    Puffer aufnimmt. Ohne diese Schranke heizte die Referenz weit über die
+    Maximaltemperatur: Grünbach, 28.09.2026, Puffer 68,5 von 75 °C, Budget
+    8,3 kWh; das LP plante 6,55 kWh Wärme, die Referenz 15,21 kWh im
+    24-h-Fenster (18,5 kWh allein für den Folgetag) und bekam dafür 1,04 €
+    gutgeschrieben, die kein Puffer je aufnehmen kann — der Vorteil stand
+    bei −0,23 € statt im Plus. Deshalb dieselbe Schranke wie im LP
+    (``opt_highs.py``): ``heizstab_budget_kwh`` je Kalendertag, AC-seitig, und
+    nur, wenn das LP sie auch setzt (Leistung, Wärmewert und Budget > 0).
+    ``heizstab_budget_gesamt_kwh`` ersetzt sie durch EINE Schranke über alle
+    Slots — die Tagesbilanz kennt die Wärme des Tages aus der Messung.
     """
     dt_h = inputs.time_res_s / 3600.0
     eff = HAConfig.ac_efficiency
@@ -2479,6 +2492,35 @@ def simuliere_standardbetrieb(
             reserve = _reservekurve(slots, inputs, ziel_inhalt, boden, deckel, dt_h)
         if ziel_inhalt < deckel:
             obergrenze = _deckelkurve(slots, inputs, ziel_inhalt, deckel, dt_h)
+
+    # Pufferbudget je Tag (siehe oben) — None heißt unbegrenzt.
+    heiz_rest: dict[Any, float] = {}
+    if heizstab_budget_gesamt_kwh is not None:
+        budget_je_tag: float | None = max(0.0, float(heizstab_budget_gesamt_kwh))
+    elif (
+        inputs.heizstab_max_kw > 0
+        and float(inputs.heizstab_waermewert or 0.0) > 0
+        and float(inputs.heizstab_budget_kwh or 0.0) > 0
+    ):
+        budget_je_tag = float(inputs.heizstab_budget_kwh)
+    else:
+        budget_je_tag = None
+
+    def _heizstab(slot: dict[str, Any], abgeregelt: float) -> float:
+        kw = _heizstab_plan_kw(abgeregelt, inputs)
+        if budget_je_tag is None or kw <= 0:
+            return kw
+        if heizstab_budget_gesamt_kwh is not None:
+            tag: Any = None
+        else:
+            try:
+                tag = datetime.fromisoformat(str(slot["t"])).date()
+            except (KeyError, ValueError):
+                tag = None
+        rest = heiz_rest.get(tag, budget_je_tag)
+        kw = min(kw, max(0.0, rest) / dt_h)
+        heiz_rest[tag] = rest - kw * dt_h
+        return round(kw, 4)
 
     referenz: list[dict[str, Any]] = []
     for index, slot in enumerate(slots):
@@ -2528,7 +2570,7 @@ def simuliere_standardbetrieb(
                 "battery_p": round(batterie_p, 4),
                 "soc": round(100.0 * inhalt / kapazitaet, 1),
                 "discard": round(abgeregelt, 4),
-                "heizstab": _heizstab_plan_kw(abgeregelt, inputs),
+                "heizstab": _heizstab(slot, abgeregelt),
             }
         )
     return referenz
