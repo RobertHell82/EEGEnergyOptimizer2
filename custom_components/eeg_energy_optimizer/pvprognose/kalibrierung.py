@@ -11,9 +11,11 @@ Deshalb EIN Korrekturfaktor je Sonnenstand-Feld (``AZIMUT_SCHRITT`` ×
 ``HOEHE_SCHRITT`` Grad): Summe gemessen durch Summe prognostiziert, also nach
 Energie gewichtet. Felder mit wenig Energie werden zu 1 hin gezogen —
 ``(gemessen + K) / (prognose + K)`` mit ``SCHRUMPF_KWH`` als K: ein Feld muss
-sich seinen Faktor erst verdienen. Zwischen den Feldern wird bilinear
-interpoliert, nur über Felder mit Daten; ein Sonnenstand, den die Messung nie
-gesehen hat (die tiefe Wintersonne aus Herbstdaten), bekommt 1.
+sich seinen Faktor erst verdienen. Zwischen den Feldmitten wird bilinear
+interpoliert; ein Nachbar ohne Daten zählt dabei mit Faktor 1. Ein
+Sonnenstand, den die Messung nie gesehen hat (die tiefe Wintersonne aus
+Herbstdaten), bekommt so 1, und zum Rand der gelernten Felder hin läuft der
+Faktor stetig dorthin aus — ohne Stufe.
 
 Gelernt wird aus den Tagen des Prognosevergleichs (``prognosevergleich.py``):
 die **unkalibrierte** Reihe (``eigen_roh`` — sonst lernte die Kalibrierung
@@ -28,7 +30,12 @@ Was NICHT zählt, weil es nichts über die Module sagt:
   abgenommen wurde, nicht, was die Module konnten), und die Nähe der
   AC-Grenze (dort deckelt der Wechselrichter die Prognose wie die Messung).
   Ohne diesen Filter senkte die Kalibrierung die Prognose genau dort, wo die
-  Sonne am stärksten ist.
+  Sonne am stärksten ist. Geprüft wird am MAXIMUM der 5-Minuten-Werte je
+  Halbstunde (``netz_max``, ``gemessen_max``), wo der Vergleich es hat: Das
+  Halbstundenmittel einer Viertelstunde an der Grenze liegt ein ganzes Stück
+  darunter und fiele durch den Filter. Bei Nulleinspeisung zählt zusätzlich
+  eine Batterie, die nahe ihrer Maximalleistung lädt (``batterie_max``) —
+  mehr nimmt sie nicht, der Rest wird abgeregelt, auch unter 95 %.
 * **Tage mit ganz anderem Wetter** (Tagesverhältnis außerhalb
   ``TAG_VERHAELTNIS``) — Wetterzufall, keine Eigenschaft der Anlage.
 * **Kleine Werte** unter ``MIN_PROGNOSE_KW`` und einzelne Halbstunden mit
@@ -120,29 +127,35 @@ class Kalibrierung:
         return min(FAKTOR_MAX, max(FAKTOR_MIN, faktor))
 
     def faktor(self, t: datetime) -> float:
-        """Faktor für den Zeitpunkt ``t`` (Mitte des Intervalls)."""
+        """Faktor für den Zeitpunkt ``t`` (Mitte des Intervalls).
+
+        Bilinear zwischen den Feldmitten; ein Nachbar ohne (genug) Daten
+        zählt als 1 mit seinem vollen Gewicht. Bis 28.09.2026 wurde nur über
+        die Nachbarn MIT Daten normiert: Ein Sonnenstand bis zu einem halben
+        Feld jenseits des Gelernten bekam den vollen Randfaktor, danach sprang
+        er auf 1 — eine Stufe in der Prognose, und eine Korrektur für einen
+        Himmel, den die Messung nie gesehen hat. Der Preis: Am Rand eines
+        gelernten Bereichs wirkt der Faktor nur zum Teil — dieselbe Vorsicht
+        wie das Schrumpfen zu 1 bei wenig Energie.
+        """
         if not self.felder:
             return 1.0
         azimut, hoehe = sonnenstand(t, self.breite, self.laenge)
         if hoehe <= 0:
             return 1.0
-        # Bilinear zwischen den Feldmitten — nur über Felder mit Daten.
         x = azimut / AZIMUT_SCHRITT - 0.5
         y = hoehe / HOEHE_SCHRITT - 0.5
         x0, y0 = math.floor(x), math.floor(y)
         fx, fy = x - x0, y - y0
-        summe = gewicht = 0.0
+        summe = 0.0
         for dx, wx in ((0, 1.0 - fx), (1, fx)):
             for dy, wy in ((0, 1.0 - fy), (1, fy)):
                 w = wx * wy
                 if w <= 0:
                     continue
                 f = self.feldfaktor((int((x0 + dx) % (360 / AZIMUT_SCHRITT)), y0 + dy))
-                if f is None:
-                    continue
-                summe += w * f
-                gewicht += w
-        return round(summe / gewicht, 4) if gewicht > 0 else 1.0
+                summe += w * (1.0 if f is None else f)
+        return round(summe, 4)
 
     def status(self) -> dict[str, Any]:
         faktoren = [f for f in (self.feldfaktor(k) for k in self.felder) if f is not None]
@@ -165,7 +178,14 @@ def _abgeregelt(
     soc: float | None,
     export_grenze_kw: float | None,
     ac_limit_kw: float | None,
+    batterie: float | None = None,
+    batterie_max_kw: float | None = None,
 ) -> bool:
+    """Könnte in dieser Halbstunde abgeregelt worden sein?
+
+    ``pv`` und ``netz`` sind die Maxima der 5-Minuten-Werte, wo es sie gibt
+    (sonst die Mittel), ``batterie`` das Maximum der Ladeleistung.
+    """
     if ac_limit_kw and max(pv, prognose) >= ac_limit_kw - GRENZE_ABSTAND_KW:
         return True
     if export_grenze_kw is None or netz is None:
@@ -173,6 +193,12 @@ def _abgeregelt(
     if netz < export_grenze_kw - GRENZE_ABSTAND_KW:
         return False
     if export_grenze_kw >= NULLEINSPEISUNG_KW:
+        return True
+    if (
+        batterie is not None
+        and batterie_max_kw
+        and batterie >= batterie_max_kw - GRENZE_ABSTAND_KW
+    ):
         return True
     return soc is None or soc >= SOC_VOLL_PCT
 
@@ -184,8 +210,13 @@ def lerne(
     kennung: str,
     export_grenze_kw: float | None,
     ac_limit_kw: float | None,
+    batterie_max_kw: float | None = None,
 ) -> Kalibrierung:
-    """Kalibrierung aus den Tagesaufzeichnungen des Prognosevergleichs."""
+    """Kalibrierung aus den Tagesaufzeichnungen des Prognosevergleichs.
+
+    Tage aus der Zeit vor ``netz_max`` / ``gemessen_max`` / ``batterie_max``
+    haben nur die Mittel — für sie gilt der Filter wie bisher.
+    """
     kal = Kalibrierung(breite=breite, laenge=laenge)
     halbe = timedelta(minutes=SLOT_MIN / 2)
     for tag in tage:
@@ -193,14 +224,26 @@ def lerne(
             continue
         roh: dict[str, float] = tag.get("eigen_roh") or {}
         gemessen: dict[str, float] = tag.get("gemessen") or {}
+        gemessen_max: dict[str, float] = tag.get("gemessen_max") or {}
         netz: dict[str, float] = tag.get("netz") or {}
+        netz_max: dict[str, float] = tag.get("netz_max") or {}
         soc: dict[str, float] = tag.get("soc") or {}
+        batterie: dict[str, float] = tag.get("batterie_max") or {}
         paare: list[tuple[str, float, float]] = []
         for slot, prognose in roh.items():
             pv = gemessen.get(slot)
             if pv is None or prognose < MIN_PROGNOSE_KW:
                 continue
-            if _abgeregelt(pv, prognose, netz.get(slot), soc.get(slot), export_grenze_kw, ac_limit_kw):
+            if _abgeregelt(
+                max(pv, gemessen_max.get(slot, pv)),
+                prognose,
+                netz_max.get(slot, netz.get(slot)),
+                soc.get(slot),
+                export_grenze_kw,
+                ac_limit_kw,
+                batterie.get(slot),
+                batterie_max_kw,
+            ):
                 kal.ausgelassen_abregelung += 1
                 continue
             paare.append((slot, prognose, pv))

@@ -510,3 +510,48 @@ def test_telemetrie_meldet_vergleich_und_flaechen_ohne_liste():
     assert settings["pv_flaechen_kwp"] == 16.5
     assert "pv_flaechen" not in settings
     assert "pv_flaechen" not in TELEMETRY_SETTINGS_KEYS
+
+
+def test_messung_aus_punkten_maximum_und_nan():
+    """Das Maximum je Halbstunde erkennt eine Viertelstunde an der
+    Exportgrenze, die im Mittel verschwindet; NaN fällt weg."""
+    slots = pv.tagesslots(HEUTE)
+    basis = slots[20]
+    werte = [4.0, 4.0, 4.0, 1.0, 1.0, float("nan")]
+    punkte = [[(basis + timedelta(minutes=5 * i)).isoformat(), w] for i, w in enumerate(werte)]
+    punkte.append([(basis + timedelta(minutes=30)).isoformat(), "inf"])
+    mittel, _ = pv.messung_aus_punkten(punkte, slots)
+    maximum, _ = pv.messung_aus_punkten(punkte, slots, maximum=True)
+    assert mittel[basis.isoformat()] == pytest.approx(14.0 / 5)
+    assert maximum[basis.isoformat()] == pytest.approx(4.0)
+    assert slots[21].isoformat() not in mittel
+
+
+async def test_tick_speichert_die_maxima_fuer_die_kalibrierung():
+    slots = pv.tagesslots(HEUTE)
+    solcast = {slots[i]: (1.0, 0.5) for i in range(12, 36)}
+    eigen = {slots[i]: 0.8 for i in range(12, 36)}
+
+    def _punkte(werte):
+        return [[(slots[20] + timedelta(minutes=5 * i)).isoformat(), w] for i, w in enumerate(werte)]
+
+    reihen = {
+        "pv_leistung": _punkte([5.0, 5.0, 5.0, 2.0, 2.0, 2.0]),
+        "netzleistung": _punkte([4.0, 4.0, 4.0, 1.0, 1.0, 1.0]),
+        "batterieleistung": _punkte([3.0, 3.0, 3.0, -1.0, -1.0, -1.0]),
+    }
+    hass = _hass_mit_provider(eigen)
+    with patch.object(pv, "Store", None):
+        v = pv.Prognosevergleich(hass, "entry1")
+    ist = AsyncMock(return_value={"reihen": reihen})
+    with (
+        patch.object(sched, "_solcast_detailed", return_value=solcast),
+        patch("custom_components.eeg_energy_optimizer.schedule_archive.async_ist_verlauf", ist),
+    ):
+        await v.async_tick({}, JETZT)
+    tag = v.tag(HEUTE)
+    k = slots[20].isoformat()
+    assert tag["netz"][k] == pytest.approx(2.5)
+    assert tag["netz_max"][k] == pytest.approx(4.0)
+    assert tag["gemessen_max"][k] == pytest.approx(5.0)
+    assert tag["batterie_max"][k] == pytest.approx(3.0)

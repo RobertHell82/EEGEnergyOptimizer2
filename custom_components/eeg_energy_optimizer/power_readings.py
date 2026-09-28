@@ -10,7 +10,14 @@ durch divergente Lokalkopien.
 """
 from __future__ import annotations
 
+import math
+from datetime import datetime, timezone
 from typing import Any
+
+try:  # pragma: no cover - im Test nicht vorhanden
+    from homeassistant.util import dt as dt_util
+except ImportError:  # pragma: no cover
+    dt_util = None  # type: ignore[assignment]
 
 from .const import (
     CONF_BATTERY_CAPACITY_KWH,
@@ -184,7 +191,10 @@ def backfill_faktor_kw(
     raten. Leere Einheit = kW, wie in ``read_power_kw``.
     """
     if statistik_einheit is not None:
-        if statistik_einheit.strip().lower() in _HA_LEISTUNGSEINHEITEN:
+        # Exakt, ohne strip/lower: Home Assistant rechnet nur um, wenn die
+        # Metadaten-Einheit genau ein Schlüssel seines Konverters ist. „w“
+        # oder „ kW“ liefert es unverändert in der gespeicherten Einheit.
+        if statistik_einheit in _HA_LEISTUNGSEINHEITEN:
             return 1.0  # Home Assistant hat schon auf kW umgerechnet
         return _UNIT_FACTORS_TO_KW.get(statistik_einheit.strip().lower(), 1.0)
     if zustand_einheit is None:
@@ -253,8 +263,10 @@ def backfill_stunden(
 
 
 # Einheiten, die Home Assistant als Leistung kennt und beim Lesen der
-# Statistik selbst umrechnet (PowerConverter).
-_HA_LEISTUNGSEINHEITEN = frozenset({"w", "kw", "mw", "gw"})
+# Statistik selbst umrechnet — die Schlüssel von PowerConverter in
+# STATISTIC_UNIT_TO_UNIT_CONVERTER, Groß-/Kleinschreibung wie dort
+# („mW“ ist Milliwatt, „MW“ Megawatt).
+_HA_LEISTUNGSEINHEITEN = frozenset({"mW", "W", "kW", "MW", "GW", "TW"})
 
 # Bekannte Einheiten-Aliase, alle in der KEY in lowercase. Deckt die in HA-
 # Sensoren beobachteten Schreibweisen ab — bewusst defensiv, weil HA-Custom-
@@ -275,12 +287,69 @@ _UNIT_FACTORS_TO_KW: dict[str, float] = {
 }
 
 
-def read_power_kw(hass: Any, entity_id: str) -> float | None:
+# Wie alt der Zustand einer Live-Messung höchstens sein darf, bevor er als
+# fehlend gilt. Eine hängende Modbus-Verbindung lässt den letzten Wert stehen,
+# ohne ``unavailable`` zu melden — Guard 1, Not-Aus und Heizstab regelten dann
+# auf einen eingefrorenen Netzzähler. Großzügig statt knapp: Die Quellen
+# schreiben unterschiedlich oft (Huawei ~5–30 s, SMA 5 s, Kostal 10 s,
+# Fronius-Zähler 1 min, die kombinierten Paar-Sensoren dieser Integration im
+# Minutentakt), und ein Koordinator mit ``always_update=False`` schreibt einen
+# unveränderten Wert gar nicht neu — nachts steht die Batterie auf 0 W. Ein
+# falsch „veralteter“ Batteriesensor nähme dem Executor die Hauslast; fünf
+# Minuten eingefroren sind dagegen gut zehn Guard-Läufe, nicht Stunden.
+# ``leistungsspitze.HALTEN_MAX_S`` (120 s) ist bewusst knapper: Dort wird
+# Energie integriert, jede zu lang gehaltene Sekunde erfindet Bezug.
+MESSWERT_MAX_ALTER_S = 300.0
+
+
+def _jetzt_utc() -> datetime:
+    if dt_util is not None:
+        jetzt = dt_util.utcnow()
+        if isinstance(jetzt, datetime):  # im Test ist dt_util ein Mock
+            return jetzt
+    return datetime.now(tz=timezone.utc)
+
+
+def zustand_alter_s(state: Any, jetzt: datetime) -> float | None:
+    """Sekunden seit die Quelle den Zustand zuletzt geschrieben hat.
+
+    ``last_reported`` wandert auch bei gleichbleibendem Wert weiter, sobald
+    die Quelle neu schreibt — ein stehender Wert ist also gemessen, ein
+    eingefrorener nicht. ``last_updated`` ist der Ersatz für ältere HA-
+    Versionen. ``None`` = nicht prüfbar (kein Zeitstempel, Test-Mock); das
+    gilt als frisch, denn ohne Beleg soll kein Messwert verschwinden.
+    """
+    zuletzt = getattr(state, "last_reported", None)
+    if not isinstance(zuletzt, datetime):
+        zuletzt = getattr(state, "last_updated", None)
+    if not isinstance(zuletzt, datetime):
+        return None
+    try:
+        return (jetzt - zuletzt).total_seconds()
+    except TypeError:  # naiv gegen zonenbehaftet
+        return None
+
+
+def read_power_kw(
+    hass: Any,
+    entity_id: str,
+    *,
+    max_alter_s: float | None = None,
+    jetzt: datetime | None = None,
+) -> float | None:
     """Liest einen Power-Sensor und normalisiert auf kW.
 
     Returns None für nicht konfigurierte / nicht verfügbare Sensoren —
     NICHT 0.0, weil das Backend zwischen "0 W" und "konnte nicht gelesen
-    werden" unterscheidet.
+    werden" unterscheidet. Ebenso None für nicht-endliche Werte (``nan``,
+    ``inf`` — ``float()`` nimmt beide an, und ein NaN vergiftet jede Summe,
+    in die es gerät) und, mit ``max_alter_s``, für einen Zustand, den die
+    Quelle länger nicht geschrieben hat.
+
+    Die Altersprüfung ist eine Option, kein Standard: Nennwerte wie die
+    Nennladeleistung eines Speichers schreiben manche Integrationen nur alle
+    paar Minuten, sie sind trotzdem gültig. Die Live-Pfade unten
+    (``compute_*``) prüfen mit ``MESSWERT_MAX_ALTER_S``.
 
     Einheiten-Erkennung ist case-insensitive und akzeptiert die gängigen
     Aliase (W/Watt/Watts, kW/kilowatt, MW/Megawatt). Eine fehlende oder
@@ -299,6 +368,12 @@ def read_power_kw(hass: Any, entity_id: str) -> float | None:
         val = float(raw_state)
     except (ValueError, TypeError):
         return None
+    if not math.isfinite(val):
+        return None
+    if max_alter_s is not None:
+        alter = zustand_alter_s(state, jetzt if jetzt is not None else _jetzt_utc())
+        if alter is not None and alter > max_alter_s:
+            return None
 
     attrs = getattr(state, "attributes", None) or {}
     unit_raw = attrs.get("unit_of_measurement") if hasattr(attrs, "get") else None
@@ -310,6 +385,11 @@ def read_power_kw(hass: Any, entity_id: str) -> float | None:
         # in kW. Das ist die historische Default-Annahme der Integration.
         return val
     return val * factor
+
+
+def _live_kw(hass: Any, entity_id: str) -> float | None:
+    """``read_power_kw`` für Live-Messungen: veraltete Zustände zählen als fehlend."""
+    return read_power_kw(hass, entity_id, max_alter_s=MESSWERT_MAX_ALTER_S)
 
 
 def compute_pv_now_kw(hass: Any, config: dict) -> float | None:
@@ -330,8 +410,8 @@ def compute_pv_now_kw(hass: Any, config: dict) -> float | None:
     pv_id = config.get(CONF_PV_POWER_SENSOR, "")
     pv_2_id = config.get(CONF_PV_POWER_SENSOR_2, "")
 
-    pv_raw = read_power_kw(hass, pv_id) if pv_id else None
-    pv_2_raw = read_power_kw(hass, pv_2_id) if pv_2_id else None
+    pv_raw = _live_kw(hass, pv_id) if pv_id else None
+    pv_2_raw = _live_kw(hass, pv_2_id) if pv_2_id else None
 
     # Beide Quellen unverfügbar → kein Wert (Backend bekommt None, nicht 0)
     if pv_raw is None and pv_2_raw is None:
@@ -351,7 +431,7 @@ def compute_grid_export_kw(hass: Any, config: dict) -> float | None:
     klebt; der Not-Aus erkennt anhaltenden Netzbezug während einer Entladung.
     """
     grid_id = config.get(CONF_GRID_POWER_SENSOR, "")
-    grid = read_power_kw(hass, grid_id)
+    grid = _live_kw(hass, grid_id)
     if grid is None:
         return None
     return grid * resolve_sign(config.get(CONF_INVERTER_TYPE, ""), grid_id, "grid_sign")
@@ -372,12 +452,12 @@ def compute_battery_now_kw(hass: Any, config: dict) -> float | None:
     bat_id = config.get(CONF_BATTERY_POWER_SENSOR, "")
     bat_2_id = config.get(CONF_BATTERY_POWER_SENSOR_2, "")
 
-    battery_power = read_power_kw(hass, bat_id)
+    battery_power = _live_kw(hass, bat_id)
     if battery_power is None:
         return None
 
     if bat_2_id:
-        bat2 = read_power_kw(hass, bat_2_id)
+        bat2 = _live_kw(hass, bat_2_id)
         if bat2 is not None:
             battery_power += bat2
 
@@ -425,7 +505,8 @@ def compute_heizstab_kw(hass: Any, config: dict) -> float:
         if controller is None:
             return 0.0
         kw = getattr(controller, "leistung_kw", None)
-        return float(kw) if kw else 0.0
+        kw = float(kw) if kw else 0.0
+        return kw if math.isfinite(kw) else 0.0
     except (AttributeError, TypeError):
         return 0.0
 
@@ -458,9 +539,9 @@ def compute_house_load_kw(hass: Any, config: dict) -> float | None:
     bat_2_id = config.get(CONF_BATTERY_POWER_SENSOR_2, "")
     grid_id = config.get(CONF_GRID_POWER_SENSOR, "")
 
-    pv_power = read_power_kw(hass, pv_id)
-    battery_power = read_power_kw(hass, bat_id)
-    grid_power = read_power_kw(hass, grid_id)
+    pv_power = _live_kw(hass, pv_id)
+    battery_power = _live_kw(hass, bat_id)
+    grid_power = _live_kw(hass, grid_id)
 
     # PV-Sensor nachts nicht verfügbar (Inverter offline) → PV = 0 kW
     if pv_power is None:
@@ -470,14 +551,14 @@ def compute_house_load_kw(hass: Any, config: dict) -> float | None:
 
     # Optionaler zweiter PV-Sensor (z. B. SolaX-Generator über Meter 2)
     if pv_2_id:
-        pv2 = read_power_kw(hass, pv_2_id)
+        pv2 = _live_kw(hass, pv_2_id)
         if pv2 is not None:
             pv_power += pv2
 
     # Zweite Batterie (Huawei Master/Slave): roher, vorzeichenbehafteter Wert,
     # exakt wie im HausverbrauchSensor.
     if bat_2_id:
-        bat2 = read_power_kw(hass, bat_2_id)
+        bat2 = _live_kw(hass, bat_2_id)
         if bat2 is not None:
             battery_power += bat2
 

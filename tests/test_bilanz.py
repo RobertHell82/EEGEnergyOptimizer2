@@ -795,3 +795,97 @@ def test_waerme_zaehlt_unabhaengig_von_der_puffertemperatur():
     assert ergebnis["heizstab_kwh"] == pytest.approx(0.1)
     assert "heizstab_ueber_kwh" not in ergebnis
     assert ergebnis["waerme"] == pytest.approx(0.01)
+
+
+# ---------------------------------------------------------------------------
+# Heizstab-Schranke der Referenz — je Tag eingefroren
+# ---------------------------------------------------------------------------
+
+
+def _heiz_inputs(temp_c: float, budget: float = 0.0):
+    # 500 L, 60 °C maximal: je Kelvin 500 · 1,163 · 1,1 / 1000 = 0,6397 kWh
+    return _inputs(
+        heizstab_max_kw=3.0, heizstab_waermewert=0.10, heizstab_puffer_liter=500.0,
+        heizstab_temp_c=temp_c, heizstab_maxtemp_c=60.0, heizstab_budget_kwh=budget,
+    )
+
+
+_JE_KELVIN = 500 * 1.163 * 1.1 / 1000
+
+
+def test_heizstab_schranke_ist_das_minimum_ueber_den_tag():
+    """Morgens 40 °C (12,8 kWh Platz), mittags 2 kWh geheizt, abends auf
+    35 °C ausgekühlt: Die Schranke bleibt beim Morgen — um 04:00 beim
+    Abschluss zählt nicht, was die Nacht an Platz geschaffen hat."""
+    b = _bilanz()
+    now = datetime(2026, 8, 27, 6, 0, tzinfo=timezone.utc)
+    werte = {"pv": 0.0, "haus": 0.3, "netz": -0.3, "batterie": 0.0, "soc": 50.0}
+    b._summiere("8", werte, 30.0, "Ein", _heiz_inputs(40.0), now)
+    assert b._heute["heizstab_schranke_kwh"] == pytest.approx(20 * _JE_KELVIN, abs=1e-3)
+
+    # Mittags: 2 kWh in den Heizstab, der Puffer steht bei 43 °C
+    b._heute["slots"]["8"]["heizstab"] = 2.0
+    b._summiere("32", werte, 30.0, "Ein", _heiz_inputs(43.0), now)
+    assert b._heute["heizstab_schranke_kwh"] == pytest.approx(
+        min(20 * _JE_KELVIN, 2.0 + 17 * _JE_KELVIN), abs=1e-3
+    )
+    frueh = b._heute["heizstab_schranke_kwh"]
+    # Abends ausgekühlt: mehr Platz, die Schranke steigt NICHT
+    b._summiere("70", werte, 30.0, "Ein", _heiz_inputs(35.0), now)
+    assert b._heute["heizstab_schranke_kwh"] == frueh
+
+
+def test_heizstab_schranke_ignoriert_die_sperre_der_zweiten_waermequelle():
+    """Gesperrt ist das Budget 0 — der Platz im Puffer ist trotzdem da."""
+    b = _bilanz()
+    now = datetime(2026, 8, 27, 6, 0, tzinfo=timezone.utc)
+    werte = {"pv": 0.0, "haus": 0.3, "netz": -0.3, "batterie": 0.0, "soc": 50.0}
+    b._summiere("8", werte, 30.0, "Ein", _heiz_inputs(50.0, budget=0.0), now)
+    assert b._heute["heizstab_schranke_kwh"] == pytest.approx(10 * _JE_KELVIN, abs=1e-3)
+
+
+def test_ohne_heizstab_keine_schranke():
+    b = _bilanz()
+    now = datetime(2026, 8, 27, 6, 0, tzinfo=timezone.utc)
+    werte = {"pv": 0.0, "haus": 0.3, "netz": -0.3, "batterie": 0.0, "soc": 50.0}
+    b._summiere("8", werte, 30.0, "Ein", _inputs(), now)
+    b._summiere("9", werte, 30.0, "Ein", None, now)
+    assert "heizstab_schranke_kwh" not in b._heute
+
+
+def test_heizstab_budget_tag_eingefroren_nie_unter_der_messung():
+    ist = [{"heizstab": 8.0}, {"heizstab": 8.0}]  # 2 × 8 kW × ¼ h = 4 kWh
+    inputs = _heiz_inputs(55.0, budget=3.0)
+    b = EnergieBilanz
+    # Alter Tag ohne Feld: wie bisher, Messung + Budget jetzt
+    assert b._heizstab_budget_tag(ist, inputs) == pytest.approx(7.0)
+    # Eingefroren: das Minimum des Tages …
+    assert b._heizstab_budget_tag(ist, inputs, 5.5) == pytest.approx(5.5)
+    # … aber was hineinging, hat hineingepasst
+    assert b._heizstab_budget_tag(ist, inputs, 1.0) == pytest.approx(4.0)
+    # Ohne Heizstab keine Schranke, eingefroren oder nicht
+    assert b._heizstab_budget_tag(ist, _inputs(), 5.5) is None
+
+
+def test_bewertung_reicht_die_eingefrorene_schranke_an_die_referenz(monkeypatch):
+    from custom_components.eeg_energy_optimizer import schedule as sched
+
+    gesehen = []
+    echt = sched.simuliere_standardbetrieb
+
+    def _spion(*args, **kwargs):
+        gesehen.append(kwargs.get("heizstab_budget_gesamt_kwh"))
+        return echt(*args, **kwargs)
+
+    monkeypatch.setattr(sched, "simuliere_standardbetrieb", _spion)
+    b = _bilanz()
+    tag = _tag_mit({
+        32: _slot(pv=2.0, haus=0.3, export=1.0, heizstab=0.5, kwp=0.26, basis=0.06,
+                  soc_a=50.0, soc_e=50.0, s=900.0),
+    })
+    inputs = _heiz_inputs(30.0, budget=19.0)  # abends ausgekühlt: viel Budget
+    b.bewerte_tag(tag, inputs)
+    tag["heizstab_schranke_kwh"] = 2.5
+    b.bewerte_tag(tag, inputs)
+    assert gesehen[0] == pytest.approx(0.5 + 19.0)  # Altbestand: bisheriges Verhalten
+    assert gesehen[1] == pytest.approx(2.5)

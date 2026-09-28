@@ -305,3 +305,24 @@ def test_netzkosten_monat_mindestens_zwei_kw_und_stufe():
     k = netzkosten_monat(12.0)
     assert k["endstufe_eur"] == pytest.approx((10 * 33.82 + 2 * 67.64) / 12 * 1.2, abs=0.01)
     assert netzkosten_monat(None) is None
+
+
+def test_nicht_endlicher_messwert_zaehlt_nicht():
+    """max(0, nan) wäre 0 — ein unlesbarer Wert ist aber unbekannt, keine
+    gemessene Null."""
+    ls = _neu()
+    ls.messwert(_min(0), float("nan"))
+    assert ls._letzte_kw is None
+    ls.messwert(_min(1), float("inf"))
+    assert ls._letzte_kw is None
+
+
+def test_nan_im_speicher_wird_null():
+    ls = _neu()
+    ls.aus_dict(
+        {"laufend": {"start": _min(0).isoformat(), "energie_kwh": float("nan"),
+                     "abgedeckt_s": "x"}},
+        _min(1),
+    )
+    assert ls._energie_kwh == 0.0
+    assert ls._abgedeckt_s == 0.0

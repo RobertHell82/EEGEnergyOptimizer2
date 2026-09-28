@@ -75,7 +75,7 @@ from dataclasses import replace
 from datetime import date, datetime, timedelta
 from typing import Any
 
-from .const import DOMAIN, MODE_EIN
+from .const import DOMAIN, MODE_EIN, PUFFER_WH_PRO_LITER_KELVIN_EFFEKTIV
 
 try:  # pragma: no cover - im Test nicht vorhanden
     from homeassistant.helpers.storage import Store
@@ -129,6 +129,40 @@ _QUELLEN = {
 _QUELLEN_OPTIONAL = {
     "heizstab": "heizstab_leistung",
 }
+
+
+def _heizstab_bewertet(inputs: Any) -> bool:
+    """Heizstab mit Leistung, Wärmewert, Puffervolumen und Temperatur?"""
+    try:
+        return (
+            float(getattr(inputs, "heizstab_max_kw", 0.0) or 0.0) > 0
+            and float(getattr(inputs, "heizstab_waermewert", 0.0) or 0.0) > 0
+            and float(getattr(inputs, "heizstab_puffer_liter", 0.0) or 0.0) > 0
+            and getattr(inputs, "heizstab_temp_c", None) is not None
+        )
+    except (TypeError, ValueError):
+        return False
+
+
+def _puffer_platz_kwh(inputs: Any) -> float | None:
+    """Wärme, die der Puffer bis zur Maximaltemperatur noch aufnimmt (kWh).
+
+    Aus Volumen, gemessener und maximaler Temperatur — nicht aus
+    ``heizstab_budget_kwh``: Das ist 0, solange eine zweite Wärmequelle den
+    Heizstab sperrt, und eine halbe Stunde Holzvergaser am Morgen hätte die
+    Schranke für den ganzen Tag auf null gedrückt. Ohne Maximaltemperatur
+    bleibt nur das Budget.
+    """
+    try:
+        maxtemp = float(getattr(inputs, "heizstab_maxtemp_c", 0.0) or 0.0)
+        temp = getattr(inputs, "heizstab_temp_c", None)
+        liter = float(getattr(inputs, "heizstab_puffer_liter", 0.0) or 0.0)
+        if maxtemp > 0 and temp is not None:
+            hub_k = max(0.0, maxtemp - float(temp))
+            return liter * hub_k * PUFFER_WH_PRO_LITER_KELVIN_EFFEKTIV / 1000.0
+        return max(0.0, float(getattr(inputs, "heizstab_budget_kwh", 0.0) or 0.0))
+    except (TypeError, ValueError):
+        return None
 
 
 def _jetzt_lokal(now_utc: datetime) -> datetime:
@@ -488,6 +522,30 @@ class EnergieBilanz:
                 slot["soc_a"] = round(soc, 1)
             slot["soc_e"] = round(soc, 1)
 
+        self._friere_heizstab_schranke_ein(inputs)
+
+    def _friere_heizstab_schranke_ein(self, inputs: Any) -> None:
+        """Was der Puffer an diesem Tag höchstens aufnehmen konnte, festhalten.
+
+        Je Takt ``Wärme bisher + Platz jetzt``, im Tagesdatensatz das Minimum
+        davon. Bis 28.09.2026 wurde die Schranke erst bei der Bewertung aus
+        dem Budget DIESES Augenblicks gebildet — um 04:00, beim Abschluss, ist
+        der Puffer über Nacht ausgekühlt, die Referenz durfte also mehr heizen,
+        als tagsüber Platz war, und der laufende Tag stieg abends ohne Grund.
+        Das Minimum ist die engste Aussage des Tages; wurde tagsüber Wasser
+        gezapft, ist es zu eng — dagegen hilft die gemessene Wärme als
+        Untergrenze in ``_heizstab_budget_tag``.
+        """
+        if inputs is None or not _heizstab_bewertet(inputs):
+            return
+        platz = _puffer_platz_kwh(inputs)
+        if platz is None:
+            return
+        schranke = round(self._heute_summe("heizstab") + platz, 3)
+        bisher = self._heute.get("heizstab_schranke_kwh")
+        if bisher is None or schranke < float(bisher):
+            self._heute["heizstab_schranke_kwh"] = schranke
+
     def _friere_preise_ein(
         self, slot: dict[str, Any], inputs: Any, now_local: datetime
     ) -> None:
@@ -710,7 +768,8 @@ class EnergieBilanz:
         )
 
         vorteil, referenz = self._optimierungs_vorteil(
-            ist_slots, slots, inputs, bewertung
+            ist_slots, slots, inputs, bewertung,
+            heizstab_schranke=tag.get("heizstab_schranke_kwh"),
         )
         ergebnis["opt_vorteil"] = vorteil
         # Beide Seiten der Differenz mit ausweisen — sonst steht im Panel eine
@@ -832,22 +891,28 @@ class EnergieBilanz:
         )
 
     @staticmethod
-    def _heizstab_budget_tag(ist_slots: list[dict[str, Any]], inputs: Any) -> float | None:
-        """Was der Puffer an diesem Tag aufnehmen konnte: die gemessene Wärme
-        plus das, was jetzt noch Platz hat. Die Referenz darf nicht mehr
-        verheizen — sonst schreibt sie sich Wärme über der Maximaltemperatur
-        gut (siehe ``simuliere_standardbetrieb``). Ohne Heizstab mit Wärmewert
-        und Puffervolumen keine Schranke (None).
+    def _heizstab_budget_tag(
+        ist_slots: list[dict[str, Any]],
+        inputs: Any,
+        eingefroren: float | None = None,
+    ) -> float | None:
+        """Was der Puffer an diesem Tag aufnehmen konnte. Die Referenz darf
+        nicht mehr verheizen — sonst schreibt sie sich Wärme über der
+        Maximaltemperatur gut (siehe ``simuliere_standardbetrieb``). Ohne
+        Heizstab mit Wärmewert und Puffervolumen keine Schranke (None).
+
+        ``eingefroren`` ist die während des Tages festgehaltene Schranke
+        (``_friere_heizstab_schranke_ein``), nie kleiner als die gemessene
+        Wärme — was tatsächlich hineinging, hat hineingepasst. Tage, die vor
+        dem Einfrieren aufgezeichnet wurden, haben keine: dann wie bisher die
+        gemessene Wärme plus das Budget des Bewertungszeitpunkts.
         """
-        if (
-            float(getattr(inputs, "heizstab_max_kw", 0.0) or 0.0) <= 0
-            or float(getattr(inputs, "heizstab_waermewert", 0.0) or 0.0) <= 0
-            or float(getattr(inputs, "heizstab_puffer_liter", 0.0) or 0.0) <= 0
-            or getattr(inputs, "heizstab_temp_c", None) is None
-        ):
+        if not _heizstab_bewertet(inputs):
             return None
         dt_h = SLOT_SEKUNDEN / 3600.0
         gemessen = sum(max(0.0, float(s.get("heizstab") or 0.0)) for s in ist_slots) * dt_h
+        if eingefroren is not None:
+            return max(float(eingefroren), gemessen)
         return gemessen + max(0.0, float(getattr(inputs, "heizstab_budget_kwh", 0.0) or 0.0))
 
     def _bewerte(
@@ -869,6 +934,7 @@ class EnergieBilanz:
         slots: list[dict[str, Any]],
         inputs: Any,
         ist_bewertung: dict[str, float],
+        heizstab_schranke: float | None = None,
     ) -> tuple[float | None, dict[str, float] | None]:
         """Ist gegen simulierten Standardbetrieb — beide am selben Tag gemessen.
 
@@ -896,7 +962,9 @@ class EnergieBilanz:
             referenz_slots = simuliere_standardbetrieb(
                 ist_slots,
                 replace(angepasst, soc_pct=start_soc),
-                heizstab_budget_gesamt_kwh=self._heizstab_budget_tag(ist_slots, inputs),
+                heizstab_budget_gesamt_kwh=self._heizstab_budget_tag(
+                    ist_slots, inputs, heizstab_schranke
+                ),
             )
             referenz = bewerte_geldfluesse(referenz_slots, angepasst)
         except Exception:  # noqa: BLE001

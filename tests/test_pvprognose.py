@@ -735,3 +735,13 @@ async def test_ohne_daten_bleiben_die_sensoren_leer():
     for s in sensoren:
         await s.async_update()
         assert s.native_value is None
+
+
+
+def test_openmeteo_float_verwirft_nicht_endliche_werte():
+    from custom_components.eeg_energy_optimizer.pvprognose import openmeteo as om
+
+    assert om._float("nan") is None
+    assert om._float(float("inf")) is None
+    assert om._float("12.5") == 12.5
+    assert om._float(None) is None

@@ -43,6 +43,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from ..const import (
+    CONF_DISCHARGE_POWER_KW,
     CONF_GRID_EXPORT_LIMIT_ENABLED,
     CONF_GRID_EXPORT_LIMIT_KW,
     CONF_INVERTER_AC_LIMIT_KW,
@@ -197,6 +198,7 @@ class PvPrognoseProvider:
         self._paare: list[tuple[Flaeche, Wetterreihe]] = []
         self._kalibrierung: Kalibrierung | None = None
         self._export_grenze_kw: float | None = None
+        self._batterie_max_kw: float | None = None
         self._geholt: datetime | None = None
         self._fehler: str | None = None
         self._fehler_gemeldet = False
@@ -223,6 +225,13 @@ class PvPrognoseProvider:
             except (TypeError, ValueError):
                 grenze = None
         self._export_grenze_kw = grenze
+        # Batterie-Leistungsgrenze, wie der Fahrplan sie nimmt — für den
+        # Abregelungsfilter bei Nulleinspeisung (siehe kalibrierung.py).
+        try:
+            batterie = float(config.get(CONF_DISCHARGE_POWER_KW) or 0.0)
+        except (TypeError, ValueError):
+            batterie = 0.0
+        self._batterie_max_kw = batterie if batterie > 0 else None
 
     def _kennung(self) -> dict[str, Any]:
         """Womit die gespeicherte Reihe gerechnet wurde — passt sie nicht
@@ -246,7 +255,8 @@ class PvPrognoseProvider:
         if ort is None:
             return
         self._kalibrierung = lerne(
-            tage, ort[0], ort[1], self.modellkennung(), self._export_grenze_kw, self._ac_limit_kw
+            tage, ort[0], ort[1], self.modellkennung(), self._export_grenze_kw,
+            self._ac_limit_kw, self._batterie_max_kw,
         )
         self._neu_rechnen()
 

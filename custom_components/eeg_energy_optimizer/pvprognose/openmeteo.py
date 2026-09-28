@@ -38,6 +38,7 @@ von zehn Variablen, ab der Open-Meteo einen Abruf mehrfach zählt.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
@@ -94,10 +95,14 @@ class Wetterreihe:
 
 
 def _float(wert: Any) -> float | None:
+    """Zahl oder None. ``nan``/``inf`` zählen wie ein fehlender Wert: ``float()``
+    nimmt die Zeichenketten an, und ein NaN im Modellmittel machte den Slot
+    und jede Tagessumme darüber zu NaN."""
     try:
-        return None if wert is None else float(wert)
+        zahl = None if wert is None else float(wert)
     except (TypeError, ValueError):
         return None
+    return zahl if zahl is not None and math.isfinite(zahl) else None
 
 
 def _reihen(block: dict[str, Any], groesse: str) -> list[list[Any]]:

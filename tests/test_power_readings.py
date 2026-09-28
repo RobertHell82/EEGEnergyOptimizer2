@@ -773,3 +773,104 @@ def test_backfill_faktor_leere_einheit_ist_kw():
     """Wie read_power_kw: ohne Einheit gilt kW."""
     assert backfill_faktor_kw("", None) == 1.0
     assert backfill_faktor_kw(None, "") == 1.0
+
+
+# ---------------------------------------------------------------------------
+# read_power_kw — Endlichkeit und Alter (hängender Zähler)
+# ---------------------------------------------------------------------------
+
+from datetime import datetime, timedelta, timezone  # noqa: E402
+from types import SimpleNamespace  # noqa: E402
+
+from custom_components.eeg_energy_optimizer.power_readings import (  # noqa: E402
+    MESSWERT_MAX_ALTER_S,
+    compute_battery_now_kw,
+    compute_grid_export_kw,
+)
+
+_JETZT = datetime(2026, 9, 28, 12, 0, tzinfo=timezone.utc)
+
+
+def _zustand(wert, alter_s=None, *, nur_updated=False, unit="kW"):
+    """Zustand mit Zeitstempel ``alter_s`` Sekunden vor ``_JETZT``."""
+    felder = {"state": wert, "attributes": {"unit_of_measurement": unit}}
+    if alter_s is not None:
+        zuletzt = _JETZT - timedelta(seconds=alter_s)
+        felder["last_updated"] = zuletzt
+        if not nur_updated:
+            felder["last_reported"] = zuletzt
+    return SimpleNamespace(**felder)
+
+
+@pytest.mark.parametrize("roh", ["nan", "NaN", "inf", "-inf"])
+def test_nicht_endlicher_wert_ist_kein_messwert(roh):
+    """float() nimmt 'nan' und 'inf' an — ein NaN vergiftete jede Summe."""
+    hass = _make_hass({"sensor.x": _make_state(roh, "W")})
+    assert read_power_kw(hass, "sensor.x") is None
+
+
+def test_veralteter_zustand_gilt_als_fehlend():
+    hass = _make_hass({"sensor.x": _zustand("2.0", MESSWERT_MAX_ALTER_S + 1)})
+    assert read_power_kw(
+        hass, "sensor.x", max_alter_s=MESSWERT_MAX_ALTER_S, jetzt=_JETZT
+    ) is None
+    # Ohne Altersgrenze (Nennwerte) bleibt er lesbar
+    assert read_power_kw(hass, "sensor.x") == pytest.approx(2.0)
+
+
+def test_frischer_zustand_und_last_updated_als_ersatz():
+    hass = _make_hass({
+        "sensor.frisch": _zustand("2.0", 60),
+        "sensor.alt": _zustand("2.0", 600, nur_updated=True),
+    })
+    kw = dict(max_alter_s=MESSWERT_MAX_ALTER_S, jetzt=_JETZT)
+    assert read_power_kw(hass, "sensor.frisch", **kw) == pytest.approx(2.0)
+    assert read_power_kw(hass, "sensor.alt", **kw) is None
+
+
+def test_ohne_zeitstempel_ist_nicht_pruefbar_und_gilt_als_frisch():
+    """MagicMock-Zustände der Tests (und alte HA-Versionen) haben keinen
+    datetime-Zeitstempel — dann darf kein Messwert verschwinden."""
+    hass = _make_hass({
+        "sensor.mock": _make_state("2.0"),
+        "sensor.ns": _zustand("2.0"),
+    })
+    kw = dict(max_alter_s=MESSWERT_MAX_ALTER_S, jetzt=_JETZT)
+    assert read_power_kw(hass, "sensor.mock", **kw) == pytest.approx(2.0)
+    assert read_power_kw(hass, "sensor.ns", **kw) == pytest.approx(2.0)
+
+
+def test_live_pfade_verwerfen_einen_eingefrorenen_netzzaehler():
+    """Modbus weg, Zustand bleibt stehen: Guard 1 und Not-Aus dürfen darauf
+    nicht regeln. Minutentakt-Quellen (Fronius-Paare) bleiben gültig."""
+    jetzt = datetime.now(tz=timezone.utc)
+    alt = SimpleNamespace(
+        state="-3.0", attributes={"unit_of_measurement": "kW"},
+        last_reported=jetzt - timedelta(seconds=MESSWERT_MAX_ALTER_S + 60),
+    )
+    minute = SimpleNamespace(
+        state="1.5", attributes={"unit_of_measurement": "kW"},
+        last_reported=jetzt - timedelta(seconds=70),
+    )
+    config = {
+        CONF_INVERTER_TYPE: "fronius_gen24",
+        CONF_GRID_POWER_SENSOR: "sensor.netz",
+        CONF_BATTERY_POWER_SENSOR: "sensor.bat",
+    }
+    hass = _make_hass({"sensor.netz": alt, "sensor.bat": minute})
+    assert compute_grid_export_kw(hass, config) is None
+    assert compute_house_load_kw(hass, config) is None
+    assert compute_battery_now_kw(hass, config) is not None
+
+
+def test_backfill_faktor_vergleicht_die_ha_einheit_exakt():
+    """HA rechnet nur um, wenn die Metadaten-Einheit exakt ein Schlüssel
+    seines Konverters ist — 'w' oder ' kW ' kommen unverändert zurück."""
+    assert backfill_faktor_kw("mW", None) == 1.0   # Milliwatt: HA rechnet um
+    assert backfill_faktor_kw("TW", None) == 1.0
+    assert backfill_faktor_kw("GW", "W") == 1.0
+    assert backfill_faktor_kw("w", "kW") == 0.001  # HA liefert W → wir teilen
+    assert backfill_faktor_kw(" W ", None) == 0.001
+    assert backfill_faktor_kw("Watt", None) == 0.001
+    assert backfill_faktor_kw("kw", None) == 1.0
+    assert backfill_faktor_kw("mw", None) == 1000.0  # kein HA-Schlüssel: Megawatt-Alias

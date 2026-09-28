@@ -34,7 +34,11 @@ Neben den beiden Prognosen hält ein Tag fest, was die Kalibrierung braucht:
 lernte sie ihre eigene Korrektur nach), ``eigen_kennung`` (Anlage und
 Wettermodelle, mit denen sie gerechnet wurde) und zur Messung die
 Einspeisung (``netz``) und den Ladestand (``soc``), an denen eine Abregelung
-zu erkennen ist.
+zu erkennen ist — dazu je Halbstunde das Maximum der 5-Minuten-Werte von PV,
+Einspeisung und Ladeleistung (``gemessen_max``, ``netz_max``,
+``batterie_max``): Klebt die Einspeisung nur eine Viertelstunde an der
+Grenze, liegt das Halbstundenmittel weit darunter, und die Abregelung
+bliebe unerkannt.
 
 Was der Vergleich NICHT ist: eine Steuerung. Er liest, rechnet und zeigt —
 und gibt der eigenen Prognose die Lerndaten. Aufgezeichnet wird, wenn der
@@ -51,6 +55,7 @@ in schedule.py).
 from __future__ import annotations
 
 import logging
+import math
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
@@ -175,9 +180,14 @@ def reihe_aus_stunden(wh_hours: dict[str, float], slots: list[datetime]) -> dict
 
 
 def messung_aus_punkten(
-    punkte: list[list[Any]], slots: list[datetime]
+    punkte: list[list[Any]], slots: list[datetime], *, maximum: bool = False
 ) -> tuple[dict[str, float], datetime | None]:
-    """5-Minuten-Mittel des Recorders → Halbstundenmittel, plus Ende der Messung."""
+    """5-Minuten-Mittel des Recorders → Halbstundenmittel, plus Ende der Messung.
+
+    ``maximum``: statt des Mittels der größte 5-Minuten-Wert der Halbstunde.
+    Nicht-endliche Werte (``nan`` aus einer kaputten Statistik) fallen weg —
+    ein einziges NaN machte sonst die ganze Halbstunde zu NaN.
+    """
     gruppen: dict[str, list[float]] = {}
     letzter: datetime | None = None
     if not slots:
@@ -189,7 +199,7 @@ def messung_aus_punkten(
             wert = float(punkt[1])
         except (TypeError, ValueError, IndexError):
             continue
-        if stamp.tzinfo is None:
+        if not math.isfinite(wert) or stamp.tzinfo is None:
             continue
         if stamp < erster_slot:
             continue
@@ -201,6 +211,8 @@ def messung_aus_punkten(
         ende = stamp + timedelta(minutes=5)
         if letzter is None or ende > letzter:
             letzter = ende
+    if maximum:
+        return {k: round(max(v), 4) for k, v in gruppen.items()}, letzter
     return {k: round(sum(v) / len(v), 4) for k, v in gruppen.items()}, letzter
 
 
@@ -403,7 +415,10 @@ class Prognosevergleich:
         bis: datetime | None,
         netz: dict[str, float] | None = None,
         soc: dict[str, float] | None = None,
+        maxima: dict[str, dict[str, float]] | None = None,
     ) -> None:
+        """``maxima``: ``gemessen_max`` / ``netz_max`` / ``batterie_max`` für
+        den Abregelungsfilter der Kalibrierung."""
         if not gemessen:
             return
         tag = self._tag(datum)
@@ -412,6 +427,9 @@ class Prognosevergleich:
             tag["netz"] = netz
         if soc is not None:
             tag["soc"] = soc
+        for feld, reihe in (maxima or {}).items():
+            if reihe:
+                tag[feld] = reihe
         tag["gemessen_bis"] = bis.isoformat() if bis else None
         if bis is not None and tag["slots"]:
             ende = datetime.fromisoformat(tag["slots"][-1]) + _SLOT
@@ -615,7 +633,17 @@ class Prognosevergleich:
                 # schneidet unter 0 ab, übrig bleibt genau der Export.
                 netz, _ = messung_aus_punkten(reihen.get("netzleistung") or [], slots)
                 soc, _ = messung_aus_punkten(reihen.get("ladestand") or [], slots)
-                self.messung_eintragen(datum, gemessen, bis, netz, soc)
+                # Batterieleistung positiv = Laden; abgeschnitten bleibt die
+                # Ladeleistung.
+                maxima = {
+                    feld: messung_aus_punkten(reihen.get(name) or [], slots, maximum=True)[0]
+                    for feld, name in (
+                        ("gemessen_max", "pv_leistung"),
+                        ("netz_max", "netzleistung"),
+                        ("batterie_max", "batterieleistung"),
+                    )
+                }
+                self.messung_eintragen(datum, gemessen, bis, netz, soc, maxima)
                 geaendert = True
 
         vorher = len(self._tage)

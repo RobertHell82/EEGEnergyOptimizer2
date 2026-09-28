@@ -50,11 +50,12 @@ Kollision. Nur die Zuordnung zum MONAT folgt der Ortszeit.
 from __future__ import annotations
 
 import logging
+import math
 from datetime import datetime, timedelta, timezone
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Any, Callable
 
-from .const import CONF_GRID_POWER_SENSOR, DOMAIN
+from .const import CONF_GRID_POWER_SENSOR, CONF_INVERTER_TYPE, DOMAIN
 
 try:  # pragma: no cover - im Test nicht vorhanden
     from homeassistant.helpers.storage import Store
@@ -82,6 +83,15 @@ VOLLSTAENDIG_AB = 0.95
 # Wie viele abgeschlossene Monate im Verlauf bleiben.
 VERLAUF_MONATE = 24
 _SPEICHER_VERZOEGERUNG_S = 10
+
+
+def _endlich(wert: Any) -> float:
+    """Gespeicherte Zahl, 0 für fehlend oder nicht endlich (json schreibt NaN)."""
+    try:
+        zahl = float(wert or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+    return zahl if math.isfinite(zahl) else 0.0
 
 
 def _lokal(t: datetime) -> datetime:
@@ -208,7 +218,9 @@ class Leistungsspitze:
         """Neuer Stützpunkt: ab ``t`` gilt ``bezug_kw`` (None = unbekannt)."""
         self._vorruecken(t)
         if bezug_kw is not None:
-            bezug_kw = max(0.0, float(bezug_kw))
+            bezug_kw = float(bezug_kw)
+            # max(0, nan) ergäbe 0 — ein unlesbarer Wert ist aber unbekannt.
+            bezug_kw = max(0.0, bezug_kw) if math.isfinite(bezug_kw) else None
         self._letzte_t = t
         self._letzte_kw = bezug_kw
         self._gilt_bis = t + timedelta(seconds=HALTEN_MAX_S)
@@ -393,8 +405,8 @@ class Leistungsspitze:
             start = None
         if start is not None and start == viertelstunde_von(jetzt):
             self._q_start = start
-            self._energie_kwh = float(laufend.get("energie_kwh") or 0.0)
-            self._abgedeckt_s = float(laufend.get("abgedeckt_s") or 0.0)
+            self._energie_kwh = _endlich(laufend.get("energie_kwh"))
+            self._abgedeckt_s = _endlich(laufend.get("abgedeckt_s"))
         # Monatswechsel während der Ausfallzeit.
         self._pruefe_monat(viertelstunde_von(jetzt))
 
@@ -427,21 +439,20 @@ class Leistungsspitze:
         weiter, wenn der Wert gleich bleibt — ein stehender Wert ist also
         gemessen, ein eingefrorener nicht.
         """
-        from .power_readings import compute_grid_export_kw
+        from .power_readings import read_power_kw, resolve_sign
 
         grid_id = self._config.get(CONF_GRID_POWER_SENSOR, "")
-        state = self._hass.states.get(grid_id) if grid_id else None
-        if state is None:
+        if not grid_id:
             return None
-        zuletzt = getattr(state, "last_reported", None) or getattr(
-            state, "last_updated", None
+        # Eigene, knappere Grenze als die Live-Pfade (siehe HALTEN_MAX_S),
+        # gegen denselben Zeitpunkt wie die Integration.
+        netz = read_power_kw(
+            self._hass, grid_id, max_alter_s=HALTEN_MAX_S, jetzt=jetzt
         )
-        if isinstance(zuletzt, datetime) and (
-            jetzt - zuletzt
-        ).total_seconds() > HALTEN_MAX_S:
+        if netz is None:
             return None
-        netz = compute_grid_export_kw(self._hass, self._config)
-        return None if netz is None else max(0.0, -netz)
+        netz *= resolve_sign(self._config.get(CONF_INVERTER_TYPE, ""), grid_id, "grid_sign")
+        return max(0.0, -netz)
 
     def async_start(self, entry: Any) -> None:
         """Netzsensor, Abtastung und Viertelstunden-Zeitgeber abonnieren."""

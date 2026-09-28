@@ -164,10 +164,13 @@ def _read_power_kw(hass: Any, entity_id: str) -> float | None:
     """Read a power sensor value and normalize to kW.
 
     Thin wrapper über power_readings.read_power_kw — eine Quelle der Wahrheit
-    für Unit-Erkennung (W/kW/MW + Aliase, case-insensitive).
+    für Unit-Erkennung (W/kW/MW + Aliase, case-insensitive). Ein Wert, den die
+    Quelle seit ``MESSWERT_MAX_ALTER_S`` nicht mehr geschrieben hat, gilt als
+    fehlend — wie in den ``compute_*``-Pfaden der Steuerung, sonst zeigte das
+    Dashboard einen eingefrorenen Zähler weiter als Messung.
     """
-    from .power_readings import read_power_kw
-    return read_power_kw(hass, entity_id)
+    from .power_readings import MESSWERT_MAX_ALTER_S, read_power_kw
+    return read_power_kw(hass, entity_id, max_alter_s=MESSWERT_MAX_ALTER_S)
 
 
 def _device_info(entry_id: str) -> DeviceInfo:

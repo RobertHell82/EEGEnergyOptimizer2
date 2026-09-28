@@ -222,3 +222,57 @@ async def test_wetter_ueberlebt_den_neustart():
         await neu.async_load()
     assert len(neu._paare) == 1
     assert neu._paare[0][1].gti_w_m2 == [500.0] * 4
+
+
+# ---------------------------------------------------------------------------
+# Abregelung am Maximum, Nulleinspeisung mit ladender Batterie, Randfaktor
+# ---------------------------------------------------------------------------
+
+
+def test_abregelung_am_maximum_der_halbstunde():
+    """Eine Viertelstunde an der Grenze: das Mittel (2,5 kW) liegt weit
+    unter 4 kW, das Maximum nicht. Alte Tage ohne netz_max: wie bisher."""
+    tag = _tag(20, 0.8)
+    tag["netz"] = {k: 2.5 for k in tag["eigen_roh"]}
+    assert kal.lerne([tag], *TRAUN, KENNUNG, 4.0, None).aktiv
+    tag["netz_max"] = {k: 4.0 for k in tag["eigen_roh"]}
+    k = kal.lerne([tag], *TRAUN, KENNUNG, 4.0, None)
+    assert not k.aktiv
+    assert k.ausgelassen_abregelung == 18
+
+
+def test_ac_grenze_am_pv_maximum():
+    tag = _tag(20, 1.0, prognose_kw=6.0)
+    assert kal.lerne([tag], *TRAUN, KENNUNG, None, 8.0).aktiv
+    tag["gemessen_max"] = {k: 7.9 for k in tag["eigen_roh"]}
+    assert not kal.lerne([tag], *TRAUN, KENNUNG, None, 8.0).aktiv
+
+
+def test_nulleinspeisung_mit_batterie_an_der_leistungsgrenze():
+    """Lädt die Batterie mit voller Leistung, nimmt sie nicht mehr — der Rest
+    wird abgeregelt, auch unter 95 %."""
+    tag = _tag(20, 0.8)
+    tag["netz"] = {k: 0.0 for k in tag["eigen_roh"]}
+    tag["soc"] = {k: 60.0 for k in tag["eigen_roh"]}
+    tag["batterie_max"] = {k: 4.9 for k in tag["eigen_roh"]}
+    assert not kal.lerne([tag], *TRAUN, KENNUNG, 0.0, None, 5.0).aktiv
+    # Ohne bekannte Maximalleistung bleibt es bei der SOC-Regel
+    assert kal.lerne([tag], *TRAUN, KENNUNG, 0.0, None).aktiv
+    # Batterie mit Luft nach oben: nicht abgeregelt
+    tag["batterie_max"] = {k: 2.0 for k in tag["eigen_roh"]}
+    assert kal.lerne([tag], *TRAUN, KENNUNG, 0.0, None, 5.0).aktiv
+
+
+def test_faktor_laeuft_zum_rand_stetig_auf_eins():
+    """Ein einziges gelerntes Feld: in seiner Mitte der volle Faktor, eine
+    Feldbreite daneben 1, dazwischen ohne Stufe."""
+    k = kal.Kalibrierung(breite=TRAUN[0], laenge=TRAUN[1])
+    mitte = _utc(28, 9)
+    azimut, hoehe = kal.sonnenstand(mitte, *TRAUN)
+    k.felder[kal._feld(azimut, hoehe)] = [100.0, 50.0]  # Faktor gedeckelt 1,5
+    werte = [k.faktor(mitte + timedelta(minutes=m)) for m in range(-120, 121, 2)]
+    assert max(werte) <= kal.FAKTOR_MAX
+    assert min(werte) >= 1.0
+    assert werte[0] == 1.0 and werte[-1] == 1.0  # weit weg: nie gesehen
+    # Keine Stufe: Nachbarn im 2-Minuten-Raster liegen dicht beieinander
+    assert max(abs(a - b) for a, b in zip(werte, werte[1:])) < 0.1
