@@ -25,7 +25,7 @@ Unter **Standardvergütung — Quelle** wählst du, woher der Basistarif kommt. 
 | **OeMAG-Einspeisetarif (laufender Monat, hochgerechnet)** | wie oben, aber mit dem Wert des laufenden Monats statt des Vormonats | alle drei Stunden |
 | **Spotpreis der Strombörse** | Dein Vertrag zahlt den stündlichen Börsenpreis, z. B. aWATTar SUNNY Spot 60min | stündlich |
 | **aWATTar SUNNY (fester Monatstarif)** | Du hast den SUNNY-Monatstarif von aWATTar | zweimal täglich |
-| **Energie AG Team Sonne Float** (veröffentlicht oder hochgerechnet) | Du hast den Float-Tarif der Energie AG | zweimal täglich |
+| **Energie AG Team Sonne Float** (veröffentlicht oder hochgerechnet) | Du hast den Float-Tarif der Energie AG | veröffentlicht: zweimal täglich; hochgerechnet: alle drei Stunden (aus der OeMAG-Hochrechnung) |
 
 ### Fester Wert
 

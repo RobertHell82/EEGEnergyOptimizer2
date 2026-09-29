@@ -6,8 +6,8 @@ Der Sensor für die Akkukapazität ist bei Huawei Solar standardmäßig deaktivi
 2. Klicke auf **Huawei Solar**
 3. Klicke auf dein **Batterie-Gerät** (z.B. „LUNA2000")
 4. Scrolle nach unten zur Entitäten-Liste
-5. Klicke oben rechts auf **„Entitäten die nicht auf dem Dashboard angezeigt werden"** (oder den Filter für deaktivierte Entitäten)
-6. Suche nach **„Akkukapazität"** oder **„Storage Rated Capacity"**
+5. Klicke in der Entitäten-Liste auf **„+ x Entitäten sind deaktiviert"**
+6. Suche nach **„Akkukapazität"** (englisch benannt: **„Rated capacity"**)
 7. Klicke auf die Entität und dann auf **„Aktivieren"**
 8. Warte ca. 30 Sekunden bis der Sensor Daten liefert
 

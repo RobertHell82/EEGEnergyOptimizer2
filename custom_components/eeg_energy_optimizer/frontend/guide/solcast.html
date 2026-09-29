@@ -36,13 +36,13 @@
 
 <p><em><strong>Voraussetzung:</strong> <a href="https://hacs.xyz/">HACS</a> muss installiert sein (Solcast ist eine Custom Integration, kein HA-Standard).</em></p>
 <ol>
-<li>Gehe zu <strong>HACS → Integrationen → Suche „Solcast PV Forecast"</strong></li>
+<li>Gehe zu <strong>HACS</strong> und suche dort nach <strong>„Solcast PV Forecast"</strong></li>
 <li>Installiere die Integration und starte Home Assistant neu.</li>
 </ol>
 <h3>3. Solcast-Konto verbinden</h3>
 <p><em>Dieser Abschnitt gilt für <strong>alle</strong> — auch bei einem vorbereiteten EEG-Gerät, denn jedes Mitglied nutzt seinen eigenen API-Key.</em></p>
 <ol>
-<li>Gehe zu <strong>Einstellungen → Geräte &amp; Dienste → Integration hinzufügen</strong> und wähle <strong>Solcast Solar</strong>.</li>
+<li>Gehe zu <strong>Einstellungen → Geräte &amp; Dienste → Integration hinzufügen</strong> und wähle <strong>Solcast PV Forecast</strong>.</li>
 <li>Gib den zuvor kopierten API-Key ein, lasse die restlichen Einstellungen wie vorausgewählt und klicke auf <strong>OK</strong>.</li>
 <li>Aktiviere die deaktivierten Prognose-Sensoren für die Tage 3 bis 7: Klicke den Sensor an, dann auf das Zahnrad und stelle ihn auf <strong>Aktiviert</strong>.<br>
    <img alt="Sensoren aktivieren" src="/eeg_optimizer_panel/guide/solcast/06_Prognosesensoren.png" /></li>
@@ -51,6 +51,6 @@
 <ol>
 <li>Warte 1–2 Minuten nach der Einrichtung</li>
 <li>Prüfe unter <strong>Entwicklerwerkzeuge → Zustände</strong>: Suche nach <code>solcast</code></li>
-<li>Die Sensoren <code>sensor.solcast_pv_forecast_prognose_fuer_heute</code> und <code>sensor.solcast_pv_forecast_prognose_fuer_morgen</code> sollten kWh-Werte zeigen</li>
+<li>Die Sensoren <code>sensor.solcast_pv_forecast_prognose_verbleibende_leistung_heute</code> (die <strong>verbleibende</strong> Prognose für heute, nicht die Tagessumme) und <code>sensor.solcast_pv_forecast_prognose_morgen</code> sollten kWh-Werte zeigen. Ältere Versionen der Integration nennen sie <code>…_prognose_fuer_heute</code> und <code>…_prognose_fuer_morgen</code></li>
 <li>Kehre hierher zurück — die Sensoren werden automatisch zugeordnet</li>
 </ol>

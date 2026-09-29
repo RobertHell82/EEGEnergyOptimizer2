@@ -39,13 +39,28 @@ Der EEG Energy Optimizer steuert die Batterie über Modbus TCP (SunSpec Model 12
 
 1. Unter **Einstellungen → Integrationen**: Fronius zeigt **„geladen"**
 2. **Entwicklerwerkzeuge → Zustände**: Suche nach `power_photovoltaics` / `pv_leistung` und `state_of_charge` / `ladezustand`
-3. Kehre hierher zurück — die Sensoren werden automatisch erkannt
+3. Kehre in den Assistenten zurück — die Sensoren werden automatisch erkannt
+
+## Im Assistenten: Schritt „Wechselrichter“
+
+Hier bleibt man am häufigsten hängen: **„Weiter“** geht erst, wenn alles Folgende stimmt.
+
+1. **Fronius Gen24** wählen. Ohne die Fronius-Integration aus Schritt 1 geht es nicht weiter — sie liefert alle Messwerte, Modbus allein genügt nicht.
+2. **Fünf Leistungssensoren**, alle Pflicht. Fronius meldet Batterie und Netz nicht als einen Wert mit Vorzeichen, sondern als je **zwei getrennte Sensoren**:
+   - PV-Leistung
+   - Batterie **Laden** (`*_battery_power_charging` / `*_ladeleistung`) und Batterie **Entladen** (`*_battery_power_discharging` / `*_entladeleistung`)
+   - Netz **Einspeisung** (`*_leistung_netzeinspeisung`) und Netz **Bezug** (`*_leistung_netzbezug`)
+
+   Die Erkennung trägt sie selbst ein; fehlt einer, bleibt „Weiter“ gesperrt.
+3. **Modbus IP-Adresse** (Pflicht): die IP des Wechselrichters. Sie wird aus der Fronius-Integration vorbelegt — prüfen, ob sie stimmt. Port **502**.
+4. Bei **„Weiter“** prüft der Assistent die Modbus-Verbindung (nur lesend). Schlägt sie fehl, geht es nicht weiter: Modbus aktiviert (Schritt 2)? IP richtig? Wechselrichter im selben Netz?
 
 ## Häufige Probleme
 
 | Problem | Lösung |
 |---|---|
-| **Modbus Connection refused** | Modbus TCP nicht aktiviert oder „Allow Control" nicht EIN → Schritt 2 wiederholen |
+| **Modbus Connection refused** | Modbus TCP nicht aktiviert, falscher Port oder falsche IP → Schritt 2 wiederholen |
+| **Verbindung klappt, Steuerbefehle werden abgelehnt** | „Allow Control via Modbus" nicht EIN → Schritt 2, Punkt 6 |
 | **Alle Werte 0 oder unsinnig** | Falscher SunSpec-Modus → „int + SF" statt „float" einstellen |
 | **Keine Fronius-Sensoren in HA** | Fronius Integration prüfen: Solar API im Web-Interface aktiviert? |
 | **Steuerung funktioniert manchmal nicht** | Scheduled Charging/Discharging im Web-Interface deaktivieren (konkurriert mit Modbus) |

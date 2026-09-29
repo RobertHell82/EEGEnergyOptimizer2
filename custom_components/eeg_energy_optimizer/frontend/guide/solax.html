@@ -33,7 +33,7 @@
 <h3>3. HACS Integration installieren</h3>
 <p><em><strong>Voraussetzung:</strong> <a href="https://hacs.xyz/">HACS</a> muss installiert sein.</em></p>
 <ol>
-<li>Gehe zu <strong>HACS → Integrationen → Suche „SolaX Inverter Modbus"</strong><br>
+<li>Gehe zu <strong>HACS</strong> und suche dort nach <strong>„SolaX Inverter Modbus"</strong><br>
    <em>Repository: <code>wills106/homeassistant-solax-modbus</code></em></li>
 <li>Installiere die Integration und <strong>starte Home Assistant neu</strong></li>
 </ol>
@@ -61,14 +61,14 @@
 <p><em>Der Sensor heißt typischerweise <code>sensor.solax_inverter_meter_2_measured_power</code> (Prefix je Installation abweichend) und zeigt die Leistung in W.</em></p>
 <div class="guide-alert note"><p><strong>Voraussetzung:</strong> Meter 2 muss auch am Wechselrichter bzw. in der SolaX-App als Generator-/zweiter Zähler konfiguriert sein. Ohne diese Konfiguration liefert der Sensor dauerhaft 0.</p></div>
 
-<p>Im Wizard erscheint das Feld <strong>„Zweiter PV-Sensor (optional)"</strong> — es wird automatisch mit dem Meter-2-Sensor vorbelegt, sobald dieser existiert. Der Optimizer addiert diesen Wert zur PV-Leistung des Hybrid-Wechselrichters.</p>
+<p>Im Assistenten gibt es dafür das Feld <strong>„Zweiter PV-Sensor (optional)"</strong> — es erscheint nur im <strong>Expertenmodus</strong> (Schalter oben rechts im Assistenten). Vorbelegt wird es mit dem Meter-2-Sensor, wenn dieser schon <strong>vor</strong> der Sensorerkennung aktiv war; hast du ihn erst danach aktiviert, klicke auf <strong>„Erneut prüfen"</strong> oder trage ihn im Expertenmodus von Hand ein. Der Optimizer addiert diesen Wert zur PV-Leistung des Hybrid-Wechselrichters.</p>
 <div class="guide-alert warning"><p>Wird der Sensor nicht aktiviert bzw. nicht im Wizard hinterlegt, rechnet der Optimizer mit <strong>zu geringer PV-Leistung</strong>. Folge: Hausverbrauch und Fahrplan arbeiten mit falschen Werten.</p></div>
 
 <h3>7. Prüfen</h3>
 <ol>
 <li>Unter <strong>Einstellungen → Integrationen</strong>: SolaX Inverter Modbus zeigt <strong>„geladen"</strong></li>
 <li><strong>Entwicklerwerkzeuge → Zustände</strong>: <code>sensor.solax_*battery_capacity</code> zeigt SOC (0–100%)</li>
-<li><code>button.solax_*remotecontrol_trigger</code> existiert (= Remote Control verfügbar)</li>
+<li>Ein Button <code>button.solax_*remotecontrol_trigger*</code> existiert (neuere Versionen hängen den Modus an, z. B. <code>…_remotecontrol_trigger_mode_1_7</code>) — dann ist Remote Control verfügbar</li>
 <li>Kehre hierher zurück — der Wechselrichter wird automatisch erkannt</li>
 </ol>
 <p><em><strong>Hinweis:</strong> Der Entity-Prefix variiert je Installation (z.B. <code>solax_inverter_</code> statt <code>solax_</code>). Der EEG Energy Optimizer erkennt den Prefix automatisch.</em></p>
@@ -103,7 +103,7 @@
 </tr>
 <tr>
 <td><strong>PV-Leistung zu niedrig (Generator-WR fehlt)</strong></td>
-<td><code>sensor.solax_inverter_meter_2_measured_power</code> aktivieren (→ Abschnitt 6) und im Wizard als zweiten PV-Sensor hinterlegen</td>
+<td><code>sensor.solax_inverter_meter_2_measured_power</code> aktivieren (→ Abschnitt 6) und im Assistenten (Expertenmodus) als zweiten PV-Sensor hinterlegen</td>
 </tr>
 <tr>
 <td><strong>Meter 2 Sensor zeigt immer 0</strong></td>

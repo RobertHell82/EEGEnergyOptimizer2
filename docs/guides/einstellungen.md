@@ -39,7 +39,12 @@ Es gibt eine Ausnahme: die Sensoren der PV-Prognose im Tab **Prognose**. Die ste
 
 ## Speichern
 
-Der Knopf **Speichern** unter den Tabs übernimmt die Änderungen aus **allen** Tabs auf einmal. Danach bist du wieder im Dashboard. Fehlt ein Pflichtwert (AC-Grenzleistung, PV-Spitzenleistung, Höhe der Einspeisegrenze, die Sensoren einer fremden Prognosequelle, gültige PV-Flächen, Adresse und Leistung des Heizstabs), wird nichts gespeichert. Über dem Knopf steht dann, was fehlt.
+Der Knopf **Speichern** unter den Tabs übernimmt die Änderungen aus **allen** Tabs auf einmal. Danach bist du wieder im Dashboard. Fehlt ein Pflichtwert oder passt etwas nicht zusammen, wird nichts gespeichert; über dem Knopf steht dann, was fehlt. Geprüft werden:
+
+- **Anlage:** AC-Grenzleistung, PV-Spitzenleistung, Batterie-Leistungsgrenze, Höhe der Einspeisegrenze (wenn eingeschaltet)
+- **Tarife:** Standardvergütung (bei „Fester Wert“), Arbeitspreis, Netzbereich (wenn Sommer-Nieder- oder Winter-Nieder-Arbeitspreis eingeschaltet ist), das Nachtfenster, sobald ein Nachtsatz eingetragen ist (Standardvergütung und je Gemeinschaft), die Anteile der Gemeinschaften (zusammen höchstens 100 %) und im Quotenmodus die Tages-Abnahmequote
+- **Prognose:** die Sensoren einer fremden Prognosequelle, gültige PV-Flächen
+- **Verbraucher:** Adresse, Leistung und Maximaltemperatur des Heizstabs, Adresse der Ambibox
 
 Die meisten Änderungen wirken **sofort**: Der Fahrplan wird gleich neu gerechnet, die Steuerung behält ihren Zustand. Einen geänderten Rückblick des Verbrauchsprofils rechnet die Integration im Hintergrund neu.
 

@@ -1,8 +1,8 @@
 # Wechselrichter — Stand der Unterstützung
 
-Diese Seite ist die **einzige Stelle**, an der steht, welcher Wechselrichter
-unterstützt wird und wie weit er erprobt ist. Die übrige Doku verweist
-hierher, statt eigene Listen zu führen.
+Diese Seite ist die **einzige Stelle**, an der steht, wie weit jeder
+Wechselrichter erprobt ist und was noch offen ist. Die übrige Doku nennt die
+Geräte nur mit dem Link auf ihre Anleitung und verweist für den Stand hierher.
 
 > [!IMPORTANT]
 > **Unterstützt werden Fronius Gen24, Huawei SUN2000, Kostal Plenticore,
@@ -15,20 +15,19 @@ hierher, statt eigene Listen zu führen.
 
 | Wechselrichter | Anbindung | Stand |
 |---|---|---|
-| **Fronius Gen24** | direkt per Modbus TCP | Feldtest |
+| **Fronius Gen24** | direkt per Modbus TCP | **freigegeben** |
 | **Huawei SUN2000** | Huawei-Solar-Integration | **freigegeben** |
-| **Kostal Plenticore** | direkt per Modbus TCP | Feldtest |
-| **Sigenergy SigenStor** | Sigenergy-Local-Modbus-Integration | Feldtest |
-| **SMA Smart Energy** | direkt per Modbus TCP | Feldtest |
-| **SolaX Gen4+** | SolaX-Modbus-Integration | Feldtest |
+| **Kostal Plenticore** | direkt per Modbus TCP | **freigegeben** |
+| **Sigenergy SigenStor** | Sigenergy-Local-Modbus-Integration | **freigegeben** |
+| **SMA Smart Energy** | direkt per Modbus TCP | **freigegeben** |
+| **SolaX Gen4+** | SolaX-Modbus-Integration | **freigegeben** |
 
-- **Freigegeben** heißt: über längere Zeit im Dauerbetrieb, alle
-  Sicherheitsnetze am Gerät nachgewiesen.
-- **Feldtest** heißt: Laden sperren, Entladen und Freigeben sind an einer
-  echten Anlage nachgewiesen, der Dauerbetrieb über Tage und Wochen noch
-  nicht vollständig. Was je Gerät noch offen ist, steht unten. Wer so ein
-  Gerät betreibt, schaut in den ersten Tagen am besten öfter in die
-  Statuskarte und das Aktivitätsprotokoll.
+**Freigegeben** heißt: im Dauerbetrieb an echten Anlagen erprobt, alle
+Sicherheitsnetze am Gerät nachgewiesen. Das gilt für alle sechs. Was je Gerät
+zu beachten ist, steht unten.
+
+_Ein neu hinzukommender Wechselrichter läuft zunächst als **Feldtest**, bis er
+diese Prüfungen bestanden hat (siehe `docs/DEVELOPMENT.md`)._
 
 ## Was je Wechselrichter noch zu klären ist
 
@@ -36,7 +35,7 @@ Alphabetisch. Die Einrichtung selbst beschreibt jeweils der verlinkte Guide.
 
 ### Fronius Gen24
 
-**Feldtest.** Steuerung über direktes Modbus TCP (SunSpec
+**Freigegeben.** Steuerung über direktes Modbus TCP (SunSpec
 Model 124), Sensordaten über die native
 [Fronius](https://www.home-assistant.io/integrations/fronius/) Integration
 (Solar API). Keine zusätzliche HACS-Integration nötig — nur die Fronius Core
@@ -64,7 +63,7 @@ Guide: [huawei.md](guides/huawei.md) · [Akkukapazität-Sensor](guides/capacity_
 
 ### Kostal Plenticore
 
-**Feldtest.** plus/G2/G3, Steuerung über direktes Modbus TCP (Port 1502, proprietäre
+**Freigegeben.** plus/G2/G3, Steuerung über direktes Modbus TCP (Port 1502, proprietäre
 Batterie-Steuerregister), Sensordaten über die native
 [Kostal Plenticore](https://www.home-assistant.io/integrations/kostal_plenticore/)
 Integration (REST). Die Umstellung der Batteriesteuerung auf „Extern über
@@ -82,13 +81,12 @@ Folgte auf „Normalbetrieb“ ein Ladelimit, stand die Batterie stundenlang.
 Seitdem schreibt der Treiber 1034 nur nach einer echten Entladung und
 danach kein Steuerregister, bis die gemessene Batterieleistung den Rückfall
 zur internen Automatik zeigt (höchstens 15 min) — der Watchdog-Timeout ist
-per Modbus nicht lesbar und je Anlage verschieden. Offen: Feldtest der
-Fahrplan-Nachführung über mehrere Tage.
+per Modbus nicht lesbar und je Anlage verschieden.
 Guide: [kostal.md](guides/kostal.md)
 
 ### Sigenergy SigenStor
 
-**Feldtest.** SigenStor-Anlagen (EC-/CMU-Serie) ab Firmware
+**Freigegeben.** SigenStor-Anlagen (EC-/CMU-Serie) ab Firmware
 SPC109, Steuerung über die HACS-Integration
 [Sigenergy Local Modbus](https://github.com/TypQxQ/Sigenergy-Local-Modbus)
 (Domain `sigen`) — Remote EMS per Schalter, Auswahl und Zahlen-Entitäten,
@@ -112,16 +110,18 @@ Service-Aufrufe an nicht verfügbare Entitäten stillschweigend).
 > immer aktiv frei. Nach einem harten Absturz von Home Assistant bleibt der
 > letzte Befehl stehen.
 
-Offen (Feldtest): ob „Command Charging (PV First)" mit Limit 0 nur das Laden
-sperrt oder auch die Hausentladung; ob „Command Discharging (ESS First)" ins
-Netz liefert; ob der Entlade-Cut-Off (40048) eine befohlene Entladung stoppt
-(dann wie bei SolaX für die Dauer absenken). Netz-Vorzeichen bei Einspeisung
-gegenprüfen.
+Ladelimit: Der Modus bleibt „Maximum Self Consumption“, geschrieben wird nur
+das Limit — „Command Charging“ wird nicht verwendet, weil es aus dem Netz lädt.
+Das Limit wirkt im Eigenverbrauchsmodus laut Anwenderberichten erst ab
+Firmware **SPC113**; auf älterer Firmware bleibt es wirkungslos (die Anlage
+lädt dann mit Überschuss weiter, aus dem Netz lädt sie nicht). Den
+Entlade-Cut-Off (40048) liest der Optimizer als Untergrenze, schreibt ihn aber
+nicht.
 Guide: [sigenergy.md](guides/sigenergy.md)
 
 ### SMA Smart Energy
 
-**Feldtest.** Sunny Tripower Smart Energy, Sunny Boy Storage, Sunny Boy Smart Energy.
+**Freigegeben.** Sunny Tripower Smart Energy, Sunny Boy Storage, Sunny Boy Smart Energy.
 Steuerung über direktes Modbus TCP (Port 502, externes Batteriemanagement /
 CmpBMS-Register), Sensordaten über die native
 [SMA Solar](https://www.home-assistant.io/integrations/sma/) Integration
@@ -134,13 +134,12 @@ Sollwert und Stopp sind am Gerät verifiziert (1.x-Reihe, STP10.0-3SE-40).
 Besonderheit: Die Entladung ist ein **Netz-Sollwert** (GridWSpt) — der
 Wechselrichter legt die Hauslast selbst obendrauf, deshalb gibt die
 Steuerung hier die geplante Einspeisung vor statt der Batterieleistung
-(`discharge_is_grid_setpoint`). Offen: Feldtest der Fahrplan-Nachführung
-über mehrere Tage, Koexistenz mit dem SHM 2.0 im Dauerbetrieb.
+(`discharge_is_grid_setpoint`).
 Guide: [sma.md](guides/sma.md)
 
 ### SolaX Gen4+
 
-**Feldtest.** Steuerung über die
+**Freigegeben.** Steuerung über die
 [SolaX Modbus](https://github.com/wills106/homeassistant-solax-modbus)
 Integration (RemoteControl Mode 1).
 
@@ -158,6 +157,4 @@ Fahrplan rechnet in Leistung. Umgerechnet wird über die Batteriespannung
 (Rückfallwert 400 V, wenn der Spannungssensor fehlt) — bei einer fehlenden
 Spannung ist das Limit entsprechend ungenau.
 
-Offen: Feldtest der Nachführung, insbesondere ob der abgesenkte Entladeboden
-am Gerät greift und nach dem Stopp sauber zurückkommt.
 Guide: [solax.md](guides/solax.md)

@@ -36,8 +36,20 @@
 <ol>
 <li>Unter <strong>Einstellungen → Integrationen</strong>: Fronius zeigt <strong>„geladen"</strong></li>
 <li><strong>Entwicklerwerkzeuge → Zustände</strong>: Suche nach <code>power_photovoltaics</code> / <code>pv_leistung</code> und <code>state_of_charge</code> / <code>ladezustand</code></li>
-<li>Kehre hierher zurück — die Sensoren werden automatisch erkannt</li>
+<li>Kehre in den Assistenten zurück — die Sensoren werden automatisch erkannt</li>
 </ol>
+<h3>Im Assistenten: Schritt „Wechselrichter“</h3>
+<p>Hier bleibt man am häufigsten hängen: <strong>„Weiter“</strong> geht erst, wenn alles Folgende stimmt.</p>
+<ol>
+<li><strong>Fronius Gen24</strong> wählen. Ohne die Fronius-Integration aus Schritt 1 geht es nicht weiter — sie liefert alle Messwerte, Modbus allein genügt nicht.</li>
+<li><strong>Fünf Leistungssensoren</strong>, alle Pflicht. Fronius meldet Batterie und Netz nicht als einen Wert mit Vorzeichen, sondern als je <strong>zwei getrennte Sensoren</strong>:</li>
+<li>PV-Leistung</li>
+<li>Batterie <strong>Laden</strong> (<code>*_battery_power_charging</code> / <code>*_ladeleistung</code>) und Batterie <strong>Entladen</strong> (<code>*_battery_power_discharging</code> / <code>*_entladeleistung</code>)</li>
+<li>Netz <strong>Einspeisung</strong> (<code>*_leistung_netzeinspeisung</code>) und Netz <strong>Bezug</strong> (<code>*_leistung_netzbezug</code>)</li>
+</ol>
+<p>Die Erkennung trägt sie selbst ein; fehlt einer, bleibt „Weiter“ gesperrt.
+3. <strong>Modbus IP-Adresse</strong> (Pflicht): die IP des Wechselrichters. Sie wird aus der Fronius-Integration vorbelegt — prüfen, ob sie stimmt. Port <strong>502</strong>.
+4. Bei <strong>„Weiter“</strong> prüft der Assistent die Modbus-Verbindung (nur lesend). Schlägt sie fehl, geht es nicht weiter: Modbus aktiviert (Schritt 2)? IP richtig? Wechselrichter im selben Netz?</p>
 <h3>Häufige Probleme</h3>
 <table>
 <thead>
@@ -49,7 +61,11 @@
 <tbody>
 <tr>
 <td><strong>Modbus Connection refused</strong></td>
-<td>Modbus TCP nicht aktiviert oder „Allow Control" nicht EIN → Schritt 2 wiederholen</td>
+<td>Modbus TCP nicht aktiviert, falscher Port oder falsche IP → Schritt 2 wiederholen</td>
+</tr>
+<tr>
+<td><strong>Verbindung klappt, Steuerbefehle werden abgelehnt</strong></td>
+<td>„Allow Control via Modbus" nicht EIN → Schritt 2, Punkt 6</td>
 </tr>
 <tr>
 <td><strong>Alle Werte 0 oder unsinnig</strong></td>

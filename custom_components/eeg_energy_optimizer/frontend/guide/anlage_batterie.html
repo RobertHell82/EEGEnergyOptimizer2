@@ -39,7 +39,9 @@
 <p>Der Mindest-Ladestand darf <strong>höchstens 20 Prozentpunkte unter dem Maximum-Ladestand</strong> liegen, damit der Optimierung ein nutzbarer Bereich bleibt. Bei einem Maximum von 100 % sind das 80 %, beim tiefsten erlaubten Maximum von 70 % sind es 50 %. Trägst du mehr ein, wird der Wert auf diese Grenze gesetzt. Das Feld zeigt immer den Wert, mit dem die Optimierung tatsächlich rechnet.</p>
 <div class="guide-alert note"><p><strong>Die Reserve des Wechselrichters hebt den Mindest-Ladestand an.</strong> Viele Geräte halten selbst einen Ladestand zurück und geben darunter nichts mehr ab. Liegt dieser Gerätewert höher als dein Mindest-Ladestand, plant die Optimierung mit dem Gerätewert. Sonst würde sie Entladungen planen, die der Wechselrichter verweigert, und Plan und Wirklichkeit liefen dauerhaft auseinander.</p>
 <ul>
+<li><strong>Fronius:</strong> die Mindestreserve der Batterie (im Fronius-Webinterface eingestellt). Eine Änderung dort greift erst am nächsten Tag oder nach einem Neustart von Home Assistant.</li>
 <li><strong>Huawei:</strong> der Backup-Ladestand (Notstrom) der Batterie. Bei mehreren Batterien zählt der höchste Wert.</li>
+<li><strong>Sigenergy:</strong> das Höhere aus Backup-Ladestand und Entlade-Abschaltgrenze. Beide Entitäten sind in der Sigenergy-Integration ab Werk deaktiviert — solange sie aus sind, gilt allein dein Mindest-Ladestand.</li>
 <li><strong>SolaX:</strong> der Entladeboden im Eigenverbrauchsmodus. Er ist ein harter Riegel: Der Wechselrichter stoppt die Entladung dort, auch mitten in einer befohlenen Entladung. Für die Dauer einer geplanten Entladung senkt die Integration ihn deshalb auf 5 Prozentpunkte unter das Ziel und stellt danach deinen Wert wieder her. Die Optimierung plant immer mit deinem eingestellten Wert.</li>
 </ul>
 <p>Soll die Batterie tiefer entladen werden, musst du die Reserve im Gerät senken. Eine Einstellung hier reicht dafür nicht.</p></div>

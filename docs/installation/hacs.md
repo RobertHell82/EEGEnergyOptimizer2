@@ -7,7 +7,7 @@
 
 ## Voraussetzungen
 
-- Home Assistant **OS** oder **Supervised** (für andere Installationsarten siehe offizielle HACS-Doku)
+- Home Assistant **OS** (für andere Installationsarten siehe offizielle HACS-Doku)
 - Ein **GitHub-Konto** (kostenlos) — wird für die Aktivierung von HACS benötigt
 - Zugriff auf die Home Assistant Oberfläche als Administrator
 

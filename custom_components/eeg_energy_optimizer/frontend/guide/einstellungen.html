@@ -53,7 +53,13 @@
 <p>Die Karte <strong>Anlage und Sensoren</strong> im Tab <strong>System</strong> zeigt nur an, welcher Wechselrichter und welche Sensoren zugeordnet sind. Ändern kannst du sie hier nicht. Dafür gibt es den Knopf <strong>Einrichtung erneut durchlaufen</strong>: Er startet den Assistenten direkt beim Schritt „Wechselrichter“, und alle Felder sind mit deiner aktuellen Konfiguration vorbefüllt. Der Grund für den Umweg: Nur der Assistent erkennt Sensoren automatisch und testet die Verbindung zum Wechselrichter.</p>
 <p>Es gibt eine Ausnahme: die Sensoren der PV-Prognose im Tab <strong>Prognose</strong>. Die steuernde Quelle wählst du dort wie im Assistenten über die drei Karten. Bei Solcast und Forecast.Solar stehen die Sensoren darunter, zugeklappt unter <strong>Prognose-Sensoren</strong>; die Zeile zeigt, welche gerade zugeordnet sind. Ein Wechsel der Quelle belegt sie aus der Erkennung vor, aufgeklappt kannst du sie ändern. Fehlt ein Pflichtsensor, ist der Bereich von selbst offen. Ohne diese Sensoren wäre der Wechsel wertlos.</p>
 <h3>Speichern</h3>
-<p>Der Knopf <strong>Speichern</strong> unter den Tabs übernimmt die Änderungen aus <strong>allen</strong> Tabs auf einmal. Danach bist du wieder im Dashboard. Fehlt ein Pflichtwert (AC-Grenzleistung, PV-Spitzenleistung, Höhe der Einspeisegrenze, die Sensoren einer fremden Prognosequelle, gültige PV-Flächen, Adresse und Leistung des Heizstabs), wird nichts gespeichert. Über dem Knopf steht dann, was fehlt.</p>
+<p>Der Knopf <strong>Speichern</strong> unter den Tabs übernimmt die Änderungen aus <strong>allen</strong> Tabs auf einmal. Danach bist du wieder im Dashboard. Fehlt ein Pflichtwert oder passt etwas nicht zusammen, wird nichts gespeichert; über dem Knopf steht dann, was fehlt. Geprüft werden:</p>
+<ul>
+<li><strong>Anlage:</strong> AC-Grenzleistung, PV-Spitzenleistung, Batterie-Leistungsgrenze, Höhe der Einspeisegrenze (wenn eingeschaltet)</li>
+<li><strong>Tarife:</strong> Standardvergütung (bei „Fester Wert“), Arbeitspreis, Netzbereich (wenn Sommer-Nieder- oder Winter-Nieder-Arbeitspreis eingeschaltet ist), das Nachtfenster, sobald ein Nachtsatz eingetragen ist (Standardvergütung und je Gemeinschaft), die Anteile der Gemeinschaften (zusammen höchstens 100 %) und im Quotenmodus die Tages-Abnahmequote</li>
+<li><strong>Prognose:</strong> die Sensoren einer fremden Prognosequelle, gültige PV-Flächen</li>
+<li><strong>Verbraucher:</strong> Adresse, Leistung und Maximaltemperatur des Heizstabs, Adresse der Ambibox</li>
+</ul>
 <p>Die meisten Änderungen wirken <strong>sofort</strong>: Der Fahrplan wird gleich neu gerechnet, die Steuerung behält ihren Zustand. Einen geänderten Rückblick des Verbrauchsprofils rechnet die Integration im Hintergrund neu.</p>
 <p>Bei einigen Änderungen <strong>lädt die Integration neu</strong>, weil Treiber und Sensoren mit der neuen Anbindung neu entstehen müssen. Das dauert einige Sekunden:</p>
 <ul>

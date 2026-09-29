@@ -29,7 +29,7 @@ Der Heizstab ist eine **zweite Senke** neben der Batterie. Er hat zwei Betriebsa
 | Gemessene Einspeisung | Heizstab |
 |---|---|
 | **Klebt an der Grenze** (± 0,1 kW) | Der Wechselrichter regelt gerade ab. Der Heizstab bekommt 0,5 kW mehr — in Schritten, weil die wahre Höhe des Überschusses unsichtbar ist |
-| **Deutlich unter der Grenze** (mehr als 0,3 kW) | Der Heizstab gibt genau die Lücke wieder her, in einem Schritt. Bei Netzbezug fällt er sofort auf 0 |
+| **Deutlich unter der Grenze** (mehr als 0,3 kW) | Der Heizstab gibt je Lauf die **Hälfte** der Lücke wieder her; direkt nach einem Anheben wartet er einen Lauf ab, bis sich die Einspeisung eingeschwungen hat. Bei **Netzbezug** nimmt er die ganze Lücke sofort zurück — an der Einspeisegrenze heißt das: aus |
 | **Dazwischen** | Nichts ändern |
 
 _Fällt der Netz-Messwert einen Lauf lang aus (der Zähler antwortet nicht), hält der Heizstab seinen Sollwert; erst beim zweiten fehlenden Messwert in Folge geht er auf 0. Ein einzelner Aussetzer kostete sonst Minuten Wärme, denn der Weg zurück geht in Schritten._
@@ -38,7 +38,7 @@ Was der Heizstab **nie** tut:
 
 - **Aus der Batterie heizen.** Entlädt die Optimierung gerade ins Netz, steht der Heizstab auf 0. Eine Einspeisung aus der Batterie ist kein Überschuss.
 - **Aus dem Netz heizen** — außer du erlaubst es ausdrücklich unter der Mindesttemperatur (siehe unten). Ohne diese Erlaubnis zieht der Heizstab nie Netzstrom.
-- **Weiterlaufen, wenn niemand steuert.** Der Ohmpilot schaltet nach 50 Sekunden ohne neuen Sollwert selbst ab. Bricht die Verbindung ab oder ist die Optimierung aus, ist auch der Heizstab aus.
+- **Weiterlaufen, wenn niemand steuert.** Der Ohmpilot schaltet nach 50 Sekunden ohne neuen Sollwert selbst ab. Bricht die Verbindung ab oder ist die Optimierung aus, ist auch der Heizstab aus. Hängt die Regelung selbst — die letzte Vorgabe ist älter als 90 Sekunden oder ein Regelschritt schlägt fehl —, geht der Sollwert ebenfalls auf 0, statt dass der letzte Wert weiter nachgeschrieben wird.
 
 Die geplante Heizstab-Leistung steht im **Optimierungsplan** (rote gestrichelte Linie): So viel Wärme sieht das Modell je Viertelstunde vor. Sie ist die Obergrenze für den laufenden Slot — wie viel davon wirklich fließt, entscheidet die Messung.
 
@@ -71,9 +71,9 @@ Alle Felder stehen in den **Einstellungen** im Tab **Verbraucher**, Karte **Heiz
 | **Heizstab steuern — nur Fronius Ohmpilot** | Schaltet die Steuerung ein. Aus = der Optimizer fasst den Ohmpilot nicht an |
 | **Adresse des Ohmpilot** | IP-Adresse oder Hostname des Ohmpilot im Netzwerk |
 | **Modbus-Port** | Standard 502 |
-| **Leistung des Heizstabs (kW)** | Nennleistung des angeschlossenen Heizstabs — 3 kW einphasig, 6 oder 9 kW dreiphasig |
-| **Maximaltemperatur (°C)** | Bis zu dieser Temperatur darf der Heizstab heizen; darüber bleibt er aus, weiter geht es 3 K darunter |
-| **Mindesttemperatur (°C)** | Darunter hat der Heizstab Vorrang vor der Einspeisung: Er nimmt allen PV-Überschuss, auch den unterhalb der Einspeisegrenze, bis 5 K darüber — aber weder Netz- noch Batteriestrom. 0 = aus |
+| **Leistung des Heizstabs (kW)** | Nennleistung des angeschlossenen Heizstabs — 3 kW einphasig, 6 oder 9 kW dreiphasig. Vorgabe 6, erlaubt 0,5 bis 30 |
+| **Maximaltemperatur (°C)** | Bis zu dieser Temperatur darf der Heizstab heizen; darüber bleibt er aus, weiter geht es 3 K darunter. Vorgabe 80, erlaubt 30 bis 95 |
+| **Mindesttemperatur (°C)** | Darunter hat der Heizstab Vorrang vor der Einspeisung: Er nimmt allen PV-Überschuss, auch den unterhalb der Einspeisegrenze, bis 5 K darüber — aber weder Netz- noch Batteriestrom. 0 = aus, erlaubt bis 90 |
 | **Unter der Mindesttemperatur auch aus dem Netz heizen** | Nur sichtbar mit Mindesttemperatur. Eingeschaltet heizt der Heizstab darunter mit voller Leistung, egal woher der Strom kommt, und die Optimierung entlädt derweil nicht ins Netz. Ausgeschaltet (Vorgabe) wird nie Netzstrom verheizt — ohne Sonne bleibt das Wasser dann kalt |
 | **Wärmewert (ct/kWh)** | Was eine Kilowattstunde Wärme ersetzt — der Preis der Energie, mit der du sonst heizen würdest. Gegen diesen Wert wägt der Fahrplan die Einspeisung ab; er fließt in „Ersparnis durch PV" und in den Optimierungsgewinn ein. 0 = Wärme wird gezählt, aber nicht bewertet |
 | **Puffervolumen (Liter)** | Wie groß der Speicher ist, den der Heizstab erwärmt. Daraus rechnet der Fahrplan, wie viel Wärme noch hineinpasst — mit 10 % Verlustaufschlag auf die reine Wasserwärme (1,163 Wh je Liter und Kelvin), für Heizstabverluste, Schichtung und Wärme, die nicht bis zum Fühler kommt. Bei Schichtspeichern nur den Teil angeben, der tatsächlich warm wird. Leer = der Heizstab bekommt nur, was ohnehin abgeregelt würde |

@@ -16,12 +16,13 @@ HACS-kompatible Home Assistant Integration für vorausschauendes Batteriemanagem
 - **PV-Prognose** — Solcast Solar, Forecast.Solar oder eigene Berechnung (Open-Meteo-Wetter als Mittel aus drei Wettermodellen, Anlage mit mehreren Ausrichtungen und Grenze je Wechselrichter direkt im Panel, ohne Konto, kalibriert sich an der eigenen Messung) mit 7-Tage-Ausblick
 - **Prognosevergleich** — die zweite Quelle läuft mit, ohne zu steuern; jeden Morgen werden beide Prognosen festgehalten und im Dashboard gegen die Messung gestellt (Diagramm je Tag, Abweichung der letzten 30 Tage)
 - **Verbrauchsprofil** — lernt den stündlichen Verbrauch aus den HA-Recorder-Daten, getrennt nach Werktag und Wochenende/Feiertag
-- **Live-Dashboard** — Sidebar-Panel mit Energiefluss, Fahrplan und Ist-Verlauf, PeakShare-Bedarfskurve, Geldbilanz und Aktivitätsprotokoll. Die Steuerung lässt sich pausieren — für eine Dauer oder bis die Batterie einen Ladestand erreicht hat
+- **Live-Dashboard** — Sidebar-Panel mit Energiefluss, Fahrplan und Ist-Verlauf, PeakShare-Bedarfskurve, Geldbilanz, Einspeise-Karte (was ins Netz ging, wie viel davon aus der Batterie, wie viel die Gemeinschaft genommen hat — heute, im Monat, im Jahr, gesamt) und Aktivitätsprotokoll. Die Steuerung lässt sich pausieren — für eine Dauer oder bis die Batterie einen Ladestand erreicht hat
+- **Bezugsspitze** — misst den Netzbezug je Viertelstunde und die Monatsspitze, nach der sich ab 2027 der Leistungspreis des Netzentgelts richtet, samt Richtwert der Netzkosten (misst nur, steuert nicht)
 - **Einrichtungsassistent** — schrittweises Onboarding mit automatischer Sensorerkennung
 
 ### EEG-Statistik
 
-Der EEG Energy Optimizer sendet anonymisierte Diagnose- und Wirksamkeitsdaten an einen vom Maintainer betriebenen Cloudflare-Backend. Damit lassen sich Schwachstellen schneller finden und die Wirksamkeit der EEG-Steuerung über mehrere Anlagen hinweg auswerten — ohne Personenbezug. Die Funktion ist bei **neuen Installationen standardmäßig aktiv**; deaktivieren und vollständig löschen lässt sie sich jederzeit im Panel unter *Einstellungen → System → EEG-Statistik*. Bestehende Installationen behalten ihre vorherige Einstellung (Default war zuvor *aus*).
+Der EEG Energy Optimizer sendet anonymisierte Diagnose- und Wirksamkeitsdaten an die EEG (ein Backend auf Cloudflare, das der Verein Energiewende Ansfelden betreibt). Damit lassen sich Schwachstellen schneller finden und die Wirksamkeit der EEG-Steuerung über mehrere Anlagen hinweg auswerten — ohne Personenbezug. Die Funktion ist bei **neuen Installationen standardmäßig aktiv**; deaktivieren und vollständig löschen lässt sie sich jederzeit im Panel unter *Einstellungen → System → EEG-Statistik*. Bestehende Installationen behalten ihre vorherige Einstellung (Default war zuvor *aus*).
 
 #### Was übermittelt wird
 
@@ -29,8 +30,9 @@ Der EEG Energy Optimizer sendet anonymisierte Diagnose- und Wirksamkeitsdaten an
 |-----------|----------|--------|
 | **Profil** | bei Setup, Restart, Settings-Change | App-Version, HA-Version, Wechselrichter-Typ, Batterie-Kapazität, PV-Peak, Prognose-Quelle, Länder-ISO-Code, ausgewählte EEG-Community (sofern PeakShare aktiv), gefilterte Settings (Whitelist) |
 | **Failure** | bei Auftreten (mit Dedup) | Zeitstempel, Kategorie, Schweregrad, gehashte Fehlermeldung, Kontext-JSON |
-| **Momentaufnahme** | alle 30 Minuten (gesammelt übertragen) | Zeitstempel, Ladestand, PV-, Haus-, Netz- und Batterieleistung, Modus (Ein/Aus), was die Steuerung gerade tut (Laden begrenzt, Entladung, Freigabe, Failsafe), der Mindest-Ladestand des Fahrplans |
-| **Tagesbilanz** | einmal täglich | PV-Erzeugung, Verbrauch und Einspeisung des Vortags, höchste Leistung, Ladestand am Anfang und Ende, dazu PV- und Verbrauchsprognose des Fahrplans für denselben Tag |
+| **Momentaufnahme** | alle 30 Minuten (gesammelt übertragen) | Zeitstempel, Ladestand, PV-, Haus-, Netz- und Batterieleistung, Modus (Ein/Aus — im Datensatz als `ein` bzw. `test`, der alte Name von Aus), was die Steuerung gerade tut (Laden begrenzt, Entladung, Freigabe, Failsafe), der Mindest-Ladestand des Fahrplans |
+| **Bilanztag** | einmal täglich nach 04:00; nach dem Update einmalig das Archiv (bis 400 Tage) | Die Energiemengen der Einspeise-Karte je Bilanztag (04:00–04:00): eingespeist, davon aus der Batterie, davon an die Gemeinschaft, PV, Netzbezug, Haus- und Heizstabverbrauch, Eigenverbrauch, Anteil im Modus Ein, ob die Batterie wie im Standardbetrieb lief, ob der Gemeinschaftsanteil aus der Abnahmequote stammt, dazu dieselben Mengen im simulierten Standardbetrieb — **keine Geldbeträge** |
+| **Tagesbilanz** | einmal täglich | PV-Erzeugung, Verbrauch und Einspeisung des Vortags, höchste Leistung, Ladestand am Anfang und Ende, dazu PV- und Verbrauchsprognose für denselben Tag aus dem Fahrplan des Vorabends und dem von zwei Tagen davor |
 
 Die Settings-Whitelist enthält ausschließlich numerische/kategorische Konfigurationswerte (Tarife, Batterie-Leistungsgrenze, Anzahl und kWp-Summe der PV-Flächen etc.) — **keine Entity-IDs**, keine Sensor-Namen.
 
@@ -59,7 +61,7 @@ Alle sechs werden vom Fahrplan **gesteuert** (Ladelimit und erzwungene Entladung
 | **SMA Smart Energy** | direkt per Modbus TCP (externes Batteriemanagement) | [Guide](docs/guides/sma.md) |
 | **SolaX Gen4+** | via [solax_modbus](https://github.com/wills106/homeassistant-solax-modbus) | [Guide](docs/guides/solax.md) |
 
-Huawei ist **freigegeben**, die übrigen fünf sind im **Feldtest**: Die Steuerung ist an einer echten Anlage nachgewiesen, der Dauerbetrieb über Wochen noch nicht vollständig. Was das je Gerät heißt und was noch offen ist, steht in [docs/wechselrichter-status.md](docs/wechselrichter-status.md).
+Wie weit jedes Gerät erprobt ist und was noch offen ist, steht in [docs/wechselrichter-status.md](docs/wechselrichter-status.md).
 
 ## Installation
 
@@ -86,7 +88,7 @@ Willkommen · Wechselrichter · Batterie · PV-Prognose · Anlage & Batterie · 
 
 ### Fahrplan
 
-Jede Minute rechnet die Integration einen **linearen Optimierungs-Fahrplan** über 48 Stunden (15-Minuten-Raster): Welche Viertelstunde lädt, hält oder entlädt die Batterie, und was geht dabei ins Netz. Grundlage sind das gelernte Verbrauchsprofil, der Batteriezustand, die PV-Prognose (bei Solcast inklusive echtem p10-Worst-Case-Pfad) und die konfigurierten Preise.
+Jede Minute rechnet die Integration einen **linearen Optimierungs-Fahrplan** über 48 Stunden (15-Minuten-Raster): Welche Viertelstunde lädt, hält oder entlädt die Batterie, und was geht dabei ins Netz. Grundlage sind das gelernte Verbrauchsprofil, der Batteriezustand, die PV-Prognose (bei Solcast inklusive echtem p10-Worst-Case-Pfad; die eigene Berechnung übernimmt bei eingeschaltetem Prognosevergleich das p10-Verhältnis von Solcast oder, nach 14 Vergleichstagen, einen aus der eigenen Messung gelernten Faktor) und die konfigurierten Preise.
 
 ### Gesteuert wird über Preise
 
@@ -123,7 +125,7 @@ Weitere Steuergrößen im Fahrplan:
 
 | Größe | Wirkung |
 |---|---|
-| **Mindest-Ladestand** | Harte Untergrenze — darunter wird nicht entladen. Höchstens 20 Prozentpunkte unter dem Maximum-Ladestand, damit ein nutzbarer Bereich bleibt |
+| **Mindest-Ladestand** | Harte Untergrenze — darunter wird nicht entladen. Höchstens 20 Prozentpunkte unter dem Maximum-Ladestand, damit ein nutzbarer Bereich bleibt. Hält der Wechselrichter selbst eine höhere Reserve zurück (Backup-Ladestand), gilt diese |
 | **Maximum-Ladestand** | Obergrenze der Planung (Vorgabe 100 = bis voll laden) |
 | **Einspeisegrenze** | Maximale Leistung am Netzanschluss, um die herum geplant wird |
 | **Alterungskosten der Batterie** | Preis pro umgesetzter kWh — ein zu kleiner Preisunterschied lohnt den Zyklus nicht. Vorgabe 1 ct, im Expertenmodus einstellbar; bei der Entladung in die Gemeinschaft ist der Wert die Schwelle (Vergütung plus Alterungskosten) |
@@ -173,7 +175,7 @@ Viele Netzbetreiber begrenzen die maximale Einspeiseleistung (z. B. 4 kW). Kennt
 ## Voraussetzungen
 
 - Home Assistant 2025.1.0 oder neuer
-- Einer der oben genannten **Wechselrichter mit Batteriespeicher**. Fronius, Kostal und SMA werden direkt per Modbus TCP angesprochen und brauchen keine weitere Integration; Huawei, Sigenergy und SolaX setzen die jeweilige Integration voraus
+- Einer der oben genannten **Wechselrichter mit Batteriespeicher**. Jeder braucht die passende Integration in Home Assistant: Fronius, Kostal Plenticore und SMA Solar sind eingebaut und liefern die Messwerte, gesteuert wird bei diesen drei zusätzlich direkt per Modbus TCP (am Wechselrichter zu aktivieren). Huawei Solar, Sigenergy und SolaX Modbus kommen über HACS
 - Eine PV-Prognose: Solcast Solar, Forecast.Solar oder die eigene Berechnung der Integration (braucht nur den Standort in Home Assistant)
 
 ## Lizenz

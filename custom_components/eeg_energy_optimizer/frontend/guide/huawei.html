@@ -18,7 +18,7 @@
 <h3>2. HACS Integration installieren</h3>
 <p><em><strong>Voraussetzung:</strong> <a href="https://hacs.xyz/">HACS</a> muss installiert sein.</em></p>
 <ol>
-<li>Gehe zu <strong>HACS → Integrationen → Suche „Huawei Solar"</strong><br>
+<li>Gehe zu <strong>HACS</strong> und suche dort nach <strong>„Huawei Solar"</strong><br>
    <em>Repository: <code>wlcrs/huawei_solar</code></em></li>
 <li>Installiere die Integration und <strong>starte Home Assistant neu</strong></li>
 </ol>
@@ -30,16 +30,16 @@
 <li>Gib die <strong>IP-Adresse</strong> des Wechselrichters/Dongles ein</li>
 <li>Port: <strong>6607</strong> (neuere Firmware) oder <strong>502</strong> (ältere Firmware)</li>
 <li>Slave ID: <strong>1</strong> (Standard, bei Problemen 0 versuchen)</li>
-<li><strong>Elevated Permissions: MUSS aktiviert werden!</strong><br>
-   <em>Ohne Elevated Permissions keine Batteriesteuerung — der EEG Energy Optimizer kann dann nicht steuern.</em></li>
+<li><strong>„Enable battery control“ MUSS aktiviert werden!</strong> (in älteren Versionen der Integration hieß die Option „Elevated Permissions“)<br>
+   <em>Ohne diese Option registriert die Integration keine Steuer-Dienste — der EEG Energy Optimizer kann dann nicht steuern, und der Assistent meldet „Die Steuer-Dienste der huawei_solar-Integration fehlen“.</em></li>
 <li>Installer-Passwort: <code>00000a</code> eingeben</li>
 </ol>
-<p><em><strong>Elevated Permissions vergessen?</strong> Unter Einstellungen → Integrationen → Huawei Solar → Drei-Punkte-Menü → „Neu konfigurieren" nachträglich aktivieren.</em></p>
+<p><em><strong>Option vergessen?</strong> Unter Einstellungen → Integrationen → Huawei Solar → Drei-Punkte-Menü → „Neu konfigurieren" nachträglich aktivieren, dann im Assistenten „Erneut prüfen“.</em></p>
 <h3>4. Prüfen</h3>
 <ol>
 <li>Unter <strong>Einstellungen → Integrationen</strong>: Huawei Solar zeigt <strong>„geladen"</strong></li>
-<li><strong>Entwicklerwerkzeuge → Zustände</strong>: <code>sensor.battery_state_of_capacity</code> zeigt SOC (0–100%)</li>
-<li><code>number.batteries_maximale_ladeleistung</code> existiert (= Elevated Permissions aktiv)</li>
+<li><strong>Entwicklerwerkzeuge → Zustände</strong>: <code>sensor.batterien_batterieladung</code> (englisch benannt: <code>sensor.batteries_batterieladung</code>) zeigt den Ladestand (0–100 %)</li>
+<li><code>number.batteries_maximale_ladeleistung</code> existiert (= „Enable battery control“ aktiv)</li>
 <li>Kehre hierher zurück — der Wechselrichter wird automatisch erkannt</li>
 </ol>
 <h3>Häufige Probleme</h3>
@@ -61,7 +61,7 @@
 </tr>
 <tr>
 <td><strong>Keine Batterie-Entities</strong></td>
-<td>Elevated Permissions fehlen → neu konfigurieren</td>
+<td>„Enable battery control“ fehlt → neu konfigurieren</td>
 </tr>
 <tr>
 <td><strong>Permission denied</strong></td>

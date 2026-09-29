@@ -19,7 +19,7 @@ Modbus TCP muss am Wechselrichter aktiviert sein, damit Home Assistant zugreifen
 
 _**Voraussetzung:** [HACS](https://hacs.xyz/) muss installiert sein._
 
-1. Gehe zu **HACS → Integrationen → Suche „Huawei Solar"**<br>
+1. Gehe zu **HACS** und suche dort nach **„Huawei Solar"**<br>
    _Repository: `wlcrs/huawei_solar`_
 2. Installiere die Integration und **starte Home Assistant neu**
 
@@ -31,17 +31,17 @@ _**Voraussetzung:** [HACS](https://hacs.xyz/) muss installiert sein._
 4. Gib die **IP-Adresse** des Wechselrichters/Dongles ein
 5. Port: **6607** (neuere Firmware) oder **502** (ältere Firmware)
 6. Slave ID: **1** (Standard, bei Problemen 0 versuchen)
-7. **Elevated Permissions: MUSS aktiviert werden!**<br>
-   _Ohne Elevated Permissions keine Batteriesteuerung — der EEG Energy Optimizer kann dann nicht steuern._
+7. **„Enable battery control“ MUSS aktiviert werden!** (in älteren Versionen der Integration hieß die Option „Elevated Permissions“)<br>
+   _Ohne diese Option registriert die Integration keine Steuer-Dienste — der EEG Energy Optimizer kann dann nicht steuern, und der Assistent meldet „Die Steuer-Dienste der huawei_solar-Integration fehlen“._
 8. Installer-Passwort: `00000a` eingeben
 
-_**Elevated Permissions vergessen?** Unter Einstellungen → Integrationen → Huawei Solar → Drei-Punkte-Menü → „Neu konfigurieren" nachträglich aktivieren._
+_**Option vergessen?** Unter Einstellungen → Integrationen → Huawei Solar → Drei-Punkte-Menü → „Neu konfigurieren" nachträglich aktivieren, dann im Assistenten „Erneut prüfen“._
 
 ## 4. Prüfen
 
 1. Unter **Einstellungen → Integrationen**: Huawei Solar zeigt **„geladen"**
-2. **Entwicklerwerkzeuge → Zustände**: `sensor.battery_state_of_capacity` zeigt SOC (0–100%)
-3. `number.batteries_maximale_ladeleistung` existiert (= Elevated Permissions aktiv)
+2. **Entwicklerwerkzeuge → Zustände**: `sensor.batterien_batterieladung` (englisch benannt: `sensor.batteries_batterieladung`) zeigt den Ladestand (0–100 %)
+3. `number.batteries_maximale_ladeleistung` existiert (= „Enable battery control“ aktiv)
 4. Kehre hierher zurück — der Wechselrichter wird automatisch erkannt
 
 ## Häufige Probleme
@@ -50,6 +50,6 @@ _**Elevated Permissions vergessen?** Unter Einstellungen → Integrationen → H
 |---|---|
 | **Connection refused** | Modbus TCP nicht aktiviert → Schritt 1 wiederholen |
 | **Connection timeout** | Port 6607 statt 502 versuchen (oder umgekehrt) |
-| **Keine Batterie-Entities** | Elevated Permissions fehlen → neu konfigurieren |
+| **Keine Batterie-Entities** | „Enable battery control“ fehlt → neu konfigurieren |
 | **Permission denied** | Passwort `00000a` oder `0000000a` (8 Zeichen) versuchen |
 | **Verbindung bricht ab** | FusionSolar App komplett schließen, nicht nur minimieren |

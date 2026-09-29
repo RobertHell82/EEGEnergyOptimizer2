@@ -16,7 +16,7 @@
 <p>Der EEG Energy Optimizer steuert die Batterie über Modbus TCP. Den Modbus-Server kann der Anlagenbetreiber selbst aktivieren — es ist <strong>kein Grid-Guard-Code nötig</strong>:</p>
 <ol>
 <li>SMA-Webinterface öffnen: <code>https://&lt;IP des Wechselrichters&gt;</code>, als <strong>Installateur</strong> (oder Benutzer mit Parameterrechten) anmelden</li>
-<li><strong>Gerätekonfiguration → Externe Kommunikation → Modbus → TCP-Server</strong> → <strong>aktivieren</strong></li>
+<li><strong>Geräteparameter → Externe Kommunikation → Modbus → TCP-Server</strong> → <strong>aktivieren</strong></li>
 <li>Port: <strong>502</strong> (Standard, nicht ändern)</li>
 </ol>
 <p>Die Unit-ID 3 für die Steuerregister ist im Optimizer fest hinterlegt.</p>
@@ -31,9 +31,21 @@
 <ol>
 <li>Unter <strong>Einstellungen → Geräte &amp; Dienste</strong>: SMA Solar zeigt <strong>„geladen"</strong> und listet Sensoren</li>
 <li><strong>Entwicklerwerkzeuge → Zustände</strong>: Suche nach <code>battery_soc_total</code>, <code>metering_power_absorbed</code> und <code>pv_power</code> — die Werte müssen plausibel sein</li>
-<li>Kehre hierher zurück — die Sensoren werden automatisch erkannt</li>
+<li>Kehre in den Assistenten zurück — die Sensoren werden automatisch erkannt</li>
 </ol>
 <p><em>Hinweis: Der Sensor <code>sensor.*_grid_power</code> ist bei SMA die AC-Ausgangsleistung des Wechselrichters, <strong>nicht</strong> der Netzanschlusspunkt. Für die Netzleistung verwendet der Optimizer das Sensorpaar <code>metering_power_supplied</code> (Einspeisung) und <code>metering_power_absorbed</code> (Bezug).</em></p>
+<h3>Im Assistenten: Schritt „Wechselrichter“</h3>
+<p>Hier bleibt man am häufigsten hängen: <strong>„Weiter“</strong> geht erst, wenn alles Folgende stimmt.</p>
+<ol>
+<li><strong>SMA Smart Energy</strong> wählen. Ohne die SMA-Integration aus Schritt 1 geht es nicht weiter — sie liefert alle Messwerte, Modbus allein genügt nicht.</li>
+<li><strong>Fünf Leistungssensoren</strong>, alle Pflicht. SMA meldet Batterie und Netz nicht als einen Wert mit Vorzeichen, sondern als je <strong>zwei getrennte Sensoren</strong>:</li>
+<li>PV-Leistung</li>
+<li>Batterie <strong>Laden</strong> (<code>*_battery_power_charge_total</code>) und Batterie <strong>Entladen</strong> (<code>*_battery_power_discharge_total</code>)</li>
+<li>Netz <strong>Einspeisung</strong> (<code>*_metering_power_supplied</code>) und Netz <strong>Bezug</strong> (<code>*_metering_power_absorbed</code>)</li>
+</ol>
+<p>Die Erkennung trägt sie selbst ein; fehlt einer, bleibt „Weiter“ gesperrt.
+3. <strong>Modbus IP-Adresse</strong> (Pflicht): die IP des Wechselrichters — sie wird <strong>nicht</strong> vorbelegt, bitte eintragen. Port <strong>502</strong>.
+4. Bei <strong>„Weiter“</strong> prüft der Assistent die Modbus-Verbindung und liest dabei das Steuerregister (nur lesend). Schlägt sie fehl, geht es nicht weiter: Modbus-TCP-Server aktiviert (Schritt 2)? IP richtig?</p>
 <h3>Was der Optimizer am Gerät tut</h3>
 <p>Der Fahrplan stellt den SMA über das <strong>externe Batteriemanagement</strong> (CmpBMS, „6-Parameter-Methode"). Jeder Befehl schreibt den kompletten Block aus Betriebsart und vier Leistungsgrenzen plus Netz-Sollwert — so verlangt es die SMA-Spezifikation, einzelne Register wären wirkungslos.</p>
 <table>
@@ -58,7 +70,7 @@
 <p><strong>Der Watchdog ist das Sicherheitsnetz:</strong> Der Block muss spätestens alle 300 Sekunden erneuert werden, sonst fällt der Wechselrichter in sein internes Batteriemanagement zurück. Der Treiber schreibt alle 60 Sekunden nach. Stürzt Home Assistant mitten in einer Einspeisung ab, endet sie also von selbst.</p>
 <p>Einen Ziel-Ladestand kennt die SMA-Schnittstelle nicht; der Optimizer prüft den Ladestand alle 30 Sekunden selbst und beendet die Einspeisung.</p>
 <blockquote>
-<p><strong>Feldtest:</strong> Ladeblockierung, Netz-Sollwert und Stopp sind am Gerät verifiziert (Sunny Tripower 10.0 Smart Energy). Offen ist der Dauerbetrieb über mehrere Tage — insbesondere neben einem Sunny Home Manager 2.0.</p>
+<p>Ladeblockierung, Netz-Sollwert und Stopp sind am Gerät verifiziert (Sunny Tripower 10.0 Smart Energy). Mit einem Sunny Home Manager 2.0 muss dessen prognosebasiertes Laden aus sein (Abschnitt 3).</p>
 </blockquote>
 <h3>Häufige Probleme</h3>
 <table>

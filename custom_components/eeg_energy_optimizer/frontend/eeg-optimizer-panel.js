@@ -2709,6 +2709,12 @@ class EegOptimizerPanel extends HTMLElement {
       }
       const saveData = { ...this._wizardData };
       delete saveData.consumption_sensor;
+      // Eine Bedienentscheidung, kein Einstellwert — sie gehört nicht in die
+      // Konfiguration. Der Modus liegt in der Select-Entität.
+      const einschalten = saveData.steuerung_einschalten !== false
+        && SCHEDULE_CONTROL_INVERTERS.includes(saveData.inverter_type);
+      delete saveData.steuerung_einschalten;
+      delete this._wizardData.steuerung_einschalten;
       await this._hass.callWS({
         type: "eeg_optimizer/save_config",
         config: saveData,
@@ -2721,7 +2727,7 @@ class EegOptimizerPanel extends HTMLElement {
       this._render();
 
       // Integration reloads after config save — poll until optimizer is ready
-      this._waitForOptimizer();
+      this._waitForOptimizer(0, einschalten);
     } catch (err) {
       console.error("Failed to save config:", err);
       this._wizardData.setup_complete = false;
@@ -2898,10 +2904,11 @@ class EegOptimizerPanel extends HTMLElement {
     this.dispatchEvent(ev);
   }
 
-  async _waitForOptimizer(attempt = 0) {
+  async _waitForOptimizer(attempt = 0, einschalten = false) {
     // Poll config every 2s until setup_complete is reflected (max 15 attempts = 30s)
     if (attempt >= 15) {
       this._loadConfig();
+      if (einschalten) this._modusEinschalten();
       return;
     }
     try {
@@ -2910,10 +2917,30 @@ class EegOptimizerPanel extends HTMLElement {
         await this._loadConfig();
         this._loadActivityLog();
         this._subscribeActivityEvents();
+        if (einschalten) this._modusEinschalten();
         return;
       }
     } catch (_) { /* integration still reloading */ }
-    setTimeout(() => this._waitForOptimizer(attempt + 1), 2000);
+    setTimeout(() => this._waitForOptimizer(attempt + 1, einschalten), 2000);
+  }
+
+  // Nach dem Assistenten auf „Ein“ schalten (Haken in der Zusammenfassung).
+  // Die Integration lädt nach dem Speichern neu, und die Select-Entität
+  // stellt dabei ihren letzten Zustand wieder her — ein Schalten mitten im
+  // Neuladen ginge verloren. Deshalb: schalten, nach 3 s nachsehen, bis zu
+  // fünfmal wiederholen. Scheitert es, bleibt der Schalter im Dashboard.
+  async _modusEinschalten(versuch = 0) {
+    if (!this._hass || versuch >= 5) return;
+    const entity = this._entityIds?.select || "select.eeg_energy_optimizer_optimizer";
+    if (this._readState(entity)?.state === "Ein") return;
+    try {
+      if (this._readState(entity)) {
+        await this._hass.callService("select", "select_option", { entity_id: entity, option: "Ein" });
+      }
+    } catch (e) {
+      console.warn("Modus Ein nicht setzbar:", e);
+    }
+    setTimeout(() => this._modusEinschalten(versuch + 1), 3000);
   }
 
   async _loadActivityLog() {
@@ -5529,7 +5556,7 @@ class EegOptimizerPanel extends HTMLElement {
         <li>Einen Wechselrichter mit Batteriespeicher: Fronius Gen24, Huawei SUN2000,
             Kostal Plenticore, Sigenergy SigenStor, SMA Smart Energy
             oder SolaX Gen4+</li>
-        <li>Eine PV-Prognose-Integration (Solcast Solar oder Forecast.Solar)</li>
+        <li>Eine PV-Prognose: Solcast Solar oder Forecast.Solar als Integration — oder die eigene Berechnung, die ohne Integration auskommt</li>
       </ul>
       <h3 style="margin-bottom:8px">Getestete Setups</h3>
       <ul style="line-height:1.8;padding-left:20px">
@@ -6784,8 +6811,8 @@ class EegOptimizerPanel extends HTMLElement {
           nutzbarer Bereich.</div>
         <div class="help-text">${wirkung}</div>
         <div class="help-text" style="margin-top:8px">
-          Das begrenzt den <em>Plan</em>, nicht das Gerät: steht die Optimierung auf Test oder
-          Aus, startet Home Assistant neu, oder drückt bei aktiver Einspeisegrenze mehr
+          Das begrenzt den <em>Plan</em>, nicht das Gerät: steht die Optimierung auf Aus
+          oder in Pause, startet Home Assistant neu, oder drückt bei aktiver Einspeisegrenze mehr
           PV-Leistung nach als ins Netz darf, lädt der Wechselrichter weiterhin bis voll. Als
           echter Zellschutz gehört die Grenze zusätzlich ins Gerät.
         </div>
@@ -7934,8 +7961,24 @@ class EegOptimizerPanel extends HTMLElement {
       <div class="summary-section">
         <h3>Wechselrichter</h3>
         ${row("Typ", INVERTER_LABELS[d.inverter_type] || d.inverter_type)}
-        ${row("Steuerung", gesteuert ? "Aktiv (Ladelimit + Entladung)" : "Nur Anzeige — Steuerung derzeit nur Fronius, Huawei, Kostal, Sigenergy, SMA und SolaX")}
+        ${row("Steuerung", gesteuert ? "Ladelimit + Entladung nach Fahrplan" : "Nur Anzeige — Steuerung derzeit nur Fronius, Huawei, Kostal, Sigenergy, SMA und SolaX")}
       </div>
+
+      ${gesteuert ? `
+      <div class="summary-section">
+        <label style="display:flex;gap:10px;align-items:flex-start;cursor:pointer">
+          <input type="checkbox" data-field="steuerung_einschalten" style="margin-top:3px"
+                 ${d.steuerung_einschalten !== false ? "checked" : ""}>
+          <span>
+            <strong>Steuerung nach dem Fertigstellen einschalten</strong>
+            <span class="help-text" style="display:block">
+              Stellt den Optimizer auf <strong>Ein</strong> — ab dann steuert er deinen Speicher.
+              Ohne Haken bleibt er auf <strong>Aus</strong>: Er rechnet und zeigt den Fahrplan,
+              schreibt aber nichts an den Wechselrichter. Umschalten kannst du jederzeit im Dashboard.
+            </span>
+          </span>
+        </label>
+      </div>` : ""}
 
       <div class="summary-section">
         <h3>Batterie &amp; PV</h3>
@@ -8349,9 +8392,10 @@ class EegOptimizerPanel extends HTMLElement {
             <strong>Übermittelt:</strong>
             <ul style="margin:6px 0 10px 18px;padding:0">
               <li><strong>Profil</strong> (bei Setup, Restart, Settings-Change): App-/HA-Version, Wechselrichter-Typ, Batterie-Kapazität, PV-Peak, Prognose-Quelle, Land, ausgewählte EEG-Community (sofern PeakShare aktiv), Whitelist-Settings (numerische/kategorische Werte, keine Entity-IDs)</li>
-              <li><strong>Failure</strong> (bei Auftreten): Kategorie, Schweregrad, gehashte Fehlermeldung</li>
+              <li><strong>Failure</strong> (bei Auftreten): Kategorie, Schweregrad, gehashte Fehlermeldung, technischer Kontext (z. B. Wechselrichter-Typ, Grund)</li>
               <li><strong>Momentaufnahme</strong> (alle 30 Minuten): Ladestand, PV-, Haus-, Netz- und Batterieleistung, Modus, was die Steuerung gerade tut, Mindest-Ladestand des Fahrplans</li>
-              <li><strong>Tagesbilanz</strong> (einmal täglich): PV-Erzeugung, Verbrauch und Einspeisung des Vortags, höchste Leistung, Ladestand am Anfang und Ende, PV- und Verbrauchsprognose für denselben Tag</li>
+              <li><strong>Bilanztag</strong> (einmal täglich; nach dem Update einmalig das Archiv bis 400 Tage): die Energiemengen der Einspeise-Karte — eingespeist, davon aus der Batterie und an die Gemeinschaft, PV, Netzbezug, Haus- und Heizstabverbrauch, Anteil im Modus Ein, dieselben Mengen im simulierten Standardbetrieb. Keine Geldbeträge</li>
+                <li><strong>Tagesbilanz</strong> (einmal täglich): PV-Erzeugung, Verbrauch und Einspeisung des Vortags, höchste Leistung, Ladestand am Anfang und Ende, PV- und Verbrauchsprognose für denselben Tag aus dem Fahrplan des Vorabends und dem von zwei Tagen davor</li>
             </ul>
             <strong>Nicht übermittelt:</strong>
             <ul style="margin:6px 0 10px 18px;padding:0">

@@ -32,20 +32,23 @@ Der Assistent hat sieben Schritte. Die ersten drei ordnen einmalig die Sensoren 
 
 | Schritt | Was abgefragt wird |
 |---|---|
-| **1. Willkommen** | Prüft, ob die nötigen Integrationen installiert sind (je nach Wechselrichter und Prognosequelle) |
+| **1. Willkommen** | Überblick, was du brauchst. Ob die nötigen Integrationen installiert sind, prüfen die Schritte Wechselrichter und PV-Prognose (mit „Erneut prüfen“, falls du eine nachinstallierst) |
 | **2. Wechselrichter** | Typ wählen; je nach Gerät automatische Sensorerkennung oder Verbindungsprüfung per Modbus. Dazu die Sensoren für PV-, Batterie- und Netzleistung |
 | **3. Batterie** | Sensor für den Ladestand und die Kapazität — als Sensor oder von Hand eingetragen |
 | **4. PV-Prognose** | Quelle wählen: Solcast, Forecast.Solar oder die **eigene Berechnung** (Flächen der Anlage mit kWp, Neigung und Ausrichtung, ohne Konto). Optional der Prognosevergleich, bei dem die zweite Quelle zum Vergleich mitläuft |
-| **5. Anlage & Batterie** | AC-Grenzleistung des Wechselrichters und PV-Spitzenleistung (beide Pflicht), Einspeisegrenze des Netzbetreibers, Batterie-Leistungsgrenze, Mindest- und Maximum-Ladestand |
+| **5. Anlage & Batterie** | AC-Grenzleistung des Wechselrichters, PV-Spitzenleistung, Batterie-Leistungsgrenze und Mindest-Ladestand (alle Pflicht), dazu Einspeisegrenze des Netzbetreibers und Maximum-Ladestand |
 | **6. Tarife & Gemeinschaft** | Standardvergütung (fester Wert, OeMAG, Energie AG, aWATTar SUNNY oder Börsen-Spotpreis), Arbeitspreis und Netzbereich; optional bis zu zwei Energiegemeinschaften — mit PeakShare-Bedarfsprognose oder fester Abnahmequote |
-| **7. Zusammenfassung** | Alles noch einmal im Überblick, dann speichern |
+| **7. Zusammenfassung** | Alles noch einmal im Überblick, dazu der Haken **„Steuerung nach dem Fertigstellen einschalten“**, dann **„Fertig“** |
+
+> [!IMPORTANT]
+> **Erst im Modus „Ein“ steuert der Optimizer.** Mit dem Haken in der Zusammenfassung (vorausgewählt) schaltet der Assistent ihn beim Fertigstellen ein. Ohne Haken bleibt er auf **„Aus“**: Er rechnet und zeigt den Fahrplan, schreibt aber nichts an den Wechselrichter. Umschalten kannst du jederzeit mit dem Schalter oben im Dashboard.
 
 Bei den Schritten Wechselrichter, PV-Prognose, Anlage & Batterie und Tarife & Gemeinschaft (bei Huawei auch Batterie) gibt es einen **„Anleitung"-Button**, der die passende Hilfe direkt im Panel öffnet. Was die Felder der beiden Einstellungsschritte bedeuten, erklären [Anlage & Batterie](../guides/anlage_batterie.md) und [Tarife & Gemeinschaft](../guides/tarife.md); die Bedienung danach [Dashboard & Bedienung](../guides/dashboard.md).
 
 ## Voraussetzungen für den Betrieb
 
 - Home Assistant **2025.1.0** oder neuer
-- Einer der sechs unterstützten **Wechselrichter mit Batteriespeicher** — welche das sind und wie weit sie erprobt sind, steht im [Stand der Unterstützung](../wechselrichter-status.md). Fronius, Kostal und SMA werden direkt per Modbus TCP angesprochen; Huawei, Sigenergy und SolaX brauchen die jeweilige Integration, eingerichtet und funktionsfähig (siehe die Guides dort)
+- Einer der sechs unterstützten **Wechselrichter mit Batteriespeicher** — welche das sind und wie weit sie erprobt sind, steht im [Stand der Unterstützung](../wechselrichter-status.md). Jeder braucht die passende Integration in Home Assistant, eingerichtet und funktionsfähig (siehe die Guides dort): Fronius, Kostal Plenticore und SMA Solar sind in Home Assistant eingebaut und liefern die Messwerte; gesteuert werden diese drei zusätzlich direkt per Modbus TCP, das dafür am Wechselrichter aktiviert sein muss. Huawei Solar, Sigenergy und SolaX Modbus kommen über HACS und übernehmen Messen und Steuern
 - Eine **PV-Prognose**, eine von drei:
   - [Solcast Solar](../guides/solcast.md) — kostenloses Konto nötig, am genauesten
   - [Forecast.Solar](../guides/forecast_solar.md) — ohne Registrierung

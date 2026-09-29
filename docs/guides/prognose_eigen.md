@@ -13,7 +13,7 @@ Eine Zeile je Modulfläche mit gleicher Ausrichtung. Ein Süddach ist eine Fläc
 | Feld | Wert |
 |---|---|
 | **Name** | Frei wählbar, z.B. „Dach Süd" |
-| **kWp** | Modulleistung dieser Fläche (Summe der Module) |
+| **Leistung (kWp)** | Modulleistung dieser Fläche (Summe der Module) |
 | **Neigung** | 0° = flach liegend, 90° = senkrecht. Typische Dächer: **30–35°**, Flachdach-Aufständerung: 10–15° |
 | **Azimut** | Himmelsrichtung der Module als Kompasswert:<br>**0° = Nord**, 90° = Ost, **180° = Süd**, 270° = West |
 

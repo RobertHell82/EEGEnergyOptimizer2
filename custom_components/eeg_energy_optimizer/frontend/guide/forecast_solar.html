@@ -23,10 +23,6 @@
 <td>Frei wählbar, z.B. „PV Süd"</td>
 </tr>
 <tr>
-<td><strong>API Key</strong></td>
-<td>Leer lassen (kostenlos) oder dein Forecast.Solar API-Key</td>
-</tr>
-<tr>
 <td><strong>Latitude / Longitude</strong></td>
 <td>Automatisch aus HA-Konfiguration — prüfen, nicht ändern</td>
 </tr>
@@ -39,15 +35,16 @@
 <td>Himmelsrichtung der Module:<br><strong>0° = Nord</strong>, 90° = Ost, <strong>180° = Süd</strong>, 270° = West<br><em>Achtung: HA nutzt Kompass-Konvention (0=Nord), nicht die Forecast.Solar-Website (0=Süd)!</em></td>
 </tr>
 <tr>
-<td><strong>Leistung (kWp)</strong></td>
-<td>Anlagenleistung <strong>in Watt</strong>, nicht kWp!<br>Beispiel: 10 kWp → <strong>10000</strong> eingeben</td>
+<td><strong>Modulleistung</strong></td>
+<td>Gesamtleistung der Module <strong>in Watt</strong>, nicht kWp!<br>Beispiel: 10 kWp → <strong>10000</strong> eingeben</td>
 </tr>
 </tbody>
 </table>
 <p><em><strong>Tipp:</strong> Die häufigsten Fehler sind falscher Azimuth (Süd = 180°, nicht 0°) und kWp statt Watt.</em></p>
+<p><em>Einen <strong>API-Key</strong> fragt die Integration beim Hinzufügen nicht ab. Wer einen bezahlten Zugang hat, trägt ihn danach unter <strong>Konfigurieren</strong> (Optionen der Integration) ein; ohne Key läuft die kostenlose Version.</em></p>
 <h3>3. Mehrere Ausrichtungen (Ost/West)</h3>
 <p>Bei Modulen in verschiedene Richtungen die Integration <strong>mehrmals hinzufügen</strong> — einmal pro Ausrichtung (z.B. „PV Ost" mit Azimuth 90° und „PV West" mit 270°).</p>
-<p><em>Die zweite Instanz erstellt Sensoren mit <code>_2</code> Suffix (z.B. <code>sensor.energy_production_tomorrow_2</code>).</em></p>
+<p><em>Die zweite Instanz erstellt Sensoren mit <code>_2</code> Suffix (z.B. <code>sensor.energy_production_tomorrow_2</code>). Der Fahrplan zählt alle Instanzen zusammen; die Anzeige-Sensoren „PV-Prognose heute / morgen“ lesen dagegen nur den einen Sensor, der im Assistenten gewählt ist — also nur diese Fläche.</em></p>
 <h3>4. Prüfen</h3>
 <ol>
 <li>Warte 1–2 Minuten nach der Einrichtung</li>
@@ -55,4 +52,4 @@
 <li>Die Sensoren <code>sensor.energy_production_today_remaining</code> und <code>sensor.energy_production_tomorrow</code> sollten kWh-Werte zeigen</li>
 <li>Kehre hierher zurück — die Sensoren werden automatisch zugeordnet</li>
 </ol>
-<p><em><strong>Kostenlose Version:</strong> 12 Abrufe/Stunde, Prognose für heute + morgen, 1h-Auflösung — vollkommen ausreichend für den EEG Energy Optimizer.</em></p>
+<p><em><strong>Kostenlose Version:</strong> 12 Abrufe/Stunde, Prognose für heute + morgen, 1h-Auflösung — ausreichend für den EEG Energy Optimizer. Weil die Prognose mit morgen endet, rechnet der Fahrplan nur bis Ende morgen statt volle 48 Stunden; am Abend schaut er also rund 26 Stunden voraus.</em></p>

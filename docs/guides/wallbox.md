@@ -55,15 +55,16 @@ _Antwortet die Ambibox nicht, stehen die drei Messwert-Sensoren auf „nicht ver
 
 ## Manueller Lade- und Entladetest
 
-Der Test steht in der Auto-Zeile der Statuskarte, sobald ein Fahrzeug angesteckt und der **Expertenmodus** eingeschaltet ist: zwei Felder für die Leistung (kW, 0,5 bis 22) und die Dauer (min, 1 bis 60, Vorgabe 15) sowie die Knöpfe **Laden** und **Entladen**. Läuft ein Test, zeigt die Zeile „Handbetrieb" mit Richtung, Leistung, Restzeit und dem geschriebenen Sollwert in Watt, dazu den Knopf **Stoppen**.
+Der Test steht in der Auto-Zeile der Statuskarte, sobald ein Fahrzeug angesteckt und der **Expertenmodus** eingeschaltet ist: zwei Felder für die Leistung (kW, ab 0,5 — nach oben begrenzt auf den Stellbereich, den die Wallbox meldet, ohne Angabe von ihr auf 11 kW) und die Dauer (min, 1 bis 60, Vorgabe 15) sowie die Knöpfe **Laden** und **Entladen**. Läuft ein Test, zeigt die Zeile „Handbetrieb" mit Richtung, Leistung, Restzeit und dem geschriebenen Sollwert in Watt, dazu den Knopf **Stoppen**.
 
 Starten und stoppen dürfen nur **Administratoren** von Home Assistant; bei allen anderen lehnt die Integration die Anfrage ab.
 
-Drei Sicherungen hängen am Test, weil das Verhalten des Geräts nicht vollständig bekannt ist:
+Vier Sicherungen hängen am Test, weil das Verhalten des Geräts nicht vollständig bekannt ist:
 
 - **Nachschreiben:** Der Sollwert wird alle 30 Sekunden erneut geschrieben.
 - **Höchstdauer:** Nach der eingestellten Zeit, spätestens nach 60 Minuten, stoppt der Test von selbst — auch wenn niemand mehr hinsieht. Er endet ebenso, wenn das Auto abgesteckt wird.
 - **Ende mit der Integration:** Wird die Integration beendet oder neu geladen, wird der Test gestoppt.
+- **Falsche Richtung:** Arbeitet die Wallbox nach einer Minute Anlauf in die Gegenrichtung — sie entlädt, obwohl du **Laden** gedrückt hast, oder umgekehrt —, bricht der Test ab: „Die Wallbox arbeitet in Gegenrichtung — Vorzeichen-Einstellung prüfen.“
 
 Beim Stoppen schreibt der Optimizer erst 0 W und dann den Befehl zum Beenden des Ladevorgangs.
 
@@ -77,7 +78,7 @@ Verweigert wird der Start, wenn kein Fahrzeug angesteckt ist, wenn die Wallbox d
 Das Herstellerdokument lässt drei Fragen offen. Genau dafür gibt es den manuellen Test:
 
 1. **Wie lange gilt ein Sollwert?** Ob und wann die Ambibox einen Wert ohne Nachschreiben verwirft, ist nicht dokumentiert. Die 30 Sekunden sind bewusst eng gewählt.
-2. **Welches Vorzeichen heißt Laden?** Steht nirgends. Die Vorgabe „Negativ = laden" folgt der einzigen bekannten fremden Umsetzung. Entlädt das Auto, wenn du **Laden** drückst, oder passiert gar nichts, stelle das Vorzeichen in den Einstellungen um und teste erneut.
+2. **Welches Vorzeichen heißt Laden?** Steht nirgends. Die Vorgabe „Negativ = laden" folgt der einzigen bekannten fremden Umsetzung. Arbeitet die Wallbox in die falsche Richtung, bricht der Test nach einer Minute selbst ab (siehe oben); passiert gar nichts, oder kommt diese Meldung, stelle das Vorzeichen in den Einstellungen um und teste erneut.
 3. **Was macht die Eigenoptimierung der Ambibox?** Die Ambibox regelt mit ihrem Energiemanagement (sidOS) selbst. Was passiert, wenn der Optimizer gleichzeitig einen Sollwert schreibt, ist nicht beschrieben.
 
 Beobachte beim Test deshalb: ob das Auto in die gewählte Richtung und mit ungefähr der gewählten Leistung lädt oder entlädt, ob die Leistung zwischen zwei Nachschreib-Zeitpunkten wegfällt oder springt, ob die Ambibox die Leistung von sich aus verändert, und ob das Auto nach **Stoppen** oder nach Ablauf der Zeit wirklich aufhört.

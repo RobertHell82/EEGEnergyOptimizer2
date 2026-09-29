@@ -42,8 +42,11 @@ Treiber wird an drei Stellen freigeschaltet, in dieser Reihenfolge:
    erscheint und ob der Hinweis „nur Anzeige" gezeigt wird. Ein bereits
    konfigurierter Treiber außerhalb der Liste bleibt unabhängig davon sichtbar.
 3. **Doku** — die Zeile in der Tabelle von `wechselrichter-status.md`
-   eintragen, den Guide in `docs/README.md` verlinken und
-   `python scripts/build_guides.py` laufen lassen.
+   eintragen (nur dort steht der Stand der Erprobung) und das Gerät in allen
+   Listen ergänzen, die es nennen: die Tabellen in `README.md`,
+   `docs/README.md` und `docs/deployment/inbetriebnahme.md` (Schritt 5), im
+   Panel die Willkommensseite („Was du brauchst“, „Getestete Setups“) und
+   `INVERTER_LABELS`. Danach `python scripts/build_guides.py` laufen lassen.
 
 Vor dem Schritt von „Feldtest“ zu „freigegeben“ an einer echten Anlage
 nachweisen:

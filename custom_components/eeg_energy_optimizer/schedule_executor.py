@@ -207,7 +207,7 @@ class ScheduleExecutor:
 
     Schreibt Limits statt Zustände: Absicherung gegen stehenbleibende Limits
     über async_release() beim Entladen der Integration, beim Wechsel
-    Ein → Test und über den Failsafe (kein brauchbarer Fahrplan seit
+    Ein → Aus und über den Failsafe (kein brauchbarer Fahrplan seit
     SCHEDULE_FAILSAFE_MINUTES). Nach einem harten Absturz bleibt ein Limit
     bis zum ersten Guard-Lauf nach dem Neustart stehen (Grace Period).
     """

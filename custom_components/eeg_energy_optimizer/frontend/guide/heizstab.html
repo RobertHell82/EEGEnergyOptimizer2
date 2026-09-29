@@ -33,7 +33,7 @@
 </tr>
 <tr>
 <td><strong>Deutlich unter der Grenze</strong> (mehr als 0,3 kW)</td>
-<td>Der Heizstab gibt genau die Lücke wieder her, in einem Schritt. Bei Netzbezug fällt er sofort auf 0</td>
+<td>Der Heizstab gibt je Lauf die <strong>Hälfte</strong> der Lücke wieder her; direkt nach einem Anheben wartet er einen Lauf ab, bis sich die Einspeisung eingeschwungen hat. Bei <strong>Netzbezug</strong> nimmt er die ganze Lücke sofort zurück — an der Einspeisegrenze heißt das: aus</td>
 </tr>
 <tr>
 <td><strong>Dazwischen</strong></td>
@@ -46,7 +46,7 @@
 <ul>
 <li><strong>Aus der Batterie heizen.</strong> Entlädt die Optimierung gerade ins Netz, steht der Heizstab auf 0. Eine Einspeisung aus der Batterie ist kein Überschuss.</li>
 <li><strong>Aus dem Netz heizen</strong> — außer du erlaubst es ausdrücklich unter der Mindesttemperatur (siehe unten). Ohne diese Erlaubnis zieht der Heizstab nie Netzstrom.</li>
-<li><strong>Weiterlaufen, wenn niemand steuert.</strong> Der Ohmpilot schaltet nach 50 Sekunden ohne neuen Sollwert selbst ab. Bricht die Verbindung ab oder ist die Optimierung aus, ist auch der Heizstab aus.</li>
+<li><strong>Weiterlaufen, wenn niemand steuert.</strong> Der Ohmpilot schaltet nach 50 Sekunden ohne neuen Sollwert selbst ab. Bricht die Verbindung ab oder ist die Optimierung aus, ist auch der Heizstab aus. Hängt die Regelung selbst — die letzte Vorgabe ist älter als 90 Sekunden oder ein Regelschritt schlägt fehl —, geht der Sollwert ebenfalls auf 0, statt dass der letzte Wert weiter nachgeschrieben wird.</li>
 </ul>
 <p>Die geplante Heizstab-Leistung steht im <strong>Optimierungsplan</strong> (rote gestrichelte Linie): So viel Wärme sieht das Modell je Viertelstunde vor. Sie ist die Obergrenze für den laufenden Slot — wie viel davon wirklich fließt, entscheidet die Messung.</p>
 <p>Was der Heizstab <strong>gerade</strong> zieht, steht oben in der Statuskarte: in der Werteliste als eigene Kachel „Heizstab" mit Leistung und Wassertemperatur, im Energieflussdiagramm als eigener Kasten neben dem Haus — samt der Linie, über die er seine Energie bekommt (gelb aus der PV, rot aus dem Netz beim Komfortheizen). Ein Gedankenstrich statt einer Zahl heißt: Der Ohmpilot antwortet nicht.</p>
@@ -86,15 +86,15 @@
 </tr>
 <tr>
 <td><strong>Leistung des Heizstabs (kW)</strong></td>
-<td>Nennleistung des angeschlossenen Heizstabs — 3 kW einphasig, 6 oder 9 kW dreiphasig</td>
+<td>Nennleistung des angeschlossenen Heizstabs — 3 kW einphasig, 6 oder 9 kW dreiphasig. Vorgabe 6, erlaubt 0,5 bis 30</td>
 </tr>
 <tr>
 <td><strong>Maximaltemperatur (°C)</strong></td>
-<td>Bis zu dieser Temperatur darf der Heizstab heizen; darüber bleibt er aus, weiter geht es 3 K darunter</td>
+<td>Bis zu dieser Temperatur darf der Heizstab heizen; darüber bleibt er aus, weiter geht es 3 K darunter. Vorgabe 80, erlaubt 30 bis 95</td>
 </tr>
 <tr>
 <td><strong>Mindesttemperatur (°C)</strong></td>
-<td>Darunter hat der Heizstab Vorrang vor der Einspeisung: Er nimmt allen PV-Überschuss, auch den unterhalb der Einspeisegrenze, bis 5 K darüber — aber weder Netz- noch Batteriestrom. 0 = aus</td>
+<td>Darunter hat der Heizstab Vorrang vor der Einspeisung: Er nimmt allen PV-Überschuss, auch den unterhalb der Einspeisegrenze, bis 5 K darüber — aber weder Netz- noch Batteriestrom. 0 = aus, erlaubt bis 90</td>
 </tr>
 <tr>
 <td><strong>Unter der Mindesttemperatur auch aus dem Netz heizen</strong></td>

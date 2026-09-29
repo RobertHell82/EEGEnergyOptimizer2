@@ -32,14 +32,14 @@
 
 _**Voraussetzung:** [HACS](https://hacs.xyz/) muss installiert sein (Solcast ist eine Custom Integration, kein HA-Standard)._
 
-1. Gehe zu **HACS → Integrationen → Suche „Solcast PV Forecast"**
+1. Gehe zu **HACS** und suche dort nach **„Solcast PV Forecast"**
 2. Installiere die Integration und starte Home Assistant neu.
 
 ## 3. Solcast-Konto verbinden
 
 _Dieser Abschnitt gilt für **alle** — auch bei einem vorbereiteten EEG-Gerät, denn jedes Mitglied nutzt seinen eigenen API-Key._
 
-1. Gehe zu **Einstellungen → Geräte & Dienste → Integration hinzufügen** und wähle **Solcast Solar**.
+1. Gehe zu **Einstellungen → Geräte & Dienste → Integration hinzufügen** und wähle **Solcast PV Forecast**.
 2. Gib den zuvor kopierten API-Key ein, lasse die restlichen Einstellungen wie vorausgewählt und klicke auf **OK**.
 3. Aktiviere die deaktivierten Prognose-Sensoren für die Tage 3 bis 7: Klicke den Sensor an, dann auf das Zahnrad und stelle ihn auf **Aktiviert**.<br>
    ![Sensoren aktivieren](../images/solcast/06_Prognosesensoren.png)
@@ -48,5 +48,5 @@ _Dieser Abschnitt gilt für **alle** — auch bei einem vorbereiteten EEG-Gerät
 
 1. Warte 1–2 Minuten nach der Einrichtung
 2. Prüfe unter **Entwicklerwerkzeuge → Zustände**: Suche nach `solcast`
-3. Die Sensoren `sensor.solcast_pv_forecast_prognose_fuer_heute` und `sensor.solcast_pv_forecast_prognose_fuer_morgen` sollten kWh-Werte zeigen
+3. Die Sensoren `sensor.solcast_pv_forecast_prognose_verbleibende_leistung_heute` (die **verbleibende** Prognose für heute, nicht die Tagessumme) und `sensor.solcast_pv_forecast_prognose_morgen` sollten kWh-Werte zeigen. Ältere Versionen der Integration nennen sie `…_prognose_fuer_heute` und `…_prognose_fuer_morgen`
 4. Kehre hierher zurück — die Sensoren werden automatisch zugeordnet

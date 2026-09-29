@@ -43,7 +43,15 @@
 <ol>
 <li>Unter <strong>Einstellungen → Geräte &amp; Dienste</strong>: Kostal Plenticore zeigt <strong>„geladen"</strong> und listet Sensoren</li>
 <li><strong>Entwicklerwerkzeuge → Zustände</strong>: Suche nach <code>battery_soc</code> / <code>ladezustand</code> und <code>home_power</code> — die Werte müssen plausibel sein</li>
-<li>Kehre hierher zurück — die Sensoren werden automatisch erkannt</li>
+<li>Kehre in den Assistenten zurück — die Sensoren werden automatisch erkannt</li>
+</ol>
+<h3>Im Assistenten: Schritt „Wechselrichter“</h3>
+<p>Hier bleibt man am häufigsten hängen: <strong>„Weiter“</strong> geht erst, wenn alles Folgende stimmt.</p>
+<ol>
+<li><strong>Kostal Plenticore</strong> wählen. Ohne die Kostal-Integration aus Schritt 1 geht es nicht weiter — sie liefert alle Messwerte, Modbus allein genügt nicht.</li>
+<li><strong>Leistungssensoren</strong> für PV, Batterie und Netz: werden automatisch erkannt, alle drei sind Pflicht.</li>
+<li><strong>Modbus IP-Adresse</strong> (Pflicht): die IP des Wechselrichters <strong>mit Batterie</strong> — sie wird <strong>nicht</strong> vorbelegt, bitte eintragen. Port <strong>1502</strong> (nicht 502).</li>
+<li>Bei <strong>„Weiter“</strong> prüft der Assistent die Modbus-Verbindung (nur lesend). Schlägt sie fehl, geht es nicht weiter: Modbus aktiviert (Schritt 2)? Port 1502? IP richtig?</li>
 </ol>
 <h3>Was der Optimizer am Gerät tut</h3>
 <p>Der Fahrplan stellt den Plenticore über zwei Register, beide flüchtig (RAM) — zyklisches Schreiben nutzt den Speicher also nicht ab:</p>
@@ -69,7 +77,7 @@
 <p>Einen Ziel-Ladestand kennt die Kostal-Schnittstelle nicht. Stattdessen prüft der Optimizer den Ladestand alle 30 Sekunden selbst und beendet die Entladung; der Watchdog deckt nur den Absturzfall ab.</p>
 <p><strong>Nach einer Entladung kann die Batterie bis zu 15 Minuten stehen.</strong> Ein Entlade-Sollwert von 0 W hält am Plenticore, solange <em>irgendein</em> Steuerregister geschrieben wird. Deshalb schreibt der Treiber nach dem Ende einer Entladung so lange gar nichts, bis der Wechselrichter von selbst in sein internes Batteriemanagement zurückgefallen ist — erkennbar an der gemessenen Batterieleistung, höchstens 15 Minuten. Steht die Statuskarte in dieser Zeit auf „Normalbetrieb“, die Batterie aber still, ist das dieser Rückfall und kein Fehler.</p>
 <blockquote>
-<p><strong>Feldtest:</strong> Ladeblockierung und Entladung sind am Gerät verifiziert. Teil-Ladelimits (der Normalfall im Fahrplan) prüft der Treiber beim ersten Mal selbst nach: Weicht der zurückgelesene Wert stark vom geschriebenen ab, steht eine Warnung im Protokoll — dann meldet sich bitte mit der Firmware-Version.</p>
+<p><strong>Teil-Ladelimits</strong> (der Normalfall im Fahrplan) prüft der Treiber beim ersten Mal selbst nach: Weicht der zurückgelesene Wert stark vom geschriebenen ab, steht eine Warnung im Protokoll — dann meldet sich bitte mit der Firmware-Version.</p>
 </blockquote>
 <h3>Häufige Probleme</h3>
 <table>

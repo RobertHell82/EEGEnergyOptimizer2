@@ -3,17 +3,22 @@
 Mit dieser Anleitung machst du deinen Home Assistant direkt unter einer eigenen Internetadresse verfügbar - ohne zusätzliche Kosten.
 Der Zugang läuft über einen sogenannten **Cloudflare Tunnel**: Dein Home Assistant baut die Verbindung selbst nach außen auf und bleibt von außen unsichtbar.
 
+> [!IMPORTANT]
+> **Vorbereitetes EEG-Gerät?** Dann ist das alles schon erledigt — die Adresse steht
+> auf deinem Begleitschreiben. Diese Anleitung brauchst du nur, wenn du Home
+> Assistant selbst eingerichtet hast.
+
 > [!NOTE]
 > Du musst **kein Konto bei Cloudflare** anlegen und dort nichts einstellen. Den
 > technischen Teil übernimmt deine Energiegemeinschaft.
 
 
 ## Voraussetzungen
-- Home Assistant **OS** oder **Supervised** in **aktueller Version** (mit App Store)
+- Home Assistant **OS** in **aktueller Version** (mit App Store)
 - Zugriff auf Home Assistant als **Administrator**
 - Von der Energiegemeinschaft EW Ansfelden erhalten. Falls Du noch keine Zugangsdaten erhalten hast und Interesse hast, melde Dich unter: info@ew-ansfelden.at
   - ein **Tunnel-Token** (eine lange Zeichenkette)
-  - deine **Adresse** (z.B. `sicherer_name.ew-ansfelden.cc`)
+  - deine **Adresse** (z.B. `3f9c2a7e-….ew-ansfelden.cc` — eine lange, zufällige Kennung)
 
 ---
 
@@ -57,7 +62,7 @@ Der Zugang läuft über einen sogenannten **Cloudflare Tunnel**: Dein Home Assis
 
 Der Home Assistant ist nun mit Cloudflare verbunden. Zum Prüfen:
 
-6. Rufe im Browser deine Adresse auf, z.B. `https://deinname.ew-ansfelden.cc`.
+6. Rufe im Browser deine Adresse auf, also `https://` gefolgt von der Adresse, die du bekommen hast.
 7. Es erscheint deine gewohnte Home-Assistant-Anmeldeseite — **fertig.** ✅
 
 ---

@@ -1,6 +1,6 @@
 # Reporting — Anonyme EEG-Community-Statistik
 
-Zukunftskonzept für zentrales Reporting aller EEG-Installationen.
+Konzept für zentrales Reporting aller EEG-Installationen — umgesetzt; was heute tatsächlich gesendet wird, steht in der README unter „EEG-Statistik“.
 
 > [!NOTE]
 > **Historisches Konzeptpapier.** Es beschreibt den ursprünglichen Entwurf

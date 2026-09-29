@@ -21,7 +21,7 @@ Diese Einstellungen müssen am Wechselrichter oder in der SolaX-App korrekt gese
 
 _**Voraussetzung:** [HACS](https://hacs.xyz/) muss installiert sein._
 
-1. Gehe zu **HACS → Integrationen → Suche „SolaX Inverter Modbus"**<br>
+1. Gehe zu **HACS** und suche dort nach **„SolaX Inverter Modbus"**<br>
    _Repository: `wills106/homeassistant-solax-modbus`_
 2. Installiere die Integration und **starte Home Assistant neu**
 
@@ -55,7 +55,7 @@ _Der Sensor heißt typischerweise `sensor.solax_inverter_meter_2_measured_power`
 > [!NOTE]
 > **Voraussetzung:** Meter 2 muss auch am Wechselrichter bzw. in der SolaX-App als Generator-/zweiter Zähler konfiguriert sein. Ohne diese Konfiguration liefert der Sensor dauerhaft 0.
 
-Im Wizard erscheint das Feld **„Zweiter PV-Sensor (optional)"** — es wird automatisch mit dem Meter-2-Sensor vorbelegt, sobald dieser existiert. Der Optimizer addiert diesen Wert zur PV-Leistung des Hybrid-Wechselrichters.
+Im Assistenten gibt es dafür das Feld **„Zweiter PV-Sensor (optional)"** — es erscheint nur im **Expertenmodus** (Schalter oben rechts im Assistenten). Vorbelegt wird es mit dem Meter-2-Sensor, wenn dieser schon **vor** der Sensorerkennung aktiv war; hast du ihn erst danach aktiviert, klicke auf **„Erneut prüfen"** oder trage ihn im Expertenmodus von Hand ein. Der Optimizer addiert diesen Wert zur PV-Leistung des Hybrid-Wechselrichters.
 
 > [!WARNING]
 > Wird der Sensor nicht aktiviert bzw. nicht im Wizard hinterlegt, rechnet der Optimizer mit **zu geringer PV-Leistung**. Folge: Hausverbrauch und Fahrplan arbeiten mit falschen Werten.
@@ -64,7 +64,7 @@ Im Wizard erscheint das Feld **„Zweiter PV-Sensor (optional)"** — es wird au
 
 1. Unter **Einstellungen → Integrationen**: SolaX Inverter Modbus zeigt **„geladen"**
 2. **Entwicklerwerkzeuge → Zustände**: `sensor.solax_*battery_capacity` zeigt SOC (0–100%)
-3. `button.solax_*remotecontrol_trigger` existiert (= Remote Control verfügbar)
+3. Ein Button `button.solax_*remotecontrol_trigger*` existiert (neuere Versionen hängen den Modus an, z. B. `…_remotecontrol_trigger_mode_1_7`) — dann ist Remote Control verfügbar
 4. Kehre hierher zurück — der Wechselrichter wird automatisch erkannt
 
 _**Hinweis:** Der Entity-Prefix variiert je Installation (z.B. `solax_inverter_` statt `solax_`). Der EEG Energy Optimizer erkennt den Prefix automatisch._
@@ -78,5 +78,5 @@ _**Hinweis:** Der Entity-Prefix variiert je Installation (z.B. `solax_inverter_`
 | **Kommandos ohne Wirkung** | Work Mode auf „Self Use" prüfen, Night Charge und Smart Schedule aus |
 | **Batterie lädt trotz Blockierung** | Lock State prüfen — Passwort `2014` zum Entsperren |
 | **Sensoren „unavailable" nachts** | Normal — Wechselrichter im Sleep Mode (kein PV, keine Last) |
-| **PV-Leistung zu niedrig (Generator-WR fehlt)** | `sensor.solax_inverter_meter_2_measured_power` aktivieren (→ Abschnitt 6) und im Wizard als zweiten PV-Sensor hinterlegen |
+| **PV-Leistung zu niedrig (Generator-WR fehlt)** | `sensor.solax_inverter_meter_2_measured_power` aktivieren (→ Abschnitt 6) und im Assistenten (Expertenmodus) als zweiten PV-Sensor hinterlegen |
 | **Meter 2 Sensor zeigt immer 0** | Meter 2 am Wechselrichter / in der SolaX-App als Generator-Zähler konfigurieren |

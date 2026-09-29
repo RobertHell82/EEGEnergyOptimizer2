@@ -2,7 +2,7 @@
 
 ## 1. Unterstützte Geräte
 
-**SigenStor**-Anlagen mit Batteriespeicher (EC- und CMU-Serie, Hybrid) ab Firmware **SPC109**. Gesteuert wird die **ganze Anlage** über eine Verbindung — auch wenn mehrere Wechselrichter parallel laufen.
+**SigenStor**-Anlagen mit Batteriespeicher (EC- und CMU-Serie, Hybrid) ab Firmware **SPC109**; damit das Ladelimit auch im Eigenverbrauchsmodus wirkt, ab **SPC113** (siehe unten). Gesteuert wird die **ganze Anlage** über eine Verbindung — auch wenn mehrere Wechselrichter parallel laufen.
 
 _Getestet mit SigenStor EC 25.0 TP (Firmware V100R001C21SPC116, 40 kWh Speicher)._
 
@@ -21,7 +21,7 @@ Port ist **502**. Home Assistant muss das Gerät im Netzwerk erreichen (gleiches
 
 _**Voraussetzung:** [HACS](https://hacs.xyz/) muss installiert sein._
 
-1. Gehe zu **HACS → Integrationen → Suche „Sigenergy"**<br>
+1. Gehe zu **HACS** und suche dort nach **„Sigenergy"**<br>
    _Repository: `TypQxQ/Sigenergy-Local-Modbus`_
 2. Installiere die Integration und **starte Home Assistant neu**
 
@@ -99,20 +99,18 @@ Während der Optimizer steuert, steht der Schalter „Remote EMS" auf **an**; gi
 
 | Absicht des Fahrplans | Am Gerät |
 |---|---|
-| **Laden begrenzen** (auch 0 kW = Laden sperren) | Remote EMS an → „Command Charging (PV First)" mit Ladelimit |
+| **Laden begrenzen** (auch 0 kW = Laden sperren) | Remote EMS an, Modus bleibt „Maximum Self Consumption“ — nur das Ladelimit wird gesetzt |
 | **Entladen ins Netz** | Remote EMS an → „Command Discharging (ESS First)" mit Entladelimit |
 | **Freigabe** (Normalbetrieb) | „Maximum Self Consumption" → Remote EMS **aus** |
 
 > [!WARNING]
 > **Kein geräteseitiges Sicherheitsnetz.** Sigenergy kennt — anders als Fronius, Kostal oder SMA — keine Rückfallzeit: Ein Befehl läuft am Gerät weiter, bis er zurückgenommen wird. Der Optimizer gibt beim Umschalten auf „Aus", bei fehlendem Plan und beim Neustart aktiv frei. Stürzt Home Assistant **hart** ab (Stromausfall, eingefrorenes System), bleibt der letzte Befehl stehen — dann den Schalter „Remote EMS" in Home Assistant oder der Sigen-App manuell ausschalten.
 
-## Feldtest — was noch zu bestätigen ist
+## Zu beachten
 
-Die Steuerung folgt der offiziellen Modbus-Spezifikation (V2.7), ist aber am Gerät noch nicht in allen Punkten nachgewiesen:
-
-- **Ladesperre bei Nacht:** Sperrt „Command Charging (PV First)" mit 0 kW nur das Laden, oder entlädt der Speicher in diesem Modus auch nicht mehr für das Haus? Im zweiten Fall käme die Hauslast in den Randstunden kurz aus dem Netz.
-- **Einspeisung:** Liefert „Command Discharging (ESS First)" tatsächlich ins Netz oder nur bis zur Hauslast?
-- **Entladeboden:** Stoppt „ESS Discharge Cut-Off State of Charge" eine befohlene Entladung vorzeitig? Der Optimizer liest den Wert als Untergrenze, schreibt ihn aber nicht.
+- **Kein „Command Charging“:** Für ein Ladelimit wird bewusst nicht in „Command Charging (PV First)“ geschaltet. Dieser Modus ist ein Ladebefehl, kein Limit — er lädt den Rest aus dem Netz, wenn die PV nicht reicht (an einer Anlage 5,35 kWh Netzladung an einem Morgen ohne Sonne).
+- **Firmware SPC113:** Im Eigenverbrauchsmodus wirkt das Ladelimit laut Anwenderberichten erst ab dieser Firmware. Auf älterer Firmware bleibt es wirkungslos — die Anlage lädt dann mit Überschuss weiter, aber nie aus dem Netz. Den Stand zeigt die Sigen-App.
+- **Entladeboden:** „ESS Discharge Cut-Off State of Charge“ liest der Optimizer als Untergrenze der Planung, schreibt ihn aber nicht.
 
 ## Häufige Probleme
 

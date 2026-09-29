@@ -37,7 +37,9 @@ Eine der drei Prognose-Quellen wird benötigt:
 
 - **[Solcast Solar einrichten](guides/solcast.md)** (7-Tage-Prognose mit Satelliten-Nowcast, kostenloses Konto nötig)
 - **[Forecast.Solar einrichten](guides/forecast_solar.md)** (ohne Registrierung nutzbar)
-- **[Eigene Berechnung einrichten](guides/prognose_eigen.md)** (keine Zusatz-Integration, Wetter von Open-Meteo, Flächen der Anlage direkt im Panel)
+- **[Eigene Berechnung einrichten](guides/prognose_eigen.md)** (keine Zusatz-Integration, Wetter von Open-Meteo, Flächen der Anlage direkt im Panel; kalibriert sich mit der Zeit an der eigenen Messung)
+
+Mit dem **Prognosevergleich** läuft eine zweite Quelle mit, ohne zu steuern: Jeden Morgen werden beide Prognosen festgehalten und im Dashboard gegen die Messung gestellt. Beschrieben in der Anleitung zur eigenen Berechnung.
 
 ## ⚙️ Einstellungen
 
@@ -50,7 +52,7 @@ Was die Felder im Einrichtungsassistenten und in den Einstellungen bedeuten:
 
 ## 📊 Im Betrieb
 
-- **[Dashboard & Bedienung](guides/dashboard.md)** — Statuskarte, Modus und Pause, „Was deine PV bringt“, Bezugsspitze, was bei Störungen zu tun ist
+- **[Dashboard & Bedienung](guides/dashboard.md)** — Statuskarte, Modus und Pause, „Was deine PV bringt“, Einspeisung, Bezugsspitze, was bei Störungen zu tun ist
 
 ## 🔥 Heizstab (optional)
 
@@ -70,6 +72,11 @@ Wer einen Warmwasserpuffer hat, kann PV-Strom als Wärme speichern — der Fahrp
 Home Assistant über eine eigene Internet-Adresse erreichbar machen — ohne Portfreigabe am Router:
 
 - **[Fernzugang einrichten (Cloudflare Tunnel)](deployment/fernzugang-cloudflared.md)**
+
+> [!NOTE]
+> **Nur für selbst eingerichtete Geräte.** Auf einem vorbereiteten EEG-Gerät ist der
+> Fernzugang schon fertig — die Adresse steht auf deinem Begleitschreiben, und wie du
+> ihn abschaltest, steht in der [Inbetriebnahme](deployment/inbetriebnahme.md#fernzugang).
 
 ## ℹ️ Funktionsweise
 

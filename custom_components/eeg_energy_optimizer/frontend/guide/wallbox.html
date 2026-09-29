@@ -91,13 +91,14 @@
 </table>
 <p><em>Antwortet die Ambibox nicht, stehen die drei Messwert-Sensoren auf „nicht verfügbar" — so bleibt kein alter Ladestand stehen, nachdem das Auto weggefahren ist.</em></p>
 <h3>Manueller Lade- und Entladetest</h3>
-<p>Der Test steht in der Auto-Zeile der Statuskarte, sobald ein Fahrzeug angesteckt und der <strong>Expertenmodus</strong> eingeschaltet ist: zwei Felder für die Leistung (kW, 0,5 bis 22) und die Dauer (min, 1 bis 60, Vorgabe 15) sowie die Knöpfe <strong>Laden</strong> und <strong>Entladen</strong>. Läuft ein Test, zeigt die Zeile „Handbetrieb" mit Richtung, Leistung, Restzeit und dem geschriebenen Sollwert in Watt, dazu den Knopf <strong>Stoppen</strong>.</p>
+<p>Der Test steht in der Auto-Zeile der Statuskarte, sobald ein Fahrzeug angesteckt und der <strong>Expertenmodus</strong> eingeschaltet ist: zwei Felder für die Leistung (kW, ab 0,5 — nach oben begrenzt auf den Stellbereich, den die Wallbox meldet, ohne Angabe von ihr auf 11 kW) und die Dauer (min, 1 bis 60, Vorgabe 15) sowie die Knöpfe <strong>Laden</strong> und <strong>Entladen</strong>. Läuft ein Test, zeigt die Zeile „Handbetrieb" mit Richtung, Leistung, Restzeit und dem geschriebenen Sollwert in Watt, dazu den Knopf <strong>Stoppen</strong>.</p>
 <p>Starten und stoppen dürfen nur <strong>Administratoren</strong> von Home Assistant; bei allen anderen lehnt die Integration die Anfrage ab.</p>
-<p>Drei Sicherungen hängen am Test, weil das Verhalten des Geräts nicht vollständig bekannt ist:</p>
+<p>Vier Sicherungen hängen am Test, weil das Verhalten des Geräts nicht vollständig bekannt ist:</p>
 <ul>
 <li><strong>Nachschreiben:</strong> Der Sollwert wird alle 30 Sekunden erneut geschrieben.</li>
 <li><strong>Höchstdauer:</strong> Nach der eingestellten Zeit, spätestens nach 60 Minuten, stoppt der Test von selbst — auch wenn niemand mehr hinsieht. Er endet ebenso, wenn das Auto abgesteckt wird.</li>
 <li><strong>Ende mit der Integration:</strong> Wird die Integration beendet oder neu geladen, wird der Test gestoppt.</li>
+<li><strong>Falsche Richtung:</strong> Arbeitet die Wallbox nach einer Minute Anlauf in die Gegenrichtung — sie entlädt, obwohl du <strong>Laden</strong> gedrückt hast, oder umgekehrt —, bricht der Test ab: „Die Wallbox arbeitet in Gegenrichtung — Vorzeichen-Einstellung prüfen.“</li>
 </ul>
 <p>Beim Stoppen schreibt der Optimizer erst 0 W und dann den Befehl zum Beenden des Ladevorgangs.</p>
 <p>Verweigert wird der Start, wenn kein Fahrzeug angesteckt ist, wenn die Wallbox das Fahrzeug als nicht steuerbar meldet und — nur beim Entladen — wenn das Fahrzeug nicht über ISO 15118-20 lädt. Der Grund steht dann unter den Knöpfen.</p>
@@ -107,7 +108,7 @@
 <p>Das Herstellerdokument lässt drei Fragen offen. Genau dafür gibt es den manuellen Test:</p>
 <ol>
 <li><strong>Wie lange gilt ein Sollwert?</strong> Ob und wann die Ambibox einen Wert ohne Nachschreiben verwirft, ist nicht dokumentiert. Die 30 Sekunden sind bewusst eng gewählt.</li>
-<li><strong>Welches Vorzeichen heißt Laden?</strong> Steht nirgends. Die Vorgabe „Negativ = laden" folgt der einzigen bekannten fremden Umsetzung. Entlädt das Auto, wenn du <strong>Laden</strong> drückst, oder passiert gar nichts, stelle das Vorzeichen in den Einstellungen um und teste erneut.</li>
+<li><strong>Welches Vorzeichen heißt Laden?</strong> Steht nirgends. Die Vorgabe „Negativ = laden" folgt der einzigen bekannten fremden Umsetzung. Arbeitet die Wallbox in die falsche Richtung, bricht der Test nach einer Minute selbst ab (siehe oben); passiert gar nichts, oder kommt diese Meldung, stelle das Vorzeichen in den Einstellungen um und teste erneut.</li>
 <li><strong>Was macht die Eigenoptimierung der Ambibox?</strong> Die Ambibox regelt mit ihrem Energiemanagement (sidOS) selbst. Was passiert, wenn der Optimizer gleichzeitig einen Sollwert schreibt, ist nicht beschrieben.</li>
 </ol>
 <p>Beobachte beim Test deshalb: ob das Auto in die gewählte Richtung und mit ungefähr der gewählten Leistung lädt oder entlädt, ob die Leistung zwischen zwei Nachschreib-Zeitpunkten wegfällt oder springt, ob die Ambibox die Leistung von sich aus verändert, und ob das Auto nach <strong>Stoppen</strong> oder nach Ablauf der Zeit wirklich aufhört.</p>

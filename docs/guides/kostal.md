@@ -49,7 +49,16 @@ _Die Firmware-Version ist im Kostal-Webserver unter „Info" sichtbar. Updates m
 
 1. Unter **Einstellungen → Geräte & Dienste**: Kostal Plenticore zeigt **„geladen"** und listet Sensoren
 2. **Entwicklerwerkzeuge → Zustände**: Suche nach `battery_soc` / `ladezustand` und `home_power` — die Werte müssen plausibel sein
-3. Kehre hierher zurück — die Sensoren werden automatisch erkannt
+3. Kehre in den Assistenten zurück — die Sensoren werden automatisch erkannt
+
+## Im Assistenten: Schritt „Wechselrichter“
+
+Hier bleibt man am häufigsten hängen: **„Weiter“** geht erst, wenn alles Folgende stimmt.
+
+1. **Kostal Plenticore** wählen. Ohne die Kostal-Integration aus Schritt 1 geht es nicht weiter — sie liefert alle Messwerte, Modbus allein genügt nicht.
+2. **Leistungssensoren** für PV, Batterie und Netz: werden automatisch erkannt, alle drei sind Pflicht.
+3. **Modbus IP-Adresse** (Pflicht): die IP des Wechselrichters **mit Batterie** — sie wird **nicht** vorbelegt, bitte eintragen. Port **1502** (nicht 502).
+4. Bei **„Weiter“** prüft der Assistent die Modbus-Verbindung (nur lesend). Schlägt sie fehl, geht es nicht weiter: Modbus aktiviert (Schritt 2)? Port 1502? IP richtig?
 
 ## Was der Optimizer am Gerät tut
 
@@ -66,7 +75,7 @@ Einen Ziel-Ladestand kennt die Kostal-Schnittstelle nicht. Stattdessen prüft de
 
 **Nach einer Entladung kann die Batterie bis zu 15 Minuten stehen.** Ein Entlade-Sollwert von 0 W hält am Plenticore, solange *irgendein* Steuerregister geschrieben wird. Deshalb schreibt der Treiber nach dem Ende einer Entladung so lange gar nichts, bis der Wechselrichter von selbst in sein internes Batteriemanagement zurückgefallen ist — erkennbar an der gemessenen Batterieleistung, höchstens 15 Minuten. Steht die Statuskarte in dieser Zeit auf „Normalbetrieb“, die Batterie aber still, ist das dieser Rückfall und kein Fehler.
 
-> **Feldtest:** Ladeblockierung und Entladung sind am Gerät verifiziert. Teil-Ladelimits (der Normalfall im Fahrplan) prüft der Treiber beim ersten Mal selbst nach: Weicht der zurückgelesene Wert stark vom geschriebenen ab, steht eine Warnung im Protokoll — dann meldet sich bitte mit der Firmware-Version.
+> **Teil-Ladelimits** (der Normalfall im Fahrplan) prüft der Treiber beim ersten Mal selbst nach: Weicht der zurückgelesene Wert stark vom geschriebenen ab, steht eine Warnung im Protokoll — dann meldet sich bitte mit der Firmware-Version.
 
 ## Häufige Probleme
 

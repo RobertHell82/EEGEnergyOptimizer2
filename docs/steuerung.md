@@ -27,9 +27,12 @@ den **gemessenen** Werten.
 
 ## Ein Steuerungslauf (alle 30 Sekunden)
 
-Jeder Lauf ist eine Prüfkette mit genau **einer** Aktion am Ende. Die Absicht
-wird auch im Modus **Aus** bestimmt (fürs Dashboard) — geschrieben wird nur im
-Modus **Ein**.
+Jeder Lauf ist eine Prüfkette, an deren Ende **eine Absicht** steht: Laden
+begrenzen, Entladen oder Freigeben. Um sie umzusetzen, können mehrere
+Schreibvorgänge nötig sein — etwa beim Wechsel von einer Entladung auf ein
+Ladelimit erst das Stoppen der Entladung, dann das Limit. Die Absicht wird auch
+im Modus **Aus** bestimmt (fürs Dashboard) — geschrieben wird nur im Modus
+**Ein**.
 
 ```mermaid
 flowchart TD
@@ -69,11 +72,11 @@ Der laufende Fahrplan-Slot wird treiberneutral in genau eine Absicht übersetzt:
 
 | Slot plant … | Absicht | Warum |
 |---|---|---|
-| **Laden** (`battery_p < 0`) | Ladelimit = Planleistung | Die Batterie darf höchstens so schnell laden, wie der Plan vorsieht — der Rest der PV geht ins Netz. |
-| **Einspeisen aus der Batterie** (`battery_p > 0`, `grid_p > 0`) | Erzwungene Entladung | Energie soll aktiv in die Energiegemeinschaft. |
+| **Laden** | Ladelimit = Planleistung | Die Batterie darf höchstens so schnell laden, wie der Plan vorsieht — der Rest der PV geht ins Netz. |
+| **Einspeisen aus der Batterie** | Erzwungene Entladung | Energie soll aktiv in die Energiegemeinschaft. |
 | **Entladen nur für den Hausverbrauch** | Freigabe | Das erledigt der Wechselrichter im Automatikmodus selbst — kein Eingriff nötig. |
-| **Nichts** (`battery_p ≈ 0`), Batterie hat Platz | Ladelimit = 0 | Freigeben wäre falsch: Der Automatikmodus würde PV-Überschuss in die Batterie laden, den der Plan einspeisen will. An einem Sonnenmorgen sieht das dann von außen wie eine „Morgen-Einspeisung" aus — es ist aber keine Regel, sondern nur das Ergebnis der Preise dieses Tages. |
-| **Nichts** (`battery_p ≈ 0`), Batterie voll (im letzten Prozent vor dem Maximum-Ladestand) | Freigabe | „Nicht laden" ist hier keine Absicht, sondern Platzmangel. Ein Ladelimit 0 bewirkt nichts und stünde nur im Weg, sobald wieder Platz entsteht. Kein Eingriff, der Standardwert bleibt. |
+| **Nichts**, Batterie hat Platz | Ladelimit = 0 | Freigeben wäre falsch: Der Automatikmodus würde PV-Überschuss in die Batterie laden, den der Plan einspeisen will. An einem Sonnenmorgen sieht das dann von außen wie eine „Morgen-Einspeisung" aus — es ist aber keine Regel, sondern nur das Ergebnis der Preise dieses Tages. |
+| **Nichts**, Batterie voll (im letzten Prozent vor dem Maximum-Ladestand) | Freigabe | „Nicht laden" ist hier keine Absicht, sondern Platzmangel. Ein Ladelimit 0 bewirkt nichts und stünde nur im Weg, sobald wieder Platz entsteht. Kein Eingriff, der Standardwert bleibt. |
 
 ---
 
@@ -108,7 +111,10 @@ Gemessene Einspeisung                        Reaktion pro Lauf (30 s)
 ```
 
 Das **asymmetrische tote Band** verhindert Pendeln zwischen Anheben und
-Rücknahme. Die Rücknahme halbiert den Abstand je Lauf, weil ihr Ziel bekannt
+Rücknahme. Nach jedem Anheben wartet die Nachführung einen Lauf ab, solange
+noch eingespeist wird: Der Wechselrichter braucht einen Moment, bis er die PV
+nachgeführt hat, und ohne diese Pause verschwände — zusammen mit einem
+zurückregelnden Heizstab — mehr Last, als tatsächlich fehlt. Die Rücknahme halbiert den Abstand je Lauf, weil ihr Ziel bekannt
 ist — mit festen Schritten wäre der Slot oft vorbei, bevor sein Planwert
 wirkt. Ohne Einspeisegrenze (oder wenn der Netz-Messwert fehlt) wird
 schlicht der Fahrplanwert geschrieben — fail-open.
@@ -139,7 +145,8 @@ direkt die geplante Einspeisung vor, ohne Hauslast und PV aufzurechnen.
 
 Dass der Wechselrichter einen Befehl bestätigt, heißt noch nicht, dass er ihn
 auch ausführt. Deshalb prüft die Steuerung während jeder Entladung, ob die
-Batterie tatsächlich liefert: Bleibt die gemessene Leistung **sechs Läufe lang
+Batterie tatsächlich liefert — bei SMA, dessen Vorgabe ein Netz-Sollwert ist,
+am Netzzähler statt an der Batterie: Bleibt die gemessene Leistung **sechs Läufe lang
 (3 Minuten) unter der Hälfte der Vorgabe und mehr als 0,3 kW darunter**, wird
 die Entladung gestoppt und im nächsten Lauf neu gesetzt. Beide Bedingungen
 müssen zusammen erfüllt sein — sonst löste bei kleinen Vorgaben schon das
@@ -157,10 +164,10 @@ wird nicht geprüft.
 | 🛑 **Not-Aus** | Netzbezug > 1 kW in 3 aufeinanderfolgenden Läufen (= 90 s) während einer Entladung | Entladung stoppen, bis zum nächsten Slotwechsel sperren. Verhindert, dass Strom teuer gekauft und billig verkauft wird. |
 | ⚠️ **Failsafe** | Kein brauchbarer Fahrplan seit 15 Minuten (Optimierer eingefroren, Daten fehlen) | Wechselrichter einmalig in den Automatikmodus freigeben — kein Limit bleibt stehen. |
 | 🔄 **Freigabe bei Ein → Aus** | Moduswechsel | Sofortige Freigabe, sonst bliebe das letzte Ladelimit im Gerät stehen. Gleiches beim Entladen der Integration (Neustart, Konfig-Änderung). |
-| ⏳ **Startphase** | Erste 90 Sekunden nach dem Start | Noch keine Steuerbefehle — erst Messwerte sammeln. |
+| ⏳ **Startphase** | Erste 90 Sekunden nach dem Start | Noch keine Steuerbefehle — erst Messwerte sammeln. Danach im Modus **Ein** zuerst eine Freigabe, die Steuerwerte aus der Zeit vor dem Neustart zurücknimmt, erst dann der Plan; scheitert die Freigabe, gibt es bis zu drei Versuche („Startphase: Freigabe fehlgeschlagen — wird wiederholt“). |
 | ♻️ **Nachgeholte Freigabe** | Erster Lauf nach einem Neustart, während wir *nicht* steuern | Ein Limit aus der Vorsession käme im Anzeige-Modus sonst nie zurück — es würde dort nie geschrieben. Wird bis zum Erfolg wiederholt. |
 | 📏 **Totbänder** | Änderung ≤ 0,2 kW (Ladelimit, Entladeleistung) bzw. < 1 %-Punkt (Ziel-SOC) | Nicht schreiben — der Wert im Gerät ist noch gut genug. Minimiert die Schreibzugriffe drastisch. |
-| 🔁 **Wirkungskontrolle** | Batterie liefert während einer Entladung 3 Minuten lang weniger als die Hälfte der Vorgabe | Entladung stoppen und neu setzen, höchstens zweimal je Slot (siehe oben). |
+| 🔁 **Wirkungskontrolle** | Batterie (bei SMA: Netzeinspeisung) liefert während einer Entladung 3 Minuten lang weniger als die Hälfte der Vorgabe | Entladung stoppen und neu setzen, höchstens zweimal je Slot (siehe oben). |
 | 🐢 **Schreibbremse** | Der Wechselrichter lehnt einen Befehl ab | Nicht in jedem Lauf wiederholen, sondern mit doppeltem Abstand (1, 2, 4 … bis 10 Läufe = 5 Minuten). Der Grund steht im Aktivitätsprotokoll. |
 | ⏸️ **Pause** | Im Dashboard gestartet, oder Dienst `eeg_energy_optimizer.pause` | Verhält sich wie Modus **Aus** und endet von selbst — nach der gewählten Dauer (¼ bis 48 h) oder sobald der gewählte Ladestand erreicht ist. Übersteht einen Neustart. |
 
@@ -196,17 +203,27 @@ und läuft danach in seinem Automatikmodus (Eigenverbrauch).
 
 Die **Pause** wirkt wie **Aus** auf Zeit: Sie gibt frei und endet von selbst.
 
-Pro Lauf passiert höchstens **ein** Schreibvorgang, und nur über die
-abstrakte Wechselrichter-Schnittstelle (`InverterBase`) — die Steuerung kennt
-keine Modbus-Register und keine Entitäten.
+Geschrieben wird nur, wenn sich die Absicht ändert oder ein Wert das Totband
+verlässt; wie das am jeweiligen Gerät aussieht, übernimmt der Treiber des
+Wechselrichters — die Steuerung selbst kennt keine Modbus-Register und keine
+Entitäten.
 
 ## Heizstab
 
 Ist ein Heizstab (Fronius Ohmpilot) eingerichtet, führt die Steuerung ihn nach
 jedem Lauf nach: Plant der laufende Slot Wärme, regelt sie auf „Einspeisung
 ≈ 0“, gedeckelt auf die geplante Leistung. Plant er keine, nimmt der Heizstab
-nur den Überschuss, der an der Einspeisegrenze sonst abgeregelt würde. Während
-einer Entladung und im Modus Aus bleibt er aus. Details in der Anleitung
+nur den Überschuss, der an der Einspeisegrenze sonst abgeregelt würde — ohne
+eingestellte Einspeisegrenze an der AC-Grenzleistung minus 0,5 kW. Diesen
+ungeplanten Überschuss teilt er sich mit der Batterie nach deren Ladestand:
+unter 20 % bekommt die Batterie alles, ab 50 % die Hälfte. Während einer
+Entladung und im Modus Aus bleibt er aus.
+
+Unter der **Mindesttemperatur** hat der Heizstab Vorrang vor der Einspeisung:
+Er nimmt allen PV-Überschuss, aber weder Netz- noch Batteriestrom. Nur wenn
+„Unter der Mindesttemperatur auch aus dem Netz heizen“ eingeschaltet ist, heizt
+er dann mit voller Leistung von überall, und die Steuerung gibt eine geplante
+Entladung derweil frei, statt ins Netz zu entladen. Details in der Anleitung
 [Heizstab](guides/heizstab.md).
 
 ---

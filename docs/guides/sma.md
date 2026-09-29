@@ -17,7 +17,7 @@ Die native SMA-Integration wird für das Lesen der Sensoren (PV, Batterie, SOC, 
 Der EEG Energy Optimizer steuert die Batterie über Modbus TCP. Den Modbus-Server kann der Anlagenbetreiber selbst aktivieren — es ist **kein Grid-Guard-Code nötig**:
 
 1. SMA-Webinterface öffnen: `https://<IP des Wechselrichters>`, als **Installateur** (oder Benutzer mit Parameterrechten) anmelden
-2. **Gerätekonfiguration → Externe Kommunikation → Modbus → TCP-Server** → **aktivieren**
+2. **Geräteparameter → Externe Kommunikation → Modbus → TCP-Server** → **aktivieren**
 3. Port: **502** (Standard, nicht ändern)
 
 Die Unit-ID 3 für die Steuerregister ist im Optimizer fest hinterlegt.
@@ -37,9 +37,23 @@ Die Unit-ID 3 für die Steuerregister ist im Optimizer fest hinterlegt.
 
 1. Unter **Einstellungen → Geräte & Dienste**: SMA Solar zeigt **„geladen"** und listet Sensoren
 2. **Entwicklerwerkzeuge → Zustände**: Suche nach `battery_soc_total`, `metering_power_absorbed` und `pv_power` — die Werte müssen plausibel sein
-3. Kehre hierher zurück — die Sensoren werden automatisch erkannt
+3. Kehre in den Assistenten zurück — die Sensoren werden automatisch erkannt
 
 _Hinweis: Der Sensor `sensor.*_grid_power` ist bei SMA die AC-Ausgangsleistung des Wechselrichters, **nicht** der Netzanschlusspunkt. Für die Netzleistung verwendet der Optimizer das Sensorpaar `metering_power_supplied` (Einspeisung) und `metering_power_absorbed` (Bezug)._
+
+## Im Assistenten: Schritt „Wechselrichter“
+
+Hier bleibt man am häufigsten hängen: **„Weiter“** geht erst, wenn alles Folgende stimmt.
+
+1. **SMA Smart Energy** wählen. Ohne die SMA-Integration aus Schritt 1 geht es nicht weiter — sie liefert alle Messwerte, Modbus allein genügt nicht.
+2. **Fünf Leistungssensoren**, alle Pflicht. SMA meldet Batterie und Netz nicht als einen Wert mit Vorzeichen, sondern als je **zwei getrennte Sensoren**:
+   - PV-Leistung
+   - Batterie **Laden** (`*_battery_power_charge_total`) und Batterie **Entladen** (`*_battery_power_discharge_total`)
+   - Netz **Einspeisung** (`*_metering_power_supplied`) und Netz **Bezug** (`*_metering_power_absorbed`)
+
+   Die Erkennung trägt sie selbst ein; fehlt einer, bleibt „Weiter“ gesperrt.
+3. **Modbus IP-Adresse** (Pflicht): die IP des Wechselrichters — sie wird **nicht** vorbelegt, bitte eintragen. Port **502**.
+4. Bei **„Weiter“** prüft der Assistent die Modbus-Verbindung und liest dabei das Steuerregister (nur lesend). Schlägt sie fehl, geht es nicht weiter: Modbus-TCP-Server aktiviert (Schritt 2)? IP richtig?
 
 ## Was der Optimizer am Gerät tut
 
@@ -56,7 +70,7 @@ Der Fahrplan stellt den SMA über das **externe Batteriemanagement** (CmpBMS, �
 
 Einen Ziel-Ladestand kennt die SMA-Schnittstelle nicht; der Optimizer prüft den Ladestand alle 30 Sekunden selbst und beendet die Einspeisung.
 
-> **Feldtest:** Ladeblockierung, Netz-Sollwert und Stopp sind am Gerät verifiziert (Sunny Tripower 10.0 Smart Energy). Offen ist der Dauerbetrieb über mehrere Tage — insbesondere neben einem Sunny Home Manager 2.0.
+> Ladeblockierung, Netz-Sollwert und Stopp sind am Gerät verifiziert (Sunny Tripower 10.0 Smart Energy). Mit einem Sunny Home Manager 2.0 muss dessen prognosebasiertes Laden aus sein (Abschnitt 3).
 
 ## Häufige Probleme
 

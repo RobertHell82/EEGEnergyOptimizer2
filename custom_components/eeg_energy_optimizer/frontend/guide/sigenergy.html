@@ -3,7 +3,7 @@
      Neu generieren mit: python scripts/build_guides.py -->
 <h2 class="guide-title">Sigenergy einrichten</h2>
 <h3>1. Unterstützte Geräte</h3>
-<p><strong>SigenStor</strong>-Anlagen mit Batteriespeicher (EC- und CMU-Serie, Hybrid) ab Firmware <strong>SPC109</strong>. Gesteuert wird die <strong>ganze Anlage</strong> über eine Verbindung — auch wenn mehrere Wechselrichter parallel laufen.</p>
+<p><strong>SigenStor</strong>-Anlagen mit Batteriespeicher (EC- und CMU-Serie, Hybrid) ab Firmware <strong>SPC109</strong>; damit das Ladelimit auch im Eigenverbrauchsmodus wirkt, ab <strong>SPC113</strong> (siehe unten). Gesteuert wird die <strong>ganze Anlage</strong> über eine Verbindung — auch wenn mehrere Wechselrichter parallel laufen.</p>
 <p><em>Getestet mit SigenStor EC 25.0 TP (Firmware V100R001C21SPC116, 40 kWh Speicher).</em></p>
 <h3>2. Modbus TCP am Gerät freischalten</h3>
 <p>Der Wechselrichter muss seine Modbus-TCP-Schnittstelle anbieten. Das schaltet der Installateur (oder du mit Installateur-Zugang) in der <strong>Sigen-App</strong> frei:</p>
@@ -14,7 +14,7 @@
 <h3>3. HACS-Integration installieren</h3>
 <p><em><strong>Voraussetzung:</strong> <a href="https://hacs.xyz/">HACS</a> muss installiert sein.</em></p>
 <ol>
-<li>Gehe zu <strong>HACS → Integrationen → Suche „Sigenergy"</strong><br>
+<li>Gehe zu <strong>HACS</strong> und suche dort nach <strong>„Sigenergy"</strong><br>
    <em>Repository: <code>TypQxQ/Sigenergy-Local-Modbus</code></em></li>
 <li>Installiere die Integration und <strong>starte Home Assistant neu</strong></li>
 </ol>
@@ -153,7 +153,7 @@
 <tbody>
 <tr>
 <td><strong>Laden begrenzen</strong> (auch 0 kW = Laden sperren)</td>
-<td>Remote EMS an → „Command Charging (PV First)" mit Ladelimit</td>
+<td>Remote EMS an, Modus bleibt „Maximum Self Consumption“ — nur das Ladelimit wird gesetzt</td>
 </tr>
 <tr>
 <td><strong>Entladen ins Netz</strong></td>
@@ -167,12 +167,11 @@
 </table>
 <div class="guide-alert warning"><p><strong>Kein geräteseitiges Sicherheitsnetz.</strong> Sigenergy kennt — anders als Fronius, Kostal oder SMA — keine Rückfallzeit: Ein Befehl läuft am Gerät weiter, bis er zurückgenommen wird. Der Optimizer gibt beim Umschalten auf „Aus", bei fehlendem Plan und beim Neustart aktiv frei. Stürzt Home Assistant <strong>hart</strong> ab (Stromausfall, eingefrorenes System), bleibt der letzte Befehl stehen — dann den Schalter „Remote EMS" in Home Assistant oder der Sigen-App manuell ausschalten.</p></div>
 
-<h3>Feldtest — was noch zu bestätigen ist</h3>
-<p>Die Steuerung folgt der offiziellen Modbus-Spezifikation (V2.7), ist aber am Gerät noch nicht in allen Punkten nachgewiesen:</p>
+<h3>Zu beachten</h3>
 <ul>
-<li><strong>Ladesperre bei Nacht:</strong> Sperrt „Command Charging (PV First)" mit 0 kW nur das Laden, oder entlädt der Speicher in diesem Modus auch nicht mehr für das Haus? Im zweiten Fall käme die Hauslast in den Randstunden kurz aus dem Netz.</li>
-<li><strong>Einspeisung:</strong> Liefert „Command Discharging (ESS First)" tatsächlich ins Netz oder nur bis zur Hauslast?</li>
-<li><strong>Entladeboden:</strong> Stoppt „ESS Discharge Cut-Off State of Charge" eine befohlene Entladung vorzeitig? Der Optimizer liest den Wert als Untergrenze, schreibt ihn aber nicht.</li>
+<li><strong>Kein „Command Charging“:</strong> Für ein Ladelimit wird bewusst nicht in „Command Charging (PV First)“ geschaltet. Dieser Modus ist ein Ladebefehl, kein Limit — er lädt den Rest aus dem Netz, wenn die PV nicht reicht (an einer Anlage 5,35 kWh Netzladung an einem Morgen ohne Sonne).</li>
+<li><strong>Firmware SPC113:</strong> Im Eigenverbrauchsmodus wirkt das Ladelimit laut Anwenderberichten erst ab dieser Firmware. Auf älterer Firmware bleibt es wirkungslos — die Anlage lädt dann mit Überschuss weiter, aber nie aus dem Netz. Den Stand zeigt die Sigen-App.</li>
+<li><strong>Entladeboden:</strong> „ESS Discharge Cut-Off State of Charge“ liest der Optimizer als Untergrenze der Planung, schreibt ihn aber nicht.</li>
 </ul>
 <h3>Häufige Probleme</h3>
 <table>
