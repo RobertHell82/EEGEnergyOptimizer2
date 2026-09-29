@@ -10,6 +10,12 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
+## [2.1.30] - 2026-09-29
+
+### Hinzugefügt
+
+- **Die EEG-Statistik meldet die Bezugsspitze.** Jeder Bilanztag trägt jetzt die höchste Viertelstunde Netzbezug mit Uhrzeit. Die Energiebilanz zählt den Bezug je Viertelstunde im Raster des Netzbetreibers, die Spitze ist dessen Energie geteilt durch 0,25 h; Einspeisung verrechnet sich nicht. Das ist die Grundlage des Leistungspreises ab 2027. Im Backend-Dashboard steht sie als Kachel: bei einer Anlage deren Spitze im Zeitraum mit Zeitpunkt, über die Flotte die Summe der Einzelspitzen und die höchste einzelne. Tage, die vor diesem Stand archiviert wurden, haben keine Viertelstunden mehr — für sie gibt es keine Spitze, nachgeliefert wird sie nicht.
+
 ## [2.1.29] - 2026-09-29
 
 ### Hinzugefügt
