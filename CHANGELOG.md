@@ -10,6 +10,55 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
+## [2.1.29] - 2026-09-29
+
+### Hinzugefügt
+
+- **Die EEG-Statistik meldet die Zahlen der Einspeise-Karte.** Bisher kannte das Backend von der Einspeisung nur die Tagessumme aus dem Recorder. Jetzt geht jeder abgeschlossene Bilanztag (04:00–04:00) an den neuen Endpunkt `/v1/balance`:
+  - eingespeist, davon aus der Batterie, davon an die Gemeinschaft
+  - PV, Netzbezug, Haus- und Heizstabverbrauch, Eigenverbrauch
+  - Anteil im Modus Ein, ob die Batterie wie im Standardbetrieb lief und ob der Gemeinschaftsanteil aus der Abnahmequote stammt
+  - dieselben Mengen im simulierten Standardbetrieb
+
+  **Geldbeträge gehen nicht hinaus.** Nach dem Update schickt die Anlage einmal ihr ganzes Archiv nach, bis zu 400 Tage. Danach meldet sie jeden Morgen den neuen Tag. Einen Tag, dessen Versand ausfiel, holt sie beim nächsten stündlichen Durchlauf nach. Das Backend-Dashboard zeigt daraus dieselbe Einspeise-Ansicht über alle Anlagen summiert. Die Datenschutztexte in Panel, README und Inbetriebnahme nennen die neue Kategorie.
+
+- **Der Assistent schaltet die Steuerung beim Fertigstellen ein.** Bisher stand der Optimizer nach dem Assistenten auf „Aus“ und rechnete nur, während die Inbetriebnahme versprach, er steuere nun den Speicher; die Zusammenfassung zeigte dazu „Steuerung: Aktiv“. Jetzt steht dort der Haken „Steuerung nach dem Fertigstellen einschalten“, vorausgewählt. Er stellt den Modus auf „Ein“, sobald die Integration nach dem Speichern neu geladen ist. Ohne Haken bleibt es bei „Aus“, und die Zusammenfassung sagt, was das heißt.
+
+### Geändert
+
+- **Die Inbetriebnahme folgt dem Begleitschreiben.** Sie führt über die Fernzugangs-Adresse vom Blatt statt über `homeassistant.local` (das bleibt der Weg, wenn die Adresse nicht geht). Neu sind die Hinweise, wie man den Fernzugang abschaltet und was die EEG-Statistik sendet und wo sie abzuschalten ist. Das war bei neuen Installationen schon immer aktiv, stand dort aber nicht.
+- **Die Anleitungen für Fronius, Kostal und SMA erklären den Schritt „Wechselrichter“ im Assistenten**: Die Core-Integration ist Pflicht, auch wenn gesteuert per Modbus wird, die Modbus-IP ist Pflicht und wird bei „Weiter“ geprüft, und Fronius und SMA brauchen vier Richtungssensoren. Installationsanleitung und README behaupteten bisher, diese drei bräuchten keine Integration.
+- **Die Dokumentation ist auf dem Stand von 2.1.28**:
+  - Das Dashboard beschreibt die Einspeise-Karte, die Reihenfolge der Karten und die Startfreigabe.
+  - Die README-Dateien nennen Einspeise-Karte, Bezugsspitze und Prognosevergleich.
+  - Wallbox: Stellbereich und Abbruch bei falscher Richtung.
+  - Die Gerätereserve bei Fronius und Sigenergy ist beschrieben.
+  - Die Pflichtfelder beim Speichern der Einstellungen sind vollständig aufgeführt.
+  - Heizstab: Sicherung bei hängender Regelung sowie Vorgaben und Grenzen der Felder.
+  - HACS 2.x ohne Reiter „Integrationen“; Home Assistant Supervised fällt weg.
+  - Forecast.Solar: API-Key in den Optionen, kürzerer Horizont.
+  - Datenschutztext in Panel und README einheitlich.
+  - Im Panel sind der Willkommenstext (eigene Berechnung als PV-Quelle) und der Hilfetext zum Maximum-Ladestand korrigiert: den Modus „Test“ gibt es nicht mehr.
+- **Alle sechs Wechselrichter sind freigegeben.** Der Feldtest von Fronius, Kostal, Sigenergy, SMA und SolaX ist abgeschlossen. Der Stand der Unterstützung führt alle sechs als „freigegeben“, und „Feldtest“ bleibt nur die Einstiegsstufe für einen neu hinzukommenden Treiber. Was je Gerät zu beachten ist, steht weiter dort.
+
+### Behoben
+
+- **Sachliche Fehler in der Dokumentation:**
+  - **Sigenergy:** Das Laden wird nicht über „Command Charging“ begrenzt — das wurde entfernt, weil es aus dem Netz lud —, sondern im Modus „Maximum Self Consumption“ mit dem Ladelimit. Das wirkt laut Anwenderberichten erst ab Firmware SPC113.
+  - **Heizstab:** Beim Zurückregeln unter der Einspeisegrenze gibt er je Lauf die halbe Lücke frei, nicht die ganze.
+  - **Steuerung:** Ein Lauf kann mehrere Schreibvorgänge brauchen, nicht nur einen. Neu beschrieben sind der Wartelauf nach dem Anheben des Ladelimits und die Wirkungskontrolle am Netzzähler bei SMA.
+  - **Richtige Namen aus Integrationen und Geräte-Webinterfaces:**
+    - Huawei: die Option „Enable battery control“ und der Ladestand-Sensor `batterien_batterieladung`
+    - Solcast: „verbleibende Leistung heute“
+    - SMA: „Geräteparameter“
+    - SolaX: der zweite PV-Sensor nur im Expertenmodus, die Trigger-Namen mit Modus-Suffix
+    - Huawei-Akkukapazität: „Rated capacity“
+    - Eigene Prognose: das Feld „Leistung (kWp)“
+  - **Kleinere Korrekturen:**
+    - Der Willkommensschritt des Assistenten prüft keine Integrationen.
+    - Fronius: „Connection refused“ und abgelehnte Steuerbefehle haben verschiedene Ursachen.
+    - Die Fernzugang-Beispiele nennen eine zufällige Kennung.
+
 ## [2.1.28] - 2026-09-29
 
 ### Geändert
