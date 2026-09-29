@@ -104,7 +104,7 @@ MAX_TAKT_SEKUNDEN = 300
 # Felder, die sich NICHT ueber Tage aufsummieren lassen: ein_anteil ist ein
 # Anteil zwischen 0 und 1, seine Monatssumme waere 30 statt eines Anteils;
 # kein_eingriff ist ein Ja/Nein je Tag (bool zaehlt sonst als int mit).
-NICHT_SUMMIERBAR = {"ein_anteil", "kein_eingriff", "batterie_abweichung_kwh"}
+NICHT_SUMMIERBAR = {"ein_anteil", "kein_eingriff", "batterie_abweichung_kwh", "quotenmodus"}
 
 # Beginn des Bilanztags (Stunde, Ortszeit) — siehe Modul-Docstring.
 BILANZTAG_START_STUNDE = 4
@@ -690,6 +690,9 @@ class EnergieBilanz:
             "ref_eeg_kwh": None,
             "ref_erloes": None,
             "ref_batterie_export_kwh": None,
+            # Kam der Gemeinschaftsanteil aus der Abnahmequote (eine Annahme)
+            # statt aus PeakShare-Salden? None = ohne Fahrplan-Inputs unbekannt.
+            "quotenmodus": None,
             "ist_summe": None,
             "ref_summe": None,
             "vorteil_begruendung": None,
@@ -787,6 +790,9 @@ class EnergieBilanz:
             ergebnis["pv_ersparnis"] = ergebnis["vermieden"]
             return ergebnis
 
+        ergebnis["quotenmodus"] = any(
+            t.get("quote_tag") is not None for t in (getattr(inputs, "eeg_tarife", None) or [])
+        )
         datum = tag.get("datum") or bilanz_datum(datetime.now())
         ist_slots = self._als_slots(paare, datum)
         bewertung = self._bewerte(ist_slots, slots, inputs)
@@ -1274,6 +1280,14 @@ class EnergieBilanz:
                 "bedarf": any(float(v) > 0 for v in salden.values()) if salden else None,
             })
         return reihe
+
+    def archivierte_tage(self) -> dict[str, dict[str, Any]]:
+        """Die abgeschlossenen, bewerteten Tage (Datum → Tagesergebnis).
+
+        Für die Telemetrie (``bilanz_telemetrie``) — eine Kopie, damit der
+        Versand das Archiv nicht versehentlich verändert.
+        """
+        return dict(self._tage)
 
     @property
     def datum_heute(self) -> str:

@@ -2372,6 +2372,26 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             # ----------------------------------------------------------
             cfg_enabled = config.get(CONF_TELEMETRY_ENABLED, False)
             if cfg_enabled and reporter.is_configured:
+                # Bilanztage der Einspeise-Karte (bilanz_telemetrie.py): was
+                # das Backend noch nicht hat, geht stündlich hinaus — nach dem
+                # Update das ganze Archiv, danach jeden Morgen der neue Tag.
+                from .bilanz_telemetrie import BilanzVersand
+
+                bilanz_versand = BilanzVersand(hass, entry.entry_id)
+
+                async def _bilanz_melden() -> None:
+                    bilanz_obj = data.get("bilanz")
+                    ident = telemetry_buffer.get_identity() or {}
+                    if bilanz_obj is None or not _telemetry_an():
+                        return
+                    try:
+                        await bilanz_versand.async_senden(
+                            reporter, ident.get("installation_id"),
+                            bilanz_obj.archivierte_tage(),
+                        )
+                    except Exception:  # pragma: no cover
+                        _LOGGER.exception("Telemetry: Bilanztage nicht gemeldet")
+
                 async def _telemetry_flush(_now=None):
                     if not (
                         _telemetry_an()
@@ -2398,6 +2418,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                         await reporter.flush_buffer()
                     except Exception:  # pragma: no cover
                         _LOGGER.exception("Telemetry: buffer flush failed")
+
+                    await _bilanz_melden()
 
                     # Herzschlag. Das Backend führt ``last_seen_at`` nur bei
                     # authentifizierten Ereignissen nach und löscht
@@ -2528,6 +2550,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                             await reporter.flush_buffer()
                         except Exception:  # pragma: no cover
                             _LOGGER.exception("Telemetry boot send failed")
+                        await _bilanz_melden()
                     if async_call_later is not None:
                         unsub_boot = async_call_later(
                             hass, _BOOT_TELEMETRY_DELAY_S, _boot_telemetry_send,

@@ -236,6 +236,16 @@ class TelemetryReporter:
         """
         await self._send_authed("/v1/outcome", payload)
 
+    async def send_balance(self, tage: list[dict]) -> None:
+        """Bilanztage an /v1/balance (siehe bilanz_telemetrie.py).
+
+        In einem Dict verpackt, nicht als nackte Liste: nur Dicts landen bei
+        einem Ausfall im Puffer — und die Nachlieferung aus dem Archiv soll
+        einen Backend-Ausfall überleben.
+        """
+        if tage:
+            await self._send_authed("/v1/balance", {"days": tage})
+
     async def send_failure(self, payload: dict) -> None:
         await self._send_authed("/v1/failure", payload)
 
