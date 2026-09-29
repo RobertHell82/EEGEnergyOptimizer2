@@ -10,6 +10,12 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
+## [2.1.28] - 2026-09-29
+
+### Geändert
+
+- **„Gesamt“ in der Einspeise-Karte zeigt einen Balken je Jahr.** Bisher liefen dort bis zu zwei Jahre lang die Monate, wie beim Zeitraum „Jahr“. Die Monate zeigt aber schon „Jahr“, „Gesamt“ stellt jetzt die Jahre nebeneinander. Ein Jahr ohne Aufzeichnung steht als leerer Balken da.
+
 ## [2.1.27] - 2026-09-29
 
 ### Hinzugefügt
