@@ -10,6 +10,13 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
+## [2.1.31] - 2026-09-29
+
+### Behoben
+
+- **Ein Update meldet keine Störungen mehr, die keine sind.** In den ersten Minuten nach dem Start liefern die Quell-Integrationen noch nichts: Bei Huawei scheiterte der erste Planlauf mit „Batterie-Ladestand oder -Kapazität unbekannt“, bei SolaX die Freigabe beim Start. Zwischen dem 27. und 29.09. waren das bei Traun alle 18 Solver-Meldungen, bei Weismann, Marter und Häusler ebenso — die Zeitpunkte fielen auf die Minute mit den Updates zusammen. Planlauf- und Schreibfehler werden jetzt in den ersten fünf Minuten nach dem Start weder gemeldet noch gezählt; besteht der Fehler danach noch, meldet er sich sofort.
+- **Ein Neustart kostet keine Momentaufnahmen mehr.** Die Warteschlange der Snapshots wird nur stündlich gesendet und lag bisher nur im Speicher; nach dem Update auf 2.1.30 fehlte fast der ganzen Flotte der Snapshot von 13:03. Sie liegt jetzt zusätzlich auf der Platte und geht nach dem Neustart mit dem nächsten Versand hinaus.
+
 ## [2.1.30] - 2026-09-29
 
 ### Hinzugefügt
