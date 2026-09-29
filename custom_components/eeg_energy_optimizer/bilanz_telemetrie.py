@@ -76,6 +76,11 @@ def tag_payload(datum: str, ergebnis: dict[str, Any]) -> dict[str, Any]:
         "ref_export_kwh": _zahl(ergebnis.get("ref_export_kwh")),
         "ref_battery_export_kwh": _zahl(ergebnis.get("ref_batterie_export_kwh")),
         "ref_community_kwh": _zahl(ergebnis.get("ref_eeg_kwh")),
+        "import_peak_kw": _zahl(ergebnis.get("bezug_spitze_kw")),
+        "import_peak_at": (
+            ergebnis["bezug_spitze_zeit"]
+            if isinstance(ergebnis.get("bezug_spitze_zeit"), str) else None
+        ),
     }
 
 

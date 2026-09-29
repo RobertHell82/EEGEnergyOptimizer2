@@ -160,3 +160,44 @@ def test_quotenmodus_wird_nicht_ueber_den_monat_summiert():
 def test_zahlenfelder_nehmen_nur_zahlen(wert):
     payload = tag_payload("2026-09-28", _tag(export_kwh=wert))
     assert payload["export_kwh"] is None
+
+
+# ---------------------------------------------------------------------------
+# Bezugsspitze
+# ---------------------------------------------------------------------------
+
+
+def test_bezugsspitze_ist_die_hoechste_viertelstunde_mit_uhrzeit():
+    """Bezugsenergie der Viertelstunde durch 0,25 h — dasselbe Raster wie der
+    Netzbetreiber. Slot 0 beginnt um 04:00, Slot 60 also um 19:00."""
+    b = _bilanz()
+    tag = _tag_mit({
+        10: _slot(bezug=0.5, s=900.0),
+        60: _slot(bezug=1.2, export=0.3, s=900.0),
+        61: _slot(bezug=0.9, s=900.0),
+    })
+
+    ergebnis = b.bewerte_tag(tag, None)
+
+    assert ergebnis["bezug_spitze_kw"] == pytest.approx(4.8)
+    assert ergebnis["bezug_spitze_zeit"].startswith("2026-08-27T19:00")
+
+
+def test_ohne_slots_keine_bezugsspitze():
+    b = _bilanz()
+    ergebnis = b.bewerte_tag(_tag_mit({}), None)
+
+    assert ergebnis["bezug_spitze_kw"] is None
+    assert ergebnis["bezug_spitze_zeit"] is None
+
+
+def test_bezugsspitze_geht_mit_und_wird_nicht_summiert():
+    from custom_components.eeg_energy_optimizer import bilanz as bilanz_modul
+
+    payload = tag_payload("2026-09-28", _tag(bezug_spitze_kw=5.25, bezug_spitze_zeit="2026-09-28T19:15"))
+    alt = tag_payload("2026-08-01", _tag())
+
+    assert payload["import_peak_kw"] == 5.25
+    assert payload["import_peak_at"] == "2026-09-28T19:15"
+    assert alt["import_peak_kw"] is None and alt["import_peak_at"] is None
+    assert "bezug_spitze_kw" in bilanz_modul.NICHT_SUMMIERBAR

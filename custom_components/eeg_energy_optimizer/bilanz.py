@@ -104,7 +104,11 @@ MAX_TAKT_SEKUNDEN = 300
 # Felder, die sich NICHT ueber Tage aufsummieren lassen: ein_anteil ist ein
 # Anteil zwischen 0 und 1, seine Monatssumme waere 30 statt eines Anteils;
 # kein_eingriff ist ein Ja/Nein je Tag (bool zaehlt sonst als int mit).
-NICHT_SUMMIERBAR = {"ein_anteil", "kein_eingriff", "batterie_abweichung_kwh", "quotenmodus"}
+NICHT_SUMMIERBAR = {
+    "ein_anteil", "kein_eingriff", "batterie_abweichung_kwh", "quotenmodus",
+    # Eine Spitze ist ein Maximum, keine Menge — die Monatssumme wäre Unsinn.
+    "bezug_spitze_kw",
+}
 
 # Beginn des Bilanztags (Stunde, Ortszeit) — siehe Modul-Docstring.
 BILANZTAG_START_STUNDE = 4
@@ -693,6 +697,12 @@ class EnergieBilanz:
             # Kam der Gemeinschaftsanteil aus der Abnahmequote (eine Annahme)
             # statt aus PeakShare-Salden? None = ohne Fahrplan-Inputs unbekannt.
             "quotenmodus": None,
+            # Höchste Viertelstunde Netzbezug des Bilanztags (kW) und ihr Beginn
+            # (Ortszeit, ISO) — Grundlage des Leistungspreises ab 2027. Dasselbe
+            # Raster wie der Netzbetreiber: Bezugsenergie der Viertelstunde
+            # geteilt durch 0,25 h, Einspeisung verrechnet sich nicht.
+            "bezug_spitze_kw": None,
+            "bezug_spitze_zeit": None,
             "ist_summe": None,
             "ref_summe": None,
             "vorteil_begruendung": None,
@@ -770,8 +780,26 @@ class EnergieBilanz:
         # steckt nicht in ``heizstab_pv_kwh`` und bleibt draußen.
         waerme = heizstab_pv_kwh * waermewert
 
+        spitze_kw: float | None = None
+        spitze_index: int | None = None
+        for index, slot in paare:
+            kw = max(float(slot.get("bezug") or 0.0), 0.0) / (SLOT_SEKUNDEN / 3600.0)
+            if spitze_kw is None or kw > spitze_kw:
+                spitze_kw, spitze_index = kw, index
+        spitze_zeit = None
+        if spitze_index is not None and tag.get("datum"):
+            try:
+                spitze_zeit = (
+                    bilanztag_start(str(tag["datum"]))
+                    + timedelta(seconds=spitze_index * SLOT_SEKUNDEN)
+                ).isoformat(timespec="minutes")
+            except (TypeError, ValueError):
+                spitze_zeit = None
+
         ergebnis = dict(leer)
         ergebnis.update({
+            "bezug_spitze_kw": None if spitze_kw is None else round(spitze_kw, 3),
+            "bezug_spitze_zeit": spitze_zeit,
             "eigen_kwh": round(eigen_kwh, 3),
             "pv_kwh": round(pv_kwh, 3),
             "export_kwh": round(export_kwh, 3),
