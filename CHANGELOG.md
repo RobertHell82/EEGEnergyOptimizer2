@@ -10,6 +10,12 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
+## [2.1.26] - 2026-09-29
+
+### Hinzugefügt
+
+- **Karte „Einspeisung“ im Dashboard: was ins Netz ging, woher, und wer es genommen hat.** Unter „Was deine PV bringt“ stehen für Heute, Monat oder Jahr (umschaltbar, gemerkt) sieben Kennzahlen: eingespeist, davon aus der Batterie, Anteil, den die Gemeinschaft aufgenommen hat, Erlös je kWh, Batterie-Zyklen, Autarkie und Eigenverbrauch. Wo es sinnvoll ist, steht der simulierte Standardbetrieb klein darunter. Das Chart zeigt die Einspeisung als gestapelte Balken (an die Gemeinschaft / zum Basistarif, der Batterie-Anteil schraffiert). Heute läuft es je Viertelstunde, mit dem Bedarf der Gemeinschaft als Hintergrund, im Monat je Tag, im Jahr je Monat. Ein Tipp oder Klick auf einen Balken zeigt seine Werte, auch am Handy. „Aus der Batterie“ ist die Einspeisung in Viertelstunden ohne PV-Leistung (unter 50 W), gleich, ob die Optimierung dabei entladen hat. Der Sensor „Entladung ins Netz“ zählt weiterhin nur die gesteuerte Entladung und bleibt unverändert. Alles kommt aus der Tagesbilanz, die schon aufgezeichnet wird. Neu gespeichert werden je Tag nur Hausverbrauch, Entladung, Batterie-Einspeisung und dieselben Mengen der Standardbetrieb-Simulation, die bisher nach der Geldrechnung verworfen wurden. Tage vor diesem Stand haben diese Felder nicht: Der Batterie-Anteil und der Vergleich beginnen mit dieser Version, und die Karte sagt, über wie viele Tage verglichen wird. Quoten werden aus Summen gebildet, nicht aus Tagesmitteln, und der Vergleich läuft auf beiden Seiten nur über Tage mit Referenz.
+
 ## [2.1.25] - 2026-09-28
 
 ### Geändert
