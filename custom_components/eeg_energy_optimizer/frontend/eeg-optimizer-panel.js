@@ -4328,12 +4328,14 @@ class EegOptimizerPanel extends HTMLElement {
       n = 12;
       index = (r) => Number(String(r.monat).slice(5, 7)) - 1;
     }
-    // Gesamt: das Backend liefert die Reihe lückenlos, je Monat oder (über
-    // zwei Jahre) je Jahr — der Index ist die Position.
-    const jeJahr = zeitraum === "gesamt" && reihe.length && reihe[0].jahr != null;
+    // Gesamt: das Backend liefert die Jahre lückenlos — der Index ist die
+    // Position.
+    const jeJahr = zeitraum === "gesamt";
     const max = Math.max(...balken.map(r => r.export || 0), 0.001) * 1.1;
     const slotW = plotW / n;
-    const bw = Math.max(1, slotW * (zeitraum === "heute" ? 0.9 : 0.7));
+    // Höchstens 64 px: „Gesamt" hat im ersten Jahr genau einen Balken, der
+    // sonst über die halbe Karte liefe.
+    const bw = Math.min(64, Math.max(1, slotW * (zeitraum === "heute" ? 0.9 : 0.7)));
     const y = (val) => padT + plotH - (val / max) * plotH;
 
     const farbeEeg = "#43a047", farbeRest = "#90a4ae", farbeAlle = "#1e88e5";
@@ -4355,7 +4357,7 @@ class EegOptimizerPanel extends HTMLElement {
         zeitraum === "heute" ? new Date(r.t).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })
           : zeitraum === "monat" ? new Date(r.datum).toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit" })
           : jeJahr ? String(r.jahr)
-          : new Date(`${r.monat}-01T00:00:00`).toLocaleDateString("de-DE", zeitraum === "gesamt" ? { month: "long", year: "numeric" } : { month: "long" }),
+          : new Date(`${r.monat}-01T00:00:00`).toLocaleDateString("de-DE", { month: "long" }),
         `${fmtDe(exp, zeitraum === "heute" ? 2 : 1)} kWh eingespeist`,
         mitEeg ? `davon ${fmtDe(eeg, zeitraum === "heute" ? 2 : 1)} kWh an die Gemeinschaft` : "",
         r.batterie != null ? `davon ${fmtDe(bat, zeitraum === "heute" ? 2 : 1)} kWh aus der Batterie` : "",
@@ -4403,16 +4405,8 @@ class EegOptimizerPanel extends HTMLElement {
       const namen = ["J", "F", "M", "A", "M", "J", "J", "A", "S", "O", "N", "D"];
       const lang = ["Jan", "Feb", "Mär", "Apr", "Mai", "Jun", "Jul", "Aug", "Sep", "Okt", "Nov", "Dez"];
       for (let k = 0; k < 12; k++) beschrift(k, schmal ? namen[k] : lang[k]);
-    } else if (jeJahr) {
-      reihe.forEach((r, k) => beschrift(k, String(r.jahr)));
     } else {
-      // Gesamt je Monat: so viele Beschriftungen, wie nebeneinander passen
-      // („09/26" braucht am Handy gut 30 px), Jahreswechsel bevorzugt.
-      const platz = schmal ? 34 : 44;
-      const schritt = Math.max(1, Math.ceil(platz / slotW));
-      reihe.forEach((r, k) => {
-        if (k % schritt === 0) beschrift(k, `${String(r.monat).slice(5, 7)}/${String(r.monat).slice(2, 4)}`);
-      });
+      reihe.forEach((r, k) => beschrift(k, String(r.jahr)));
     }
 
     const legendeEintrag = (stil, text) =>

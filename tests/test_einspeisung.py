@@ -276,7 +276,9 @@ def test_gesamt_nimmt_vor_dem_tagesarchiv_die_monatssummen():
     assert ergebnis["tage"] == 3
 
 
-def test_gesamt_reihe_ist_lueckenlos_und_wird_ueber_zwei_jahre_jaehrlich():
+def test_gesamt_reihe_ist_je_jahr_und_lueckenlos():
+    """Die Monate zeigt schon „Jahr" — „Gesamt" stellt die Jahre nebeneinander,
+    auch wenn es erst eines gibt."""
     b = _bilanz()
     b._heute = {"datum": TAG, "slots": {}}
     b._tage = {
@@ -284,14 +286,16 @@ def test_gesamt_reihe_ist_lueckenlos_und_wird_ueber_zwei_jahre_jaehrlich():
         "2026-08-26": _tagesergebnis(export_kwh=4.0),
     }
 
-    monate = b.einspeisung("gesamt", JETZT, _inputs())["reihe"]
+    jahre = b.einspeisung("gesamt", JETZT, _inputs())["reihe"]
 
-    assert [m["monat"] for m in monate] == ["2026-05", "2026-06", "2026-07", "2026-08"]
-    assert monate[1]["export"] == 0.0
+    assert [j["jahr"] for j in jahre] == ["2026"]
+    assert jahre[0]["export"] == pytest.approx(7.0)
 
+    # Ein Jahr ohne Aufzeichnung dazwischen ist ein leerer Balken.
     b._monate = {"2023-01": _tagesergebnis(export_kwh=50.0)}
     jahre = b.einspeisung("gesamt", JETZT, _inputs())["reihe"]
 
     assert [j["jahr"] for j in jahre] == ["2023", "2024", "2025", "2026"]
     assert jahre[0]["export"] == pytest.approx(50.0)
+    assert jahre[1]["export"] == 0.0
     assert jahre[3]["export"] == pytest.approx(7.0)

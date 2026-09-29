@@ -230,24 +230,6 @@ def ohne_pv(slot: dict[str, Any]) -> bool:
     return pv_kw < BATTERIE_EXPORT_PV_SCHWELLE_KW
 
 
-def _lueckenlos(monate: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
-    """Monatsposten vom ersten bis zum letzten Monat, fehlende als leer."""
-    erster, letzter = min(monate), max(monate)
-    j, m = int(erster[:4]), int(erster[5:7])
-    reihe: list[dict[str, Any]] = []
-    while True:
-        schluessel = f"{j:04d}-{m:02d}"
-        reihe.append(
-            monate.get(schluessel)
-            or {"monat": schluessel, "export": 0.0, "batterie": None, "eeg": 0.0}
-        )
-        if schluessel >= letzter:
-            return reihe
-        m += 1
-        if m > 12:
-            j, m = j + 1, 1
-
-
 class EnergieBilanz:
     """Zeichnet die Energiereihe auf und bewertet sie in Geld."""
 
@@ -1205,9 +1187,10 @@ class EnergieBilanz:
     ) -> list[dict[str, Any]]:
         """Balken für das Chart: Viertelstunden, Tage, Monate oder Jahre.
 
-        ``jahr`` und ``gesamt`` liefern lückenlos jeden Monat vom ersten bis
-        zum letzten (ein Monat ohne Aufzeichnung ist ein leerer Balken, keine
-        Lücke in der Achse); ``gesamt`` über mehr als 24 Monate je Jahr.
+        ``jahr`` liefert je Monat, ``gesamt`` je Jahr — lückenlos vom ersten
+        bis zum letzten (ein Jahr ohne Aufzeichnung ist ein leerer Balken,
+        keine Lücke in der Achse). Die Monate zeigt schon ``jahr``; ``gesamt``
+        stellt die Jahre nebeneinander.
         """
         if zeitraum == "heute":
             return self._einspeise_viertelstunden(inputs)
@@ -1231,19 +1214,22 @@ class EnergieBilanz:
             if e.get("batterie_export_kwh") is not None:
                 m["batterie"] = (m["batterie"] or 0.0) + float(e["batterie_export_kwh"])
         if zeitraum == "gesamt" and monate:
-            reihe = _lueckenlos(monate)
-            if len(reihe) > 24:
-                jahre: dict[str, dict[str, Any]] = {}
-                for m in reihe:
-                    j = jahre.setdefault(
-                        m["monat"][:4],
-                        {"jahr": m["monat"][:4], "export": 0.0, "batterie": None, "eeg": 0.0},
-                    )
-                    j["export"] += m["export"]
-                    j["eeg"] += m["eeg"]
-                    if m["batterie"] is not None:
-                        j["batterie"] = (j["batterie"] or 0.0) + m["batterie"]
-                reihe = list(jahre.values())
+            jahre: dict[str, dict[str, Any]] = {}
+            for m in monate.values():
+                j = jahre.setdefault(
+                    m["monat"][:4],
+                    {"jahr": m["monat"][:4], "export": 0.0, "batterie": None, "eeg": 0.0},
+                )
+                j["export"] += m["export"]
+                j["eeg"] += m["eeg"]
+                if m["batterie"] is not None:
+                    j["batterie"] = (j["batterie"] or 0.0) + m["batterie"]
+            erstes, letztes = int(min(jahre)), int(max(jahre))
+            reihe = [
+                jahre.get(str(j))
+                or {"jahr": str(j), "export": 0.0, "batterie": None, "eeg": 0.0}
+                for j in range(erstes, letztes + 1)
+            ]
         else:
             reihe = list(monate.values())
         for m in reihe:
