@@ -59,7 +59,6 @@ def test_einspeisung_ohne_pv_zaehlt_als_batterie():
 
     assert ergebnis["export_kwh"] == pytest.approx(1.2)
     assert ergebnis["batterie_export_kwh"] == pytest.approx(0.7)
-    assert ergebnis["entladen_kwh"] == pytest.approx(0.85)
 
 
 def test_ohne_pv_misst_die_leistung_ueber_die_gezaehlte_dauer():
@@ -118,7 +117,6 @@ def test_standardbetrieb_hat_dieselben_mengen_wie_die_referenz():
     ergebnis = b.bewerte_tag(tag, inputs)
 
     assert ergebnis["ref_export_kwh"] == pytest.approx(ergebnis["export_kwh"], abs=0.05)
-    assert ergebnis["ref_entladen_kwh"] == pytest.approx(ergebnis["entladen_kwh"], abs=0.05)
     assert ergebnis["ref_batterie_export_kwh"] == pytest.approx(
         ergebnis["batterie_export_kwh"], abs=0.05
     )
@@ -141,7 +139,7 @@ def test_ohne_ladestand_keine_referenzwerte():
 
 
 def _tagesergebnis(**werte):
-    leer = {"export_kwh": 0.0, "eeg_kwh": 0.0, "erloes": 0.0, "entladen_kwh": 0.0,
+    leer = {"export_kwh": 0.0, "eeg_kwh": 0.0, "erloes": 0.0,
             "batterie_export_kwh": 0.0, "pv_kwh": 0.0, "haus_kwh": 0.0,
             "heizstab_kwh": 0.0, "bezug_kwh": 0.0}
     leer.update(werte)
@@ -169,20 +167,19 @@ def test_vergleich_nur_ueber_tage_mit_referenz():
         # Vor der Einführung: keine Referenzwerte.
         "2026-08-25": _tagesergebnis(export_kwh=20.0, eeg_kwh=2.0),
         "2026-08-26": _tagesergebnis(
-            export_kwh=10.0, eeg_kwh=4.0, entladen_kwh=6.0,
+            export_kwh=10.0, eeg_kwh=4.0,
             ref_export_kwh=12.0, ref_eeg_kwh=1.0, ref_erloes=0.9,
-            ref_entladen_kwh=4.5, ref_batterie_export_kwh=0.0,
+            ref_batterie_export_kwh=0.0,
         ),
     }
 
-    v = b.einspeisung("monat", JETZT, _inputs(battery_capacity_kwh=15.0))["vergleich"]
+    v = b.einspeisung("monat", JETZT, _inputs())["vergleich"]
 
     assert v["tage"] == 1
     # Ist-Seite nur über den Tag mit Referenz — nicht 30 gegen 12 kWh.
     assert v["ist"]["export_kwh"] == pytest.approx(10.0)
     assert v["ist"]["eeg_anteil"] == pytest.approx(0.4)
     assert v["ref"]["eeg_anteil"] == pytest.approx(1 / 12, abs=1e-3)
-    assert v["ref"]["zyklen"] == pytest.approx(0.3)
 
 
 def test_autarkie_und_eigenverbrauch():
@@ -248,3 +245,53 @@ def test_quotenmodus_wird_gemeldet():
 
     assert ergebnis["gemeinschaft"] is True
     assert ergebnis["quotenmodus"] is True
+
+
+# ---------------------------------------------------------------------------
+# Gesamt
+# ---------------------------------------------------------------------------
+
+
+def test_gesamt_nimmt_vor_dem_tagesarchiv_die_monatssummen():
+    """Die Tage reichen 400 Tage zurück, davor stehen nur Monatssummen. Ein
+    Monat darf dabei nicht doppelt zählen, und seine ref_*-Summe gehört nicht
+    in den Vergleich (der läuft nur über Tage)."""
+    b = _bilanz()
+    b._heute = {"datum": TAG, "slots": {}}
+    b._monate = {
+        "2025-06": _tagesergebnis(export_kwh=100.0, eeg_kwh=10.0, ref_export_kwh=90.0),
+        # Monat des ältesten Tages — steht auch als Tage im Archiv.
+        "2025-08": _tagesergebnis(export_kwh=999.0),
+    }
+    b._tage = {
+        "2025-08-30": _tagesergebnis(export_kwh=5.0),
+        "2026-08-26": _tagesergebnis(export_kwh=7.0, ref_export_kwh=6.0),
+    }
+
+    ergebnis = b.einspeisung("gesamt", JETZT, _inputs())
+
+    assert ergebnis["kennzahlen"]["export_kwh"] == pytest.approx(112.0)
+    assert ergebnis["vergleich"]["tage"] == 1
+    # Heute und zwei Archivtage — der Monatsposten ist kein Tag.
+    assert ergebnis["tage"] == 3
+
+
+def test_gesamt_reihe_ist_lueckenlos_und_wird_ueber_zwei_jahre_jaehrlich():
+    b = _bilanz()
+    b._heute = {"datum": TAG, "slots": {}}
+    b._tage = {
+        "2026-05-10": _tagesergebnis(export_kwh=3.0),
+        "2026-08-26": _tagesergebnis(export_kwh=4.0),
+    }
+
+    monate = b.einspeisung("gesamt", JETZT, _inputs())["reihe"]
+
+    assert [m["monat"] for m in monate] == ["2026-05", "2026-06", "2026-07", "2026-08"]
+    assert monate[1]["export"] == 0.0
+
+    b._monate = {"2023-01": _tagesergebnis(export_kwh=50.0)}
+    jahre = b.einspeisung("gesamt", JETZT, _inputs())["reihe"]
+
+    assert [j["jahr"] for j in jahre] == ["2023", "2024", "2025", "2026"]
+    assert jahre[0]["export"] == pytest.approx(50.0)
+    assert jahre[3]["export"] == pytest.approx(7.0)

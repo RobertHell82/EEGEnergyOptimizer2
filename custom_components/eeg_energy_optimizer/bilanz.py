@@ -230,6 +230,24 @@ def ohne_pv(slot: dict[str, Any]) -> bool:
     return pv_kw < BATTERIE_EXPORT_PV_SCHWELLE_KW
 
 
+def _lueckenlos(monate: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+    """Monatsposten vom ersten bis zum letzten Monat, fehlende als leer."""
+    erster, letzter = min(monate), max(monate)
+    j, m = int(erster[:4]), int(erster[5:7])
+    reihe: list[dict[str, Any]] = []
+    while True:
+        schluessel = f"{j:04d}-{m:02d}"
+        reihe.append(
+            monate.get(schluessel)
+            or {"monat": schluessel, "export": 0.0, "batterie": None, "eeg": 0.0}
+        )
+        if schluessel >= letzter:
+            return reihe
+        m += 1
+        if m > 12:
+            j, m = j + 1, 1
+
+
 class EnergieBilanz:
     """Zeichnet die Energiereihe auf und bewertet sie in Geld."""
 
@@ -680,7 +698,6 @@ class EnergieBilanz:
             "eeg_kwh": 0.0,
             "heizstab_kwh": 0.0,
             "haus_kwh": 0.0,
-            "entladen_kwh": 0.0,
             "batterie_export_kwh": 0.0,
             "waerme": 0.0,
             "ein_anteil": 0.0,
@@ -690,7 +707,6 @@ class EnergieBilanz:
             "ref_export_kwh": None,
             "ref_eeg_kwh": None,
             "ref_erloes": None,
-            "ref_entladen_kwh": None,
             "ref_batterie_export_kwh": None,
             "ist_summe": None,
             "ref_summe": None,
@@ -707,7 +723,7 @@ class EnergieBilanz:
         eigen_kwh = 0.0
         vermieden = 0.0
         pv_kwh = export_kwh = bezug_kwh = 0.0
-        haus_kwh = entladen_kwh = batterie_export_kwh = 0.0
+        haus_kwh = batterie_export_kwh = 0.0
         heizstab_kwh = heizstab_pv_kwh = 0.0
         netzgeladen_kwh = 0.0
         ein_s = gesamt_s = 0.0
@@ -716,7 +732,6 @@ class EnergieBilanz:
             export_kwh += slot.get("export", 0.0)
             bezug_kwh += slot.get("bezug", 0.0)
             haus_kwh += max(slot.get("haus", 0.0), 0.0)
-            entladen_kwh += max(slot.get("entladen", 0.0), 0.0)
             if ohne_pv(slot):
                 batterie_export_kwh += max(slot.get("export", 0.0), 0.0)
             ein_s += slot.get("ein_s", 0.0)
@@ -778,7 +793,6 @@ class EnergieBilanz:
             "bezug_kwh": round(bezug_kwh, 3),
             "heizstab_kwh": round(heizstab_kwh, 3),
             "haus_kwh": round(haus_kwh, 3),
-            "entladen_kwh": round(entladen_kwh, 3),
             "batterie_export_kwh": round(batterie_export_kwh, 3),
             "waerme": round(waerme, 4),
             "vermieden": round(vermieden, 4),
@@ -817,7 +831,7 @@ class EnergieBilanz:
         )
         if referenz is not None:
             for feld in (
-                "export_kwh", "eeg_kwh", "erloes", "entladen_kwh", "batterie_export_kwh",
+                "export_kwh", "eeg_kwh", "erloes", "batterie_export_kwh",
             ):
                 if referenz.get(feld) is not None:
                     ergebnis[f"ref_{feld}"] = round(float(referenz[feld]), 4)
@@ -1022,22 +1036,20 @@ class EnergieBilanz:
         # als Massstab — die Entscheidung faellt in bewerte_tag.
         dt_h = SLOT_SEKUNDEN / 3600.0
         abweichung = durchsatz = 0.0
-        # Die Einspeise-Karte vergleicht dieselben Mengen: Entladung (Zyklen)
-        # und Einspeisung ohne PV. „Ohne PV" entscheidet der gemessene Slot —
-        # die Referenz faehrt dieselbe gemessene PV-Reihe.
-        ref_entladen = ref_batterie_export = 0.0
+        # Die Einspeise-Karte vergleicht dieselbe Menge: Einspeisung ohne PV.
+        # „Ohne PV" entscheidet der gemessene Slot — die Referenz faehrt
+        # dieselbe gemessene PV-Reihe.
+        ref_batterie_export = 0.0
         for ist, ref, roh in zip(ist_slots, referenz_slots, slots):
             bat_ist = float(ist.get("battery_p") or 0.0)
             bat_ref = float(ref.get("battery_p") or 0.0)
             abweichung += abs(bat_ist - bat_ref) * dt_h
             durchsatz += abs(bat_ist) * dt_h
-            ref_entladen += max(bat_ref, 0.0) * dt_h
             if ohne_pv(roh):
                 ref_batterie_export += max(float(ref.get("grid_p") or 0.0), 0.0) * dt_h
         ergebnis = dict(referenz)
         ergebnis["batterie_abweichung_kwh"] = round(abweichung, 3)
         ergebnis["batterie_durchsatz_kwh"] = round(durchsatz, 3)
-        ergebnis["entladen_kwh"] = round(ref_entladen, 3)
         ergebnis["batterie_export_kwh"] = round(ref_batterie_export, 3)
         return vorteil, ergebnis
 
@@ -1082,10 +1094,11 @@ class EnergieBilanz:
     ) -> dict[str, Any]:
         """Was ins Netz ging — für die Einspeise-Karte.
 
-        ``zeitraum`` ist ``heute``, ``monat`` oder ``jahr`` (nach Bilanztag,
-        siehe ``zeitraum_schluessel``). Monat und Jahr kommen aus dem
-        Tagesarchiv, nicht aus den Monatssummen: 400 Tage decken ein Jahr ab,
-        und nur die Tage wissen, ob sie eine Referenz haben.
+        ``zeitraum`` ist ``heute``, ``monat``, ``jahr`` oder ``gesamt`` (nach
+        Bilanztag, siehe ``zeitraum_schluessel``). Monat und Jahr kommen aus
+        dem Tagesarchiv, nicht aus den Monatssummen: 400 Tage decken ein Jahr
+        ab, und nur die Tage wissen, ob sie eine Referenz haben. ``gesamt``
+        nimmt davor die Monatssummen dazu (``_gesamt_eintraege``).
 
         Quoten werden hier aus Summen gebildet, nie gespeichert — ein Mittel
         aus Tagesprozenten wäre nach Tagen gewichtet statt nach Energie.
@@ -1097,18 +1110,13 @@ class EnergieBilanz:
         datum = self.datum_heute or bilanz_datum(now_local)
         if zeitraum == "heute":
             tage: dict[str, dict[str, Any]] = {}
+        elif zeitraum == "gesamt":
+            tage = self._gesamt_eintraege()
         else:
             praefix = monat_key if zeitraum == "monat" else jahr_key
             tage = {d: e for d, e in self._tage.items() if d.startswith(praefix)}
         tage[datum] = heute
         eintraege = [tage[d] for d in sorted(tage)]
-
-        kapazitaet = None
-        if inputs is not None:
-            try:
-                kapazitaet = float(inputs.battery_capacity_kwh) or None
-            except (AttributeError, TypeError, ValueError):
-                kapazitaet = None
 
         def summe(liste: list[dict[str, Any]], feld: str) -> float:
             return sum(float(e.get(feld) or 0.0) for e in liste)
@@ -1120,7 +1128,6 @@ class EnergieBilanz:
             export = summe(liste, f"{vorsilbe}export_kwh")
             eeg = summe(liste, f"{vorsilbe}eeg_kwh")
             erloes = summe(liste, f"{vorsilbe}erloes")
-            entladen = summe(liste, f"{vorsilbe}entladen_kwh")
             return {
                 "export_kwh": round(export, 2),
                 "batterie_export_kwh": round(
@@ -1130,8 +1137,6 @@ class EnergieBilanz:
                 "eeg_anteil": quote(eeg, export),
                 "erloes": round(erloes, 2),
                 "erloes_je_kwh": quote(erloes, export),
-                "entladen_kwh": round(entladen, 2),
-                "zyklen": None if kapazitaet is None else round(entladen / kapazitaet, 2),
             }
 
         ist = kennzahlen(eintraege)
@@ -1163,7 +1168,9 @@ class EnergieBilanz:
         return {
             "zeitraum": zeitraum,
             "bilanztag": datum,
-            "tage": len(eintraege),
+            # Nur echte Tage — ein Monatsposten aus der Zeit vor dem
+            # Tagesarchiv ist kein Tag.
+            "tage": sum(1 for e in eintraege if not e.get("_monatssumme")),
             "kennzahlen": ist,
             "vergleich": vergleich,
             "batterie_seit": mit_batterie[0] if mit_batterie else None,
@@ -1173,10 +1180,35 @@ class EnergieBilanz:
             "reihe": self._einspeise_reihe(zeitraum, tage, inputs),
         }
 
+    def _gesamt_eintraege(self) -> dict[str, dict[str, Any]]:
+        """Alle Tage des Archivs, davor die Monatssummen.
+
+        Die Tage reichen ``TAGE_ROH`` zurück, die Monatssummen bis zum Anfang.
+        Genommen werden nur Monate VOR dem Monat des ältesten Tages — sonst
+        zählte ein Monat doppelt. Der Grenzmonat ist dadurch nur so weit
+        drin, wie seine Tage noch im Archiv stehen: eine kleine Untergrenze,
+        erst nach 400 Tagen Laufzeit. Die ``ref_*``-Summen der Monate bleiben
+        weg — der Vergleich läuft nur über Tage (siehe ``einspeisung``).
+        """
+        eintraege = dict(self._tage)
+        grenze = min(eintraege)[:7] if eintraege else None
+        for monat, summe in self._monate.items():
+            if grenze is not None and monat >= grenze:
+                continue
+            posten = {k: v for k, v in summe.items() if not k.startswith("ref_")}
+            posten["_monatssumme"] = True
+            eintraege[f"{monat}-01"] = posten
+        return eintraege
+
     def _einspeise_reihe(
         self, zeitraum: str, tage: dict[str, dict[str, Any]], inputs: Any
     ) -> list[dict[str, Any]]:
-        """Balken für das Chart: Viertelstunden, Tage oder Monate."""
+        """Balken für das Chart: Viertelstunden, Tage, Monate oder Jahre.
+
+        ``jahr`` und ``gesamt`` liefern lückenlos jeden Monat vom ersten bis
+        zum letzten (ein Monat ohne Aufzeichnung ist ein leerer Balken, keine
+        Lücke in der Achse); ``gesamt`` über mehr als 24 Monate je Jahr.
+        """
         if zeitraum == "heute":
             return self._einspeise_viertelstunden(inputs)
         if zeitraum == "monat":
@@ -1198,12 +1230,28 @@ class EnergieBilanz:
             m["eeg"] += float(e.get("eeg_kwh") or 0.0)
             if e.get("batterie_export_kwh") is not None:
                 m["batterie"] = (m["batterie"] or 0.0) + float(e["batterie_export_kwh"])
-        for m in monate.values():
+        if zeitraum == "gesamt" and monate:
+            reihe = _lueckenlos(monate)
+            if len(reihe) > 24:
+                jahre: dict[str, dict[str, Any]] = {}
+                for m in reihe:
+                    j = jahre.setdefault(
+                        m["monat"][:4],
+                        {"jahr": m["monat"][:4], "export": 0.0, "batterie": None, "eeg": 0.0},
+                    )
+                    j["export"] += m["export"]
+                    j["eeg"] += m["eeg"]
+                    if m["batterie"] is not None:
+                        j["batterie"] = (j["batterie"] or 0.0) + m["batterie"]
+                reihe = list(jahre.values())
+        else:
+            reihe = list(monate.values())
+        for m in reihe:
             m["export"] = round(m["export"], 2)
             m["eeg"] = round(m["eeg"], 2)
             if m["batterie"] is not None:
                 m["batterie"] = round(m["batterie"], 2)
-        return list(monate.values())
+        return reihe
 
     def _einspeise_viertelstunden(self, inputs: Any) -> list[dict[str, Any]]:
         """Der laufende Bilanztag je Viertelstunde.

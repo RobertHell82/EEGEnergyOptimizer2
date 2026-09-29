@@ -2159,7 +2159,7 @@ async def ws_get_bilanz(
 @websocket_api.websocket_command(
     {
         vol.Required("type"): "eeg_optimizer/get_einspeisung",
-        vol.Optional("zeitraum", default="heute"): vol.In(["heute", "monat", "jahr"]),
+        vol.Optional("zeitraum", default="heute"): vol.In(["heute", "monat", "jahr", "gesamt"]),
     }
 )
 @websocket_api.async_response

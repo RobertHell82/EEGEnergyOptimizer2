@@ -777,7 +777,7 @@ class EegOptimizerPanel extends HTMLElement {
     this._einspeisung = null;
     this._einspeisungBusy = false;
     this._einspeisungGeholt = 0;
-    this._einspeisungZeitraum = this._loadPref("einspeisung_zeitraum", "monat", ["heute", "monat", "jahr"]);
+    this._einspeisungZeitraum = this._loadPref("einspeisung_zeitraum", "monat", ["heute", "monat", "jahr", "gesamt"]);
     // Angetippter Balken (Index im Raster des Zeitraums) oder null.
     this._einspeisungAuswahl = null;
     // Befristeter Eingriff (Pause) — Zustand vom Backend, Dialog und
@@ -1231,7 +1231,7 @@ class EegOptimizerPanel extends HTMLElement {
   // existieren, sonst laufen localStorage und Nachladen auseinander.
   _chartBereichSetzen(art, wert) {
     if (art === "einspeisung") {
-      if (!["heute", "monat", "jahr"].includes(wert)) return;
+      if (!["heute", "monat", "jahr", "gesamt"].includes(wert)) return;
       this._einspeisungZeitraum = wert;
       this._einspeisungAuswahl = null;
       this._savePref("einspeisung_zeitraum", wert);
@@ -4196,7 +4196,6 @@ class EegOptimizerPanel extends HTMLElement {
     const kwh = (x) => (x == null ? "—" : `${fmtDe(x, x >= 100 ? 0 : 1)}&nbsp;kWh`);
     const pct = (x) => (x == null ? "—" : `${fmtDe(x * 100, 0)}&nbsp;%`);
     const ct = (x) => (x == null ? "—" : `${fmtDe(x * 100, 1)}&nbsp;ct`);
-    const zahl = (x) => (x == null ? "—" : fmtDe(x, x >= 10 ? 0 : 1));
 
     // Zeile unter der Kennzahl: der Standardbetrieb. Deckt der Vergleich
     // nicht alle Tage ab (Referenz erst seit Einführung aufgezeichnet),
@@ -4221,7 +4220,7 @@ class EegOptimizerPanel extends HTMLElement {
       kachel(kwh(k.export_kwh), "eingespeist"),
       kachel(kwh(k.batterie_export_kwh), "aus der Batterie",
         [batterieAnteil, vergleichZeile("batterie_export_kwh", kwh)].filter(Boolean).join("<br>"),
-        "Einspeisung in Viertelstunden ohne PV-Leistung — gleich, ob die Optimierung gerade entladen hat oder nicht."),
+        "Einspeisung in Viertelstunden ohne PV-Leistung."),
       d.gemeinschaft ? kachel(pct(k.eeg_anteil),
         d.quotenmodus ? "an die Gemeinschaft (Quote)" : "an die Gemeinschaft",
         vergleichZeile("eeg_anteil", pct),
@@ -4229,8 +4228,6 @@ class EegOptimizerPanel extends HTMLElement {
           ? "Nach der eingestellten Abnahmequote — eine Annahme aus deiner EEG-Abrechnung, keine Messung."
           : "Anteil der Einspeisung, den der Bedarf der Gemeinschaft in derselben Viertelstunde aufnehmen konnte. Beruht auf der Bedarfsprognose — endgültig steht es erst mit der EEG-Abrechnung fest.") : "",
       kachel(ct(k.erloes_je_kwh), "Erlös je kWh", vergleichZeile("erloes_je_kwh", ct)),
-      k.zyklen != null ? kachel(zahl(k.zyklen), "Batterie-Zyklen", vergleichZeile("zyklen", zahl),
-        "Entladene Energie geteilt durch die Kapazität der Batterie.") : "",
       kachel(pct(k.autarkie), "Autarkie", "",
         "Anteil des Verbrauchs (Haus und Heizstab), der nicht aus dem Netz kam."),
       kachel(pct(k.eigenverbrauch), "Eigenverbrauch", "",
@@ -4246,11 +4243,11 @@ class EegOptimizerPanel extends HTMLElement {
     // Hinweise unter der Karte — nur, wenn es etwas zu sagen gibt.
     const datumKurz = (iso) => {
       const [j, m, t] = String(iso).split("-");
-      return `${t}.${m}.${zeitraum === "jahr" ? j : ""}`;
+      return `${t}.${m}.${zeitraum === "jahr" || zeitraum === "gesamt" ? j : ""}`;
     };
     // Die Erklärungen der Kacheln stehen im title — den zeigt ein Handy nie.
     // Die eine, ohne die die Zahl missverständlich ist, steht deshalb hier.
-    const hinweise = ["„Aus der Batterie“ ist die Einspeisung in Viertelstunden ohne PV-Leistung — gleich, ob die Optimierung dabei entladen hat."];
+    const hinweise = ["„Aus der Batterie“ ist die Einspeisung in Viertelstunden ohne PV-Leistung."];
     if (d.gemeinschaft && d.quotenmodus) {
       hinweise.push("„An die Gemeinschaft“ folgt der eingestellten Abnahmequote — eine Annahme, keine Messung.");
     }
@@ -4263,7 +4260,7 @@ class EegOptimizerPanel extends HTMLElement {
       hinweise.push("Für diesen Zeitraum gibt es noch keinen Vergleich mit dem Standardbetrieb — er braucht den Ladestand zu Beginn des Bilanztags.");
     }
 
-    const wahlWerte = [["heute", "Heute"], ["monat", "Monat"], ["jahr", "Jahr"]];
+    const wahlWerte = [["heute", "Heute"], ["monat", "Monat"], ["jahr", "Jahr"], ["gesamt", "Gesamt"]];
     const wahl = schmal
       ? `<select data-chart="einspeisung" style="padding:0 28px 0 10px;min-height:44px;border:1px solid var(--divider-color);border-radius:8px;background:var(--card-background-color,#fff);color:var(--primary-text-color);font-size:16px;font-family:inherit">
           ${wahlWerte.map(([w, t]) => `<option value="${w}" ${w === zeitraum ? "selected" : ""}>${t}</option>`).join("")}
@@ -4288,7 +4285,7 @@ class EegOptimizerPanel extends HTMLElement {
           ${wahl}
         </div>
         <div style="opacity:${laedt ? 0.5 : 1};transition:opacity .2s">
-          <div class="einsp-kacheln" style="grid-template-columns:repeat(${schmal ? 2 : 4},minmax(0,1fr))">${kachelnHtml}</div>
+          <div class="einsp-kacheln" style="grid-template-columns:repeat(${schmal ? 2 : 3},minmax(0,1fr))">${kachelnHtml}</div>
           ${this._einspeisungChart(d)}
           ${hinweise.length ? `<div style="font-size:12px;color:var(--secondary-text-color);margin-top:8px;line-height:1.5">${hinweise.join("<br>")}</div>` : ""}
         </div>
@@ -4327,10 +4324,13 @@ class EegOptimizerPanel extends HTMLElement {
       const [j, m] = String(d.bilanztag).split("-").map(Number);
       n = new Date(j, m, 0).getDate();
       index = (r) => Number(String(r.datum).slice(8, 10)) - 1;
-    } else {
+    } else if (zeitraum === "jahr") {
       n = 12;
       index = (r) => Number(String(r.monat).slice(5, 7)) - 1;
     }
+    // Gesamt: das Backend liefert die Reihe lückenlos, je Monat oder (über
+    // zwei Jahre) je Jahr — der Index ist die Position.
+    const jeJahr = zeitraum === "gesamt" && reihe.length && reihe[0].jahr != null;
     const max = Math.max(...balken.map(r => r.export || 0), 0.001) * 1.1;
     const slotW = plotW / n;
     const bw = Math.max(1, slotW * (zeitraum === "heute" ? 0.9 : 0.7));
@@ -4354,7 +4354,8 @@ class EegOptimizerPanel extends HTMLElement {
       const titel = [
         zeitraum === "heute" ? new Date(r.t).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })
           : zeitraum === "monat" ? new Date(r.datum).toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit" })
-          : new Date(`${r.monat}-01`).toLocaleDateString("de-DE", { month: "long" }),
+          : jeJahr ? String(r.jahr)
+          : new Date(`${r.monat}-01T00:00:00`).toLocaleDateString("de-DE", zeitraum === "gesamt" ? { month: "long", year: "numeric" } : { month: "long" }),
         `${fmtDe(exp, zeitraum === "heute" ? 2 : 1)} kWh eingespeist`,
         mitEeg ? `davon ${fmtDe(eeg, zeitraum === "heute" ? 2 : 1)} kWh an die Gemeinschaft` : "",
         r.batterie != null ? `davon ${fmtDe(bat, zeitraum === "heute" ? 2 : 1)} kWh aus der Batterie` : "",
@@ -4398,10 +4399,20 @@ class EegOptimizerPanel extends HTMLElement {
     } else if (zeitraum === "monat") {
       const schritt = schmal ? 7 : 5;
       for (let k = 0; k < n; k++) if (k === 0 || (k + 1) % schritt === 0) beschrift(k, String(k + 1));
-    } else {
+    } else if (zeitraum === "jahr") {
       const namen = ["J", "F", "M", "A", "M", "J", "J", "A", "S", "O", "N", "D"];
       const lang = ["Jan", "Feb", "Mär", "Apr", "Mai", "Jun", "Jul", "Aug", "Sep", "Okt", "Nov", "Dez"];
       for (let k = 0; k < 12; k++) beschrift(k, schmal ? namen[k] : lang[k]);
+    } else if (jeJahr) {
+      reihe.forEach((r, k) => beschrift(k, String(r.jahr)));
+    } else {
+      // Gesamt je Monat: so viele Beschriftungen, wie nebeneinander passen
+      // („09/26" braucht am Handy gut 30 px), Jahreswechsel bevorzugt.
+      const platz = schmal ? 34 : 44;
+      const schritt = Math.max(1, Math.ceil(platz / slotW));
+      reihe.forEach((r, k) => {
+        if (k % schritt === 0) beschrift(k, `${String(r.monat).slice(5, 7)}/${String(r.monat).slice(2, 4)}`);
+      });
     }
 
     const legendeEintrag = (stil, text) =>
@@ -4432,7 +4443,7 @@ class EegOptimizerPanel extends HTMLElement {
         </svg>
         <div style="display:flex;justify-content:space-between;gap:8px;font-size:11px;color:var(--secondary-text-color)">
           <span>${schmal ? "Balken antippen für Details" : "Balken anklicken für Details"}</span>
-          <span style="white-space:nowrap">kWh je ${zeitraum === "heute" ? "Viertelstunde" : zeitraum === "monat" ? "Tag" : "Monat"}</span>
+          <span style="white-space:nowrap">kWh je ${zeitraum === "heute" ? "Viertelstunde" : zeitraum === "monat" ? "Tag" : jeJahr ? "Jahr" : "Monat"}</span>
         </div>
         ${auswahl != null ? `
         <div style="margin-top:6px;padding:8px 10px;border-radius:8px;background:var(--secondary-background-color,#f5f5f5);font-size:13px;line-height:1.5">
@@ -10455,9 +10466,9 @@ class EegOptimizerPanel extends HTMLElement {
              ließen sie aufgebläht wirken (Nutzer-Feedback 27.08.). */
           padding: 14px 24px;
         }
-        /* Einspeise-Karte: Kennzahlen als Kacheln, 4 + 3 am Desktop, 2 je
-           Zeile am Handy (Spaltenzahl inline, sie haengt an _narrow). Ein
-           auto-fill brach die sieben Kacheln zu 6 + 1 um. */
+        /* Einspeise-Karte: Kennzahlen als Kacheln, 3 je Zeile am Desktop,
+           2 am Handy (Spaltenzahl inline, sie haengt an _narrow). Ein
+           auto-fill brach die Kacheln unregelmaessig um. */
         .einsp-kacheln {
           display: grid;
           gap: 8px;
