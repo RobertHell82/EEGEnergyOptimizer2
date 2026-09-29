@@ -10,6 +10,20 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
+## [2.1.27] - 2026-09-29
+
+### Hinzugefügt
+
+- **Die Einspeise-Karte hat einen Zeitraum „Gesamt“.** Neben Heute, Monat und Jahr zeigt er alles, was die Bilanz seit ihrem Start aufgezeichnet hat. Das Chart läuft je Monat, lückenlos vom ersten bis zum letzten, und über mehr als zwei Jahre je Jahr. Die Bilanz hält 400 Tage einzeln, davor nur Monatssummen. „Gesamt“ nimmt beides, ohne einen Monat doppelt zu zählen. Der Vergleich mit dem Standardbetrieb läuft weiterhin nur über einzelne Tage.
+
+### Entfernt
+
+- **Die Batterie-Zyklen sind wieder aus der Einspeise-Karte verschwunden**, samt der Entlade-Mengen, die die Bilanz dafür je Tag mitschrieb. Die Karte hat damit sechs Kacheln, am Desktop in zwei Reihen zu drei.
+
+### Geändert
+
+- **Der Hinweis zu „aus der Batterie“ ist kürzer.** Er lautet nur noch „Einspeisung in Viertelstunden ohne PV-Leistung“.
+
 ## [2.1.26] - 2026-09-29
 
 ### Hinzugefügt
