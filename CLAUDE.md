@@ -105,7 +105,7 @@ schedule_executor.py: ScheduleExecutor (execution, 30 s)
 | `schedule_archive_view.py` | HTTP view that packs archive + settings + measured history into a downloadable ZIP |
 | `chamo/` | Harald Geyer's LP optimizer (`opt_highs.py`, `timetableopt`) plus a HiGHS adapter. `opt_highs.py` carries three local additions, all marked `LOCAL CHANGE` and documented in `chamo/README.md`: the heater as a valued sink (`heater_p`, 2.1.1-dev2), the blackout reserve capped at what is reachable **without buying** and a solver-status check after `optimize()` — everything else is upstream |
 | `sensor.py` | 26 sensors (+ up to 21 conditional): consumption profile, forecasts, power flows, plan values, grid discharge energy, register writes, Fahrplan-Status, money balance |
-| `bilanz.py` | Energy balance in money — records 96 quarter-hours per day (energy, SOC, **frozen** prices and community balances), evaluates them with `bewerte_geldfluesse`, and derives the optimiser advantage against a simulated standard operation over the measured series. The balance day runs 04:00–04:00 (night discharge stays in one day; old midnight-based records are migrated on load). Days where the battery behaved like the reference (power deviation ≤ max(1 kWh, 10 % of throughput)) report advantage 0 with `kein_eingriff`; the raw difference stays in `vorteil_roh` |
+| `bilanz.py` | Energy balance in money — records 96 quarter-hours per day (energy, SOC, **frozen** prices and community balances), evaluates them with `bewerte_geldfluesse`, and derives the optimiser advantage against a simulated standard operation over the measured series. The balance day runs 04:00–04:00 (night discharge stays in one day; old midnight-based records are migrated on load). Days where the battery behaved like the reference (power deviation ≤ max(1 kWh, 10 % of throughput)) report advantage 0 with `kein_eingriff`; the raw difference stays in `vorteil_roh`. Also backs the **Einspeisung** card (`einspeisung()`): per day `haus_kwh`, `entladen_kwh`, `batterie_export_kwh` (export in slots with PV below `BATTERIE_EXPORT_PV_SCHWELLE_KW`, `ohne_pv()` — *not* only controlled discharge, unlike `statistics.py`) and the same amounts of the reference run as `ref_*` (None without a reference). Month/year come from the 400-day archive, not `_monate`; ratios are formed from sums at query time, and the comparison uses only days with `ref_*` on both sides. The per-slot community share comes from `schedule.eeg_aufnahme_je_slot`, which shares `_eeg_zuteilung` with `bewerte_geldfluesse` — one settlement rule |
 | `override.py` | Time-boxed user override — **Pause** (behave like mode Aus) with two end conditions: expiry time (`stunden`, 0.25–48 h) and/or target SOC (`bis_soc_pct`, 50–100 %; ends when the measured SOC reaches it, 48 h cap as safety net). Persisted via `Store` so a restart mid-pause does not resume control. Evaluated in the guard cycle in `__init__.py` (`async_tick(now, soc_pct)`); exposed as HA services `pause` / `aufheben` (`services.yaml`) |
 | `coordinator.py` | Loads hourly consumption averages from recorder (rolling, weekday split) |
 | `forecast_provider.py` | Abstract PV forecast provider — Solcast, Forecast.Solar (entity reads) and `EigenProvider` (wraps `pvprognose/`) |
@@ -113,7 +113,7 @@ schedule_executor.py: ScheduleExecutor (execution, 30 s)
 | `config_flow.py` | Single-click config flow (full setup happens in panel) |
 | `peakshare.py` | PeakShareProvider — fetches + caches community demand forecasts (half-hourly refresh; hourly values, `opt()` resamples to 15 min itself) |
 | `telemetry.py`, `telemetry_buffer.py` | Opt-in reporting — profile, failures, half-hourly snapshots (`/v1/snapshot`: SOC, PV/house/grid/battery kW, mode, executor state, plan min-SOC) and a daily outcome (`/v1/outcome`, `tagesbilanz.py`), ring buffer with backoff. README and the panel's privacy details list all four; keep them in sync when a payload changes. Snapshots are taken on the half-hour grid but **offset by `TELEMETRY_SNAPSHOT_OFFSET_MIN`**: `_collect_snapshot()` runs in the same guard cycle *after* the executor wrote, and the plain grid hit exactly the cycle that writes on a slot change (slots turn at :00/:15/:30/:45) — Huawei briefly drops the battery when `forcible_discharge_soc` is rewritten, so the power columns systematically recorded the gap we cause ourselves. Weismann, 21.09.2026: the grid meter read ~0 W at the grid start in 9 of 10 half-hours while the window averaged 271–661 W. `soc_pct` is unaffected; for power questions use the plant's own history, not the snapshots |
-| `websocket_api.py` | 35 WebSocket commands for panel (config, schedule, control state, PeakShare, OeMAG, spot price, aWATTar SUNNY, grid tariffs, daily balance, probes, telemetry, activity log) |
+| `websocket_api.py` | 36 WebSocket commands for panel (config, schedule, control state, PeakShare, OeMAG, spot price, aWATTar SUNNY, grid tariffs, daily balance, probes, telemetry, activity log) |
 | `inverter/base.py` | Abstract inverter interface (InverterBase ABC) |
 | `inverter/huawei.py` | Huawei SUN2000 implementation via HA services — Single + Master/Slave (multi-device) |
 | `inverter/_distribution.py` | Shared proportional discharge distribution (Huawei multi-battery) |
@@ -220,7 +220,7 @@ three intents. `Fahrplan-Status` shows what actually happened:
 - **API**: Paginated WebSocket endpoint (`get_activity_log` with `offset`/`limit`)
 - **Frontend**: Loads 100 entries initially, "Mehr laden" fetches 100 more per click, live events via subscription
 
-### WebSocket API (35 commands)
+### WebSocket API (36 commands)
 
 Home Assistant hands a `websocket_command` to **every logged-in user** —
 `ActiveConnection.async_handle` checks no permissions. Anything that writes
@@ -259,6 +259,7 @@ of every single command and fails on a new, unclassified one.
 | `eeg_optimizer/get_oemag_tarif` | Current OeMAG market price (base tariff option); with `schaetzung: true` also computes/returns the current-month estimate under `schaetzung` |
 | `eeg_optimizer/get_netzentgelte` | Grid usage tariff per grid area (net + gross, AP/SNAP/WiNAP) with regulation, effective date, age, last error (`refresh` forces a fetch) |
 | `eeg_optimizer/get_bilanz` | Money balance for the "Was deine PV bringt" card — PV saving and optimiser share for today / month / year plus the day's breakdown (incl. `vorteil_begruendung` when the share is negative) |
+| `eeg_optimizer/get_einspeisung` | Feed-in card (`zeitraum` = `heute`/`monat`/`jahr`): exported, from the battery (quarter-hours with PV < 50 W), absorbed by the community, revenue per kWh, cycles, self-sufficiency, self-consumption; comparison with standard operation over the days that have a reference only; chart series (quarter-hours / days / months) |
 | `eeg_optimizer/get_override` | Active pause or `{aktiv: false}` |
 | `eeg_optimizer/set_override` | Start a pause — `stunden` and/or `bis_soc_pct` (at least one); replaces a running one, takes effect immediately, answers with the state *after* the immediate guard run |
 | `eeg_optimizer/clear_override` | End the running override |
@@ -739,7 +740,16 @@ surface table in two rows); the surface table wraps on its **own** width
 (`@container`, 6 → 3 → 2 columns), not the viewport's, because the HA
 sidebar takes 0–256 px.
 
-Dashboard notes: the status card ends with the capacity-charge line
+Dashboard notes: the **Einspeisung** card (below "Was deine PV bringt",
+`_renderEinspeisungKarte` / `_einspeisungChart`) shows energy, not money —
+apart from revenue per kWh (a ratio) it carries no € amount, so nothing
+reads as a summand next to the balance card. One period at a time
+(`chart-range` with `data-chart="einspeisung"`, pref `einspeisung_zeitraum`).
+Bar details work by tap: the click handler maps the x position to the bar
+(`svg[data-einsp-n]`), because a quarter-hour is 3 px wide on a phone and
+`<title>` never shows on touch; for the same reason the "aus der Batterie"
+definition is a visible note, not only a tooltip.
+The status card ends with the capacity-charge line
 (`_renderSpitzeZeile`, below `_renderAutoZeile`): only "Bezugsspitze <Monat>"
 and the value — details (time, running quarter-hour, last quarter, previous
 months) live in the ⓘ `.info-popup-trigger` (hover on desktop, tap on touch,

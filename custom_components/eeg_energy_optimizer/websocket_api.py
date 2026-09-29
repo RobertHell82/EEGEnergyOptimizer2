@@ -465,6 +465,7 @@ def async_register_websocket_commands(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_get_oemag_tarif)
     websocket_api.async_register_command(hass, ws_get_netzentgelte)
     websocket_api.async_register_command(hass, ws_get_bilanz)
+    websocket_api.async_register_command(hass, ws_get_einspeisung)
     websocket_api.async_register_command(hass, ws_get_override)
     websocket_api.async_register_command(hass, ws_set_override)
     websocket_api.async_register_command(hass, ws_clear_override)
@@ -2153,6 +2154,47 @@ async def ws_get_bilanz(
             "jahr": bilanz.hat_archiv(jahr=jahr_key),
         },
     })
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "eeg_optimizer/get_einspeisung",
+        vol.Optional("zeitraum", default="heute"): vol.In(["heute", "monat", "jahr"]),
+    }
+)
+@websocket_api.async_response
+async def ws_get_einspeisung(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict,
+) -> None:
+    """Was ins Netz ging — für die Einspeise-Karte.
+
+    Energie statt Geld: eingespeist, davon aus der Batterie (Viertelstunden
+    ohne PV), davon von der Gemeinschaft aufgenommen, Zyklen, Autarkie und
+    Eigenverbrauch, dazu der Vergleich mit dem Standardbetrieb und die Reihe
+    fürs Chart. Die Geldwerte stehen in ``get_bilanz`` — hier bewusst nur
+    der Erlös je kWh, damit nichts doppelt neben der Bilanz-Karte steht.
+    """
+    entry, data = _get_entry_data(hass, connection, msg)
+    if entry is None:
+        return
+
+    bilanz = data.get("bilanz")
+    if bilanz is None:
+        connection.send_result(msg["id"], {"verfuegbar": False})
+        return
+
+    from homeassistant.util import dt as dt_util
+
+    inputs = getattr(data.get("schedule"), "last_inputs", None)
+    try:
+        ergebnis = bilanz.einspeisung(msg["zeitraum"], dt_util.now(), inputs)
+    except Exception:  # noqa: BLE001 - Anzeige darf nie den Zugriff kippen
+        _LOGGER.exception("Einspeisung: Werte nicht berechenbar")
+        connection.send_result(msg["id"], {"verfuegbar": False})
+        return
+    connection.send_result(msg["id"], {"verfuegbar": True, **ergebnis})
 
 
 # ---------------------------------------------------------------------------

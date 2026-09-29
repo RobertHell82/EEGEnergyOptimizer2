@@ -2760,6 +2760,78 @@ def endbestand_satz(inputs: ScheduleInputs) -> float:
     return inputs.feedin_price * HAConfig.ac_efficiency - inputs.battery_cost
 
 
+def _eeg_zuteilung(
+    export_kwh: float, stamp: datetime, basis: float, inputs: ScheduleInputs
+) -> tuple[float, float]:
+    """Erlös und von den Gemeinschaften aufgenommene Energie EINES Slots.
+
+    Die Abrechnungsregel aus ``bewerte_geldfluesse`` für eine Viertelstunde,
+    herausgelöst, damit die Einspeise-Karte der Bilanz dieselbe Aufteilung je
+    Slot zeigt, die in die Tagessumme eingeht — eine zweite Fassung daneben
+    liefe bei der nächsten Tarifänderung auseinander.
+    """
+    tarife = inputs.eeg_tarife or []
+    bedarf = inputs.eeg_bedarf or {}
+    # Die Gemeinschaften haben ihr eigenes Nachtfenster; ohne Angabe gilt
+    # das der Standardvergütung.
+    eeg_von = (
+        inputs.eeg_night_start_hour
+        if inputs.eeg_night_start_hour is not None
+        else inputs.night_start_hour
+    )
+    eeg_bis = (
+        inputs.eeg_night_end_hour
+        if inputs.eeg_night_end_hour is not None
+        else inputs.night_end_hour
+    )
+    viertel = int(stamp.timestamp() // 900)
+    eeg_nacht = _ist_im_nachtfenster(stamp.hour, eeg_von, eeg_bis)
+    erloes = eeg_kwh = 0.0
+    unzugeteilt = export_kwh
+    for tarif in tarife:
+        angeboten = tarif["anteil"] * export_kwh
+        quote = tarif.get("quote_nacht" if eeg_nacht else "quote_tag")
+        if quote is not None:
+            # Quotenmodus: die erklärte Abnahmequote statt des Saldos.
+            aufgenommen = angeboten * min(1.0, max(0.0, float(quote)))
+        else:
+            saldo = (bedarf.get(tarif["name"]) or {}).get(viertel)
+            aufgenommen = (
+                0.0 if saldo is None else min(angeboten, max(0.0, saldo))
+            )
+        satz = tarif["nacht"] if eeg_nacht else tarif["tag"]
+        erloes += aufgenommen * satz + (angeboten - aufgenommen) * basis
+        eeg_kwh += aufgenommen
+        unzugeteilt -= angeboten
+    # Restanteil (keiner Gemeinschaft zugeordnet) zum Basistarif.
+    # Summieren sich die Anteile über 100 %, wird hier nichts doppelt
+    # bewertet — der Fehler ist dann in der Konfiguration und wird
+    # beim Sammeln der Inputs bereits als Warnung protokolliert.
+    erloes += max(0.0, unzugeteilt) * basis
+    return erloes, eeg_kwh
+
+
+def eeg_aufnahme_je_slot(
+    slots: list[dict[str, Any]], inputs: ScheduleInputs
+) -> list[float]:
+    """Von den Gemeinschaften aufgenommene Energie je Slot (kWh).
+
+    Dieselbe Regel wie in ``bewerte_geldfluesse`` — die Summe dieser Liste ist
+    deren ``eeg_kwh``. Slots mit Bezug nehmen nichts auf.
+    """
+    dt_h = inputs.time_res_s / 3600.0
+    basis_je_slot = _basistarif_je_slot(slots, inputs)
+    aufnahme: list[float] = []
+    for slot, basis in zip(slots, basis_je_slot):
+        grid = slot.get("grid_p") or 0.0
+        if grid <= 0:
+            aufnahme.append(0.0)
+            continue
+        stamp = datetime.fromisoformat(slot["t"])
+        aufnahme.append(_eeg_zuteilung(grid * dt_h, stamp, basis, inputs)[1])
+    return aufnahme
+
+
 def bewerte_geldfluesse(
     slots: list[dict[str, Any]], inputs: ScheduleInputs
 ) -> dict[str, float]:
@@ -2796,21 +2868,7 @@ def bewerte_geldfluesse(
     ``battery_p`` positiv = Entladen.
     """
     dt_h = inputs.time_res_s / 3600.0
-    tarife = inputs.eeg_tarife or []
-    bedarf = inputs.eeg_bedarf or {}
     basis_je_slot = _basistarif_je_slot(slots, inputs)
-    # Die Gemeinschaften haben ihr eigenes Nachtfenster; ohne Angabe gilt
-    # das der Standardvergütung.
-    eeg_von = (
-        inputs.eeg_night_start_hour
-        if inputs.eeg_night_start_hour is not None
-        else inputs.night_start_hour
-    )
-    eeg_bis = (
-        inputs.eeg_night_end_hour
-        if inputs.eeg_night_end_hour is not None
-        else inputs.night_end_hour
-    )
 
     erloes = bezug = alterung = 0.0
     eeg_kwh = export_gesamt_kwh = 0.0
@@ -2826,29 +2884,9 @@ def bewerte_geldfluesse(
         if grid > 0:
             export_kwh = grid * dt_h
             export_gesamt_kwh += export_kwh
-            viertel = int(stamp.timestamp() // 900)
-            eeg_nacht = _ist_im_nachtfenster(stamp.hour, eeg_von, eeg_bis)
-            unzugeteilt = export_kwh
-            for tarif in tarife:
-                angeboten = tarif["anteil"] * export_kwh
-                quote = tarif.get("quote_nacht" if eeg_nacht else "quote_tag")
-                if quote is not None:
-                    # Quotenmodus: die erklärte Abnahmequote statt des Saldos.
-                    aufgenommen = angeboten * min(1.0, max(0.0, float(quote)))
-                else:
-                    saldo = (bedarf.get(tarif["name"]) or {}).get(viertel)
-                    aufgenommen = (
-                        0.0 if saldo is None else min(angeboten, max(0.0, saldo))
-                    )
-                satz = tarif["nacht"] if eeg_nacht else tarif["tag"]
-                erloes += aufgenommen * satz + (angeboten - aufgenommen) * basis
-                eeg_kwh += aufgenommen
-                unzugeteilt -= angeboten
-            # Restanteil (keiner Gemeinschaft zugeordnet) zum Basistarif.
-            # Summieren sich die Anteile über 100 %, wird hier nichts doppelt
-            # bewertet — der Fehler ist dann in der Konfiguration und wird
-            # beim Sammeln der Inputs bereits als Warnung protokolliert.
-            erloes += max(0.0, unzugeteilt) * basis
+            slot_erloes, aufgenommen = _eeg_zuteilung(export_kwh, stamp, basis, inputs)
+            erloes += slot_erloes
+            eeg_kwh += aufgenommen
         else:
             bezug += -grid * dt_h * bezugspreis_zu(inputs, stamp)
         if bat > 0:

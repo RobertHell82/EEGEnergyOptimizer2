@@ -772,6 +772,14 @@ class EegOptimizerPanel extends HTMLElement {
     this._bilanzBusy = false;
     this._bilanzGeholt = 0;
     this._bilanzDetailsOpen = false;
+    // Karte „Einspeisung": Energie statt Geld — was ins Netz ging, woher
+    // und wer es genommen hat. Ein Zeitraum auf einmal, gemerkt.
+    this._einspeisung = null;
+    this._einspeisungBusy = false;
+    this._einspeisungGeholt = 0;
+    this._einspeisungZeitraum = this._loadPref("einspeisung_zeitraum", "monat", ["heute", "monat", "jahr"]);
+    // Angetippter Balken (Index im Raster des Zeitraums) oder null.
+    this._einspeisungAuswahl = null;
     // Befristeter Eingriff (Pause) — Zustand vom Backend, Dialog und
     // Eingabewerte lokal. Ohne Pause: null.
     this._override = null;
@@ -954,6 +962,20 @@ class EegOptimizerPanel extends HTMLElement {
           this._profilHighlight = (this._profilHighlight === idx) ? null : idx;
           this._render();
         }
+        return;
+      }
+      // Einspeise-Chart: Der Balken ergibt sich aus der x-Position, nicht aus
+      // dem getroffenen Element — eine Viertelstunde ist am Handy 3 px breit,
+      // die trifft kein Finger. Ein zweiter Tipp auf denselben hebt auf.
+      const einspSvg = e.target.closest("svg[data-einsp-n]");
+      if (einspSvg) {
+        const box = einspSvg.getBoundingClientRect();
+        const ds = einspSvg.dataset;
+        const x = (e.clientX - box.left) * Number(ds.einspW) / Math.max(1, box.width);
+        const k = Math.floor((x - Number(ds.einspL)) / Number(ds.einspSlot));
+        const n = Number(ds.einspN);
+        this._einspeisungAuswahl = k >= 0 && k < n && this._einspeisungAuswahl !== k ? k : null;
+        this._render();
         return;
       }
       const btn = e.target.closest("[data-action]") || e.target;
@@ -1208,6 +1230,15 @@ class EegOptimizerPanel extends HTMLElement {
   // Segmentumschalter am Desktop (Klick) — die Logik darf nur einmal
   // existieren, sonst laufen localStorage und Nachladen auseinander.
   _chartBereichSetzen(art, wert) {
+    if (art === "einspeisung") {
+      if (!["heute", "monat", "jahr"].includes(wert)) return;
+      this._einspeisungZeitraum = wert;
+      this._einspeisungAuswahl = null;
+      this._savePref("einspeisung_zeitraum", wert);
+      this._loadEinspeisung();
+      this._render();
+      return;
+    }
     if (art === "plan") {
       this._schedPlanRange = wert;
       this._savePref("sched_plan_h", wert);
@@ -1316,6 +1347,34 @@ class EegOptimizerPanel extends HTMLElement {
     if (this._bilanz !== null && alter < 60000) return;
     this._loadBilanz();
     this._loadOverride();
+  }
+
+  // Wie _ensureBilanz: ein Render stößt das Nachladen an, höchstens einmal
+  // pro Minute. Ein Wechsel des Zeitraums lädt sofort (_chartBereichSetzen).
+  _ensureEinspeisung() {
+    if (this._einspeisungBusy || !this._hass) return;
+    const alter = Date.now() - this._einspeisungGeholt;
+    if (this._einspeisung !== null && alter < 60000
+        && this._einspeisung.zeitraum === this._einspeisungZeitraum) return;
+    this._loadEinspeisung();
+  }
+
+  async _loadEinspeisung() {
+    if (!this._hass) return;
+    const zeitraum = this._einspeisungZeitraum;
+    this._einspeisungBusy = true;
+    try {
+      const r = await this._hass.callWS({ type: "eeg_optimizer/get_einspeisung", zeitraum });
+      // Hat der Nutzer inzwischen weitergeschaltet, gilt die neuere Anfrage.
+      if (zeitraum === this._einspeisungZeitraum) this._einspeisung = r;
+    } catch (e) {
+      console.warn("Einspeisung nicht abrufbar:", e);
+      this._einspeisung = { verfuegbar: false, zeitraum };
+    } finally {
+      this._einspeisungBusy = false;
+      this._einspeisungGeholt = Date.now();
+      this._render();
+    }
   }
 
   async _loadOverride() {
@@ -4118,6 +4177,269 @@ class EegOptimizerPanel extends HTMLElement {
           ${this._bilanzDetailsOpen ? "Weniger anzeigen" : "Woraus setzt sich das zusammen?"}
         </div>
         ${details}
+      </div>`;
+  }
+
+  // Karte „Einspeisung": was ins Netz ging, woher, und wer es genommen hat.
+  // Energie statt Geld — die Geldwerte stehen in „Was deine PV bringt", ein
+  // zweiter Euro-Betrag hier läse sich wie ein Summand. Einzige Ausnahme ist
+  // der Erlös je kWh: eine Quote, kein Betrag, und er zeigt als einzige Zahl,
+  // ob die Verschiebung in bessere Stunden wirkt.
+  _renderEinspeisungKarte() {
+    const d = this._einspeisung;
+    if (!d || d.verfuegbar === false) return "";
+    const schmal = !!this._narrow;
+    const zeitraum = this._einspeisungZeitraum;
+    const k = d.kennzahlen || {};
+    const v = d.vergleich;
+    const alleTage = v && v.tage === d.tage;
+    const kwh = (x) => (x == null ? "—" : `${fmtDe(x, x >= 100 ? 0 : 1)}&nbsp;kWh`);
+    const pct = (x) => (x == null ? "—" : `${fmtDe(x * 100, 0)}&nbsp;%`);
+    const ct = (x) => (x == null ? "—" : `${fmtDe(x * 100, 1)}&nbsp;ct`);
+    const zahl = (x) => (x == null ? "—" : fmtDe(x, x >= 10 ? 0 : 1));
+
+    // Zeile unter der Kennzahl: der Standardbetrieb. Deckt der Vergleich
+    // nicht alle Tage ab (Referenz erst seit Einführung aufgezeichnet),
+    // steht der Ist-Wert derselben Tage daneben — sonst verglichen wir
+    // 30 Tage mit 12.
+    const vergleichZeile = (feld, fmt) => {
+      if (!v || !v.ref || v.ref[feld] == null) return "";
+      const ref = fmt(v.ref[feld]);
+      if (alleTage) return `ohne Optimierung ${ref}`;
+      return `an ${v.tage} Tag${v.tage === 1 ? "" : "en"}: ${fmt(v.ist[feld])} statt ${ref}`;
+    };
+    const kachel = (wert, titel, unter = "", hinweis = "") => `
+      <div class="einsp-kachel"${hinweis ? ` title="${this._escapeHtml(hinweis)}"` : ""}>
+        <div class="einsp-wert">${wert}</div>
+        <div class="einsp-titel">${titel}</div>
+        ${unter ? `<div class="einsp-unter">${unter}</div>` : ""}
+      </div>`;
+
+    const batterieAnteil = k.export_kwh > 0 && k.batterie_export_kwh != null
+      ? `${fmtDe((k.batterie_export_kwh / k.export_kwh) * 100, 0)}&nbsp;% der Einspeisung` : "";
+    const kacheln = [
+      kachel(kwh(k.export_kwh), "eingespeist"),
+      kachel(kwh(k.batterie_export_kwh), "aus der Batterie",
+        [batterieAnteil, vergleichZeile("batterie_export_kwh", kwh)].filter(Boolean).join("<br>"),
+        "Einspeisung in Viertelstunden ohne PV-Leistung — gleich, ob die Optimierung gerade entladen hat oder nicht."),
+      d.gemeinschaft ? kachel(pct(k.eeg_anteil),
+        d.quotenmodus ? "an die Gemeinschaft (Quote)" : "an die Gemeinschaft",
+        vergleichZeile("eeg_anteil", pct),
+        d.quotenmodus
+          ? "Nach der eingestellten Abnahmequote — eine Annahme aus deiner EEG-Abrechnung, keine Messung."
+          : "Anteil der Einspeisung, den der Bedarf der Gemeinschaft in derselben Viertelstunde aufnehmen konnte. Beruht auf der Bedarfsprognose — endgültig steht es erst mit der EEG-Abrechnung fest.") : "",
+      kachel(ct(k.erloes_je_kwh), "Erlös je kWh", vergleichZeile("erloes_je_kwh", ct)),
+      k.zyklen != null ? kachel(zahl(k.zyklen), "Batterie-Zyklen", vergleichZeile("zyklen", zahl),
+        "Entladene Energie geteilt durch die Kapazität der Batterie.") : "",
+      kachel(pct(k.autarkie), "Autarkie", "",
+        "Anteil des Verbrauchs (Haus und Heizstab), der nicht aus dem Netz kam."),
+      kachel(pct(k.eigenverbrauch), "Eigenverbrauch", "",
+        "Anteil der erzeugten PV-Energie, der nicht ins Netz ging."),
+    ].filter(Boolean);
+    // Am Handy zwei Spalten: bei ungerader Zahl geht die letzte Kachel über
+    // die ganze Breite, statt allein in einer halben Zeile zu stehen.
+    const kachelnHtml = kacheln.map((html, i) =>
+      schmal && kacheln.length % 2 && i === kacheln.length - 1
+        ? html.replace('class="einsp-kachel"', 'class="einsp-kachel" style="grid-column:1 / -1"')
+        : html).join("");
+
+    // Hinweise unter der Karte — nur, wenn es etwas zu sagen gibt.
+    const datumKurz = (iso) => {
+      const [j, m, t] = String(iso).split("-");
+      return `${t}.${m}.${zeitraum === "jahr" ? j : ""}`;
+    };
+    // Die Erklärungen der Kacheln stehen im title — den zeigt ein Handy nie.
+    // Die eine, ohne die die Zahl missverständlich ist, steht deshalb hier.
+    const hinweise = ["„Aus der Batterie“ ist die Einspeisung in Viertelstunden ohne PV-Leistung — gleich, ob die Optimierung dabei entladen hat."];
+    if (d.gemeinschaft && d.quotenmodus) {
+      hinweise.push("„An die Gemeinschaft“ folgt der eingestellten Abnahmequote — eine Annahme, keine Messung.");
+    }
+    if (zeitraum !== "heute" && d.batterie_seit && d.erster_tag && d.batterie_seit > d.erster_tag) {
+      hinweise.push(`Der Batterie-Anteil wird erst seit ${datumKurz(d.batterie_seit)} erfasst; die Tage davor zählen nur zur Einspeisung.`);
+    }
+    if (v && !alleTage) {
+      hinweise.push(`Der Vergleich mit dem Standardbetrieb liegt für ${v.tage} von ${d.tage} Tagen vor — er wird erst seit dieser Version mitgeschrieben.`);
+    } else if (!v && d.tage > 0) {
+      hinweise.push("Für diesen Zeitraum gibt es noch keinen Vergleich mit dem Standardbetrieb — er braucht den Ladestand zu Beginn des Bilanztags.");
+    }
+
+    const wahlWerte = [["heute", "Heute"], ["monat", "Monat"], ["jahr", "Jahr"]];
+    const wahl = schmal
+      ? `<select data-chart="einspeisung" style="padding:0 28px 0 10px;min-height:44px;border:1px solid var(--divider-color);border-radius:8px;background:var(--card-background-color,#fff);color:var(--primary-text-color);font-size:16px;font-family:inherit">
+          ${wahlWerte.map(([w, t]) => `<option value="${w}" ${w === zeitraum ? "selected" : ""}>${t}</option>`).join("")}
+        </select>`
+      : `<span style="display:inline-flex;border:1px solid var(--divider-color);border-radius:7px;overflow:hidden">
+          ${wahlWerte.map(([w, t], i) => {
+            const an = w === zeitraum;
+            return `<button type="button" data-action="chart-range" data-chart="einspeisung" data-wert="${w}"
+              style="appearance:none;border:0;${i ? "border-left:1px solid var(--divider-color);" : ""}padding:5px 11px;font:inherit;font-size:12px;line-height:1.5;cursor:pointer;background:${an ? "var(--primary-color)" : "transparent"};color:${an ? "var(--text-primary-color,#fff)" : "var(--primary-text-color)"};font-weight:${an ? "500" : "400"}"
+              aria-pressed="${an}">${t}</button>`;
+          }).join("")}
+        </span>`;
+
+    const laedt = d.zeitraum !== zeitraum;
+    return `
+      <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
+          <h3 style="margin:0">
+            <ha-icon icon="mdi:transmission-tower-export" style="--mdc-icon-size:20px;color:var(--primary-color,#03a9f4);vertical-align:middle"></ha-icon>
+            Einspeisung
+          </h3>
+          ${wahl}
+        </div>
+        <div style="opacity:${laedt ? 0.5 : 1};transition:opacity .2s">
+          <div class="einsp-kacheln" style="grid-template-columns:repeat(${schmal ? 2 : 4},minmax(0,1fr))">${kachelnHtml}</div>
+          ${this._einspeisungChart(d)}
+          ${hinweise.length ? `<div style="font-size:12px;color:var(--secondary-text-color);margin-top:8px;line-height:1.5">${hinweise.join("<br>")}</div>` : ""}
+        </div>
+      </div>`;
+  }
+
+  // Gestapelte Balken: unten, was die Gemeinschaft genommen hat, darüber der
+  // Rest zum Basistarif; der Batterie-Anteil schraffiert darüber gelegt (er
+  // ist ein „davon" quer zu dieser Aufteilung, kein dritter Stapel). Heute
+  // je Viertelstunde mit dem Bedarf der Gemeinschaft als Hintergrund, Monat
+  // je Tag, Jahr je Monat.
+  _einspeisungChart(d) {
+    const reihe = d.reihe || [];
+    if (!reihe.some(r => (r.export || 0) > 0)) {
+      return `<p style="margin:14px 0 0;font-size:13px;color:var(--secondary-text-color);text-align:center">Noch keine Einspeisung in diesem Zeitraum.</p>`;
+    }
+    const schmal = !!this._narrow;
+    const zeitraum = d.zeitraum;
+    const W = this._cw("einspeisung");
+    const H = schmal ? 190 : 220;
+    const padL = schmal ? 30 : 40, padR = 8, padT = 10, padB = 22;
+    const plotW = W - padL - padR, plotH = H - padT - padB;
+    const fs = schmal ? 10 : 11;
+    const mitEeg = d.gemeinschaft;
+
+    // Heute: das volle Raster des Bilanztags (04:00–04:00), auch wenn erst
+    // ein Teil gelaufen ist — sonst wüchse die Achse über den Tag.
+    const balken = reihe;
+    let n = reihe.length;
+    let index = (r, i) => i;
+    if (zeitraum === "heute") {
+      n = 96;
+      const start = new Date(`${d.bilanztag}T04:00:00`).getTime();
+      index = (r) => Math.round((new Date(r.t).getTime() - start) / 900000);
+    } else if (zeitraum === "monat") {
+      const [j, m] = String(d.bilanztag).split("-").map(Number);
+      n = new Date(j, m, 0).getDate();
+      index = (r) => Number(String(r.datum).slice(8, 10)) - 1;
+    } else {
+      n = 12;
+      index = (r) => Number(String(r.monat).slice(5, 7)) - 1;
+    }
+    const max = Math.max(...balken.map(r => r.export || 0), 0.001) * 1.1;
+    const slotW = plotW / n;
+    const bw = Math.max(1, slotW * (zeitraum === "heute" ? 0.9 : 0.7));
+    const y = (val) => padT + plotH - (val / max) * plotH;
+
+    const farbeEeg = "#43a047", farbeRest = "#90a4ae", farbeAlle = "#1e88e5";
+    const auswahl = this._einspeisungAuswahl;
+    const details = {};
+    let hinter = "", rects = "";
+    balken.forEach((r, i) => {
+      const k = index(r, i);
+      if (k < 0 || k >= n) return;
+      const x = padL + k * slotW + (slotW - bw) / 2;
+      if (zeitraum === "heute" && r.bedarf) {
+        hinter += `<rect x="${(padL + k * slotW).toFixed(1)}" y="${padT}" width="${slotW.toFixed(2)}" height="${plotH}" fill="${farbeEeg}" fill-opacity="0.08"/>`;
+      }
+      const exp = r.export || 0;
+      if (exp <= 0) return;
+      const eeg = mitEeg ? Math.min(exp, r.eeg || 0) : 0;
+      const bat = Math.min(exp, r.batterie || 0);
+      const titel = [
+        zeitraum === "heute" ? new Date(r.t).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })
+          : zeitraum === "monat" ? new Date(r.datum).toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit" })
+          : new Date(`${r.monat}-01`).toLocaleDateString("de-DE", { month: "long" }),
+        `${fmtDe(exp, zeitraum === "heute" ? 2 : 1)} kWh eingespeist`,
+        mitEeg ? `davon ${fmtDe(eeg, zeitraum === "heute" ? 2 : 1)} kWh an die Gemeinschaft` : "",
+        r.batterie != null ? `davon ${fmtDe(bat, zeitraum === "heute" ? 2 : 1)} kWh aus der Batterie` : "",
+      ].filter(Boolean);
+      details[k] = titel;
+      if (k === auswahl) {
+        hinter += `<rect x="${(padL + k * slotW).toFixed(1)}" y="${padT}" width="${Math.max(slotW, 3).toFixed(2)}" height="${plotH}" fill="var(--primary-color,#03a9f4)" fill-opacity="0.15"/>`;
+      }
+      rects += `<g><title>${this._escapeHtml(titel.join("\n"))}</title>`;
+      if (mitEeg) {
+        if (eeg > 0) rects += `<rect x="${x.toFixed(1)}" y="${y(eeg).toFixed(1)}" width="${bw.toFixed(2)}" height="${(y(0) - y(eeg)).toFixed(1)}" fill="${farbeEeg}"/>`;
+        if (exp > eeg) rects += `<rect x="${x.toFixed(1)}" y="${y(exp).toFixed(1)}" width="${bw.toFixed(2)}" height="${(y(eeg) - y(exp)).toFixed(1)}" fill="${farbeRest}"/>`;
+      } else {
+        rects += `<rect x="${x.toFixed(1)}" y="${y(exp).toFixed(1)}" width="${bw.toFixed(2)}" height="${(y(0) - y(exp)).toFixed(1)}" fill="${farbeAlle}"/>`;
+      }
+      if (bat > 0) {
+        rects += `<rect x="${x.toFixed(1)}" y="${y(bat).toFixed(1)}" width="${bw.toFixed(2)}" height="${(y(0) - y(bat)).toFixed(1)}" fill="url(#einsp-schraffur)" stroke="#ef6c00" stroke-width="0.8"/>`;
+      }
+      rects += `</g>`;
+    });
+
+    // Achsen: drei Stufen in kWh, darunter Uhrzeit, Tag oder Monat.
+    let achsen = "";
+    [0, 0.5, 1].forEach(f => {
+      const wert = (max / 1.1) * f;
+      const yy = y(wert).toFixed(1);
+      achsen += `<line x1="${padL}" y1="${yy}" x2="${W - padR}" y2="${yy}" stroke="var(--divider-color,#e0e0e0)" stroke-width="0.7" stroke-dasharray="${f ? "3 3" : "0"}"/>`;
+      achsen += `<text x="${padL - 4}" y="${(Number(yy) + 3.5).toFixed(1)}" text-anchor="end" font-size="${fs}" fill="var(--secondary-text-color)">${fmtDe(wert, wert >= 10 ? 0 : 1)}</text>`;
+    });
+    const beschrift = (k, text) => {
+      const x = padL + k * slotW + slotW / 2;
+      achsen += `<text x="${x.toFixed(1)}" y="${H - 6}" text-anchor="middle" font-size="${fs}" fill="var(--secondary-text-color)">${text}</text>`;
+    };
+    if (zeitraum === "heute") {
+      // Die 04:00 am rechten Ende entfällt — sie stünde halb außerhalb.
+      for (let k = 0; k < 96; k += schmal ? 24 : 16) {
+        const std = (4 + k / 4) % 24;
+        const x = padL + k * slotW;
+        achsen += `<text x="${x.toFixed(1)}" y="${H - 6}" text-anchor="middle" font-size="${fs}" fill="var(--secondary-text-color)">${String(std).padStart(2, "0")}:00</text>`;
+      }
+    } else if (zeitraum === "monat") {
+      const schritt = schmal ? 7 : 5;
+      for (let k = 0; k < n; k++) if (k === 0 || (k + 1) % schritt === 0) beschrift(k, String(k + 1));
+    } else {
+      const namen = ["J", "F", "M", "A", "M", "J", "J", "A", "S", "O", "N", "D"];
+      const lang = ["Jan", "Feb", "Mär", "Apr", "Mai", "Jun", "Jul", "Aug", "Sep", "Okt", "Nov", "Dez"];
+      for (let k = 0; k < 12; k++) beschrift(k, schmal ? namen[k] : lang[k]);
+    }
+
+    const legendeEintrag = (stil, text) =>
+      `<span style="display:inline-flex;align-items:center;gap:5px;margin-right:14px;font-size:12px;color:var(--secondary-text-color);white-space:nowrap">
+         <span style="width:11px;height:11px;border-radius:2px;display:inline-block;flex-shrink:0;${stil}"></span>${text}
+       </span>`;
+    const schraffurCss = "background:repeating-linear-gradient(135deg,#ef6c00 0 1.5px,transparent 1.5px 4px);border:1px solid #ef6c00;box-sizing:border-box";
+    const legende = [
+      mitEeg ? legendeEintrag(`background:${farbeEeg}`, "an die Gemeinschaft") : "",
+      mitEeg ? legendeEintrag(`background:${farbeRest}`, "zum Basistarif") : legendeEintrag(`background:${farbeAlle}`, "eingespeist"),
+      legendeEintrag(schraffurCss, "davon aus der Batterie"),
+      zeitraum === "heute" && mitEeg && !d.quotenmodus
+        ? legendeEintrag(`background:${farbeEeg};opacity:.2`, "Bedarf der Gemeinschaft") : "",
+    ].join("");
+
+    return `
+      <div style="margin-top:14px">
+        <div style="margin-bottom:6px">${legende}</div>
+        <svg data-cw="einspeisung" data-einsp-n="${n}" data-einsp-w="${W}" data-einsp-l="${padL}" data-einsp-slot="${slotW}"
+             viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;cursor:pointer;-webkit-tap-highlight-color:transparent">
+          <defs>
+            <pattern id="einsp-schraffur" width="4" height="4" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+              <rect width="4" height="4" fill="#ef6c00" fill-opacity="0.15"/>
+              <line x1="0" y1="0" x2="0" y2="4" stroke="#ef6c00" stroke-width="1.6"/>
+            </pattern>
+          </defs>
+          ${hinter}${achsen}${rects}
+        </svg>
+        <div style="display:flex;justify-content:space-between;gap:8px;font-size:11px;color:var(--secondary-text-color)">
+          <span>${schmal ? "Balken antippen für Details" : "Balken anklicken für Details"}</span>
+          <span style="white-space:nowrap">kWh je ${zeitraum === "heute" ? "Viertelstunde" : zeitraum === "monat" ? "Tag" : "Monat"}</span>
+        </div>
+        ${auswahl != null ? `
+        <div style="margin-top:6px;padding:8px 10px;border-radius:8px;background:var(--secondary-background-color,#f5f5f5);font-size:13px;line-height:1.5">
+          ${details[auswahl]
+            ? `<strong>${this._escapeHtml(details[auswahl][0])}</strong><br>${details[auswahl].slice(1).map(t => this._escapeHtml(t)).join("<br>")}`
+            : "Keine Einspeisung."}
+        </div>` : ""}
       </div>`;
   }
 
@@ -9484,6 +9806,7 @@ class EegOptimizerPanel extends HTMLElement {
 
     // Geldwerte nachziehen, wenn sie älter als eine Minute sind.
     this._ensureBilanz();
+    this._ensureEinspeisung();
     // Prognosevergleich nachziehen (nur mit eingeschaltetem Vergleich).
     this._ensurePrognosevergleich();
 
@@ -9795,6 +10118,9 @@ class EegOptimizerPanel extends HTMLElement {
 
         <!-- Was die PV gebracht hat: Rückblick auf Gemessenes -->
         ${this._renderBilanzKarte()}
+
+        <!-- Einspeisung: was ins Netz ging, woher, und wer es genommen hat -->
+        ${this._renderEinspeisungKarte()}
 
         <!-- Optimierungsgewinn: was die Optimierung gegenüber Standardbetrieb bringt -->
         ${this._renderGewinnKarte()}
@@ -10129,6 +10455,23 @@ class EegOptimizerPanel extends HTMLElement {
              ließen sie aufgebläht wirken (Nutzer-Feedback 27.08.). */
           padding: 14px 24px;
         }
+        /* Einspeise-Karte: Kennzahlen als Kacheln, 4 + 3 am Desktop, 2 je
+           Zeile am Handy (Spaltenzahl inline, sie haengt an _narrow). Ein
+           auto-fill brach die sieben Kacheln zu 6 + 1 um. */
+        .einsp-kacheln {
+          display: grid;
+          gap: 8px;
+          margin-top: 14px;
+        }
+        .einsp-kachel {
+          border: 1px solid var(--divider-color, #e0e0e0);
+          border-radius: 8px;
+          padding: 8px 10px;
+          min-width: 0;
+        }
+        .einsp-wert { font-size: 20px; font-weight: 600; white-space: nowrap; }
+        .einsp-titel { font-size: 12px; color: var(--secondary-text-color); margin-top: 2px; }
+        .einsp-unter { font-size: 11px; color: var(--secondary-text-color); margin-top: 4px; line-height: 1.4; }
         .setup-card { text-align: center; padding: 48px 24px; }
         .setup-card .setup-logo {
           max-width: 200px; height: auto; margin-bottom: 24px;

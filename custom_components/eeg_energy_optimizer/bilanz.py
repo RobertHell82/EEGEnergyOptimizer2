@@ -116,6 +116,13 @@ BILANZTAG_START_STUNDE = 4
 KEIN_EINGRIFF_MIN_KWH = 1.0
 KEIN_EINGRIFF_ANTEIL = 0.10
 
+# Eine Viertelstunde „ohne PV": mittlere PV-Leistung darunter. Was dann ins
+# Netz geht, kam aus der Batterie — die Einspeise-Karte weist es als eigenen
+# Anteil aus. Die Schwelle schluckt das Rauschen des Wechselrichters in der
+# Nacht; in der Daemmerung (etwas PV, dazu Entladung) zaehlt dadurch nichts
+# als Batterie, die Zahl ist also eher zu klein als zu gross.
+BATTERIE_EXPORT_PV_SCHWELLE_KW = 0.05
+
 # Unique-ID-Endungen der Sensoren, aus denen die Bilanz liest. Sie sind
 # bereits normalisiert (Vorzeichen, Multi-Batterie).
 _QUELLEN = {
@@ -210,6 +217,17 @@ def _leerer_tag(datum: str) -> dict[str, Any]:
     # ``start`` kennzeichnet das Schema: Tage ohne den Schluessel stammen aus
     # der Zeit vor dem 04:00-Bilanztag und werden beim Laden umsortiert.
     return {"datum": datum, "slots": {}, "start": BILANZTAG_START_STUNDE}
+
+
+def ohne_pv(slot: dict[str, Any]) -> bool:
+    """Lief in diesem Slot keine PV (siehe ``BATTERIE_EXPORT_PV_SCHWELLE_KW``)?
+
+    Gemessen an der Dauer, die der Slot wirklich gezaehlt hat — ein Slot mit
+    Luecke hat weniger Energie, aber nicht weniger Leistung.
+    """
+    sekunden = float(slot.get("s") or 0.0) or float(SLOT_SEKUNDEN)
+    pv_kw = max(float(slot.get("pv") or 0.0), 0.0) / (sekunden / 3600.0)
+    return pv_kw < BATTERIE_EXPORT_PV_SCHWELLE_KW
 
 
 class EnergieBilanz:
@@ -661,8 +679,19 @@ class EnergieBilanz:
             "pv_kwh": 0.0,
             "eeg_kwh": 0.0,
             "heizstab_kwh": 0.0,
+            "haus_kwh": 0.0,
+            "entladen_kwh": 0.0,
+            "batterie_export_kwh": 0.0,
             "waerme": 0.0,
             "ein_anteil": 0.0,
+            # Dieselben Groessen im simulierten Standardbetrieb — fuer den
+            # Vergleich der Einspeise-Karte. None, wenn es keine Referenz gibt
+            # (kein Start-Ladestand, keine Fahrplan-Inputs).
+            "ref_export_kwh": None,
+            "ref_eeg_kwh": None,
+            "ref_erloes": None,
+            "ref_entladen_kwh": None,
+            "ref_batterie_export_kwh": None,
             "ist_summe": None,
             "ref_summe": None,
             "vorteil_begruendung": None,
@@ -678,6 +707,7 @@ class EnergieBilanz:
         eigen_kwh = 0.0
         vermieden = 0.0
         pv_kwh = export_kwh = bezug_kwh = 0.0
+        haus_kwh = entladen_kwh = batterie_export_kwh = 0.0
         heizstab_kwh = heizstab_pv_kwh = 0.0
         netzgeladen_kwh = 0.0
         ein_s = gesamt_s = 0.0
@@ -685,6 +715,10 @@ class EnergieBilanz:
             pv_kwh += slot.get("pv", 0.0)
             export_kwh += slot.get("export", 0.0)
             bezug_kwh += slot.get("bezug", 0.0)
+            haus_kwh += max(slot.get("haus", 0.0), 0.0)
+            entladen_kwh += max(slot.get("entladen", 0.0), 0.0)
+            if ohne_pv(slot):
+                batterie_export_kwh += max(slot.get("export", 0.0), 0.0)
             ein_s += slot.get("ein_s", 0.0)
             gesamt_s += slot.get("s", 0.0)
             heizstab = max(slot.get("heizstab", 0.0), 0.0)
@@ -743,6 +777,9 @@ class EnergieBilanz:
             "export_kwh": round(export_kwh, 3),
             "bezug_kwh": round(bezug_kwh, 3),
             "heizstab_kwh": round(heizstab_kwh, 3),
+            "haus_kwh": round(haus_kwh, 3),
+            "entladen_kwh": round(entladen_kwh, 3),
+            "batterie_export_kwh": round(batterie_export_kwh, 3),
             "waerme": round(waerme, 4),
             "vermieden": round(vermieden, 4),
             "ein_anteil": round(ein_s / gesamt_s, 3) if gesamt_s > 0 else 0.0,
@@ -778,6 +815,12 @@ class EnergieBilanz:
         ergebnis["ref_summe"] = (
             None if referenz is None else round(float(referenz.get("summe", 0.0)), 4)
         )
+        if referenz is not None:
+            for feld in (
+                "export_kwh", "eeg_kwh", "erloes", "entladen_kwh", "batterie_export_kwh",
+            ):
+                if referenz.get(feld) is not None:
+                    ergebnis[f"ref_{feld}"] = round(float(referenz[feld]), 4)
         if vorteil is not None and referenz is not None:
             ergebnis["vorteil_roh"] = vorteil
             ergebnis["vorteil_details"] = vorteil_details(bewertung, referenz)
@@ -979,14 +1022,23 @@ class EnergieBilanz:
         # als Massstab — die Entscheidung faellt in bewerte_tag.
         dt_h = SLOT_SEKUNDEN / 3600.0
         abweichung = durchsatz = 0.0
-        for ist, ref in zip(ist_slots, referenz_slots):
+        # Die Einspeise-Karte vergleicht dieselben Mengen: Entladung (Zyklen)
+        # und Einspeisung ohne PV. „Ohne PV" entscheidet der gemessene Slot —
+        # die Referenz faehrt dieselbe gemessene PV-Reihe.
+        ref_entladen = ref_batterie_export = 0.0
+        for ist, ref, roh in zip(ist_slots, referenz_slots, slots):
             bat_ist = float(ist.get("battery_p") or 0.0)
             bat_ref = float(ref.get("battery_p") or 0.0)
             abweichung += abs(bat_ist - bat_ref) * dt_h
             durchsatz += abs(bat_ist) * dt_h
+            ref_entladen += max(bat_ref, 0.0) * dt_h
+            if ohne_pv(roh):
+                ref_batterie_export += max(float(ref.get("grid_p") or 0.0), 0.0) * dt_h
         ergebnis = dict(referenz)
         ergebnis["batterie_abweichung_kwh"] = round(abweichung, 3)
         ergebnis["batterie_durchsatz_kwh"] = round(durchsatz, 3)
+        ergebnis["entladen_kwh"] = round(ref_entladen, 3)
+        ergebnis["batterie_export_kwh"] = round(ref_batterie_export, 3)
         return vorteil, ergebnis
 
     # ------------------------------------------------------------------
@@ -1024,6 +1076,170 @@ class EnergieBilanz:
         if jahr:
             return any(k.startswith(jahr) for k in self._monate)
         return bool(self._monate)
+
+    def einspeisung(
+        self, zeitraum: str, now_local: datetime, inputs: Any = None
+    ) -> dict[str, Any]:
+        """Was ins Netz ging — für die Einspeise-Karte.
+
+        ``zeitraum`` ist ``heute``, ``monat`` oder ``jahr`` (nach Bilanztag,
+        siehe ``zeitraum_schluessel``). Monat und Jahr kommen aus dem
+        Tagesarchiv, nicht aus den Monatssummen: 400 Tage decken ein Jahr ab,
+        und nur die Tage wissen, ob sie eine Referenz haben.
+
+        Quoten werden hier aus Summen gebildet, nie gespeichert — ein Mittel
+        aus Tagesprozenten wäre nach Tagen gewichtet statt nach Energie.
+        Der Vergleich mit dem Standardbetrieb läuft NUR über Tage mit
+        Referenz, auf beiden Seiten; ``vergleich.tage`` sagt, über wie viele.
+        """
+        heute = self.heute(inputs)
+        monat_key, jahr_key = self.zeitraum_schluessel(now_local)
+        datum = self.datum_heute or bilanz_datum(now_local)
+        if zeitraum == "heute":
+            tage: dict[str, dict[str, Any]] = {}
+        else:
+            praefix = monat_key if zeitraum == "monat" else jahr_key
+            tage = {d: e for d, e in self._tage.items() if d.startswith(praefix)}
+        tage[datum] = heute
+        eintraege = [tage[d] for d in sorted(tage)]
+
+        kapazitaet = None
+        if inputs is not None:
+            try:
+                kapazitaet = float(inputs.battery_capacity_kwh) or None
+            except (AttributeError, TypeError, ValueError):
+                kapazitaet = None
+
+        def summe(liste: list[dict[str, Any]], feld: str) -> float:
+            return sum(float(e.get(feld) or 0.0) for e in liste)
+
+        def quote(zaehler: float, nenner: float) -> float | None:
+            return round(zaehler / nenner, 4) if nenner > 0 else None
+
+        def kennzahlen(liste: list[dict[str, Any]], vorsilbe: str = "") -> dict[str, Any]:
+            export = summe(liste, f"{vorsilbe}export_kwh")
+            eeg = summe(liste, f"{vorsilbe}eeg_kwh")
+            erloes = summe(liste, f"{vorsilbe}erloes")
+            entladen = summe(liste, f"{vorsilbe}entladen_kwh")
+            return {
+                "export_kwh": round(export, 2),
+                "batterie_export_kwh": round(
+                    summe(liste, f"{vorsilbe}batterie_export_kwh"), 2
+                ),
+                "eeg_kwh": round(eeg, 2),
+                "eeg_anteil": quote(eeg, export),
+                "erloes": round(erloes, 2),
+                "erloes_je_kwh": quote(erloes, export),
+                "entladen_kwh": round(entladen, 2),
+                "zyklen": None if kapazitaet is None else round(entladen / kapazitaet, 2),
+            }
+
+        ist = kennzahlen(eintraege)
+        pv = summe(eintraege, "pv_kwh")
+        verbrauch = summe(eintraege, "haus_kwh") + summe(eintraege, "heizstab_kwh")
+        bezug = summe(eintraege, "bezug_kwh")
+        autarkie = quote(verbrauch - bezug, verbrauch)
+        eigen = quote(pv - summe(eintraege, "export_kwh"), pv)
+        ist.update({
+            "pv_kwh": round(pv, 2),
+            "bezug_kwh": round(bezug, 2),
+            "verbrauch_kwh": round(verbrauch, 2),
+            "autarkie": None if autarkie is None else max(0.0, min(1.0, autarkie)),
+            "eigenverbrauch": None if eigen is None else max(0.0, min(1.0, eigen)),
+        })
+
+        mit_ref = [e for e in eintraege if e.get("ref_export_kwh") is not None]
+        vergleich = None
+        if mit_ref:
+            vergleich = {
+                "tage": len(mit_ref),
+                "ist": kennzahlen(mit_ref),
+                "ref": kennzahlen(mit_ref, "ref_"),
+            }
+
+        # Tage vor der Einführung der Batterie-Zuordnung kennen das Feld nicht.
+        mit_batterie = sorted(d for d, e in tage.items() if "batterie_export_kwh" in e)
+        tarife = list(getattr(inputs, "eeg_tarife", None) or []) if inputs is not None else []
+        return {
+            "zeitraum": zeitraum,
+            "bilanztag": datum,
+            "tage": len(eintraege),
+            "kennzahlen": ist,
+            "vergleich": vergleich,
+            "batterie_seit": mit_batterie[0] if mit_batterie else None,
+            "erster_tag": min(tage) if tage else None,
+            "gemeinschaft": bool(tarife),
+            "quotenmodus": any(t.get("quote_tag") is not None for t in tarife),
+            "reihe": self._einspeise_reihe(zeitraum, tage, inputs),
+        }
+
+    def _einspeise_reihe(
+        self, zeitraum: str, tage: dict[str, dict[str, Any]], inputs: Any
+    ) -> list[dict[str, Any]]:
+        """Balken für das Chart: Viertelstunden, Tage oder Monate."""
+        if zeitraum == "heute":
+            return self._einspeise_viertelstunden(inputs)
+        if zeitraum == "monat":
+            return [
+                {
+                    "datum": d,
+                    "export": round(float(e.get("export_kwh") or 0.0), 3),
+                    "batterie": e.get("batterie_export_kwh"),
+                    "eeg": round(float(e.get("eeg_kwh") or 0.0), 3),
+                }
+                for d, e in sorted(tage.items())
+            ]
+        monate: dict[str, dict[str, Any]] = {}
+        for d, e in sorted(tage.items()):
+            m = monate.setdefault(
+                d[:7], {"monat": d[:7], "export": 0.0, "batterie": None, "eeg": 0.0}
+            )
+            m["export"] += float(e.get("export_kwh") or 0.0)
+            m["eeg"] += float(e.get("eeg_kwh") or 0.0)
+            if e.get("batterie_export_kwh") is not None:
+                m["batterie"] = (m["batterie"] or 0.0) + float(e["batterie_export_kwh"])
+        for m in monate.values():
+            m["export"] = round(m["export"], 2)
+            m["eeg"] = round(m["eeg"], 2)
+            if m["batterie"] is not None:
+                m["batterie"] = round(m["batterie"], 2)
+        return list(monate.values())
+
+    def _einspeise_viertelstunden(self, inputs: Any) -> list[dict[str, Any]]:
+        """Der laufende Bilanztag je Viertelstunde.
+
+        ``eeg`` kommt aus derselben Zuteilung wie der Tageserlös
+        (``eeg_aufnahme_je_slot``); ``bedarf`` sagt, ob mindestens eine
+        Gemeinschaft in diesem Slot Bedarf hatte (None: keine Saldodaten,
+        etwa im Quotenmodus).
+        """
+        paare = self._sortierte_paare(self._heute)
+        if not paare:
+            return []
+        slots = [slot for _, slot in paare]
+        ist_slots = self._als_slots(paare, self._heute.get("datum") or "")
+        aufnahme: list[float | None] = [None] * len(slots)
+        if inputs is not None:
+            try:
+                from .schedule import eeg_aufnahme_je_slot
+
+                aufnahme = list(eeg_aufnahme_je_slot(
+                    ist_slots, self._inputs_fuer(ist_slots, slots, inputs)
+                ))
+            except Exception:  # noqa: BLE001 - Anzeige darf nie den Takt kippen
+                _LOGGER.debug("Bilanz: EEG-Aufteilung je Slot fehlgeschlagen", exc_info=True)
+        reihe = []
+        for ist, roh, eeg in zip(ist_slots, slots, aufnahme):
+            export = max(float(roh.get("export") or 0.0), 0.0)
+            salden = roh.get("eeg") or {}
+            reihe.append({
+                "t": ist["t"],
+                "export": round(export, 4),
+                "batterie": round(export, 4) if ohne_pv(roh) else 0.0,
+                "eeg": None if eeg is None else round(eeg, 4),
+                "bedarf": any(float(v) > 0 for v in salden.values()) if salden else None,
+            })
+        return reihe
 
     @property
     def datum_heute(self) -> str:
