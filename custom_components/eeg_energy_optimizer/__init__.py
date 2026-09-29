@@ -67,10 +67,13 @@ from .const import (
     HEIZSTAB_TIMESYNC_INTERVAL_H,
     HEIZSTAB_WRITE_INTERVAL_S,
     SENSOR_UNAVAIL_THRESHOLD_S,
+    STORAGE_TELEMETRY_SNAPSHOTS_SUFFIX,
     TELEMETRY_PROFILE_HEARTBEAT_S,
     TELEMETRY_SETTINGS_KEYS,
     TELEMETRY_SNAPSHOT_INTERVAL_MIN,
     TELEMETRY_SNAPSHOT_OFFSET_MIN,
+    TELEMETRY_START_SCHONFRIST_KATEGORIEN,
+    TELEMETRY_START_SCHONFRIST_S,
     TELEMETRY_STEUERUNG,
 )
 from .heizstab.controller import create_heizstab, heizstab_enabled
@@ -392,6 +395,39 @@ def _snapshot_slot_faellig(now_ts, letzter_slot):
     if now_ts.minute % TELEMETRY_SNAPSHOT_INTERVAL_MIN < TELEMETRY_SNAPSHOT_OFFSET_MIN:
         return None
     return slot
+
+
+def _in_start_schonfrist(category, start_ts, now_ts):
+    """Liegt diese Meldung in der Schonfrist nach dem Start?
+
+    Nur für die Kategorien aus ``TELEMETRY_START_SCHONFRIST_KATEGORIEN``:
+    Planlauf und Schreibvorgang scheitern in den ersten Minuten regelmäßig,
+    weil die Quell-Integration noch nicht so weit ist (Begründung an der
+    Konstante). Sensorausfall, Failsafe und Not-Aus haben eigene, längere
+    Schwellen und brauchen keine. Ohne Startzeit keine Frist — lieber eine
+    Meldung zu viel als eine verschluckte.
+    """
+    if category not in TELEMETRY_START_SCHONFRIST_KATEGORIEN or start_ts is None:
+        return False
+    alter = (now_ts - start_ts).total_seconds()
+    return 0 <= alter < TELEMETRY_START_SCHONFRIST_S
+
+
+def _snapshot_queue_sichern(hass, data):
+    """Warteschlange der Momentaufnahmen auf die Platte schreiben.
+
+    Sofort und nicht verzögert: ``async_delay_save`` würde beim Neuladen
+    mit dem Laden des neuen Eintrags um die Wette laufen. 48 kleine
+    Schreibvorgänge am Tag kosten nichts.
+    """
+    store = data.get("telemetry_snapshot_store")
+    if store is None:
+        return
+    inhalt = {"queue": list(data.get("telemetry_snapshot_queue") or [])}
+    try:
+        hass.async_create_task(store.async_save(inhalt))
+    except Exception:  # pragma: no cover — defensive
+        _LOGGER.exception("Telemetry: Snapshot-Warteschlange nicht gesichert")
 
 
 def _dedup_pruefen(dedup, unterdrueckt, key, now_ts, fenster_s):
@@ -1675,6 +1711,25 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         data["telemetry_sensor_unavail_since"] = {}
         # Momentaufnahmen: gesammelt im Guard-Takt, gesendet im Flush-Timer.
         data["telemetry_snapshot_queue"] = []
+        # Die Warteschlange überlebt den Neustart (Store) — sie wird nur
+        # stündlich gesendet, sonst kostete jedes Update bis zu zwei
+        # Momentaufnahmen.
+        try:
+            from homeassistant.helpers.storage import Store
+
+            snapshot_store = Store(
+                hass, 1,
+                f"{DOMAIN}_{entry.entry_id}_{STORAGE_TELEMETRY_SNAPSHOTS_SUFFIX}",
+            )
+            gespeichert = await snapshot_store.async_load() or {}
+            data["telemetry_snapshot_store"] = snapshot_store
+            data["telemetry_snapshot_queue"] = [
+                z for z in (gespeichert.get("queue") or []) if isinstance(z, dict)
+            ][-100:]
+        except Exception:  # pragma: no cover — ohne Store wie bisher im Speicher
+            _LOGGER.debug("Telemetry: Snapshot-Store nicht verfügbar", exc_info=True)
+        # Beginn der Schonfrist für Startfehler (``_in_start_schonfrist``).
+        data["telemetry_start_ts"] = _now_utc()
         # Halbstunden-Raster (Stunde × 2 + Minute // 30) der letzten Ablage.
         # Über das Raster statt über einen eigenen Timer, damit die Zeitpunkte
         # zwischen Anlagen vergleichbar bleiben und ein Neustart den Takt nicht
@@ -1698,8 +1753,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             # die Watchdogs rufen hierher, auch wenn der Nutzer abgeschaltet hat.
             if not _telemetry_an():
                 return
-            key = (category, message_hash)
             now_ts = _now_utc()
+            if _in_start_schonfrist(category, data.get("telemetry_start_ts"), now_ts):
+                return
+            key = (category, message_hash)
             senden, verschluckt = _dedup_pruefen(
                 data["telemetry_failure_dedup"],
                 data["telemetry_failure_suppressed"],
@@ -1847,6 +1904,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             # Warteschlange nicht wachsen. 100 Einträge sind gut zwei Tage.
             if len(queue) > 100:
                 del queue[: len(queue) - 100]
+            _snapshot_queue_sichern(hass, data)
 
         # ----------------------------------------------------------
         # Fahrplan-Executor — der einzige Aktor. Rechnet nicht selbst,
@@ -2409,6 +2467,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     queue = data.get("telemetry_snapshot_queue") or []
                     if queue:
                         data["telemetry_snapshot_queue"] = []
+                        _snapshot_queue_sichern(hass, data)
                         try:
                             await reporter.send_snapshot_batch(queue)
                         except Exception:  # pragma: no cover
@@ -2734,6 +2793,7 @@ async def _async_update_listener(
             except Exception:  # pragma: no cover — defensive
                 _LOGGER.exception("Telemetry: Puffer beim Deaktivieren nicht geleert")
         data["telemetry_snapshot_queue"] = []
+        _snapshot_queue_sichern(hass, data)
     executor = data.get("executor")
     if executor is not None:
         coordinator = data.get("coordinator")

@@ -840,3 +840,67 @@ def test_schedule_health_fremde_ausnahme_bleibt_gekuerzt():
     )
     assert calls[0]["message_hash"] == "OSError"
     assert "/config/" not in str(calls[0]["context"])
+
+
+# ---------------------------------------------------------------------------
+# Schonfrist nach dem Start
+# ---------------------------------------------------------------------------
+#
+# Jedes Update meldete auf halber Flotte "Batterie-Ladestand oder -Kapazität
+# unbekannt" (Huawei) bzw. eine gescheiterte Startfreigabe (SolaX) — die
+# Quell-Integration war nur noch nicht so weit (27.–29.09.2026).
+
+
+def test_schonfrist_verschluckt_startfehler_von_planlauf_und_schreibvorgang():
+    from custom_components.eeg_energy_optimizer import _in_start_schonfrist
+
+    start = datetime(2026, 9, 29, 13, 25, tzinfo=timezone.utc)
+    for kategorie in ("schedule_solver", "inverter_write"):
+        assert _in_start_schonfrist(kategorie, start, start + timedelta(seconds=40))
+        assert _in_start_schonfrist(kategorie, start, start + timedelta(seconds=299))
+        # Besteht der Fehler danach noch, ist er echt.
+        assert not _in_start_schonfrist(kategorie, start, start + timedelta(seconds=300))
+
+
+def test_schonfrist_gilt_nicht_fuer_andere_kategorien_und_ohne_startzeit():
+    from custom_components.eeg_energy_optimizer import _in_start_schonfrist
+
+    start = datetime(2026, 9, 29, 13, 25, tzinfo=timezone.utc)
+    jetzt = start + timedelta(seconds=10)
+    for kategorie in ("sensor_unavailable", "schedule_stale", "guard_emergency"):
+        assert not _in_start_schonfrist(kategorie, start, jetzt)
+    assert not _in_start_schonfrist("schedule_solver", None, jetzt)
+    # Zeitsprung rückwärts: keine Frist, lieber melden.
+    assert not _in_start_schonfrist("schedule_solver", start, start - timedelta(seconds=5))
+
+
+def test_snapshot_queue_sichern_schreibt_eine_kopie():
+    """Die Warteschlange geht als Kopie in den Store — ein späteres Anhängen
+    darf den geschriebenen Stand nicht mehr verändern."""
+    from custom_components.eeg_energy_optimizer import _snapshot_queue_sichern
+
+    gespeichert = []
+
+    class _Store:
+        async def async_save(self, inhalt):
+            gespeichert.append(inhalt)
+
+    tasks = []
+    hass = SimpleNamespace(async_create_task=lambda coro: tasks.append(coro))
+    queue = [{"ts": "a"}]
+    data = {"telemetry_snapshot_store": _Store(), "telemetry_snapshot_queue": queue}
+
+    _snapshot_queue_sichern(hass, data)
+    queue.append({"ts": "b"})
+
+    import asyncio
+    asyncio.run(tasks[0])
+    assert gespeichert == [{"queue": [{"ts": "a"}]}]
+
+
+def test_snapshot_queue_sichern_ohne_store_ist_ein_no_op():
+    from custom_components.eeg_energy_optimizer import _snapshot_queue_sichern
+
+    hass = SimpleNamespace(async_create_task=MagicMock())
+    _snapshot_queue_sichern(hass, {"telemetry_snapshot_queue": [{"ts": "a"}]})
+    hass.async_create_task.assert_not_called()

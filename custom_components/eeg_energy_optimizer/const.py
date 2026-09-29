@@ -509,6 +509,25 @@ TELEMETRY_BOOTSTRAP_TOKEN = "4c604d119e5e4c08f0a020e3d2aab487bcd05ab62de3fcaf0dd
 # damit ein korrupter Buffer die Identity nicht zerstören kann.
 STORAGE_TELEMETRY = f"{DOMAIN}.telemetry"
 STORAGE_TELEMETRY_BUFFER = f"{DOMAIN}.telemetry_buffer"
+# Warteschlange der Momentaufnahmen (je Eintrag, Schlüssel
+# ``{DOMAIN}_{entry_id}_telemetry_snapshots``). Sie wird nur stündlich
+# gesendet; im Speicher allein ging bei jedem Neustart bis zu eine Stunde
+# verloren — nach dem Update auf 2.1.30 fehlte der 13:03-Snapshot fast der
+# ganzen Flotte (29.09.2026).
+STORAGE_TELEMETRY_SNAPSHOTS_SUFFIX = "telemetry_snapshots"
+
+# Schonfrist nach dem Start. In den ersten Minuten liefern die Quell-
+# Integrationen noch nichts: ``huawei_solar`` hat keinen Ladestand, also
+# scheitert der erste Planlauf ("Batterie-Ladestand oder -Kapazität
+# unbekannt" — der Batteriepuffer ist nach dem Start leer), und
+# ``solax_modbus`` lehnt die Freigabe beim Start ab (HomeAssistantError).
+# Jedes Update meldete so auf halber Flotte Störungen, die nie welche waren
+# (Traun 18 von 18 zwischen 27. und 29.09.2026). Innerhalb der Frist wird
+# nicht gemeldet und nicht gezählt — ein Fehler, der danach noch besteht,
+# meldet sich also sofort. 300 s = ``BATTERIE_PUFFER_MAX_S`` und reicht für
+# die Startfreigabe des Executors (STARTUP_GRACE_SECONDS + drei Versuche).
+TELEMETRY_START_SCHONFRIST_S = 300
+TELEMETRY_START_SCHONFRIST_KATEGORIEN = frozenset({"schedule_solver", "inverter_write"})
 
 # Config-Entry-Flag, default False (08-03 ergänzt es via async_migrate_entry v12→v13).
 CONF_TELEMETRY_ENABLED = "telemetry_enabled"
