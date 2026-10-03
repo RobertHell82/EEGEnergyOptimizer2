@@ -1848,6 +1848,23 @@ class EegOptimizerPanel extends HTMLElement {
         break;
       case "show-entity": {
         const entityId = dataset.entity;
+        // Monat und Jahr: Der Standard-Dialog zeigt fix 24 Stunden — beim
+        // Monatswert sieht man so nur den heutigen Anstieg. Stattdessen den
+        // Verlauf ab Periodenbeginn öffnen (Bilanztag beginnt um 04:00).
+        const zeitraum = dataset.zeitraum;
+        if (entityId && (zeitraum === "monat" || zeitraum === "jahr")) {
+          const jetzt = new Date();
+          const bezug = new Date(jetzt.getTime() - 4 * 3600 * 1000);
+          const start = zeitraum === "monat"
+            ? new Date(bezug.getFullYear(), bezug.getMonth(), 1, 4)
+            : new Date(bezug.getFullYear(), 0, 1, 4);
+          const url = `/history?entity_id=${encodeURIComponent(entityId)}`
+            + `&start_date=${encodeURIComponent(start.toISOString())}`
+            + `&end_date=${encodeURIComponent(jetzt.toISOString())}`;
+          history.pushState(null, "", url);
+          window.dispatchEvent(new CustomEvent("location-changed", { detail: { replace: false } }));
+          break;
+        }
         if (entityId) {
           const event = new Event("hass-more-info", { composed: true, bubbles: true });
           event.detail = { entityId };
@@ -4204,10 +4221,10 @@ class EegOptimizerPanel extends HTMLElement {
     // Verlauf. Entity-IDs kommen aufgeloest aus dem Backend (die Entitaeten
     // koennen umbenannt worden sein), verlinkt wird nur, was auch da ist.
     const ent = b.entities || {};
-    const spalte = (titel, wert, gross, entity) => {
+    const spalte = (titel, wert, gross, entity, zeitraum = "heute") => {
       const klickbar = entity && this._readState(entity);
       const attrs = klickbar
-        ? ` class="bilanz-zeile-klickbar" data-action="show-entity" data-entity="${entity}" title="Verlauf anzeigen"`
+        ? ` class="bilanz-zeile-klickbar" data-action="show-entity" data-entity="${entity}" data-zeitraum="${zeitraum}" title="Verlauf anzeigen"`
         : "";
       return `
       <div${attrs} style="flex:1;min-width:0;text-align:center;border-radius:8px;padding:4px 2px">
@@ -4283,8 +4300,8 @@ class EegOptimizerPanel extends HTMLElement {
         </h3>
         <div style="display:flex;gap:8px;align-items:flex-end;margin-top:14px">
           ${spalte("heute", pv.heute, true, ent.pv_ersparnis?.heute)}
-          ${spalte("diesen Monat", pv.monat, false, ent.pv_ersparnis?.monat)}
-          ${spalte("dieses Jahr", pv.jahr, false, ent.pv_ersparnis?.jahr)}
+          ${spalte("diesen Monat", pv.monat, false, ent.pv_ersparnis?.monat, "monat")}
+          ${spalte("dieses Jahr", pv.jahr, false, ent.pv_ersparnis?.jahr, "jahr")}
         </div>
         ${davon}
         <div data-action="toggle-bilanz-details" style="margin-top:12px;font-size:13px;color:var(--primary-color,#03a9f4);cursor:pointer;user-select:none;text-align:center">
