@@ -4340,7 +4340,7 @@ class EegOptimizerPanel extends HTMLElement {
         : "";
       return `
       <div${attrs} style="flex:1;min-width:0;text-align:center;border-radius:8px;padding:4px 2px">
-        <div style="font-size:${gross ? (schmal ? "20px" : "26px") : "17px"};font-weight:600;color:var(--success-color,#0f9d58);white-space:nowrap">${eur(wert)}</div>
+        <div style="font-size:${schmal ? "18px" : "22px"};font-weight:600;color:var(--success-color,#0f9d58);white-space:nowrap">${eur(wert)}</div>
         <div style="font-size:12px;color:var(--secondary-text-color);margin-top:2px">${titel}</div>
       </div>`;
     };
