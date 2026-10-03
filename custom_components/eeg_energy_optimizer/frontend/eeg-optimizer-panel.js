@@ -73,6 +73,11 @@ const BETA_BADGE = `<span style="display:inline-block;margin-left:8px;padding:1p
   background:var(--warning-color,#ff9800);color:#fff;font-size:11px;font-weight:600;
   letter-spacing:.04em;vertical-align:middle">BETA</span>`;
 
+// Spitzenkappung vorerst ausgeblendet: kein Reiter in den Einstellungen.
+// Das Backend (spitzenkappung.py) bleibt, es schaltet nur bei
+// spitzenkappung_enabled — wieder einblenden heißt: true setzen.
+const SPITZENKAPPUNG_SICHTBAR = false;
+
 // Nur der Startwert, bis _resolveEntityIds die Registry gelesen hat. Der
 // Statussensor steht in beiden Schreibweisen drin — Bestandsinstallationen
 // haben ..._entscheidung, frische ..._fahrplan_status.
@@ -8312,6 +8317,7 @@ class EegOptimizerPanel extends HTMLElement {
     // Den Expertenmodus abzuschalten, während man im Verbraucher-Tab steht,
     // ließe sonst einen Inhalt ohne Reiter stehen.
     if ((activeTab === "verbraucher" || activeTab === "spitzenkappung") && !isExpert) activeTab = "tarife";
+    if (activeTab === "spitzenkappung" && !SPITZENKAPPUNG_SICHTBAR) activeTab = "tarife";
 
     const tabBar = `
       <div class="settings-tabs" role="tablist">
@@ -8332,10 +8338,11 @@ class EegOptimizerPanel extends HTMLElement {
           <ha-icon icon="mdi:power-plug-outline" style="--mdc-icon-size:18px"></ha-icon>
           <span>Verbraucher</span>
         </button>
+        ${SPITZENKAPPUNG_SICHTBAR ? `
         <button class="settings-tab ${activeTab === "spitzenkappung" ? "active" : ""}" data-action="set-settings-tab" data-tab="spitzenkappung" role="tab">
           <ha-icon icon="mdi:transmission-tower-import" style="--mdc-icon-size:18px"></ha-icon>
           <span>Spitzenkappung</span>
-        </button>` : ""}
+        </button>` : ""}` : ""}
         <button class="settings-tab ${activeTab === "system" ? "active" : ""}" data-action="set-settings-tab" data-tab="system" role="tab">
           <ha-icon icon="mdi:tune" style="--mdc-icon-size:18px"></ha-icon>
           <span>System</span>
