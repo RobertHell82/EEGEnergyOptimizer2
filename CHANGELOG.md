@@ -10,6 +10,12 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
+## [2.1.33] - 2026-10-03
+
+### Geändert
+
+- **Die Spitzenkappung ist vorerst ausgeblendet.** Der Reiter „Spitzenkappung“ erscheint in den Einstellungen nicht mehr, auch nicht im Expertenmodus. Die Funktion war als Beta gekennzeichnet und kommt zurück, wenn sie fertig erprobt ist. Wer zuletzt auf diesem Reiter stand, landet bei „Tarife“.
+
 ## [2.1.32] - 2026-10-03
 
 ### Hinzugefügt
