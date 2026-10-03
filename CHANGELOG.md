@@ -10,6 +10,16 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
+## [2.1.32] - 2026-10-03
+
+### Hinzugefügt
+
+- **Die Tarife auf einen Blick.** In der Kopfzeile der Karte „Was deine PV bringt“ steht jetzt ein €-Symbol. Beim Darüberfahren (am Handy beim Antippen) zeigt es die Sätze, mit denen die Karte rechnet: beim Strombezug Arbeitspreis, Netzgebühr samt Netzbereich und den Bezugspreis gesamt, mit verbilligtem Netzentgelt auch die Sätze für Sommer mittags und Winter nachts; bei der Einspeisung die Standardvergütung aus der gewählten Quelle mit ihrem aktuellen Wert und die Energiegemeinschaft mit Anteil, Preis und gegebenenfalls Abnahmequote. Die Zeilen stammen aus derselben Rechnung wie die Zusammenfassung des Assistenten.
+
+### Behoben
+
+- **Geänderte Einstellungen wirken sofort.** Nach dem Speichern holt die Integration die Fremddaten (Gemeinschaftsbedarf, Tarife) gleich neu und rechnet den Fahrplan neu. Bisher blieb das bis zum nächsten 30-Minuten-Takt liegen: Ansfelden wechselte von der festen Abnahmequote auf die PeakShare-Prognose, und der Plan rechnete weiter mit einem Bedarf der Gemeinschaft, der seit dem 11.09. im Zwischenspeicher lag.
+
 ## [2.1.31] - 2026-09-29
 
 ### Behoben
