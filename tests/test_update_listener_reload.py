@@ -55,3 +55,41 @@ def test_settings_only_change_uses_hot_reload():
 
 def test_identical_config_uses_hot_reload():
     assert _requires_full_reload(BASE, dict(BASE)) is False
+
+
+async def test_hot_reload_holt_fremddaten_und_rechnet_neu():
+    """Nach dem Speichern sofort abrufen und rechnen, nicht erst im Takt.
+
+    Ansfelden, 02.10.2026: Wechsel von fester Quote auf PeakShare-Prognose —
+    der Plan rechnete eine halbe Stunde mit einem drei Wochen alten Cache.
+    """
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock, MagicMock
+
+    from custom_components.eeg_energy_optimizer import (
+        DOMAIN,
+        _async_update_listener,
+    )
+
+    nachlauf = AsyncMock()
+    tasks = []
+    hass = MagicMock()
+    hass.async_create_task = lambda coro: tasks.append(coro)
+    data = {
+        "platforms_loaded": True,
+        "config": dict(BASE),
+        "executor": MagicMock(),
+        "nach_einstellungen": nachlauf,
+    }
+    hass.data = {DOMAIN: {"e1": data}}
+    entry = SimpleNamespace(
+        entry_id="e1",
+        data={**BASE, "eeg_demand_source": "peakshare"},
+        options={},
+    )
+
+    await _async_update_listener(hass, entry)
+
+    assert len(tasks) == 1
+    await tasks[0]
+    nachlauf.assert_awaited_once()

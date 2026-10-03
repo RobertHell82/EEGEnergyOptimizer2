@@ -1212,10 +1212,14 @@ class BezugsspitzeMonatSensor(SensorEntity):
     _attr_device_class = SensorDeviceClass.POWER
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_suggested_display_precision = 2
+    # Wechselt mit jedem Schalten — gehört ins Aktivitätsprotokoll, nicht
+    # in die Recorder-Datenbank.
+    _unrecorded_attributes = frozenset({"kappung"})
 
     def __init__(self, hass: Any, entry: Any, spitze: Any) -> None:
         self.hass = hass
         self._spitze = spitze
+        self._entry_id = entry.entry_id
         self._attr_unique_id = f"{DOMAIN}_{entry.entry_id}_bezugsspitze_monat"
         self._attr_device_info = _device_info(entry.entry_id)
         self._attr_native_value: float | None = None
@@ -1238,6 +1242,15 @@ class BezugsspitzeMonatSensor(SensorEntity):
         from .leistungsspitze import netzkosten_monat
 
         attrs["netzkosten_monat"] = netzkosten_monat(spitze["kw"] if spitze else None)
+        # Spitzenkappung (Beta): was gerade abgeschaltet ist und ab welcher
+        # Hochrechnung geschaltet wird. Nur, solange sie eingeschaltet ist.
+        kappung = (
+            (self.hass.data.get(DOMAIN, {}).get(self._entry_id) or {}).get("spitzenkappung")
+            if self.hass is not None
+            else None
+        )
+        if kappung is not None and kappung.aktiv:
+            attrs["kappung"] = kappung.status()
         self._attr_extra_state_attributes = attrs
 
 
@@ -2211,6 +2224,11 @@ async def async_setup_entry(
             sensor.async_write_ha_state()
 
         entry.async_on_unload(leistungsspitze.add_listener(_spitze_push))
+        # Die Spitzenkappung meldet jedes Schalten — die Statuskarte zeigt es
+        # über die Attribute der Bezugsspitze, ohne auf den Fast-Takt zu warten.
+        spitzenkappung = data.get("spitzenkappung")
+        if spitzenkappung is not None:
+            entry.async_on_unload(spitzenkappung.add_listener(_spitze_push))
 
     slow_sensors: list[SensorEntity] = [profil_sensor]
     fast_sensors: list[SensorEntity] = (

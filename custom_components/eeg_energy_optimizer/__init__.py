@@ -1653,6 +1653,45 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     leistungsspitze.async_start(entry)
     hass.data[DOMAIN][entry.entry_id]["leistungsspitze"] = leistungsspitze
 
+    # Spitzenkappung (Beta): schaltet konfigurierte Verbraucher ab, bevor
+    # die laufende Viertelstunde die Bezugsspitze hebt — Einzelheiten in
+    # spitzenkappung.py. Läuft immer mit und tut nichts, solange sie in der
+    # Konfiguration aus ist; so braucht das Einschalten keinen Reload.
+    from .spitzenkappung import Spitzenkappung
+
+    def _spitzenkappung_darf() -> bool:
+        """Nur im Modus Ein und ohne Pause — wie jeder andere Eingriff."""
+        eintrag = hass.data[DOMAIN].get(entry.entry_id) or {}
+        select = eintrag.get("select")
+        if select is None or select._attr_current_option != MODE_EIN:
+            return False
+        override = eintrag.get("override")
+        if override is not None:
+            jetzt = dt_util.now() if dt_util is not None else _now_utc()
+            try:
+                if override.pause_bis(jetzt) is not None:
+                    return False
+            except Exception:  # noqa: BLE001 — im Zweifel nicht eingreifen
+                return False
+        return True
+
+    def _spitzenkappung_protokoll(zustand: str, grund: str) -> None:
+        eintragen = (hass.data[DOMAIN].get(entry.entry_id) or {}).get("activity_eintrag")
+        if eintragen is not None:
+            eintragen(zustand, grund)
+
+    spitzenkappung = Spitzenkappung(
+        hass,
+        entry.entry_id,
+        lambda: (hass.data[DOMAIN].get(entry.entry_id) or {}).get("config") or config,
+        leistungsspitze,
+        _spitzenkappung_darf,
+        _spitzenkappung_protokoll,
+    )
+    await spitzenkappung.async_load()
+    spitzenkappung.async_start(entry)
+    hass.data[DOMAIN][entry.entry_id]["spitzenkappung"] = spitzenkappung
+
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     hass.data[DOMAIN][entry.entry_id]["platforms_loaded"] = True
 
@@ -2039,6 +2078,22 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             hass.bus.async_fire("eeg_optimizer_activity", entry_data)
             hass.async_create_task(_save_activity_log())
 
+        def _activity_eintrag(zustand, grund):
+            """Eintrag von außerhalb des Guard-Laufs (Spitzenkappung)."""
+            entry_data = {
+                "timestamp": _now_utc().isoformat(),
+                "zustand": zustand,
+                "reason": grund,
+                "status": grund,
+                "soc": _read_soc(),
+                "ausführung": True,
+            }
+            activity_log.append(entry_data)
+            hass.bus.async_fire("eeg_optimizer_activity", entry_data)
+            hass.async_create_task(_save_activity_log())
+
+        data["activity_eintrag"] = _activity_eintrag
+
         # Ein Guard-Lauf zur Zeit. Er wird von fünf Stellen angestoßen (Timer,
         # Update-Listener, Pause-Service, WS set_override/clear_override,
         # Setup) und schreibt dazwischen mehrfach an den Wechselrichter —
@@ -2419,6 +2474,20 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 entry.async_on_unload(
                     async_call_later(hass, FREMDDATEN_ERSTLAUF_S, _fremddaten_cycle)
                 )
+            # Nach dem Speichern der Einstellungen: Fremddaten sofort holen
+            # und neu rechnen. Der Hot-Reload baut keinen Anbieter neu, und
+            # ohne diesen Lauf kam z. B. nach dem Wechsel von der festen
+            # Quote auf die PeakShare-Prognose der erste Abruf erst mit dem
+            # 30-Minuten-Takt — bis dahin rechnete der Plan mit einem Cache
+            # von vor drei Wochen, also ohne Bedarf (Ansfelden, 02.10.2026).
+            # Die Anbieter prüfen ihre Frist selbst; was frisch ist, geht
+            # nicht ins Netz.
+            async def _nach_einstellungen():
+                await _fremddaten_cycle()
+                await _schedule_cycle()
+
+            data["nach_einstellungen"] = _nach_einstellungen
+
             # Erster Lauf als Task: beim Boot sind PV-Prognose und
             # Batteriesensoren oft noch nicht da, das Setup soll nicht warten.
             hass.async_create_task(_schedule_cycle())
@@ -2815,6 +2884,9 @@ async def _async_update_listener(
         if ambibox is not None:
             ambibox.update_config(config)
         _LOGGER.info("EEG Energy Optimizer: Config hot-reloaded")
+        nachlauf = data.get("nach_einstellungen")
+        if nachlauf is not None:
+            hass.async_create_task(nachlauf())
 
         # ----------------------------------------------------------
         # Phase 8: Profile-Update bei Settings-Change (D-17, W-3, I-4)
@@ -2893,6 +2965,9 @@ async def _stilllegen(data: dict) -> None:
     heizstab = data.get("heizstab")
     if heizstab is not None:
         heizstab.stilllegen()
+    spitzenkappung = data.get("spitzenkappung")
+    if spitzenkappung is not None:
+        spitzenkappung.stilllegen()
     lock = data.get("guard_lock")
     if lock is not None and lock.locked():
         async def _warten() -> None:
@@ -3014,6 +3089,17 @@ async def async_unload_entry(
     # weiter. Der Eintrag bleibt dann passiv (freigegeben, Heizstab 0), bis
     # ein erneutes Laden oder ein Neustart ihn neu aufsetzt.
     await _freigeben(data, nur_bei_eingriff=False)
+
+    # Spitzenkappung: abgeschaltete Verbraucher zurückgeben. Nur hier, nicht
+    # beim Herunterfahren von HA — dort bleibt der gemerkte Stand stehen,
+    # und nach dem Neustart schaltet die Wache selbst wieder ein, sobald
+    # Platz ist.
+    spitzenkappung = data.get("spitzenkappung")
+    if spitzenkappung is not None:
+        try:
+            await spitzenkappung.async_shutdown()
+        except Exception:
+            _LOGGER.exception("EEG Energy Optimizer: error shutting down Spitzenkappung")
 
     if unload_ok:
         # Close inverter resources (e.g. Fronius pymodbus TCP socket)

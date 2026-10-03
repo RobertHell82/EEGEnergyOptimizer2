@@ -341,6 +341,10 @@ class Leistungsspitze:
             "start": self._q_start.isoformat(),
             "bisher_kw": round(energie / 0.25, 3),
             "hochrechnung_kw": None,
+            # Für die Spitzenkappung: aktueller Bezug (None = nicht frisch)
+            # und was von der Viertelstunde noch übrig ist.
+            "bezug_kw": kw_jetzt,
+            "rest_s": round(rest_s, 1),
         }
         if kw_jetzt is not None:
             ergebnis["hochrechnung_kw"] = round(

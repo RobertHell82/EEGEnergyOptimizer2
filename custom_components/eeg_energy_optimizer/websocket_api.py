@@ -596,6 +596,15 @@ async def ws_save_config(
         connection.send_error(msg["id"], "invalid_config", fehler)
         return
 
+    # Spitzenkappung: die Liste kommt als Ganzes. Am Panel vorbei soll weder
+    # ein beliebiger Dienst (light., lock., …) noch eine endlose Liste
+    # hereinkommen — geschaltet wird nur switch./input_boolean.
+    if "spitzenkappung_verbraucher" in msg["config"]:
+        fehler = _pruefe_verbraucher(msg["config"]["spitzenkappung_verbraucher"])
+        if fehler:
+            connection.send_error(msg["id"], "invalid_config", fehler)
+            return
+
     # Fronius: server-side validation of the Modbus endpoint. The frontend
     # already checks "non-empty host", but we cannot trust the WebSocket
     # client. An empty/garbage host or out-of-range port would later surface
@@ -912,7 +921,40 @@ _ZAHLENFELDER: dict[str, tuple[str, float, float]] = {
     "inverter_ac_limit_kw": ("AC-Grenzleistung", 0.0, 1000.0),
     "pv_peak_kwp": ("PV-Spitzenleistung", 0.0, 1000.0),
     "discharge_power_kw": ("Batterie-Leistungsgrenze", 0.0, 1000.0),
+    # 0 = leer; unter 2 kW klemmt spitzenkappung.grenze_aus_config hoch.
+    "spitzenkappung_grenze_kw": ("Grenzwert der Spitzenkappung", 0.0, 20.0),
 }
+
+
+def _pruefe_verbraucher(liste: Any) -> str | None:
+    """Erste Fehlermeldung für die Verbraucherliste der Spitzenkappung."""
+    from .spitzenkappung import MAX_VERBRAUCHER, SCHALT_DOMAENEN
+
+    if liste is None:
+        return None
+    if not isinstance(liste, list):
+        return "Ungültige Verbraucherliste"
+    if len(liste) > MAX_VERBRAUCHER:
+        return f"Höchstens {MAX_VERBRAUCHER} Verbraucher"
+    for i, eintrag in enumerate(liste, start=1):
+        if not isinstance(eintrag, dict):
+            return f"Verbraucher {i}: ungültiger Eintrag"
+        name = eintrag.get("name") or ""
+        if not isinstance(name, str) or len(name) > 40:
+            return f"Verbraucher {i}: ungültiger Name"
+        for feld, domaenen in (
+            ("schalter_entity", SCHALT_DOMAENEN),
+            ("leistung_entity", ("sensor",)),
+        ):
+            wert = eintrag.get(feld) or ""
+            if not isinstance(wert, str) or len(wert) > 255:
+                return f"Verbraucher {i}: ungültige Entität"
+            if wert and wert.split(".", 1)[0] not in domaenen:
+                return (
+                    f"Verbraucher {i}: {wert} ist kein "
+                    + " / ".join(f"{d}." for d in domaenen)
+                )
+    return None
 
 
 def _pruefe_zahlen(config: dict) -> str | None:

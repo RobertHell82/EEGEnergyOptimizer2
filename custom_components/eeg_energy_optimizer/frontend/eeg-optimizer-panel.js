@@ -693,7 +693,7 @@ class EegOptimizerPanel extends HTMLElement {
     this._statusViewVariant = "values";
     this._forecastOpen = this._loadPref("forecast_open", "1", ["0", "1"]) === "1";
     this._settingsTab = this._loadPref("settings_tab", "tarife",
-      ["tarife", "anlage", "prognose", "verbraucher", "system",
+      ["tarife", "anlage", "prognose", "verbraucher", "spitzenkappung", "system",
        // Aliasse aus Vorversionen — werden in _renderSettings abgebildet
        "fahrplan", "wechselrichter", "batterie", "gemeinschaft", "advanced",
        "einspeisegrenze", "telemetry", "heizstab"]);
@@ -1011,6 +1011,12 @@ class EegOptimizerPanel extends HTMLElement {
         this._flaecheEingabe(flaeche);
         return;
       }
+      // Verbraucherliste der Spitzenkappung: dieselbe Weiche wie die Flächen.
+      const verbraucher = e.target.closest("[data-verbraucher]");
+      if (verbraucher) {
+        this._verbraucherEingabe(verbraucher);
+        return;
+      }
       const target = e.target.closest("[data-field]");
       if (target) {
         const field = target.dataset.field;
@@ -1101,6 +1107,7 @@ class EegOptimizerPanel extends HTMLElement {
       // Flächentabelle der eigenen PV-Prognose: schon im input-Handler
       // übernommen, hier nur die Weiche, damit kein data-field-Vorfahr greift.
       if (e.target.closest("[data-flaeche]")) return;
+      if (e.target.closest("[data-verbraucher]")) return;
       const target = e.target.closest("[data-field]");
       if (target) {
         const field = target.dataset.field;
@@ -1675,6 +1682,7 @@ class EegOptimizerPanel extends HTMLElement {
         // als geteilte Referenz sähe die Änderungserkennung beim Speichern
         // keinen Unterschied zur Konfiguration. Deshalb eine tiefe Kopie.
         this._settingsData.pv_flaechen = JSON.parse(JSON.stringify(this._config?.pv_flaechen || []));
+        this._settingsData.spitzenkappung_verbraucher = JSON.parse(JSON.stringify(this._config?.spitzenkappung_verbraucher || []));
         this._gem2Open = false;
         this._view = "settings";
         // Der Tarif steht in den Einstellungen; ohne Wert wäre der
@@ -1919,6 +1927,23 @@ class EegOptimizerPanel extends HTMLElement {
           this._saveWizardProgress();
           this._render();
         }
+        break;
+      }
+      case "add-verbraucher": {
+        const liste = this._settingsData.spitzenkappung_verbraucher ||= [];
+        if (liste.length < 10) liste.push({ name: "", leistung_entity: "", schalter_entity: "" });
+        this._render();
+        break;
+      }
+      case "remove-verbraucher":
+      case "verbraucher-hoch": {
+        const liste = this._settingsData.spitzenkappung_verbraucher || [];
+        const idx = Number(dataset?.index);
+        if (idx >= 0 && idx < liste.length) {
+          if (action === "remove-verbraucher") liste.splice(idx, 1);
+          else if (idx > 0) [liste[idx - 1], liste[idx]] = [liste[idx], liste[idx - 1]];
+        }
+        this._render();
         break;
       }
       case "add-flaeche": {
@@ -2761,6 +2786,17 @@ class EegOptimizerPanel extends HTMLElement {
     if (d.forecast_source === "eigen" || d.pv_prognose_vergleich) {
       const flaechenFehler = this._flaechenFehler(d);
       if (flaechenFehler) fehlt.push(flaechenFehler);
+    }
+    if (d.spitzenkappung_enabled) {
+      const g = Number(d.spitzenkappung_grenze_kw);
+      if (!(g >= 2 && g <= 20)) fehlt.push("Grenzwert der Spitzenkappung (2 bis 20 kW)");
+      const liste = Array.isArray(d.spitzenkappung_verbraucher) ? d.spitzenkappung_verbraucher : [];
+      if (liste.length === 0) fehlt.push("mindestens ein Verbraucher für die Spitzenkappung");
+      liste.forEach((v, i) => {
+        if (!String(v.leistung_entity || "").trim() || !String(v.schalter_entity || "").trim()) {
+          fehlt.push(`Leistungssensor und Schalter für Verbraucher ${i + 1} (Spitzenkappung)`);
+        }
+      });
     }
     if (d.heizstab_enabled) {
       if (!String(d.heizstab_host || "").trim()) fehlt.push("Adresse des Ohmpilot (Heizstab)");
@@ -4105,6 +4141,51 @@ class EegOptimizerPanel extends HTMLElement {
   // Vorausschau — neben drei gemessenen Zahlen las er sich wie eine vierte.
   // Vorausgeschaut wird in der Karte „Optimierungsgewinn"; die Sensoren
   // „Ersparnis durch Optimierung" gibt es unveraendert weiter.
+  // €-Symbol in der Kopfzeile von „Was deine PV bringt": die Sätze, mit
+  // denen die Beträge darunter bewertet sind — kurz, ohne Herleitung (die
+  // steht in den Einstellungen unter Tarife). Dieselben Zeilen wie die
+  // Zusammenfassung des Assistenten (_tarifZeilen), nur knapper beschriftet.
+  _renderTarifPopup() {
+    const d = this._config;
+    if (!d) return "";
+    // Was die Zeilen brauchen, nachladen — je Quelle nur den einen Abruf.
+    this._ensureNetzentgelte();
+    const quelle = d.schedule_feedin_source || "manual";
+    if (quelle === "oemag" || quelle === "oemag_estimate") this._ensureOemagTarif();
+    if (quelle === "spot") this._ensureSpotStatus();
+    if (quelle === "awattar_sunny") this._ensureSunnyStatus();
+    if (quelle === "energie_ag" || quelle === "energie_ag_estimate") this._ensureEnergieAgStatus();
+
+    const KURZ = {
+      "Bezugspreis": "Bezugspreis gesamt",
+      "Bezugspreis Sommer mittags": "Sommer mittags",
+      "Bezugspreis Winter nachts": "Winter nachts",
+      "Standardvergütung Nacht": "nachts",
+    };
+    const zeilen = this._tarifZeilen(d);
+    const block = (titel, gruppen) => {
+      const inhalt = zeilen.filter((z) => gruppen.includes(z.gruppe)).map((z) => {
+        const summe = z.label === "Bezugspreis";
+        return `
+          <div style="display:flex;justify-content:space-between;gap:12px;padding:2px 0${summe ? ";border-top:1px solid var(--divider-color,#e0e0e0);margin-top:3px;padding-top:5px;font-weight:600" : ""}">
+            <span style="color:${summe ? "inherit" : "var(--secondary-text-color)"}">${this._escapeHtml(KURZ[z.label] || z.label)}</span>
+            <span style="text-align:right;font-variant-numeric:tabular-nums">${this._escapeHtml(z.wert)}</span>
+          </div>`;
+      }).join("");
+      return `<div style="font-weight:600;margin:10px 0 2px">${titel}</div>${inhalt}`;
+    };
+    return `
+      <span class="info-popup-trigger">
+        <ha-icon icon="mdi:currency-eur" style="--mdc-icon-size:18px;color:var(--secondary-text-color);cursor:pointer"></ha-icon>
+        <div class="info-popup">
+          <strong>Deine Tarife</strong>
+          ${block("Strombezug", ["bezug"])}
+          ${block("Einspeisung", ["einspeisung", "gemeinschaft"])}
+          <p style="color:var(--secondary-text-color);margin-top:10px">Mit diesen Sätzen sind die Beträge dieser Karte bewertet. Ändern unter Einstellungen → Tarife.</p>
+        </div>
+      </span>`;
+  }
+
   _renderBilanzKarte() {
     const b = this._bilanz;
     if (!b || !b.verfuegbar) return "";
@@ -4193,6 +4274,7 @@ class EegOptimizerPanel extends HTMLElement {
         <h3 style="margin:0 0 4px">
           <ha-icon icon="mdi:piggy-bank-outline" style="--mdc-icon-size:20px;color:var(--primary-color,#03a9f4);vertical-align:middle"></ha-icon>
           Was deine PV bringt
+          ${this._renderTarifPopup()}
         </h3>
         <div style="display:flex;gap:8px;align-items:flex-end;margin-top:14px">
           ${spalte("heute", pv.heute, true, ent.pv_ersparnis?.heute)}
@@ -7810,6 +7892,91 @@ class EegOptimizerPanel extends HTMLElement {
       .slice(0, 400);
   }
 
+  _verbraucherEingabe(el) {
+    // data-verbraucher = Index, data-key = Feld. Ohne data-field aus
+    // demselben Grund wie die Flächentabelle (siehe _flaecheEingabe).
+    const liste = this._settingsData?.spitzenkappung_verbraucher;
+    const idx = Number(el.dataset.verbraucher);
+    if (!Array.isArray(liste) || !liste[idx]) return;
+    liste[idx][el.dataset.key] = String(el.value || "").trim();
+  }
+
+  _spitzenkappungFields(d, prefix) {
+    // Verbraucher abschalten, bevor die laufende Viertelstunde die
+    // Bezugsspitze hebt (spitzenkappung.py). Geschaltet wird switch.* und
+    // input_boolean.*, die Leistung kommt aus einem Sensor.
+    const esc = (v) => this._escapeHtml(v ?? "");
+    const liste = Array.isArray(d.spitzenkappung_verbraucher) ? d.spitzenkappung_verbraucher : [];
+    const states = this._hass?.states || {};
+    const schalter = Object.keys(states)
+      .filter(e => e.startsWith("switch.") || e.startsWith("input_boolean.")).sort().slice(0, 400);
+    const leistung = Object.keys(states)
+      .filter(e => e.startsWith("sensor.")
+        && ["w", "kw"].includes(String(states[e]?.attributes?.unit_of_measurement || "").toLowerCase()))
+      .sort().slice(0, 400);
+
+    // Was gerade abgeschaltet ist — aus den Attributen der Bezugsspitze.
+    const kappung = this._readState(this._entityIds?.bezugsspitze_monat)?.attributes?.kappung;
+    const ab = kappung?.abgeschaltet || [];
+    const zustand = !kappung ? "" : `
+      <div class="help-text" style="margin-bottom:12px">
+        ${kappung.schwelle_kw != null
+          ? `Geschaltet wird ab einer Hochrechnung von <strong>${fmtDe(Number(kappung.schwelle_kw), 2)} kW</strong>. `
+          : "Gerade nicht aktiv — die Optimierung ist aus oder pausiert. "}
+        ${ab.length ? `Abgeschaltet: ${ab.map(x => `<strong>${esc(x.name || x.entity)}</strong>`).join(", ")}.` : "Abgeschaltet ist nichts."}
+        ${kappung.fehler ? `<br><span style="color:var(--error-color,#db4437)">Letzter Schaltfehler: ${esc(kappung.fehler)}</span>` : ""}
+      </div>`;
+
+    const zeilen = liste.map((v, i) => `
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;padding:10px 0;border-top:1px solid var(--divider-color,#e0e0e0)">
+        <div class="field-group" style="flex:1;min-width:120px;margin:0">
+          <label>${i + 1}. Name</label>
+          <input type="text" data-verbraucher="${i}" data-key="name" value="${esc(v.name)}" placeholder="z.B. Tesla" maxlength="40">
+        </div>
+        <div class="field-group" style="flex:2;min-width:200px;margin:0">
+          <label>Leistung (Sensor in W oder kW) *</label>
+          <input type="text" list="eeg-kappung-leistung" data-verbraucher="${i}" data-key="leistung_entity" value="${esc(v.leistung_entity)}" placeholder="sensor.tesla_charger_power">
+        </div>
+        <div class="field-group" style="flex:2;min-width:200px;margin:0">
+          <label>Schalter *</label>
+          <input type="text" list="eeg-kappung-schalter" data-verbraucher="${i}" data-key="schalter_entity" value="${esc(v.schalter_entity)}" placeholder="switch.tesla_charge">
+        </div>
+        <div style="display:flex;gap:4px">
+          <button class="btn-secondary" data-action="verbraucher-hoch" data-index="${i}" title="Früher abschalten" ${i === 0 ? "disabled" : ""} style="padding:8px 10px">
+            <ha-icon icon="mdi:arrow-up" style="--mdc-icon-size:18px"></ha-icon>
+          </button>
+          <button class="btn-secondary" data-action="remove-verbraucher" data-index="${i}" title="Verbraucher entfernen" style="padding:8px 10px">
+            <ha-icon icon="mdi:delete-outline" style="--mdc-icon-size:18px"></ha-icon>
+          </button>
+        </div>
+      </div>`).join("");
+
+    return this._featureCard({
+      on: !!d.spitzenkappung_enabled,
+      action: prefix ? "toggle-settings-feature" : "toggle-feature",
+      feature: "spitzenkappung_enabled",
+      icon: "mdi:transmission-tower-import",
+      titel: "Bezugsspitzen kappen",
+      beschreibung: "Ab 2027 kostet der höchste Viertelstunden-Bezug des Monats extra. Droht die laufende Viertelstunde über den Grenzwert und über die bisherige Monatsspitze zu steigen, schaltet die Integration die Verbraucher unten der Reihe nach ab — und wieder ein, sobald sie eine volle Viertelstunde lang Platz hätten. Gemessen wird am Netz, also nach der Batterie: Was sie deckt, zählt gar nicht erst. Ist die Optimierung aus oder pausiert, wird alles wieder eingeschaltet.",
+      params: `
+        ${zustand}
+        <div class="field-group">
+          <label>Grenzwert (kW) *</label>
+          <input type="number" data-field="${prefix}spitzenkappung_grenze_kw" value="${d.spitzenkappung_grenze_kw ?? 5}" min="2" max="20" step="0.1">
+          <div class="help-text">Bis hierher darf eine Viertelstunde im Mittel gehen. Liegt die Monatsspitze schon höher, gilt sie — bis dorthin kostet es nichts mehr. Unter 2 kW geht es nicht: So viel wird ohnehin mindestens verrechnet. Ein Verbraucher kommt nur zurück, wenn er neben dem übrigen Haus unter die Schwelle passt — ein 11-kW-Auto unter 5 kW also nie.</div>
+        </div>
+        <datalist id="eeg-kappung-leistung">${leistung.map(e => `<option value="${esc(e)}"></option>`).join("")}</datalist>
+        <datalist id="eeg-kappung-schalter">${schalter.map(e => `<option value="${esc(e)}"></option>`).join("")}</datalist>
+        <div class="help-text" style="margin-bottom:4px">Verbraucher in der Reihenfolge, in der abgeschaltet wird. Der Leistungssensor zeigt, ob der Verbraucher gerade läuft und wie viel das Abschalten bringt — geschaltet wird nur, was läuft. Was jemand von Hand wieder einschaltet, bleibt an, bis die nächste Spitze droht.</div>
+        ${zeilen}
+        <div style="padding-top:10px;border-top:1px solid var(--divider-color,#e0e0e0)">
+          <button class="btn-secondary" data-action="add-verbraucher" ${liste.length >= 10 ? "disabled" : ""}>
+            <ha-icon icon="mdi:plus" style="--mdc-icon-size:18px"></ha-icon> Verbraucher hinzufügen
+          </button>
+        </div>`,
+    });
+  }
+
   _heizstabFields(d, prefix) {
     // Heizstab (Fronius Ohmpilot per Modbus TCP) als Senke für Überschuss,
     // den weder Batterie noch Netz aufnehmen. Nur in den Einstellungen —
@@ -7941,17 +8108,6 @@ class EegOptimizerPanel extends HTMLElement {
     // landen hier — row() escapt beides, die Aufrufer übergeben kein HTML.
     const row = (label, value) =>
       `<div class="summary-row"><span class="label">${this._escapeHtml(label)}</span><span class="value">${this._escapeHtml(value)}</span></div>`;
-    const preis = (v, fallback) => `${fmtDe(ctAus(v ?? fallback), 2)} ct/kWh`;
-    // aWATTar SUNNY: der Wert der gewählten Vertragsvariante, falls geholt.
-    const sunnyWert = this._sunnyStatus?.[d.awattar_sunny_vertrag === "alt" ? "alt" : "neu"];
-    // Energie AG: der Wert der gewählten Preisvariante, bei der Hochrechnung
-    // deren Wert — genau das, womit der Fahrplan rechnet.
-    const eagVar = d.energie_ag_variante === "loyal_float" ? "loyal_float" : "float";
-    const eagQuelle = (d.schedule_feedin_source || "manual") === "energie_ag_estimate";
-    const eagHoch = this._energieAgStatus?.schaetzung?.[eagVar];
-    const eagWert = eagQuelle && eagHoch != null
-      ? eagHoch
-      : this._energieAgStatus?.[eagVar]?.preis;
 
     return `
       <p style="margin-bottom:16px;color:var(--secondary-text-color)">
@@ -8033,73 +8189,102 @@ class EegOptimizerPanel extends HTMLElement {
 
       <div class="summary-section">
         <h3>Tarife &amp; Gemeinschaft</h3>
-        ${row("Standardvergütung", (d.schedule_feedin_source || "manual") === "oemag"
-          ? (this._oemagStatus?.preis
-            ? `OeMAG — ${fmtDe(this._oemagStatus.preis * 100, 3)} ct/kWh`
-            : "OeMAG (noch nicht geholt)")
-          : (d.schedule_feedin_source || "manual") === "oemag_estimate"
-          ? (this._oemagStatus?.schaetzung?.preis
-            ? `OeMAG hochgerechnet — ${fmtDe(this._oemagStatus.schaetzung.preis * 100, 3)} ct/kWh`
-            : this._oemagStatus?.preis
-              ? `OeMAG hochgerechnet (noch nicht berechnet, vorerst ${fmtDe(this._oemagStatus.preis * 100, 3)} ct/kWh)`
-              : "OeMAG hochgerechnet (noch nicht berechnet)")
-          : (d.schedule_feedin_source || "manual") === "spot"
-          ? `Spotpreis ${(d.spot_market_area || "at") === "de" ? "EPEX DE" : "EPEX AT"}`
-            + (Number(d.spot_feedin_fee ?? 0) !== 0 ? ` − ${fmtDe(ctAus(d.spot_feedin_fee), 2)} ct Abschlag` : "")
-            + (Number(d.spot_feedin_fee_pct ?? 0) !== 0 ? ` − ${fmtDe(Number(d.spot_feedin_fee_pct), 1)} % vom Betrag` : "")
-            + (this._spotStatus?.preis != null ? ` (jetzt ${fmtDe(this._spotStatus.preis * 100, 2)} ct/kWh)` : "")
-          : (d.schedule_feedin_source || "manual") === "awattar_sunny"
-          ? (sunnyWert && sunnyWert.preis != null
-            ? `aWATTar SUNNY — ${fmtDe(sunnyWert.preis * 100, 3)} ct/kWh${d.awattar_sunny_vertrag === "alt" ? " (Altvertrag)" : ""}`
-            : "aWATTar SUNNY (noch nicht geholt)")
-          : ["energie_ag", "energie_ag_estimate"].includes(d.schedule_feedin_source || "manual")
-          ? (eagWert != null
-            ? `Energie AG ${eagVar === "loyal_float" ? "Loyal Float" : "Float"} — ${fmtDe(eagWert * 100, 3)} ct/kWh${eagQuelle ? " (laufender Monat, hochgerechnet)" : ""}`
-            : "Energie AG Team Sonne Float (noch nicht geholt)")
-          : preis(d.schedule_feedin_price, 0.082))}
-        ${(d.schedule_feedin_source || "manual") === "manual" && Number(d.schedule_feedin_price_night ?? 0) > 0
-          ? row("Standardvergütung Nacht", `${preis(d.schedule_feedin_price_night, 0)} (${d.schedule_night_start || "20:00"}–${d.schedule_night_end || "06:00"})`)
-          : ""}
-        ${row("Arbeitspreis", preis(d.schedule_energy_price, 0.20))}
-        ${(() => {
-          const satz = netzsaetze(d, this._netzentgelte);
-          if (!satz) return "";
-          const bereichName = satz.manuell
-            ? "von Hand"
-            : (NETZBEREICHE.find(([k]) => k === d.schedule_netzbereich)?.[1] || "");
-          return row("Netzgebühr", `${preis(satz.ap, 0)} (${bereichName})`);
-        })()}
-        ${row("Bezugspreis", preis(bezugspreisSumme(d, this._netzentgelte), 0.26))}
-        ${d.schedule_snap_enabled && bezugspreisFenster(d, this._netzentgelte, "snap") != null
-          ? row("Bezugspreis Sommer mittags", `${preis(bezugspreisFenster(d, this._netzentgelte, "snap"), 0)} (Apr–Sep, 10:00–16:00)`)
-          : ""}
-        ${d.schedule_snap_enabled && bezugspreisFenster(d, this._netzentgelte, "winap") != null
-          ? row("Bezugspreis Winter nachts", `${preis(bezugspreisFenster(d, this._netzentgelte, "winap"), 0)} (Okt–Mär, 22:00–04:00)`)
-          : ""}
-        ${row("Energiegemeinschaft", d.enable_peakshare !== false
-          ? `${d.peakshare_community || "BEG"} — ${(d.eeg_demand_source || "peakshare") === "quote" ? "feste Abnahmequote" : "PeakShare-Prognose"}`
-          : "Aus")}
-        ${[["", d.peakshare_community], ["_2", d.peakshare_community_2]]
-          .filter(([sfx, name]) => name && Number(d[`peakshare_share_pct${sfx}`] ?? 0) > 0)
-          .map(([sfx, name]) => row(
-            `Anteil ${name}`,
-            `${fmtDe(Number(d[`peakshare_share_pct${sfx}`]), 0)} % zu `
-            + `${preis(d[`peakshare_price${sfx}`], 0.102)}`
-            + (Number(d[`peakshare_weight${sfx}`] ?? 0) > 0
-              ? ` + ${fmtDe(Number(d[`peakshare_weight${sfx}`]) * 100, 1)} ct Gewichtung`
-              : "")
-            + ((d.eeg_demand_source || "peakshare") === "quote"
-              ? `, Abnahmequote ${fmtDe(Number(d[`peakshare_quote_pct${sfx}`] ?? 0), 0)} %`
-                + (Number(d[`peakshare_quote_night_pct${sfx}`] ?? 0) > 0
-                  ? ` / nachts ${fmtDe(Number(d[`peakshare_quote_night_pct${sfx}`]), 0)} %` : "")
-              : "")))
-          .join("")}
+        ${this._tarifZeilen(d).map((z) => row(z.label, z.wert)).join("")}
       </div>
 
       <div class="summary-section">
         <h3>Allgemein</h3>
         ${row("Expertenmodus", d.expert_mode ? "Aktiviert" : "Deaktiviert")}
       </div>`;
+  }
+
+  // Die Tarife einer Konfiguration als Zeilen {gruppe, label, wert}, reiner
+  // Text (der Aufrufer escapt). Zusammenfassung des Assistenten und die
+  // €-Übersicht im Dashboard zeigen dieselben Zahlen — gerechnet wie
+  // bezugspreise_aus_config() in schedule.py. `gruppe` ist "einspeisung",
+  // "bezug" oder "gemeinschaft".
+  _tarifZeilen(d) {
+    const preis = (v, fallback) => `${fmtDe(ctAus(v ?? fallback), 2)} ct/kWh`;
+    const quelle = d.schedule_feedin_source || "manual";
+    const netze = this._netzentgelte;
+    const zeilen = [];
+    const zeile = (gruppe, label, wert) => zeilen.push({ gruppe, label, wert });
+
+    let basis;
+    if (quelle === "oemag") {
+      basis = this._oemagStatus?.preis
+        ? `OeMAG — ${fmtDe(this._oemagStatus.preis * 100, 3)} ct/kWh`
+        : "OeMAG (noch nicht geholt)";
+    } else if (quelle === "oemag_estimate") {
+      basis = this._oemagStatus?.schaetzung?.preis
+        ? `OeMAG hochgerechnet — ${fmtDe(this._oemagStatus.schaetzung.preis * 100, 3)} ct/kWh`
+        : this._oemagStatus?.preis
+          ? `OeMAG hochgerechnet (noch nicht berechnet, vorerst ${fmtDe(this._oemagStatus.preis * 100, 3)} ct/kWh)`
+          : "OeMAG hochgerechnet (noch nicht berechnet)";
+    } else if (quelle === "spot") {
+      basis = `Spotpreis ${(d.spot_market_area || "at") === "de" ? "EPEX DE" : "EPEX AT"}`
+        + (Number(d.spot_feedin_fee ?? 0) !== 0 ? ` − ${fmtDe(ctAus(d.spot_feedin_fee), 2)} ct Abschlag` : "")
+        + (Number(d.spot_feedin_fee_pct ?? 0) !== 0 ? ` − ${fmtDe(Number(d.spot_feedin_fee_pct), 1)} % vom Betrag` : "")
+        + (this._spotStatus?.preis != null ? ` (jetzt ${fmtDe(this._spotStatus.preis * 100, 2)} ct/kWh)` : "");
+    } else if (quelle === "awattar_sunny") {
+      // Der Wert der gewählten Vertragsvariante, falls geholt.
+      const sunnyWert = this._sunnyStatus?.[d.awattar_sunny_vertrag === "alt" ? "alt" : "neu"];
+      basis = sunnyWert && sunnyWert.preis != null
+        ? `aWATTar SUNNY — ${fmtDe(sunnyWert.preis * 100, 3)} ct/kWh${d.awattar_sunny_vertrag === "alt" ? " (Altvertrag)" : ""}`
+        : "aWATTar SUNNY (noch nicht geholt)";
+    } else if (quelle === "energie_ag" || quelle === "energie_ag_estimate") {
+      // Der Wert der gewählten Preisvariante, bei der Hochrechnung deren
+      // Wert — genau das, womit der Fahrplan rechnet.
+      const eagVar = d.energie_ag_variante === "loyal_float" ? "loyal_float" : "float";
+      const eagQuelle = quelle === "energie_ag_estimate";
+      const eagHoch = this._energieAgStatus?.schaetzung?.[eagVar];
+      const eagWert = eagQuelle && eagHoch != null ? eagHoch : this._energieAgStatus?.[eagVar]?.preis;
+      basis = eagWert != null
+        ? `Energie AG ${eagVar === "loyal_float" ? "Loyal Float" : "Float"} — ${fmtDe(eagWert * 100, 3)} ct/kWh${eagQuelle ? " (laufender Monat, hochgerechnet)" : ""}`
+        : "Energie AG Team Sonne Float (noch nicht geholt)";
+    } else {
+      basis = preis(d.schedule_feedin_price, 0.082);
+    }
+    zeile("einspeisung", "Standardvergütung", basis);
+    if (quelle === "manual" && Number(d.schedule_feedin_price_night ?? 0) > 0) {
+      zeile("einspeisung", "Standardvergütung Nacht",
+        `${preis(d.schedule_feedin_price_night, 0)} (${d.schedule_night_start || "20:00"}–${d.schedule_night_end || "06:00"})`);
+    }
+
+    zeile("bezug", "Arbeitspreis", preis(d.schedule_energy_price, 0.20));
+    const satz = netzsaetze(d, netze);
+    if (satz) {
+      const bereichName = satz.manuell
+        ? "von Hand"
+        : (NETZBEREICHE.find(([k]) => k === d.schedule_netzbereich)?.[1] || "");
+      zeile("bezug", "Netzgebühr", `${preis(satz.ap, 0)} (${bereichName})`);
+    }
+    zeile("bezug", "Bezugspreis", preis(bezugspreisSumme(d, netze), 0.26));
+    if (d.schedule_snap_enabled) {
+      const snap = bezugspreisFenster(d, netze, "snap");
+      if (snap != null) zeile("bezug", "Bezugspreis Sommer mittags", `${preis(snap, 0)} (Apr–Sep, 10:00–16:00)`);
+      const winap = bezugspreisFenster(d, netze, "winap");
+      if (winap != null) zeile("bezug", "Bezugspreis Winter nachts", `${preis(winap, 0)} (Okt–Mär, 22:00–04:00)`);
+    }
+
+    const quote = (d.eeg_demand_source || "peakshare") === "quote";
+    zeile("gemeinschaft", "Energiegemeinschaft", d.enable_peakshare !== false
+      ? `${d.peakshare_community || "BEG"} — ${quote ? "feste Abnahmequote" : "PeakShare-Prognose"}`
+      : "Aus");
+    for (const [sfx, name] of [["", d.peakshare_community], ["_2", d.peakshare_community_2]]) {
+      if (!name || !(Number(d[`peakshare_share_pct${sfx}`] ?? 0) > 0)) continue;
+      zeile("gemeinschaft", `Anteil ${name}`,
+        `${fmtDe(Number(d[`peakshare_share_pct${sfx}`]), 0)} % zu ${preis(d[`peakshare_price${sfx}`], 0.102)}`
+        + (Number(d[`peakshare_weight${sfx}`] ?? 0) > 0
+          ? ` + ${fmtDe(Number(d[`peakshare_weight${sfx}`]) * 100, 1)} ct Gewichtung`
+          : "")
+        + (quote
+          ? `, Abnahmequote ${fmtDe(Number(d[`peakshare_quote_pct${sfx}`] ?? 0), 0)} %`
+            + (Number(d[`peakshare_quote_night_pct${sfx}`] ?? 0) > 0
+              ? ` / nachts ${fmtDe(Number(d[`peakshare_quote_night_pct${sfx}`]), 0)} %` : "")
+          : ""));
+    }
+    return zeilen;
   }
 
   /* Einstellungs-Screen */
@@ -8126,7 +8311,7 @@ class EegOptimizerPanel extends HTMLElement {
     let activeTab = TAB_ALIAS[this._settingsTab] || this._settingsTab || "tarife";
     // Den Expertenmodus abzuschalten, während man im Verbraucher-Tab steht,
     // ließe sonst einen Inhalt ohne Reiter stehen.
-    if (activeTab === "verbraucher" && !isExpert) activeTab = "tarife";
+    if ((activeTab === "verbraucher" || activeTab === "spitzenkappung") && !isExpert) activeTab = "tarife";
 
     const tabBar = `
       <div class="settings-tabs" role="tablist">
@@ -8146,6 +8331,10 @@ class EegOptimizerPanel extends HTMLElement {
         <button class="settings-tab ${activeTab === "verbraucher" ? "active" : ""}" data-action="set-settings-tab" data-tab="verbraucher" role="tab">
           <ha-icon icon="mdi:power-plug-outline" style="--mdc-icon-size:18px"></ha-icon>
           <span>Verbraucher</span>
+        </button>
+        <button class="settings-tab ${activeTab === "spitzenkappung" ? "active" : ""}" data-action="set-settings-tab" data-tab="spitzenkappung" role="tab">
+          <ha-icon icon="mdi:transmission-tower-import" style="--mdc-icon-size:18px"></ha-icon>
+          <span>Spitzenkappung</span>
         </button>` : ""}
         <button class="settings-tab ${activeTab === "system" ? "active" : ""}" data-action="set-settings-tab" data-tab="system" role="tab">
           <ha-icon icon="mdi:tune" style="--mdc-icon-size:18px"></ha-icon>
@@ -8202,6 +8391,13 @@ class EegOptimizerPanel extends HTMLElement {
         ${this._wallboxFields(d, "settings_")}
       </div>`;
 
+    // --- Tab: Spitzenkappung (Beta, nur Expertenmodus) ---
+    const spitzenkappungTab = `
+      <div class="card" style="margin-bottom:16px">
+        <h3 class="settings-karte-titel" style="margin:0 0 16px">Spitzenkappung${BETA_BADGE}</h3>
+        ${this._spitzenkappungFields(d, "settings_")}
+      </div>`;
+
     // --- Tab: Prognose (== Wizard-Schritt PV-Prognose) ---
     // Steuernde Quelle mit ihren Sensoren, Prognosevergleich und — wenn die
     // eigene Berechnung steuert oder mitläuft — die Flächen der Anlage.
@@ -8254,6 +8450,7 @@ class EegOptimizerPanel extends HTMLElement {
       case "anlage":  tabContent = anlageTab; break;
       case "prognose": tabContent = prognoseTab; break;
       case "verbraucher": tabContent = verbraucherTab; break;
+      case "spitzenkappung": tabContent = spitzenkappungTab; break;
       case "system":  tabContent = systemTab; break;
       case "tarife":
       default:        tabContent = tarifeTab; break;
@@ -8985,6 +9182,17 @@ class EegOptimizerPanel extends HTMLElement {
     }
     details.push(`<p style="color:var(--secondary-text-color)">Ab 2027 richtet sich der Leistungspreis des Netzentgelts nach diesem Wert: dem höchsten Viertelstunden-Mittel des Netzbezugs im Monat.</p>`);
 
+    // Spitzenkappung (Beta): was sie gerade abgeschaltet hat, steht in der
+    // Zeile selbst — wer das Auto nicht laden sieht, soll den Grund finden.
+    const kappung = a.kappung;
+    const gekappt = (kappung?.abgeschaltet || []).map(x => this._escapeHtml(x.name || x.entity));
+    if (kappung) {
+      details.push(`<p>Spitzenkappung${kappung.schwelle_kw != null ? ` schaltet ab ${fmtDe(Number(kappung.schwelle_kw), 2)}&nbsp;kW Hochrechnung` : " ist gerade nicht aktiv (Optimierung aus oder pausiert)"}${gekappt.length ? ` — abgeschaltet: ${gekappt.join(", ")}` : ""}.</p>`);
+    }
+    const gekapptText = gekappt.length
+      ? `<span style="color:var(--warning-color,#ff9800);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0">· ${gekappt.join(", ")} aus</span>`
+      : "";
+
     const entity = this._entityIds?.bezugsspitze_monat;
     return `
       <div data-action="show-entity" data-entity="${entity}"
@@ -8993,6 +9201,7 @@ class EegOptimizerPanel extends HTMLElement {
         <ha-icon icon="mdi:transmission-tower-import" style="--mdc-icon-size:18px;color:var(--secondary-text-color);flex-shrink:0"></ha-icon>
         <span>Bezugsspitze ${this._escapeHtml(monat)}</span>
         <strong style="color:${wertFarbe}">${spitzeBekannt ? `${fmtDe(spitze, 2)} kW` : "—"}</strong>
+        ${gekapptText}
         <span class="info-popup-trigger">
           <ha-icon icon="mdi:information-outline" style="--mdc-icon-size:16px;color:var(--secondary-text-color);cursor:pointer"></ha-icon>
           <div class="info-popup"><strong>Bezugsspitze ${this._escapeHtml(monat)}</strong>${details.join("")}</div>
