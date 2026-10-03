@@ -10,6 +10,12 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
+## [2.1.34] - 2026-10-03
+
+### Geändert
+
+- **Monat und Jahr zeigen ihren ganzen Verlauf.** In der Karte „Was deine PV bringt“ öffnete ein Klick auf „diesen Monat“ oder „dieses Jahr“ bisher den Standarddialog von Home Assistant, und der zeigt immer nur die letzten 24 Stunden – man sah den heutigen Anstieg, nicht den Monat. Jetzt führt der Klick in den Verlauf ab dem Monats- bzw. Jahresersten um 04:00, dem Beginn des Bilanztags. „heute“ öffnet weiter den gewohnten Dialog. Angeregt von Daniel Mitgutsch, beigetragen als erster Pull Request von außen.
+
 ## [2.1.33] - 2026-10-03
 
 ### Geändert
