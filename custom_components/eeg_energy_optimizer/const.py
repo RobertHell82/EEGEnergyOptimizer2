@@ -568,6 +568,9 @@ TELEMETRY_SETTINGS_KEYS = (
     # eine Anlage nie voll wird. Seit v27 traegt der Wert allein den Zustand
     # (100 = bis voll laden), der fruehere Ein/Aus-Schluessel ist entfallen.
     "schedule_max_soc_pct",
+    # Ebenso das Ladeziel: es erklärt, warum eine Anlage abends voll ist,
+    # obwohl die Preise das nicht verlangen. 0 = aus.
+    "schedule_ladeziel_pct",
     "grid_export_limit_enabled",
     "grid_export_limit_kw",
     # Die Zielfunktion des Fahrplans. Ohne diese Werte sieht das Backend das

@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **EEG Energy Optimizer** — a Home Assistant custom integration for grid-friendly battery management, optimized for energy communities (Energiegemeinschaften / EEG) in the DACH region. It computes a 48-hour charge/discharge schedule with a linear program (Harald Geyer's `opt()`, vendored under `chamo/`) and steers the battery so that feed-in lands in the hours the community actually needs it.
 
-This repository is the **chamo prototype** — a clone of the main integration with the same domain, so only one of the two can be installed per HA instance. Adjustments go through the parameters `schedule.py` hands to `opt()`; the two exceptions that touch Harald's code are marked `LOCAL CHANGE` and listed in `chamo/README.md`.
+This repository is the **chamo prototype** — a clone of the main integration with the same domain, so only one of the two can be installed per HA instance. Adjustments go through the parameters `schedule.py` hands to `opt()`; the exceptions that touch Harald's code are marked `LOCAL CHANGE` and listed in `chamo/README.md`.
 
 **Language**: Python (async, Home Assistant framework) + plain JS (panel)
 **Distribution**: HACS-compatible repository structure
@@ -105,7 +105,7 @@ schedule_executor.py: ScheduleExecutor (execution, 30 s)
 | `tagesbilanz.py` | Daily outcome for the telemetry (`/v1/outcome`): forecast vs. measurement of the finished day, with the plans of the evening before and two days before (built nightly 00:15 or via `tagesbilanz_jetzt`) |
 | `schedule_archive.py` | Rolling archive of computed plans (7 days, gzip, ~8 KB each) for after-the-fact debugging. Each entry: plan (`to_dict()`), filtered settings (allowlist incl. `heizstab_*`, blocklist host/port/token/…) and, since 2.1.24, `eingaben` — the `ScheduleInputs` fields the plan does not carry (p10 path `min_production_kw`, base tariff `feedin_price_series`, `eeg_tarife`/`eeg_bedarf`, heater budget/temperature), so a plan can be replayed exactly |
 | `schedule_archive_view.py` | HTTP view that packs archive + settings + measured history into a downloadable ZIP |
-| `chamo/` | Harald Geyer's LP optimizer (`opt_highs.py`, `timetableopt`) plus a HiGHS adapter. `opt_highs.py` carries three local additions, all marked `LOCAL CHANGE` and documented in `chamo/README.md`: the heater as a valued sink (`heater_p`, 2.1.1-dev2), the blackout reserve capped at what is reachable **without buying** and a solver-status check after `optimize()` — everything else is upstream |
+| `chamo/` | Harald Geyer's LP optimizer (`opt_highs.py`, `timetableopt`) plus a HiGHS adapter. `opt_highs.py` carries four local additions, all marked `LOCAL CHANGE` and documented in `chamo/README.md`: the heater as a valued sink (`heater_p`, 2.1.1-dev2), the blackout reserve capped at what is reachable **without buying**, a solver-status check after `optimize()` and the Ladeziel hook (`c.ladeziel`, 2.1.35) — everything else is upstream |
 | `sensor.py` | 26 sensors (+ up to 21 conditional): consumption profile, forecasts, power flows, plan values, grid discharge energy, register writes, Fahrplan-Status, money balance |
 | `bilanz.py` | Energy balance in money — records 96 quarter-hours per day (energy, SOC, **frozen** prices and community balances), evaluates them with `bewerte_geldfluesse`, and derives the optimiser advantage against a simulated standard operation over the measured series. The balance day runs 04:00–04:00 (night discharge stays in one day; old midnight-based records are migrated on load). Days where the battery behaved like the reference (power deviation ≤ max(1 kWh, 10 % of throughput)) report advantage 0 with `kein_eingriff`; the raw difference stays in `vorteil_roh`. Also backs the **Einspeisung** card (`einspeisung()`): per day `haus_kwh`, `batterie_export_kwh` (export in slots with PV below `BATTERIE_EXPORT_PV_SCHWELLE_KW`, `ohne_pv()` — *not* only controlled discharge, unlike `statistics.py`) and the same amounts of the reference run as `ref_*` (None without a reference). Month/year come from the 400-day archive, not `_monate`; `gesamt` adds the `_monate` sums for months *before* the oldest archived day (never overlapping, their `ref_*` dropped) and returns a gap-free series per year (months are what `jahr` shows); ratios are formed from sums at query time, and the comparison uses only days with `ref_*` on both sides. The per-slot community share comes from `schedule.eeg_aufnahme_je_slot`, which shares `_eeg_zuteilung` with `bewerte_geldfluesse` — one settlement rule |
 | `override.py` | Time-boxed user override — **Pause** (behave like mode Aus) with two end conditions: expiry time (`stunden`, 0.25–48 h) and/or target SOC (`bis_soc_pct`, 50–100 %; ends when the measured SOC reaches it, 48 h cap as safety net). Persisted via `Store` so a restart mid-pause does not resume control. Evaluated in the guard cycle in `__init__.py` (`async_tick(now, soc_pct)`); exposed as HA services `pause` / `aufheben` (`services.yaml`) |
@@ -373,8 +373,27 @@ the event loop is long enough for HA to flag a blocking call.
   expressed as a parameter `opt()` already understands — except where the
   model itself was wrong, and that is exactly twice (heater, blackout
   reserve; `chamo/README.md` — a third `LOCAL CHANGE`, the solver-status
-  check, changes no model). Reach for a parameter first: a divergence
-  costs on every upstream merge, forever.
+  check, changes no model). The one other exception is the **Ladeziel**
+  (`schedule_ladeziel_pct`, 2.1.35): an operator wish no parameter can
+  express, so `opt()` got a four-line hook — `c.ladeziel(parameters,
+  surplus)` raises `bor` before the reachability cap — while all logic
+  (which slot, when to drop it) lives in `HAConfig.ladeziel`. Reach for a
+  parameter first: a divergence costs on every upstream merge, forever.
+- **Ladeziel** (`schedule_ladeziel_pct`, settings only, expert mode; empty /
+  0 = off): at the end of each day's PV time — the last slot with surplus,
+  only if a non-surplus slot of the same day follows inside the horizon —
+  the battery should hold at least the target. Counted in the model window
+  `[min SOC, max SOC]`, clamped to `[50, max SOC]`. It enters `bor` *before*
+  the cap on what is reachable without buying, so it inherits both reserve
+  guarantees (never a purchase, never infeasible); a cloudy day turns 100 %
+  into whatever the PV manages. A target from which the plan could not get
+  back to Harald's fixed end state (half full at the horizon end, via house
+  load plus allowed export in non-surplus slots) is dropped — that end
+  condition is why `fullcharge_try` is unusable. Why it exists: Grünbach,
+  04.10.2026 — OeMAG (10.17 ct) rose above the community's day rate, feed-in
+  went flat, and the plan only charged what the night needed (73–85 %). The
+  plan carries `ladeziel` (`ziel_pct`, `termine` with planned SOC) for the
+  small marker in the SOC chart. Tests: `tests/test_ladeziel.py`.
 - **The blackout reserve must never force a purchase**: `bor`
   is capped at the fill level reachable *without buying* — house first,
   limited at empty and at full. Before that it was capped at "content + all
@@ -788,9 +807,10 @@ absent for every other source.
   change costs on every merge with him. Two divergences change the model
   (heater, blackout reserve) — both marked `LOCAL CHANGE`, both explained in
   `chamo/README.md`, both reported upstream; a third `LOCAL CHANGE` only
-  checks the solver status. A third one needs a reason of
-  the same weight: the model is provably wrong, and no parameter can express
-  the fix. `tests/test_chamo_highs_adapter.py` compares HiGHS against GLPK
+  checks the solver status, a fourth is the Ladeziel hook (logic in
+  `HAConfig.ladeziel`, `chamo/README.md` § 3). Another one needs a reason of
+  the same weight: the model is provably wrong, or an operator wish no
+  parameter can express — and no parameter can express the fix. `tests/test_chamo_highs_adapter.py` compares HiGHS against GLPK
   column by column and stays valid (it loads the same file twice).
   `chamo/opt_test.py` has a syntax error upstream and is never imported
 - Before deleting seemingly unused panel code, check for **dynamic** dispatch:

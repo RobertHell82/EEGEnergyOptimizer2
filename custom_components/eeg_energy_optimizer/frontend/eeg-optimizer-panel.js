@@ -294,6 +294,8 @@ const WIZARD_DEFAULTS = {
   // Maximum-Ladestand: 100 heisst bis voll laden (kein eigener Schalter,
   // der Zustand steckt allein im Wert — Migration v27).
   schedule_max_soc_pct: 100,
+  // Ladeziel am Abend: 0 heisst aus (DEFAULT_LADEZIEL_PCT im Backend).
+  schedule_ladeziel_pct: 0,
   // Einspeisegrenze (Guard 1 + LP-Modell). Opt-in.
   grid_export_limit_enabled: false,
   grid_export_limit_kw: 4,
@@ -3891,6 +3893,25 @@ class EegOptimizerPanel extends HTMLElement {
         socGrid += `<text x="${padL + 4}" y="${(ys(pufferMaxC) - 4).toFixed(1)}" font-size="${fsKlein}" fill="#8e24aa">Maximaltemperatur ${fmtDe(pufferMaxC, 0)} \u00b0C</text>`;
       }
     }
+    // Ladeziel: ein kleiner offener Kreis je Tag am Ende der PV-Zeit, auf der
+    // H\u00f6he des Ziels. Bleibt die Kurve darunter, gab die Sonne nicht mehr
+    // her \u2014 das steht im Tooltip des Kreises.
+    const ladeziel = d.ladeziel;
+    if (ladeziel && Array.isArray(ladeziel.termine)) {
+      for (const termin of ladeziel.termine) {
+        const tz = Date.parse(termin.t);
+        if (!Number.isFinite(tz)) continue;
+        const cx = x(tz);
+        if (cx < padL || cx > W - padR) continue;
+        const dt = new Date(tz);
+        const hhmm = `${String(dt.getHours()).padStart(2, "0")}:${String(dt.getMinutes()).padStart(2, "0")}`;
+        const knapp = Number(termin.geplant_pct) < Number(ladeziel.ziel_pct) - 0.5;
+        socGrid += `<circle cx="${cx.toFixed(1)}" cy="${ys(ladeziel.ziel_pct).toFixed(1)}" r="3.5" fill="none" stroke="#1e88e5" stroke-width="1.2" stroke-opacity="0.8">`
+          + `<title>Ladeziel ${fmtDe(ladeziel.ziel_pct, 0)} % um ${hhmm}`
+          + (knapp ? ` \u2014 geplant ${fmtDe(termin.geplant_pct, 0)} %, mehr gibt die Sonne nicht her` : "")
+          + `</title></circle>`;
+      }
+    }
     [0, 50, 100].forEach(pct => {
       socGrid += `<line x1="${padL}" y1="${ys(pct).toFixed(1)}" x2="${W - padR}" y2="${ys(pct).toFixed(1)}" stroke="var(--divider-color,#e0e0e0)" stroke-width="0.7"/>`;
       socGrid += `<text x="${padL - 5}" y="${(ys(pct) + 3.5).toFixed(1)}" text-anchor="end" font-size="${fsAchse}" fill="var(--secondary-text-color,#727272)">${pct}</text>`;
@@ -6937,6 +6958,23 @@ class EegOptimizerPanel extends HTMLElement {
         <div class="help-text">Der Fahrplan rechnet mit ${fmtDe(pufferWert, 0)} % mehr Verbrauch und ${fmtDe(pufferWert, 0)} % weniger PV-Ertrag, als die Prognose sagt. Er lädt dadurch eher und entlädt zurückhaltender — die Batterie ist abends wahrscheinlicher voll und nachts seltener leer.</div>
         <div class="help-text">0 % heißt: Prognose unverändert, so ist es vorgesehen. Ein Aufschlag macht die Vorhersage nicht besser, er verschiebt sie nur — und weil er Einspeisung aus den Bedarfsstunden der Gemeinschaft in den Speicher verlagert, kostet er Ertrag. Der laufende Slot bleibt immer bei den Messwerten, der Puffer wirkt nur auf die Vorausschau.</div>
       </div>` : "";
+    // Ladeziel: wie der Sicherheitspuffer nur in den Einstellungen und nur im
+    // Expertenmodus. Leer oder 0 heißt aus — dann entscheidet der Fahrplan
+    // allein nach Preisen. Sonst geklemmt wie im Backend (schedule.py:
+    // `_ladeziel_pct`): mindestens 50 %, höchstens der Maximum-Ladestand.
+    const zielRoh = Number(d.schedule_ladeziel_pct ?? 0) || 0;
+    const zielDeckel = this._socGrenzen(d).deckel;
+    const zielWirkt = zielRoh > 0 ? Math.max(50, Math.min(zielDeckel, zielRoh)) : 0;
+    const ladeziel = (prefix && d.expert_mode) ? `
+      <div class="field-group">
+        <label>Ladeziel am Abend (%)</label>
+        <input type="number" data-field="${prefix}schedule_ladeziel_pct"
+               value="${zielWirkt || ""}" min="0" max="${zielDeckel}" step="1" placeholder="aus">
+        <div class="help-text">${zielWirkt
+          ? `Zum Ende der PV-Zeit soll die Batterie jeden Tag mindestens <strong>${fmtDe(zielWirkt, 0)} %</strong> haben — soweit die Sonne das hergibt. Wann sie tagsüber lädt, entscheidet der Fahrplan weiter selbst.`
+          : `Aus: Der Fahrplan lädt nur so weit, wie es sich nach den Preisen lohnt. Das kann heißen, dass die Batterie abends nicht voll wird.`}</div>
+        <div class="help-text">Leer lassen heißt aus. Das Ziel erzwingt nie Strom aus dem Netz: An einem trüben Tag wird daraus, was die PV schafft. Es kostet etwas Einspeisung oder Wärme im Heizstab, die sonst aus demselben Überschuss gekommen wäre. 50 bis ${fmtDe(zielDeckel, 0)} %.</div>
+      </div>` : "";
     const { deckel, boden, maxBoden } = this._socGrenzen(d);
     // Grenzen der Batterie für die Optimierung. Die frühere Notstromreserve
     // mit eigener kWh-Angabe und Überbrückungsdauer ist entfallen: sie folgt
@@ -6963,6 +7001,7 @@ class EegOptimizerPanel extends HTMLElement {
       </div>
       ${maxSocFeld}
       ${puffer}
+      ${ladeziel}
 `;
   }
 

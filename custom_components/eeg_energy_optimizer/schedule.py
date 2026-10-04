@@ -205,6 +205,22 @@ MIN_MAX_SOC_PCT = 70
 # (gemeldet am 14.09.2026 — eingestellt 60 %, angezeigt und wirksam 50 %).
 MAX_MIN_SOC_PCT = MIN_MAX_SOC_PCT - SOC_BAND_MIN_PCT
 
+# Ladeziel in Prozent: Zum Ende der PV-Zeit jedes Tages soll die Batterie
+# mindestens so voll sein — soweit die Sonne das ohne Netzbezug hergibt.
+# 0 (Vorgabe) heißt aus, der Fahrplan entscheidet dann allein nach Preisen.
+#
+# Warum es das braucht (Grünbach, 04.10.2026): Seit OeMAG über dem Tagessatz
+# der Gemeinschaft lag, war eine gespeicherte kWh nachts nichts mehr wert als
+# mittags, und der Fahrplan lud nur noch, was das Haus über Nacht braucht —
+# 73 bis 85 % statt voll. Aus Sicht der Preise richtig; wer abends trotzdem
+# einen vollen Speicher will (Notstrom, Zellabgleich), kann das über Preise
+# nicht ausdrücken, ohne die ganze Gemeinschaftssteuerung zu verbiegen.
+CONF_SCHEDULE_LADEZIEL_PCT = "schedule_ladeziel_pct"
+DEFAULT_LADEZIEL_PCT = 0.0
+# Darunter wäre ein Ladeziel kaum von der Reserve zu unterscheiden, die der
+# Fahrplan ohnehin für die Nacht vorhält.
+MIN_LADEZIEL_PCT = 50.0
+
 # Deckel und Boden des Einspeisepreises sind Dauerzustände, keine Ereignisse:
 # Greift einer, greift er meist über Tage, denn er hängt an der Konfiguration
 # (Anlage Traun: Basistarif 2 ct gegen Gemeinschaftswerte bis 10,2 ct — der
@@ -374,6 +390,8 @@ class ScheduleInputs:
     min_soc_pct: float = 0.0
     # Obergrenze in Prozent; 100 = der Fahrplan darf bis voll planen
     max_soc_pct: float = 100.0
+    # Ladeziel zum Ende der PV-Zeit in Prozent; 0 = aus (siehe HAConfig.ladeziel)
+    ladeziel_pct: float = 0.0
     # Bezugspreis im SNAP-Fenster (Sommer, 10–16 Uhr) und im WiNAP-Fenster
     # (Winter, 22–4 Uhr); None = Fenster gibt es nicht. Abgeleitet aus
     # Arbeitspreis + verbilligter Netzgebühr; die Fenstergrenzen kommen aus
@@ -580,6 +598,19 @@ class HAConfig:
         # ist der Unterschied bis zu 50 Prozentpunkte Ladestand.
         self.max_blackout_reserve = 0.0
         self.blackout_time = BLACKOUT_LOOKAHEAD
+        # Ladeziel im verschobenen Fenster des Modells: gezählt ab dem Boden,
+        # höchstens bis zum Deckel. Liegt es nicht über dem Boden, ist es
+        # keine Forderung — dann bleibt es aus (0).
+        ziel_pct = min(float(inputs.ladeziel_pct or 0.0), float(inputs.max_soc_pct))
+        boden_pct = max(0.0, min(90.0, inputs.min_soc_pct))
+        self.ladeziel_kwh = (
+            min(
+                self.battery_capacity,
+                inputs.battery_capacity_kwh * (ziel_pct - boden_pct) / 100.0,
+            )
+            if inputs.ladeziel_pct > 0 and ziel_pct > boden_pct
+            else 0.0
+        )
 
 
         self._consumption_series = None
@@ -634,6 +665,77 @@ class HAConfig:
 
     def feedin_limit(self, start_time):
         return self._inputs.feedin_limit_kw
+
+    def ladeziel(self, parameters, ueberschuss):
+        """Mindestinhalt je Slot aus dem Ladeziel (kWh im Modellfenster).
+
+        Aufgerufen von ``opt_highs.opt`` (LOCAL CHANGE, siehe
+        ``chamo/README.md``) mit den auf ``time_res`` gerasterten Parametern
+        und dem DC-Überschuss je Slot. Das Ergebnis geht als Untergrenze in
+        ``bor`` ein, BEVOR ``bor`` auf das ohne Netzbezug Erreichbare gekappt
+        wird — an einem trüben Tag wird aus dem Ziel also, was die Sonne
+        hergibt, nie eine Forderung, die nur ein Zukauf oder gar kein Plan
+        erfüllt.
+
+        Der Zeitpunkt ist je Kalendertag der letzte Slot mit Überschuss, also
+        das Ende der PV-Zeit. Nur wenn danach am selben Tag noch ein Slot im
+        Horizont liegt: Endet der Horizont mitten am Nachmittag, ist der
+        letzte Überschuss-Slot nicht das Ende der PV-Zeit, sondern das Ende
+        der Rechnung — dort ein Ziel zu fordern hieße, mittags voll sein zu
+        müssen.
+
+        Eine zweite Grenze kommt aus Haralds Endbedingung: ``opt()`` legt den
+        Speicher am Horizontende auf halb fest. Ein Ziel, von dem aus die
+        Zeit bis dahin nicht reicht, um wieder auf halb zu kommen (Hauslast
+        plus erlaubte Einspeisung in den Slots ohne Überschuss), machte das
+        LP unlösbar; es bleibt weg. Der nächste Planlauf rückt den Tag ohnehin
+        weiter nach vorn, dann gilt es wieder.
+        """
+        import pandas as pd
+
+        ziel = pd.Series(0.0, index=ueberschuss.index)
+        if self.ladeziel_kwh <= 0 or len(ueberschuss) == 0:
+            return ziel
+
+        p2e = self.time_res / 3600.0
+        werte = [float(v) for v in ueberschuss.values]
+        verbrauch = [float(v) for v in parameters["consumption"].values]
+        grenze = [float(v) for v in parameters["feedin_limit"].values]
+        # Was die Batterie je Slot höchstens abgeben kann, ohne zu laden:
+        # in Slots ohne Überschuss den Fehlbetrag des Hauses plus die
+        # erlaubte Einspeisung, beides auf der DC-Seite und gedeckelt durch
+        # die Leistungsgrenze. Slots mit Überschuss zählen nicht — dort
+        # versorgt die PV das Haus.
+        abbau = [
+            0.0 if werte[j] > 0 else min(
+                float(self.battery_power_limit),
+                -werte[j]
+                + max(0.0, min(grenze[j], float(self.ac_limit) - verbrauch[j]))
+                / self.ac_efficiency,
+            ) * p2e
+            for j in range(len(werte))
+        ]
+        # Abbau ab Slot j bis zum Horizontende, von hinten aufsummiert.
+        rest = [0.0] * (len(abbau) + 1)
+        for j in range(len(abbau) - 1, -1, -1):
+            rest[j] = rest[j + 1] + abbau[j]
+        ende_halb = self.battery_capacity / 2.0
+
+        tage = [stempel.date() for stempel in ueberschuss.index]
+        for i in range(len(werte)):
+            if werte[i] <= 0:
+                continue
+            naechster = i + 1
+            if naechster >= len(werte) or tage[naechster] != tage[i]:
+                continue  # Horizont- oder Tagesende, kein PV-Ende
+            if werte[naechster] > 0:
+                continue  # Überschuss geht weiter
+            if any(werte[k] > 0 for k in range(naechster, len(werte)) if tage[k] == tage[i]):
+                continue  # nur eine Wolke, später am Tag kommt noch Sonne
+            if self.ladeziel_kwh - ende_halb > rest[naechster] + 1e-9:
+                continue  # vom Ziel käme der Plan nicht mehr auf halb
+            ziel.iloc[i] = self.ladeziel_kwh
+        return ziel
 
     def feedin_price(self, start_time):
         """Einspeisepreis: Basistarif, Nachtfenster und EEG-Aufschlag.
@@ -1021,6 +1123,26 @@ def _max_soc_pct(config: dict) -> float:
     if wert <= 0:
         return DEFAULT_MAX_SOC_PCT
     return max(MIN_MAX_SOC_PCT, min(100.0, wert))
+
+
+def _ladeziel_pct(config: dict) -> float:
+    """Ladeziel in Prozent — 0 heißt aus.
+
+    Ein leeres, unlesbares oder nicht positives Feld ist aus: das Panel
+    speichert ein geleertes Zahlenfeld als 0, und genau das ist hier der
+    Aus-Zustand. Sonst geklemmt auf [MIN_LADEZIEL_PCT, Maximum-Ladestand] —
+    über den Deckel hinaus kann der Fahrplan ohnehin nicht laden.
+    """
+    raw = config.get(CONF_SCHEDULE_LADEZIEL_PCT)
+    if raw is None or raw == "":
+        return DEFAULT_LADEZIEL_PCT
+    try:
+        wert = float(raw)
+    except (TypeError, ValueError):
+        return DEFAULT_LADEZIEL_PCT
+    if not math.isfinite(wert) or wert <= 0:
+        return DEFAULT_LADEZIEL_PCT
+    return max(MIN_LADEZIEL_PCT, min(_max_soc_pct(config), wert))
 
 
 def _stunde_aus_zeit(wert: Any, default: int) -> int:
@@ -2080,6 +2202,7 @@ async def async_collect_inputs(
         ),
         min_soc_pct=min_soc,
         max_soc_pct=_max_soc_pct(config),
+        ladeziel_pct=_ladeziel_pct(config),
         forecast_source=quelle,
         eeg_bonus=eeg_bonus,
         eeg_details=eeg_details,
@@ -2176,7 +2299,7 @@ _ENDLICH_SKALARE = (
     "battery_free_kwh", "battery_capacity_kwh", "battery_power_limit_kw", "soc_pct",
     "ac_limit_kw", "feedin_limit_kw", "feedin_price", "feedin_price_night",
     "consumption_price", "consumption_price_snap", "consumption_price_winap",
-    "battery_cost", "min_soc_pct", "max_soc_pct", "worst_case_factor",
+    "battery_cost", "min_soc_pct", "max_soc_pct", "ladeziel_pct", "worst_case_factor",
     "heizstab_max_kw", "heizstab_waermewert", "heizstab_budget_kwh",
 )
 _ENDLICH_REIHEN = (
@@ -2214,6 +2337,30 @@ def nicht_endliche_eingaenge(inputs: ScheduleInputs) -> list[str]:
                 f" (+{len(stellen) - 1})" if len(stellen) > 1 else ""
             ))
     return kaputt
+
+
+def _ladeziel_termine(
+    config: "HAConfig", table, slots: list[dict[str, Any]], inputs: ScheduleInputs
+) -> dict[str, Any] | None:
+    """Wann das Ladeziel gilt und was der Plan dort erreicht — für die Anzeige.
+
+    Dieselbe Rechnung wie im LP (``HAConfig.ladeziel``), nachgefahren an der
+    fertigen Tabelle: deren ``PV``/``consumption``/``feedin_limit`` sind genau
+    die gerasterten Parameter, mit denen ``opt()`` gerechnet hat. Liegt
+    ``geplant_pct`` unter ``ziel_pct``, gab die Sonne nicht mehr her — das
+    soll man sehen, statt sich zu wundern. Ohne Ladeziel None.
+    """
+    if config.ladeziel_kwh <= 0 or table is None or len(table) == 0:
+        return None
+    ueberschuss = table["PV"] - table["consumption"] / config.ac_efficiency
+    ziele = config.ladeziel(table, ueberschuss)
+    ziel_pct = round(min(float(inputs.ladeziel_pct), float(inputs.max_soc_pct)), 1)
+    termine = [
+        {"t": slots[i]["t"], "geplant_pct": slots[i]["soc"]}
+        for i, wert in enumerate(ziele.values)
+        if wert > 0 and i < len(slots)
+    ]
+    return {"ziel_pct": ziel_pct, "termine": termine}
 
 
 def solve(inputs: ScheduleInputs) -> dict[str, Any]:
@@ -2277,6 +2424,9 @@ def solve(inputs: ScheduleInputs) -> dict[str, Any]:
         "max_soc_pct": inputs.max_soc_pct,
         "forecast_source": inputs.forecast_source,
     }
+    ladeziel = _ladeziel_termine(config, table, slots, inputs)
+    if ladeziel is not None:
+        result["ladeziel"] = ladeziel
     if slots and slots[0].get("puffer_temp_c") is not None:
         # Nur mit Kurve: die Marke „Maximaltemperatur" im Ladestandsfeld und
         # der Startwert, von dem die Prognose ausgeht.

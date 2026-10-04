@@ -95,6 +95,14 @@ def opt(c, start_time):
 	efficiency = 1 - 2 * c.battery_resistance
 	steps = (surplus.clip(lower=0) * efficiency + surplus.clip(upper=0) / efficiency) * p2e
 	max_step = c.battery_power_limit * p2e
+	# LOCAL CHANGE (see README.md): an optional charge target. The config
+	# returns a minimum content per slot (0 where it has no wish); it enters
+	# the reserve here, BEFORE the cap below, so it is held to what surplus
+	# can reach without buying - like every other part of the reserve.
+	# Without the method nothing changes.
+	ladeziel = getattr(c, 'ladeziel', None)
+	if ladeziel is not None:
+		bor = bor.clip(lower=ladeziel(parameters, surplus))
 	level = bat_content
 	reachable = []
 	for step in steps.values:

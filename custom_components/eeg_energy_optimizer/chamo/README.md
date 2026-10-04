@@ -30,10 +30,10 @@ Zwei Änderungen sind rein technisch und berühren die Rechnung nicht:
   Rückfall auf den flachen Import, damit Haralds Skript-Workflow
   (`python3 -i opt_test.py`) weiter funktioniert.
 
-Dazu kommen **drei Abweichungen in `opt()`**, alle im Code mit `LOCAL CHANGE`
+Dazu kommen **vier Abweichungen in `opt()`**, alle im Code mit `LOCAL CHANGE`
 markiert (`grep -n "LOCAL CHANGE" opt_highs.py`). Wer mit Haralds Stand
 abgleicht, muss genau diese Stellen gesondert behandeln — alles andere im
-Modell ist unangetastet. Zwei davon greifen in die Rechnung ein, die dritte
+Modell ist unangetastet. Drei davon greifen in die Rechnung ein, die vierte
 ist eine Fehlermeldung: nach `model.optimize()` wird der Solver-Status
 geprüft, weil die Ergebnistabelle sonst an `None - None` scheitert und nicht
 sagt, woran es lag.
@@ -135,6 +135,46 @@ Tests: `test_reserve_verlangt_nie_mehr_als_ohne_netzbezug_erreichbar`,
 und `test_reserve_verlangt_nie_mehr_als_die_ladeleistung_schafft` in
 `tests/test_schedule.py`, mit den echten Prognosereihen der Anlage als Fixture.
 
+### 3. Ladeziel zum Ende der PV-Zeit (04.10.2026)
+
+Eine Vorgabe des Betreibers, kein Modellfehler: „Abends soll die Batterie
+voll sein, auch wenn es sich nach den Preisen nicht lohnt.“ In Grünbach lag
+OeMAG ab dem 01.10.2026 über dem Tagessatz der Gemeinschaft; eine
+gespeicherte Kilowattstunde war nachts nichts mehr wert als mittags, und der
+Fahrplan lud nur noch, was das Haus über Nacht braucht (73–85 % statt voll).
+Das ist aus Sicht der Preise richtig — es gibt nur keinen Parameter, der die
+Vorgabe ausdrückt:
+
+* `bor` verlangt den größten Fehlbetrag der nächsten 18 Stunden, also gerade
+  die Nacht.
+* `max_blackout_reserve` hält die Reserve auch in Defizit-Slots und sperrt
+  damit die Nachteinspeisung — der verworfene Weg (siehe `CLAUDE.md`).
+* `fullcharge_try` kommt dem am nächsten, hängt aber eine Endbedingung an:
+  `battery_free` im letzten Slot = 0, also voll am Horizontende, wann immer
+  das ist — um 3 Uhr früh ohne Netzladen unlösbar.
+
+Die Änderung sind vier Zeilen direkt vor der Schranke aus Abschnitt 2: Hat
+die Konfiguration eine Methode `ladeziel(parameters, surplus)`, geht deren
+Mindestinhalt je Slot als Untergrenze in `bor` ein — **vor** der Kappung auf
+das ohne Netzbezug Erreichbare. Damit gelten dieselben Garantien wie für die
+Reserve: kein Zukauf, keine unerreichbare Forderung. Welcher Slot das Ziel
+trägt (je Kalendertag der letzte mit Überschuss), steht in `HAConfig.ladeziel`
+in `schedule.py`, nicht hier. Dort fällt auch ein Ziel weg, von dem aus der
+Plan bis zum Horizontende nicht mehr auf Haralds Endstand (halb voll) käme —
+sonst wäre das LP unlösbar.
+
+Ohne die Methode, oder mit Ladeziel aus (überall 0), ist `bor` unverändert,
+denn `bor` ist schon nach unten bei 0 geklemmt. Upstream wäre das sauberer als
+Aufteilung von `fullcharge_try` in „voll zum Ende der PV-Zeit“ und
+„voll am Horizontende“; vorgeschlagen ist das.
+
+Nachgerechnet an allen archivierten Plänen von Grünbach (27.09.–04.10.2026)
+mit Ladeziel 100 %: alle **1004 Pläne lösbar**, in keinem mehr Netzbezug als
+ohne Ladeziel. 1462 Ziel-Termine, geplanter Ladestand dort im Median 100 %,
+am tiefsten 59,8 % — an trüben Tagen das, was die PV hergab.
+
+Tests: `tests/test_ladeziel.py`.
+
 ## Was von uns ist
 
 * `highs_adapter.py` — optlang-kompatible Minimalschicht auf HiGHS. Nötig, weil
@@ -153,9 +193,9 @@ curl -sSL https://gitlab.com/EngagePV/chamo/-/commit/<sha>.patch -o upstream.pat
 git apply --directory=custom_components/eeg_energy_optimizer -p2 upstream.patch
 ```
 
-Danach die vier Änderungen oben erneut anwenden. Die beiden technischen sind
-in Sekunden erledigt; bei den beiden inhaltlichen ist zu prüfen, ob Harald
+Danach die Änderungen oben erneut anwenden. Die beiden technischen sind
+in Sekunden erledigt; bei den inhaltlichen ist zu prüfen, ob Harald
 dieselbe Stelle angefasst hat — beim Heizstab die `discard_p`-Zerlegung, bei
-der Reserve die Schranke unter „Make sure, that the system remains
-solveable". Die Reserve-Korrektur wäre idealerweise upstream aufgehoben; ist
-sie das, entfällt sie hier ersatzlos.
+der Reserve und beim Ladeziel die Schranke unter „Make sure, that the system
+remains solveable". Die Reserve-Korrektur wäre idealerweise upstream
+aufgehoben; ist sie das, entfällt sie hier ersatzlos.

@@ -64,6 +64,16 @@ Der Puffer wirkt **nur auf die Vorausschau**. Für die laufende Viertelstunde re
 
 Sinnvoll ist ein Puffer, wenn du bewusst vorsichtiger fahren willst: Eine volle Batterie am Abend ist dir dann wichtiger als der letzte Cent Einspeisung.
 
+### Ladeziel am Abend (%)
+
+Auch dieses Feld gibt es nur in den **Einstellungen** und nur im **Expertenmodus**. Leer heißt aus, das ist die Vorgabe.
+
+Ohne Ladeziel lädt der Fahrplan nur so weit, wie es sich nach den Preisen lohnt. Bringt eine Kilowattstunde am Abend nicht mehr als zu Mittag, lädt er nur, was das Haus über Nacht braucht. Die Batterie wird dann abends nicht voll.
+
+Mit einem Ladeziel von z. B. 100 % soll die Batterie jeden Tag **zum Ende der PV-Zeit** mindestens so voll sein, also dann, wenn die PV unter den Hausverbrauch fällt. Wann sie tagsüber lädt, entscheidet der Fahrplan weiter selbst. Erlaubt sind 50 % bis zum Maximum-Ladestand.
+
+Das Ziel holt nie Strom aus dem Netz. An einem trüben Tag wird daraus, was die PV schafft. Im Diagramm des Fahrplans steht das Ziel als kleiner Kreis, und bleibt die Kurve darunter, sagt der Kreis beim Darüberfahren, warum. Es kostet etwas Einspeisung oder Wärme im Heizstab, die sonst aus demselben Überschuss gekommen wäre.
+
 ## Später ändern
 
 Alle Felder dieses Schritts findest du wieder in den **Einstellungen**, Tab **Anlage**: die Karte **Anlage** mit der Einspeisegrenze und die Karte **Batterie**. Gerätedaten aus dem Datenblatt ändern sich im Betrieb praktisch nie. Deshalb erscheinen **AC-Grenzleistung**, **PV-Spitzenleistung** und **Batterie-Leistungsgrenze** in den Einstellungen nur im **Expertenmodus** (Tab **System**). Mindest- und Maximum-Ladestand sind immer sichtbar.
