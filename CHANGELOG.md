@@ -10,6 +10,12 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
+## [2.1.35] - 2026-10-04
+
+### Hinzugefügt
+
+- **Ladeziel am Abend.** In den Einstellungen (Tab „Anlage“, Expertenmodus) lässt sich ein Ladestand festlegen, den die Batterie zum Ende der PV-Zeit erreichen soll. Wann sie tagsüber lädt, entscheidet der Fahrplan weiter selbst. Das Ziel holt nie Strom aus dem Netz – an trüben Tagen wird daraus, was die PV schafft. Leer heißt aus, so bleibt alles wie bisher.
+
 ## [2.1.34] - 2026-10-03
 
 ### Geändert
