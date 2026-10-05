@@ -31,22 +31,27 @@
 <li>Kopiere den angezeigten Key für später.<br>
     <img alt="API Key kopieren" src="/eeg_optimizer_panel/guide/solcast/05_API_Key.png" /></li>
 </ol>
-<h3>2. Installation der Integration</h3>
-<div class="guide-alert note"><p><strong>Vorbereitetes EEG-Gerät (Home Assistant Green) erhalten?</strong> Dann ist die Solcast-Integration bereits installiert — überspringe diesen Abschnitt und mache direkt bei Punkt 3 weiter.</p></div>
+<h3>2. Integration installieren — nur bei selbst eingerichtetem Gerät</h3>
+<div class="guide-alert note"><p><strong>Vorbereitetes EEG-Gerät (Home Assistant Green) erhalten?</strong> Dann ist die Solcast-Integration bereits installiert. <strong>Überspringe diesen Abschnitt</strong> und mache direkt bei <strong>3. API-Key in Home Assistant eintragen</strong> weiter.</p></div>
 
 <p><em><strong>Voraussetzung:</strong> <a href="https://hacs.xyz/">HACS</a> muss installiert sein (Solcast ist eine Custom Integration, kein HA-Standard).</em></p>
 <ol>
 <li>Gehe zu <strong>HACS</strong> und suche dort nach <strong>„Solcast PV Forecast"</strong></li>
 <li>Installiere die Integration und starte Home Assistant neu.</li>
 </ol>
-<h3>3. Solcast-Konto verbinden</h3>
+<h3>3. API-Key in Home Assistant eintragen</h3>
 <p><em>Dieser Abschnitt gilt für <strong>alle</strong> — auch bei einem vorbereiteten EEG-Gerät, denn jedes Mitglied nutzt seinen eigenen API-Key.</em></p>
+<p>Den Key trägst du <strong>nicht</strong> im EEG Energy Optimizer ein, sondern in der Solcast-Integration von Home Assistant:</p>
 <ol>
-<li>Gehe zu <strong>Einstellungen → Geräte &amp; Dienste → Integration hinzufügen</strong> und wähle <strong>Solcast PV Forecast</strong>.</li>
-<li>Gib den zuvor kopierten API-Key ein, lasse die restlichen Einstellungen wie vorausgewählt und klicke auf <strong>OK</strong>.</li>
+<li>Klicke in Home Assistant links unten auf <strong>Einstellungen</strong>, dann auf <strong>Geräte &amp; Dienste</strong>.</li>
+<li>Klicke rechts unten auf den blauen Knopf <strong>„+ Integration hinzufügen"</strong>.</li>
+<li>Tippe in das Suchfeld <strong>„Solcast"</strong> und wähle <strong>Solcast PV Forecast</strong>.</li>
+<li>Es öffnet sich ein Fenster mit dem Feld <strong>API-Key</strong>: Füge dort den zuvor kopierten Key ein (Rechtsklick → Einfügen bzw. lange auf das Feld tippen). Lasse die restlichen Einstellungen wie vorausgewählt und klicke auf <strong>OK</strong> bzw. <strong>Absenden</strong>.</li>
 <li>Aktiviere die deaktivierten Prognose-Sensoren für die Tage 3 bis 7: Klicke den Sensor an, dann auf das Zahnrad und stelle ihn auf <strong>Aktiviert</strong>.<br>
    <img alt="Sensoren aktivieren" src="/eeg_optimizer_panel/guide/solcast/06_Prognosesensoren.png" /></li>
 </ol>
+<div class="guide-alert note"><p><strong>Solcast taucht in der Suche nicht auf?</strong> Dann ist die Integration nicht installiert — siehe Abschnitt 2. <strong>Meldung „Ungültiger API-Key"?</strong> Key in Solcast noch einmal kopieren (oben rechts im Menü → <strong>Your API Key</strong>) und darauf achten, dass kein Leerzeichen am Anfang oder Ende mitkommt.</p></div>
+
 <h3>4. Prüfen</h3>
 <ol>
 <li>Warte 1–2 Minuten nach der Einrichtung</li>

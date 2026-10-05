@@ -30,24 +30,61 @@
 </table>
 <div class="guide-alert warning"><p><strong>Wichtig:</strong> Der Work Mode darf <strong>NICHT</strong> auf „Feedin Priority" oder „Force Time Use" stehen! Der EEG Energy Optimizer steuert die Batterie über Remote Control (Mode 1) und setzt voraus, dass der Wechselrichter im Self Use Modus läuft.</p></div>
 
-<h3>3. HACS Integration installieren</h3>
+<h3>3. Verbindung zum Wechselrichter — was du brauchst</h3>
+<p>Home Assistant spricht mit dem Wechselrichter über <strong>Modbus TCP</strong> im Heimnetz, nicht über die SolaX-Cloud. Dafür braucht der Wechselrichter eine Netzwerkverbindung, die Modbus TCP kann. <strong>Das kann nicht jeder Stick</strong>, und das ist die häufigste Ursache, wenn die Einrichtung scheitert:</p>
+<table>
+<thead>
+<tr>
+<th>Verbindung</th>
+<th>Funktioniert?</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Pocket WiFi 2.0</strong> (ältere WLAN-Sticks)</td>
+<td><strong>Nein</strong> — kein Modbus TCP</td>
+</tr>
+<tr>
+<td><strong>Pocket WiFi 3.0</strong></td>
+<td>Nur mit aktueller Firmware; nicht immer zuverlässig</td>
+</tr>
+<tr>
+<td><strong>Pocket LAN</strong> (Stick mit Netzwerkkabel)</td>
+<td>Ja</td>
+</tr>
+<tr>
+<td><strong>RS485-zu-LAN-Adapter</strong> am COM-/RS485-Anschluss des Wechselrichters (z. B. Waveshare)</td>
+<td>Ja, am zuverlässigsten — Anschluss am besten durch den Elektriker</td>
+</tr>
+</tbody>
+</table>
+<p>Außerdem brauchst du die <strong>IP-Adresse</strong> des Sticks bzw. Adapters. Du findest sie in der Geräteliste deines Routers (z. B. bei der FRITZ!Box unter <em>Heimnetz → Netzwerk</em>). Damit sie sich nicht ändert, stelle im Router „immer dieselbe IP-Adresse zuweisen" ein.</p>
+<div class="guide-alert note"><p><strong>Unsicher, welchen Stick du hast?</strong> Er steckt unten am Wechselrichter, das Modell steht auf dem Aufkleber. Schick uns im Zweifel ein Foto davon.</p></div>
+
+<h3>4. Integration installieren</h3>
+<p><strong>Zuerst prüfen, ob sie schon da ist:</strong> Gehe zu <strong>Einstellungen → Geräte &amp; Dienste</strong>, klicke rechts unten auf <strong>„+ Integration hinzufügen"</strong> und tippe <strong>„SolaX"</strong> ein. Erscheint <strong>„SolaX Inverter Modbus"</strong> in der Liste, ist sie installiert — weiter mit Abschnitt 5.</p>
+<p>Erscheint sie nicht, installiere sie über HACS:</p>
 <p><em><strong>Voraussetzung:</strong> <a href="https://hacs.xyz/">HACS</a> muss installiert sein.</em></p>
 <ol>
 <li>Gehe zu <strong>HACS</strong> und suche dort nach <strong>„SolaX Inverter Modbus"</strong><br>
    <em>Repository: <code>wills106/homeassistant-solax-modbus</code></em></li>
-<li>Installiere die Integration und <strong>starte Home Assistant neu</strong></li>
+<li>Installiere die Integration und <strong>starte Home Assistant neu</strong> (Einstellungen → oben rechts die drei Punkte → <strong>Neu starten</strong>)</li>
 </ol>
-<h3>4. Integration konfigurieren</h3>
+<div class="guide-alert warning"><p>Ohne Neustart meldet Home Assistant beim Hinzufügen einen Fehler wie <strong>„Konfigurationsablauf konnte nicht geladen werden"</strong>. Dann einfach neu starten und es noch einmal versuchen.</p></div>
+
+<h3>5. Integration konfigurieren</h3>
 <ol>
-<li>Gehe zu <strong>Einstellungen → Geräte &amp; Dienste → Integration hinzufügen</strong></li>
+<li>Gehe zu <strong>Einstellungen → Geräte &amp; Dienste → „+ Integration hinzufügen"</strong></li>
 <li>Suche nach <strong>„SolaX Inverter Modbus"</strong></li>
-<li>Gib die <strong>IP-Adresse</strong> des Wechselrichters / WiFi-Dongles ein</li>
-<li>Port: <strong>502</strong> (Standard für Modbus TCP)</li>
-<li>Prüfe, dass <strong>„Gen4+ Inverter"</strong> als Typ ausgewählt ist</li>
+<li>Als Verbindungsart <strong>TCP / Ethernet</strong> wählen</li>
+<li>Gib die <strong>IP-Adresse</strong> des Sticks bzw. Adapters ein (→ Abschnitt 3)</li>
+<li>Port: <strong>502</strong> (Standard für Modbus TCP), Modbus-Adresse: <strong>1</strong></li>
+<li>Mit <strong>OK</strong> bzw. <strong>Absenden</strong> bestätigen — die Integration erkennt den Wechselrichter dann selbst</li>
 </ol>
-<h3>5. Batterie-Kapazität</h3>
+<p>Kommt eine Fehlermeldung, schau unter <strong>Häufige Probleme</strong> ganz unten nach.</p>
+<h3>6. Batterie-Kapazität</h3>
 <p>SolaX stellt <strong>keinen Sensor für die Batteriekapazität</strong> bereit. Die Kapazität gibst du später im Wizard manuell ein (z.B. 5.8 kWh für eine T-BAT 5.8).</p>
-<h3>6. Zweiter Wechselrichter am Generator-Eingang</h3>
+<h3>7. Zweiter Wechselrichter am Generator-Eingang</h3>
 <p>Ist am SolaX-Hybrid ein <strong>zweiter Wechselrichter als Generator</strong> angeschlossen (z.B. eine bestehende PV-Anlage am Generator-/Meter-2-Eingang), wird dessen Erzeugung <strong>nicht</strong> im normalen PV-Sensor (<code>sensor.solax_*solar_power</code>) mitgezählt — sie läuft ausschließlich über <strong>Meter 2</strong>.</p>
 <p>Der dafür benötigte Sensor ist in der SolaX-Modbus-Integration standardmäßig <strong>deaktiviert</strong> und muss aktiviert werden:</p>
 <ol>
@@ -64,7 +101,7 @@
 <p>Im Assistenten gibt es dafür das Feld <strong>„Zweiter PV-Sensor (optional)"</strong> — es erscheint nur im <strong>Expertenmodus</strong> (Schalter oben rechts im Assistenten). Vorbelegt wird es mit dem Meter-2-Sensor, wenn dieser schon <strong>vor</strong> der Sensorerkennung aktiv war; hast du ihn erst danach aktiviert, klicke auf <strong>„Erneut prüfen"</strong> oder trage ihn im Expertenmodus von Hand ein. Der Optimizer addiert diesen Wert zur PV-Leistung des Hybrid-Wechselrichters.</p>
 <div class="guide-alert warning"><p>Wird der Sensor nicht aktiviert bzw. nicht im Wizard hinterlegt, rechnet der Optimizer mit <strong>zu geringer PV-Leistung</strong>. Folge: Hausverbrauch und Fahrplan arbeiten mit falschen Werten.</p></div>
 
-<h3>7. Prüfen</h3>
+<h3>8. Prüfen</h3>
 <ol>
 <li>Unter <strong>Einstellungen → Integrationen</strong>: SolaX Inverter Modbus zeigt <strong>„geladen"</strong></li>
 <li><strong>Entwicklerwerkzeuge → Zustände</strong>: <code>sensor.solax_*battery_capacity</code> zeigt SOC (0–100%)</li>
@@ -82,8 +119,20 @@
 </thead>
 <tbody>
 <tr>
-<td><strong>Connection refused</strong></td>
-<td>WiFi-Dongle nicht erreichbar → IP und Netzwerk prüfen</td>
+<td><strong>„Konfigurationsablauf konnte nicht geladen werden"</strong></td>
+<td>Integration frisch installiert, aber Home Assistant nicht neu gestartet → neu starten (→ Abschnitt 4)</td>
+</tr>
+<tr>
+<td><strong>„Verbindung fehlgeschlagen" / Connection refused / Zeitüberschreitung</strong></td>
+<td>IP-Adresse falsch oder geändert → im Router nachsehen. Stimmt sie, kann der Stick vermutlich kein Modbus TCP (Pocket WiFi 2.0, alte 3.0-Firmware) → Abschnitt 3</td>
+</tr>
+<tr>
+<td><strong>SolaX taucht bei „Integration hinzufügen" nicht auf</strong></td>
+<td>Integration nicht installiert → Abschnitt 4</td>
+</tr>
+<tr>
+<td><strong>EEG-Assistent: „SolaX Modbus Integration muss zuerst installiert werden"</strong></td>
+<td>Erst die SolaX-Integration einrichten (Abschnitte 4–5), dann im Assistenten auf <strong>„Erneut prüfen"</strong></td>
 </tr>
 <tr>
 <td><strong>Kein remotecontrol_trigger</strong></td>
@@ -103,7 +152,7 @@
 </tr>
 <tr>
 <td><strong>PV-Leistung zu niedrig (Generator-WR fehlt)</strong></td>
-<td><code>sensor.solax_inverter_meter_2_measured_power</code> aktivieren (→ Abschnitt 6) und im Assistenten (Expertenmodus) als zweiten PV-Sensor hinterlegen</td>
+<td><code>sensor.solax_inverter_meter_2_measured_power</code> aktivieren (→ Abschnitt 7) und im Assistenten (Expertenmodus) als zweiten PV-Sensor hinterlegen</td>
 </tr>
 <tr>
 <td><strong>Meter 2 Sensor zeigt immer 0</strong></td>

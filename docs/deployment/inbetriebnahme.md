@@ -72,6 +72,25 @@ Der Optimizer braucht eine PV-Prognose für deine Anlage. Du hast drei Möglichk
 > ist der schnellste Weg ohne Konto. Du kannst später beide nebeneinander
 > laufen lassen und im Dashboard vergleichen (Prognosevergleich).
 
+### Solcast: API-Key eintragen
+
+Die Solcast-Integration ist auf deinem Gerät schon installiert — du musst sie
+nur noch mit deinem Konto verbinden. Den API-Key trägst du **nicht** im EEG
+Energy Optimizer ein, sondern direkt in Home Assistant:
+
+1. Lege das Solcast-Konto an, erfasse dort deine PV-Anlage und kopiere den
+   **API-Key** (Solcast-Webseite: oben rechts Menü → **Your API Key**). Wie das
+   geht, steht Schritt für Schritt in [Solcast Solar einrichten](../guides/solcast.md),
+   Abschnitt 1.
+2. In Home Assistant links unten auf **Einstellungen** → **Geräte & Dienste**.
+3. Rechts unten auf den blauen Knopf **„+ Integration hinzufügen"**.
+4. **„Solcast"** eintippen und **Solcast PV Forecast** wählen.
+5. Den kopierten Key in das Feld **API-Key** einfügen, den Rest so lassen und
+   mit **OK** bestätigen.
+
+Danach erscheint Solcast unter *Geräte & Dienste*, und der Assistent des
+Optimizers findet die Prognose-Sensoren von selbst.
+
 ---
 
 ## Schritt 5: Wechselrichter anbinden
@@ -91,6 +110,24 @@ Kostal Plenticore, Sigenergy SigenStor, SMA Smart Energy und SolaX Gen4+**:
 
 Wie weit jedes Gerät erprobt ist, steht im
 [Stand der Unterstützung](../wechselrichter-status.md).
+
+Das Prinzip ist bei allen gleich: Zuerst wird der Wechselrichter in Home
+Assistant selbst verbunden (**Einstellungen → Geräte & Dienste → „+ Integration
+hinzufügen"**), erst danach erkennt ihn der Assistent des Optimizers. Dafür
+brauchst du meist die **IP-Adresse** des Wechselrichters bzw. seines
+Netzwerk-Sticks — du findest sie in der Geräteliste deines Routers.
+
+> [!WARNING]
+> **SolaX:** Nicht jeder WLAN-Stick von SolaX kann sich mit Home Assistant
+> verbinden (der ältere *Pocket WiFi 2.0* etwa gar nicht). Kommt beim Einrichten
+> eine Fehlermeldung, schau in der [SolaX-Anleitung](../guides/solax.md) unter
+> Abschnitt 3 und *Häufige Probleme* nach.
+
+> [!TIP]
+> **Du kommst nicht weiter?** Schreib uns an **info@ew-ansfelden.at** — am besten
+> mit einem Foto oder Screenshot der Fehlermeldung und dem Modell deines
+> Wechselrichters. Über den Fernzugang können wir dann auch direkt auf deinem
+> Gerät mithelfen.
 
 ---
 

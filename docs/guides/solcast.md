@@ -25,24 +25,31 @@
 11. Kopiere den angezeigten Key für später.<br>
     ![API Key kopieren](../images/solcast/05_API_Key.png)
 
-## 2. Installation der Integration
+## 2. Integration installieren — nur bei selbst eingerichtetem Gerät
 
 > [!NOTE]
-> **Vorbereitetes EEG-Gerät (Home Assistant Green) erhalten?** Dann ist die Solcast-Integration bereits installiert — überspringe diesen Abschnitt und mache direkt bei Punkt 3 weiter.
+> **Vorbereitetes EEG-Gerät (Home Assistant Green) erhalten?** Dann ist die Solcast-Integration bereits installiert. **Überspringe diesen Abschnitt** und mache direkt bei **3. API-Key in Home Assistant eintragen** weiter.
 
 _**Voraussetzung:** [HACS](https://hacs.xyz/) muss installiert sein (Solcast ist eine Custom Integration, kein HA-Standard)._
 
 1. Gehe zu **HACS** und suche dort nach **„Solcast PV Forecast"**
 2. Installiere die Integration und starte Home Assistant neu.
 
-## 3. Solcast-Konto verbinden
+## 3. API-Key in Home Assistant eintragen
 
 _Dieser Abschnitt gilt für **alle** — auch bei einem vorbereiteten EEG-Gerät, denn jedes Mitglied nutzt seinen eigenen API-Key._
 
-1. Gehe zu **Einstellungen → Geräte & Dienste → Integration hinzufügen** und wähle **Solcast PV Forecast**.
-2. Gib den zuvor kopierten API-Key ein, lasse die restlichen Einstellungen wie vorausgewählt und klicke auf **OK**.
-3. Aktiviere die deaktivierten Prognose-Sensoren für die Tage 3 bis 7: Klicke den Sensor an, dann auf das Zahnrad und stelle ihn auf **Aktiviert**.<br>
+Den Key trägst du **nicht** im EEG Energy Optimizer ein, sondern in der Solcast-Integration von Home Assistant:
+
+1. Klicke in Home Assistant links unten auf **Einstellungen**, dann auf **Geräte & Dienste**.
+2. Klicke rechts unten auf den blauen Knopf **„+ Integration hinzufügen"**.
+3. Tippe in das Suchfeld **„Solcast"** und wähle **Solcast PV Forecast**.
+4. Es öffnet sich ein Fenster mit dem Feld **API-Key**: Füge dort den zuvor kopierten Key ein (Rechtsklick → Einfügen bzw. lange auf das Feld tippen). Lasse die restlichen Einstellungen wie vorausgewählt und klicke auf **OK** bzw. **Absenden**.
+5. Aktiviere die deaktivierten Prognose-Sensoren für die Tage 3 bis 7: Klicke den Sensor an, dann auf das Zahnrad und stelle ihn auf **Aktiviert**.<br>
    ![Sensoren aktivieren](../images/solcast/06_Prognosesensoren.png)
+
+> [!TIP]
+> **Solcast taucht in der Suche nicht auf?** Dann ist die Integration nicht installiert — siehe Abschnitt 2. **Meldung „Ungültiger API-Key"?** Key in Solcast noch einmal kopieren (oben rechts im Menü → **Your API Key**) und darauf achten, dass kein Leerzeichen am Anfang oder Ende mitkommt.
 
 ## 4. Prüfen
 

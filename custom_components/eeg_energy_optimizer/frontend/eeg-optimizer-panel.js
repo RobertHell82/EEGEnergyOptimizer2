@@ -2529,11 +2529,11 @@ class EegOptimizerPanel extends HTMLElement {
         const invType = this._wizardData.inverter_type;
         const invP = this._prerequisites;
         if (invType === "huawei_sun2000" && invP && !invP.huawei_solar) {
-          this._showValidationError("Huawei Solar Integration muss zuerst installiert werden.");
+          this._showValidationError("Huawei Solar ist in Home Assistant noch nicht eingerichtet (Einstellungen → Geräte & Dienste). Klicke auf 'Anleitung' für Hilfe, danach auf 'Erneut prüfen'.");
           return false;
         }
         if (invType === "solax_gen4" && invP && !invP.solax_modbus) {
-          this._showValidationError("SolaX Modbus Integration muss zuerst installiert werden.");
+          this._showValidationError("SolaX Inverter Modbus ist in Home Assistant noch nicht eingerichtet oder nicht verbunden (Einstellungen → Geräte & Dienste). Klicke auf 'Anleitung' für Hilfe, danach auf 'Erneut prüfen'.");
           return false;
         }
         if (invType === "sigenergy_sigenstor" && invP && !invP.sigen) {
@@ -2604,11 +2604,11 @@ class EegOptimizerPanel extends HTMLElement {
         }
         const fcP = this._prerequisites;
         if (fcSrc === "solcast_solar" && fcP && !fcP.solcast_solar) {
-          this._showValidationError("Solcast Solar muss zuerst installiert werden. Klicke auf 'Anleitung' für Hilfe.");
+          this._showValidationError("Solcast ist in Home Assistant noch nicht eingerichtet — der API-Key wird unter Einstellungen → Geräte & Dienste → Integration hinzufügen → Solcast PV Forecast eingetragen. Klicke auf 'Anleitung' für Hilfe.");
           return false;
         }
         if (fcSrc === "forecast_solar" && fcP && !fcP.forecast_solar) {
-          this._showValidationError("Forecast.Solar muss zuerst installiert werden. Klicke auf 'Anleitung' für Hilfe.");
+          this._showValidationError("Forecast.Solar ist in Home Assistant noch nicht eingerichtet (Einstellungen → Geräte & Dienste → Integration hinzufügen). Klicke auf 'Anleitung' für Hilfe.");
           return false;
         }
         if (!this._wizardData.forecast_remaining_entity) {
@@ -5713,28 +5713,28 @@ class EegOptimizerPanel extends HTMLElement {
     const sigenSelected = selected === "sigenergy_sigenstor";
 
     const huaweiBadge = huaweiOk
-      ? '<span class="status-badge installed">Installiert</span>'
-      : '<span class="status-badge missing">Nicht installiert</span>';
+      ? '<span class="status-badge installed">Eingerichtet</span>'
+      : '<span class="status-badge missing">Nicht eingerichtet</span>';
 
     const solaxBadge = solaxOk
-      ? '<span class="status-badge installed">Installiert</span>'
-      : '<span class="status-badge missing">Nicht installiert</span>';
+      ? '<span class="status-badge installed">Eingerichtet</span>'
+      : '<span class="status-badge missing">Nicht eingerichtet</span>';
 
     const froniusBadge = froniusOk
-      ? '<span class="status-badge installed">Installiert</span>'
-      : '<span class="status-badge missing">Nicht installiert</span>';
+      ? '<span class="status-badge installed">Eingerichtet</span>'
+      : '<span class="status-badge missing">Nicht eingerichtet</span>';
 
     const kostalBadge = kostalOk
-      ? '<span class="status-badge installed">Installiert</span>'
-      : '<span class="status-badge missing">Nicht installiert</span>';
+      ? '<span class="status-badge installed">Eingerichtet</span>'
+      : '<span class="status-badge missing">Nicht eingerichtet</span>';
 
     const smaBadge = smaOk
-      ? '<span class="status-badge installed">Installiert</span>'
-      : '<span class="status-badge missing">Nicht installiert</span>';
+      ? '<span class="status-badge installed">Eingerichtet</span>'
+      : '<span class="status-badge missing">Nicht eingerichtet</span>';
 
     const sigenBadge = sigenOk
-      ? '<span class="status-badge installed">Installiert</span>'
-      : '<span class="status-badge missing">Nicht installiert</span>';
+      ? '<span class="status-badge installed">Eingerichtet</span>'
+      : '<span class="status-badge missing">Nicht eingerichtet</span>';
 
 
     const pvHelp = huaweiSelected
@@ -6032,11 +6032,11 @@ class EegOptimizerPanel extends HTMLElement {
     const forecastOk = p && p.forecast_solar;
 
     const solcastBadge = solcastOk
-      ? '<span class="status-badge installed">Installiert</span>'
-      : '<span class="status-badge missing">Nicht installiert</span>';
+      ? '<span class="status-badge installed">Eingerichtet</span>'
+      : '<span class="status-badge missing">Nicht eingerichtet</span>';
     const forecastBadge = forecastOk
-      ? '<span class="status-badge installed">Installiert</span>'
-      : '<span class="status-badge missing">Nicht installiert</span>';
+      ? '<span class="status-badge installed">Eingerichtet</span>'
+      : '<span class="status-badge missing">Nicht eingerichtet</span>';
 
     const selected = this._wizardData.forecast_source || "";
     const solcastSelected = selected === "solcast_solar";
@@ -7690,13 +7690,13 @@ class EegOptimizerPanel extends HTMLElement {
     const karte = (wert, bild, titel) => {
       const gewaehlt = d.forecast_source === wert;
       const fehlt = pq && wert !== "eigen" && !pq[wert];
-      // Ohne Prüfergebnis kein Urteil — „Installiert" wäre geraten.
+      // Ohne Prüfergebnis kein Urteil — „Eingerichtet" wäre geraten.
       const badge = wert === "eigen"
         ? `<span class="status-badge installed">Ohne Zusatz</span>`
         : !pq ? ""
           : fehlt
-            ? `<span class="status-badge missing">Nicht installiert</span>`
-            : `<span class="status-badge installed">Installiert</span>`;
+            ? `<span class="status-badge missing">Nicht eingerichtet</span>`
+            : `<span class="status-badge installed">Eingerichtet</span>`;
       return `
         <div class="card forecast-option ${gewaehlt ? "selected" : ""}" data-action="select-settings-forecast" data-value="${wert}"
              role="button" aria-pressed="${gewaehlt}"
