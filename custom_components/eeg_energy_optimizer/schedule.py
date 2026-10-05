@@ -223,6 +223,37 @@ DEFAULT_LADEZIEL_PCT = 100.0
 # Fahrplan ohnehin für die Nacht vorhält.
 MIN_LADEZIEL_PCT = 50.0
 
+# „Vormittags bevorzugt netzdienlich": bis zur eingestellten Stunde soll der
+# PV-Überschuss lieber ins Netz als in die Batterie, die dann mittags mit
+# voller Leistung lädt — soweit sich das ausgeht. Vorgabe aus.
+#
+# Warum es das braucht (Wunsch eines Betreibers, 05.10.2026): Ist Einspeisen
+# um 8 Uhr so viel wert wie um 12 Uhr, lädt der Fahrplan früh und langsam.
+# Haralds Modell rechnet Laden unter 0,1 C verlustfrei, darüber mit 4 bzw.
+# 8 % Verlust, und sein Tie-Breaker („use battery early") lässt einen
+# späteren Export minimal mehr wert sein. Beides zusammen ergibt das
+# Morgen-Rinnsal in den Speicher — aus Sicht der Preise richtig, aus Sicht
+# des Netzes verkehrt: Mittags ist Einspeisung am wenigsten gefragt.
+#
+# Ausgedrückt als Bonus auf den Einspeisepreis in den Vormittags-Slots mit
+# PV-Überschuss — und, das ist der zweite Teil, als Einspeisegrenze auf genau
+# diesen Überschuss (``HAConfig.feedin_limit``). Ohne die Grenze holt sich
+# die BATTERIE den Bonus: Durchgerechnet am Grünbach-Plan vom 04.10.2026
+# entlud das LP vormittags von 39 auf 20 % ins Netz und lud mittags nach —
+# reine Speicher-Arbitrage, ab jedem Bonus über den Ladeverlusten.
+CONF_SCHEDULE_NETZDIENLICH = "schedule_netzdienlich"
+CONF_SCHEDULE_NETZDIENLICH_BIS = "schedule_netzdienlich_bis"
+CONF_SCHEDULE_NETZDIENLICH_BONUS = "schedule_netzdienlich_bonus"
+DEFAULT_NETZDIENLICH_BIS_STUNDE = 11
+# €/kWh. Muss die Ladeverluste im Modell schlagen (4–8 % einer
+# gespeicherten kWh, also bis ~1 ct bei Nachtwerten um 13 ct) und eine
+# Abend-/Nachtvergütung, die über dem Tagessatz liegt — 1 ct reichte an
+# realen Plänen nicht. Ein zu hoher Bonus kann die Batterie nicht leeren
+# (Einspeisegrenze) und keinen Netzbezug erzwingen; er verzichtet höchstens
+# auf Ladung, die später nicht mehr hereinkommt — das fängt das Ladeziel ab.
+DEFAULT_NETZDIENLICH_BONUS = 0.05
+MAX_NETZDIENLICH_BONUS = 0.20
+
 # Deckel und Boden des Einspeisepreises sind Dauerzustände, keine Ereignisse:
 # Greift einer, greift er meist über Tage, denn er hängt an der Konfiguration
 # (Anlage Traun: Basistarif 2 ct gegen Gemeinschaftswerte bis 10,2 ct — der
@@ -394,6 +425,11 @@ class ScheduleInputs:
     max_soc_pct: float = 100.0
     # Ladeziel zum Ende der PV-Zeit in Prozent; 0 = aus (siehe HAConfig.ladeziel)
     ladeziel_pct: float = 0.0
+    # „Vormittags bevorzugt netzdienlich": bis zu dieser Stunde (Ortszeit,
+    # exklusiv) Bonus auf PV-Einspeisung in €/kWh; None = aus (siehe
+    # HAConfig.feedin_price / feedin_limit).
+    netzdienlich_bis_stunde: int | None = None
+    netzdienlich_bonus: float = 0.0
     # Bezugspreis im SNAP-Fenster (Sommer, 10–16 Uhr) und im WiNAP-Fenster
     # (Winter, 22–4 Uhr); None = Fenster gibt es nicht. Abgeleitet aus
     # Arbeitspreis + verbilligter Netzgebühr; die Fenstergrenzen kommen aus
@@ -617,7 +653,9 @@ class HAConfig:
 
         self._consumption_series = None
         self._feedin_series = None
+        self._feedin_limit_series = None
         self._consumption_price_series = None
+        self._netzdienlich = None
 
     @property
     def grid_fee(self) -> float:
@@ -665,8 +703,57 @@ class HAConfig:
             self._consumption_series = serie
         return self._consumption_series.loc[start_time:]
 
+    def netzdienlich_slots(self) -> list[float] | None:
+        """Je ``timestamps``-Eintrag der PV-Überschuss in kW (AC), wo der
+        Vormittagsbonus gilt, sonst None — oder None insgesamt, wenn die
+        Option aus ist.
+
+        Gilt vor ``netzdienlich_bis_stunde`` (Ortszeit) und nur, wo die PV
+        laut Prognose mehr liefert als das Haus braucht. Die Nachtstunden vor
+        Sonnenaufgang fallen damit von selbst heraus: Dort gibt es keinen
+        Überschuss, und eine Entladung um 5 Uhr früh soll keinen Bonus sehen.
+        Überschuss auf der AC-Seite (PV ist DC, opt() rechnet mit
+        ``ac_efficiency``), damit die Einspeisegrenze unten exakt „nur PV"
+        heißt und nicht ein paar Prozent Batterie durchlässt.
+        """
+        bis = self._inputs.netzdienlich_bis_stunde
+        bonus = float(self._inputs.netzdienlich_bonus or 0.0)
+        if bis is None or bonus <= 0:
+            return None
+        if self._netzdienlich is None:
+            pv = self._inputs.production_kw
+            haus = self._inputs.consumption_kw
+            werte: list[float | None] = []
+            for i, stamp in enumerate(self._inputs.timestamps):
+                if i >= len(pv) or i >= len(haus) or stamp.hour >= bis:
+                    werte.append(None)
+                    continue
+                ueberschuss = float(pv[i]) * self.ac_efficiency - float(haus[i])
+                werte.append(ueberschuss if ueberschuss > 0 else None)
+            self._netzdienlich = werte
+        return self._netzdienlich
+
     def feedin_limit(self, start_time):
-        return self._inputs.feedin_limit_kw
+        """Einspeisegrenze — mit „Vormittags bevorzugt netzdienlich" je Slot.
+
+        In den Bonus-Slots höchstens der PV-Überschuss: Den Bonus soll nur
+        Sonnenstrom bekommen, der sonst in die Batterie ginge. Mit der Grenze
+        gilt dc_p·η = Haus + Export ≤ PV·η, also Entladen ≤ Laden + Abregeln
+        — die Batterie kann dort nichts ins Netz schieben. Ohne sie wäre der
+        Bonus eine Einladung zur Arbitrage (siehe CONF_SCHEDULE_NETZDIENLICH).
+        """
+        maske = self.netzdienlich_slots()
+        grenze = self._inputs.feedin_limit_kw
+        if maske is None or not any(m is not None for m in maske):
+            return grenze
+        if self._feedin_limit_series is None:
+            import pandas as pd
+
+            self._feedin_limit_series = pd.Series(
+                [grenze if m is None else min(grenze, m) for m in maske],
+                index=pd.DatetimeIndex(self._inputs.timestamps),
+            )
+        return self._feedin_limit_series.loc[start_time:]
 
     def ladeziel(self, parameters, ueberschuss):
         """Mindestinhalt je Slot aus dem Ladeziel (kWh im Modellfenster).
@@ -759,10 +846,15 @@ class HAConfig:
         # Überschuss, ist die Kilowattstunde dort weniger wert. Beide
         # Richtungen machen aus dem Skalar eine Zeitreihe.
         hat_bonus = any(b for b in bonus)
+        # „Vormittags bevorzugt netzdienlich": ein Steuer-Bonus wie der
+        # Gemeinschaftsaufschlag — nur im Plan, nie in bewerte_geldfluesse.
+        netzdienlich = self.netzdienlich_slots()
+        netz_bonus = float(self._inputs.netzdienlich_bonus or 0.0)
         if (
             serie is None
             and (nacht is None or nacht == self._inputs.feedin_price)
             and not hat_bonus
+            and netzdienlich is None
             and self._inputs.feedin_price
             <= _tiefster_bezugspreis(self._inputs) - eeg_price.DECKEL_ABSTAND
         ):
@@ -777,6 +869,8 @@ class HAConfig:
             basis = self._inputs.feedin_price
             werte = []
             basis_je_slot = []
+            # Preis ohne den netzdienlichen Bonus — nur für die Warnung unten.
+            ohne_netz = []
             for i, stamp in enumerate(index):
                 if serie is not None:
                     # Börsenreihe: darf negativ sein, kein Nachtfenster.
@@ -790,6 +884,9 @@ class HAConfig:
                 basis_je_slot.append(preis)
                 if i < len(bonus):
                     preis += bonus[i]
+                ohne_netz.append(preis)
+                if netzdienlich is not None and netzdienlich[i] is not None:
+                    preis += netz_bonus
                 werte.append(preis)
             # Der Deckel verhindert den SCHEINHANDEL: Liegt der Einspeisepreis
             # über dem Bezugspreis, kauft das LP Strom, um ihn im selben Slot
@@ -819,6 +916,11 @@ class HAConfig:
             for i, (wert, grenze) in enumerate(zip(werte, grenzen)):
                 if wert > grenze:
                     werte[i] = grenze
+                    if ohne_netz[i] <= grenze:
+                        # Nur der Vormittagsbonus stößt an: gewollt, er soll
+                        # PV-Einspeisung so attraktiv machen wie möglich —
+                        # nichts an der Konfiguration zu erklären.
+                        continue
                     gedeckelt += 1
                     if basis_je_slot[i] > grenze:
                         schon_basis += 1
@@ -1149,6 +1251,32 @@ def _ladeziel_pct(config: dict) -> float:
     if wert <= 0:
         return 0.0
     return max(MIN_LADEZIEL_PCT, min(_max_soc_pct(config), wert))
+
+
+def _netzdienlich(config: dict) -> tuple[int | None, float]:
+    """(bis_stunde, bonus €/kWh) für „Vormittags bevorzugt netzdienlich".
+
+    Aus (Vorgabe) heißt (None, 0.0). Der Bonus ist auf
+    [0, MAX_NETZDIENLICH_BONUS] geklemmt; ein unlesbarer fällt auf die
+    Vorgabe zurück, eine gespeicherte 0 schaltet die Wirkung ab. Die Stunde
+    liegt in 1..23 — „bis 0 Uhr" wäre nie, „bis 24 Uhr" der ganze Tag.
+    """
+    if not config.get(CONF_SCHEDULE_NETZDIENLICH):
+        return None, 0.0
+    bis = max(1, min(23, _stunde_aus_zeit(
+        config.get(CONF_SCHEDULE_NETZDIENLICH_BIS), DEFAULT_NETZDIENLICH_BIS_STUNDE
+    )))
+    raw = config.get(CONF_SCHEDULE_NETZDIENLICH_BONUS)
+    try:
+        bonus = float(raw) if raw not in (None, "") else DEFAULT_NETZDIENLICH_BONUS
+    except (TypeError, ValueError):
+        bonus = DEFAULT_NETZDIENLICH_BONUS
+    if not math.isfinite(bonus):
+        bonus = DEFAULT_NETZDIENLICH_BONUS
+    bonus = max(0.0, min(MAX_NETZDIENLICH_BONUS, bonus))
+    if bonus <= 0:
+        return None, 0.0
+    return bis, bonus
 
 
 def _stunde_aus_zeit(wert: Any, default: int) -> int:
@@ -2146,6 +2274,7 @@ async def async_collect_inputs(
     # einstellbar ist — das der Gemeinschaften. Ein leeres Gemeinschafts-
     # Fenster fällt auf das Standard-Fenster zurück (Bestandsanlagen
     # verhalten sich unverändert).
+    netzdienlich_bis, netzdienlich_bonus = _netzdienlich(config)
     nacht_von = _stunde_aus_zeit(
         config.get(CONF_SCHEDULE_NIGHT_START), _stunde_aus_zeit(DEFAULT_NIGHT_START, 22)
     )
@@ -2209,6 +2338,8 @@ async def async_collect_inputs(
         min_soc_pct=min_soc,
         max_soc_pct=_max_soc_pct(config),
         ladeziel_pct=_ladeziel_pct(config),
+        netzdienlich_bis_stunde=netzdienlich_bis,
+        netzdienlich_bonus=netzdienlich_bonus,
         forecast_source=quelle,
         eeg_bonus=eeg_bonus,
         eeg_details=eeg_details,
@@ -2306,6 +2437,7 @@ _ENDLICH_SKALARE = (
     "ac_limit_kw", "feedin_limit_kw", "feedin_price", "feedin_price_night",
     "consumption_price", "consumption_price_snap", "consumption_price_winap",
     "battery_cost", "min_soc_pct", "max_soc_pct", "ladeziel_pct", "worst_case_factor",
+    "netzdienlich_bonus",
     "heizstab_max_kw", "heizstab_waermewert", "heizstab_budget_kwh",
 )
 _ENDLICH_REIHEN = (

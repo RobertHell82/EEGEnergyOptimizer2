@@ -394,6 +394,26 @@ the event loop is long enough for HA to flag a blocking call.
   went flat, and the plan only charged what the night needed (73–85 %). The
   plan carries `ladeziel` (`ziel_pct`, `termine` with planned SOC) for the
   small marker in the SOC chart. Tests: `tests/test_ladeziel.py`.
+- **Vormittags bevorzugt netzdienlich** (`schedule_netzdienlich`, `_bis`
+  default 11:00, `_bonus` default 0.05 €/kWh; settings only, expert mode,
+  default off): a pure `HAConfig` parameter, no `LOCAL CHANGE`. In slots
+  before `_bis` (local hour) with forecast AC surplus (`PV·η > load`,
+  `HAConfig.netzdienlich_slots`) the feed-in price gets the bonus **and**
+  `feedin_limit` drops to that surplus. The limit is the essential half:
+  with the bonus alone the LP discharged the battery into the grid in the
+  morning to collect it and recharged at noon (Grünbach plan 04.10.2026,
+  39 → 20 % SOC by 10:45) — with `export ≤ PV·η − load` the battery cannot
+  discharge there at all. Why it exists: with a flat tariff Harald's
+  model charges early and slowly (free below 0.1 C, plus the "use battery
+  early" tie-breaker); a member wanted the Fronius-style curve (export in
+  the morning, full power into the battery at noon). Replayed over 223
+  archived plans of that plant (Fronius, 10 kWh, Ladeziel 100): morning
+  charging median 5.1 → 0 kWh, end-of-PV SOC unchanged, no added grid
+  import, real money ≈ −0.2 ct per plan. 1 ct moved too little; without
+  the Ladeziel a cloudy afternoon ends up to 18 points emptier. The bonus is
+  steering only — `bewerte_geldfluesse`/bilanz never see it, and the price-cap
+  warning ignores slots that only the bonus pushed over the cap. Tests:
+  `tests/test_netzdienlich.py`.
 - **The blackout reserve must never force a purchase**: `bor`
   is capped at the fill level reachable *without buying* — house first,
   limited at empty and at full. Before that it was capped at "content + all

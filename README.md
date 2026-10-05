@@ -128,6 +128,7 @@ Weitere Steuergrößen im Fahrplan:
 | **Mindest-Ladestand** | Harte Untergrenze — darunter wird nicht entladen. Höchstens 20 Prozentpunkte unter dem Maximum-Ladestand, damit ein nutzbarer Bereich bleibt. Hält der Wechselrichter selbst eine höhere Reserve zurück (Backup-Ladestand), gilt diese |
 | **Maximum-Ladestand** | Obergrenze der Planung (Vorgabe 100 = bis voll laden) |
 | **Ladeziel am Abend** | Optional, Expertenmodus: Zum Ende der PV-Zeit soll die Batterie mindestens so voll sein, soweit die Sonne es ohne Netzbezug hergibt (Vorgabe 100 %, leer = aus) |
+| **Vormittags bevorzugt netzdienlich** | Optional, Expertenmodus: Bis zur eingestellten Uhrzeit (Vorgabe 11 Uhr) geht PV-Überschuss lieber ins Netz, die Batterie lädt mittags mit voller Leistung, soweit es sich ausgeht. Gesteuert über einen Bonus auf die Vormittags-Einspeisung (Vorgabe 5 ct, nur im Plan, nicht in der Bilanz) |
 | **Einspeisegrenze** | Maximale Leistung am Netzanschluss, um die herum geplant wird |
 | **Alterungskosten der Batterie** | Preis pro umgesetzter kWh — ein zu kleiner Preisunterschied lohnt den Zyklus nicht. Vorgabe 1 ct, im Expertenmodus einstellbar; bei der Entladung in die Gemeinschaft ist der Wert die Schwelle (Vergütung plus Alterungskosten) |
 | **Arbeitspreis** | Was der Lieferant je kWh verlangt (inkl. MwSt) — bewertet Strom, der sonst aus dem Netz gekauft werden müsste |

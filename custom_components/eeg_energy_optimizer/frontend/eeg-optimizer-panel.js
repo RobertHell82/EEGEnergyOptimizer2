@@ -296,6 +296,11 @@ const WIZARD_DEFAULTS = {
   schedule_max_soc_pct: 100,
   // Ladeziel am Abend: 100 wie DEFAULT_LADEZIEL_PCT im Backend, 0 heisst aus.
   schedule_ladeziel_pct: 100,
+  // „Vormittags bevorzugt netzdienlich": aus, bis 11 Uhr, 5 ct Bonus
+  // (DEFAULT_NETZDIENLICH_* im Backend).
+  schedule_netzdienlich: false,
+  schedule_netzdienlich_bis: "11:00",
+  schedule_netzdienlich_bonus: 0.05,
   // Einspeisegrenze (Guard 1 + LP-Modell). Opt-in.
   grid_export_limit_enabled: false,
   grid_export_limit_kw: 4,
@@ -7003,7 +7008,43 @@ class EegOptimizerPanel extends HTMLElement {
       ${maxSocFeld}
       ${puffer}
       ${ladeziel}
+      ${this._netzdienlichFeld(d, prefix)}
 `;
+  }
+
+  // „Vormittags bevorzugt netzdienlich": wie Puffer und Ladeziel nur in den
+  // Einstellungen und nur im Expertenmodus, Vorgabe aus. Der Bonus ist eine
+  // Steuergröße (schedule.py: CONF_SCHEDULE_NETZDIENLICH) — er taucht in
+  // keiner Bilanz auf, deshalb sagt der Hilfetext, was er kostet.
+  _netzdienlichFeld(d, prefix) {
+    if (!prefix || !d.expert_mode) return "";
+    const an = !!d.schedule_netzdienlich;
+    const bis = d.schedule_netzdienlich_bis || "11:00";
+    const bonusRoh = d.schedule_netzdienlich_bonus;
+    const bonus = (bonusRoh === undefined || bonusRoh === null || bonusRoh === "") ? 0.05 : Number(bonusRoh);
+    return `
+      <div class="field-group">
+        <label style="display:flex;align-items:center;gap:12px;cursor:pointer">
+          <input type="checkbox" data-field="${prefix}schedule_netzdienlich" ${an ? "checked" : ""}>
+          <div>
+            <div style="font-weight:500">Vormittags bevorzugt netzdienlich</div>
+            <div class="help-text" style="margin-top:4px">Bis zur eingestellten Uhrzeit geht der PV-Überschuss lieber ins Netz als in die Batterie. Sie lädt dann mittags mit voller Leistung, also dann, wenn das Netz die Einspeisung am wenigsten braucht. Das gilt nur, soweit es sich ausgeht: Reicht die Sonne danach nicht mehr zum Vollladen, lädt der Fahrplan trotzdem früher.</div>
+          </div>
+        </label>
+      </div>
+      ${an ? `
+      <div class="field-group">
+        <label>Einspeisen bevorzugt bis</label>
+        <input type="time" step="3600" data-field="${prefix}schedule_netzdienlich_bis" value="${bis}">
+        <div class="help-text">Nur die volle Stunde zählt.</div>
+      </div>
+      <div class="field-group">
+        <label>Bonus für die Einspeisung am Vormittag (ct/kWh)</label>
+        <input type="number" data-field="${prefix}schedule_netzdienlich_bonus" data-unit="ct"
+               value="${ctAus(bonus)}" min="0" max="20" step="0.5">
+        <div class="help-text">Um so viel wertet der Fahrplan eine Kilowattstunde aus der PV am Vormittag auf, wenn er rechnet. Ausgezahlt wird der Bonus nicht, er dient nur der Steuerung. Vorgabe 5 ct. Ein kleiner Wert verschiebt kaum etwas, denn langsames Laden spart im Modell Batterieverluste. Die Batterie selbst bekommt den Bonus nie: In diesen Stunden speist der Fahrplan nur Sonnenstrom ein und entlädt nicht ins Netz.</div>
+        <div class="help-text">Die Option kostet wenig: Schnelleres Laden bringt etwas mehr Verlust, und an einem Tag, an dem es mittags zuzieht, ist die Batterie abends weniger voll. Das Ladeziel fängt das zum Teil ab. Was die Option kostet, steht ehrlich in der Bilanz.</div>
+      </div>` : ""}`;
   }
 
   _gemeinschaftFields(d, prefix) {

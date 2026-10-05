@@ -74,6 +74,18 @@ Mit einem Ladeziel von z. B. 100 % soll die Batterie jeden Tag **zum Ende der PV
 
 Das Ziel holt nie Strom aus dem Netz. An einem trüben Tag wird daraus, was die PV schafft. Im Diagramm des Fahrplans steht das Ziel als kleiner Kreis, und bleibt die Kurve darunter, sagt der Kreis beim Darüberfahren, warum. Es kostet etwas Einspeisung oder Wärme im Heizstab, die sonst aus demselben Überschuss gekommen wäre.
 
+### Vormittags bevorzugt netzdienlich
+
+Auch diese Option gibt es nur in den **Einstellungen** und nur im **Expertenmodus**. Die Vorgabe ist **aus**.
+
+Ohne die Option lädt der Fahrplan die Batterie oft schon am Morgen, langsam und gleichmäßig. Bringt Einspeisen um 8 Uhr gleich viel wie um 12 Uhr, ist das für ihn die günstigste Art zu laden, weil langsames Laden weniger Batterieverluste kostet.
+
+Mit der Option geht der PV-Überschuss **bis zur eingestellten Uhrzeit** (Vorgabe 11 Uhr) lieber ins Netz. Die Batterie lädt danach mit voller Leistung, also in der Mittagsspitze, wenn das Netz die Einspeisung am wenigsten braucht. Das gilt nur, soweit es sich ausgeht: Reicht die Sonne am Nachmittag nicht mehr zum Vollladen, lädt der Fahrplan trotzdem früher.
+
+Dafür rechnet der Fahrplan mit einem **Bonus** auf die Einspeisung am Vormittag (Vorgabe 5 ct/kWh). Ausgezahlt wird der Bonus nicht, er dient nur der Steuerung. Die Bilanz rechnet weiter mit deinem echten Tarif. Ein kleiner Bonus verschiebt kaum etwas. Den Bonus bekommt nur Sonnenstrom: In diesen Stunden entlädt der Fahrplan die Batterie nicht ins Netz.
+
+Die Option kostet wenig, aber nicht nichts. Schnelleres Laden bringt etwas mehr Verlust, und an einem Tag, an dem es mittags zuzieht, ist die Batterie abends weniger voll. Das **Ladeziel** fängt das zum Teil ab, deshalb lass es eingeschaltet.
+
 ## Später ändern
 
 Alle Felder dieses Schritts findest du wieder in den **Einstellungen**, Tab **Anlage**: die Karte **Anlage** mit der Einspeisegrenze und die Karte **Batterie**. Gerätedaten aus dem Datenblatt ändern sich im Betrieb praktisch nie. Deshalb erscheinen **AC-Grenzleistung**, **PV-Spitzenleistung** und **Batterie-Leistungsgrenze** in den Einstellungen nur im **Expertenmodus** (Tab **System**). Mindest- und Maximum-Ladestand sind immer sichtbar.

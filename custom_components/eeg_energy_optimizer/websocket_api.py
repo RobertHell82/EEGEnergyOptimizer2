@@ -907,6 +907,8 @@ _ZAHLENFELDER: dict[str, tuple[str, float, float]] = {
     "schedule_battery_cost": ("Alterungskosten der Batterie", 0.0, 1.0),
     # 0 = aus; Werte zwischen 0 und 50 klemmt schedule._ladeziel_pct hoch.
     "schedule_ladeziel_pct": ("Ladeziel", 0.0, 100.0),
+    # Steuer-Bonus „Vormittags bevorzugt netzdienlich", €/kWh; 0 = ohne Wirkung.
+    "schedule_netzdienlich_bonus": ("Bonus für die Einspeisung am Vormittag", 0.0, 0.2),
     # Negativ = Aufschlag des Vermarkters (siehe CONF_SPOT_FEEDIN_FEE).
     "spot_feedin_fee": ("Abschlag auf den Spotpreis", -0.5, 0.5),
     "spot_feedin_fee_pct": ("Prozentabschlag auf den Spotpreis", 0.0, 100.0),

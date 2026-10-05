@@ -571,6 +571,11 @@ TELEMETRY_SETTINGS_KEYS = (
     # Ebenso das Ladeziel: es erklärt, warum eine Anlage abends voll ist,
     # obwohl die Preise das nicht verlangen. 0 = aus.
     "schedule_ladeziel_pct",
+    # Und „Vormittags bevorzugt netzdienlich": erklärt, warum ein Plan
+    # vormittags einspeist und erst mittags lädt.
+    "schedule_netzdienlich",
+    "schedule_netzdienlich_bis",
+    "schedule_netzdienlich_bonus",
     "grid_export_limit_enabled",
     "grid_export_limit_kw",
     # Die Zielfunktion des Fahrplans. Ohne diese Werte sieht das Backend das
