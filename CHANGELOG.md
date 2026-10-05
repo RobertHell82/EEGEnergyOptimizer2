@@ -10,6 +10,12 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
+## [2.1.37] - 2026-10-05
+
+### Hinzugefügt
+
+- **Vormittags bevorzugt netzdienlich.** Bei gleichem Einspeisepreis über den Tag lud der Fahrplan die Batterie schon ab dem Morgen langsam und gleichmäßig. Langsames Laden kostet im Modell weniger Batterieverluste. Ein Mitglied wünschte sich das Bild, das es von seinem Fronius kannte: vormittags ins Netz, ab Mittag mit voller Leistung in den Speicher. Genau dann braucht das Netz die Einspeisung am wenigsten. In den Einstellungen (Tab „Anlage“, Expertenmodus) lässt sich das jetzt einschalten, mit einer Uhrzeit „bis“ (Vorgabe 11 Uhr). Der Fahrplan rechnet dann mit einem Bonus auf die Vormittags-Einspeisung (Vorgabe 5 ct/kWh). Ausgezahlt wird dieser Bonus nicht, die Bilanz bleibt beim echten Tarif. Den Bonus bekommt nur Sonnenstrom: In diesen Stunden entlädt die Batterie nicht ins Netz. Ohne diese Sperre hätte der Fahrplan den Speicher vormittags geleert, um den Bonus mitzunehmen. An 223 echten Plänen der Anlage nachgerechnet sank die Ladung vor 11 Uhr im Median von 5,1 auf 0 kWh. Am Ende der PV-Zeit war die Batterie gleich voll, zusätzlichen Netzbezug gab es keinen. Das Ladeziel sollte dafür eingeschaltet bleiben. Ohne Ladeziel ist die Batterie an einem Tag, an dem es mittags zuzieht, abends weniger voll. Vorgabe ist aus, so bleibt alles wie bisher.
+
 ## [2.1.36] - 2026-10-05
 
 ### Geändert
