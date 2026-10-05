@@ -71,11 +71,11 @@ def _netzbezug_kwh(slots: list[dict]) -> float:
 
 
 @pytest.mark.parametrize("roh,erwartet", [
-    (None, 0.0),        # nie gesetzt
-    ("", 0.0),          # leeres Feld
-    (0, 0.0),           # Panel speichert ein geleertes Zahlenfeld als 0
+    (None, 100.0),      # nie gesetzt → Vorgabe
+    ("", 100.0),        # leer → Vorgabe
+    ("abc", 100.0),     # unlesbar → Vorgabe
+    (0, 0.0),           # Panel speichert ein geleertes Zahlenfeld als 0 → aus
     (-5, 0.0),
-    ("abc", 0.0),
     (30, 50.0),         # unter dem Mindestwert → hochgeklemmt
     (100, 100.0),
     (120, 100.0),

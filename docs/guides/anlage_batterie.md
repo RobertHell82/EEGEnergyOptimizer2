@@ -66,7 +66,7 @@ Sinnvoll ist ein Puffer, wenn du bewusst vorsichtiger fahren willst: Eine volle 
 
 ### Ladeziel am Abend (%)
 
-Auch dieses Feld gibt es nur in den **Einstellungen** und nur im **Expertenmodus**. Leer heißt aus, das ist die Vorgabe.
+Auch dieses Feld gibt es nur in den **Einstellungen** und nur im **Expertenmodus**. Die Vorgabe ist **100 %**. Leerst du das Feld, ist das Ladeziel aus.
 
 Ohne Ladeziel lädt der Fahrplan nur so weit, wie es sich nach den Preisen lohnt. Bringt eine Kilowattstunde am Abend nicht mehr als zu Mittag, lädt er nur, was das Haus über Nacht braucht. Die Batterie wird dann abends nicht voll.
 

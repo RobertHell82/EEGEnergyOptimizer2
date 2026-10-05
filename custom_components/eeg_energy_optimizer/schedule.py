@@ -207,7 +207,9 @@ MAX_MIN_SOC_PCT = MIN_MAX_SOC_PCT - SOC_BAND_MIN_PCT
 
 # Ladeziel in Prozent: Zum Ende der PV-Zeit jedes Tages soll die Batterie
 # mindestens so voll sein — soweit die Sonne das ohne Netzbezug hergibt.
-# 0 (Vorgabe) heißt aus, der Fahrplan entscheidet dann allein nach Preisen.
+# Vorgabe 100 % (seit 2.1.36): Wer das Feld nie angefasst hat, bekommt abends
+# einen vollen Speicher. 0 heißt aus, der Fahrplan entscheidet dann allein
+# nach Preisen.
 #
 # Warum es das braucht (Grünbach, 04.10.2026): Seit OeMAG über dem Tagessatz
 # der Gemeinschaft lag, war eine gespeicherte kWh nachts nichts mehr wert als
@@ -216,7 +218,7 @@ MAX_MIN_SOC_PCT = MIN_MAX_SOC_PCT - SOC_BAND_MIN_PCT
 # einen vollen Speicher will (Notstrom, Zellabgleich), kann das über Preise
 # nicht ausdrücken, ohne die ganze Gemeinschaftssteuerung zu verbiegen.
 CONF_SCHEDULE_LADEZIEL_PCT = "schedule_ladeziel_pct"
-DEFAULT_LADEZIEL_PCT = 0.0
+DEFAULT_LADEZIEL_PCT = 100.0
 # Darunter wäre ein Ladeziel kaum von der Reserve zu unterscheiden, die der
 # Fahrplan ohnehin für die Nacht vorhält.
 MIN_LADEZIEL_PCT = 50.0
@@ -1128,20 +1130,24 @@ def _max_soc_pct(config: dict) -> float:
 def _ladeziel_pct(config: dict) -> float:
     """Ladeziel in Prozent — 0 heißt aus.
 
-    Ein leeres, unlesbares oder nicht positives Feld ist aus: das Panel
-    speichert ein geleertes Zahlenfeld als 0, und genau das ist hier der
-    Aus-Zustand. Sonst geklemmt auf [MIN_LADEZIEL_PCT, Maximum-Ladestand] —
-    über den Deckel hinaus kann der Fahrplan ohnehin nicht laden.
+    Nie gesetzt (fehlender Schlüssel, leerer oder unlesbarer Wert) heißt
+    Vorgabe, also DEFAULT_LADEZIEL_PCT. Eine 0 oder ein negativer Wert ist
+    dagegen eine Aussage: das Panel speichert ein geleertes Zahlenfeld als 0,
+    und genau so schaltet man das Ladeziel ab. Sonst geklemmt auf
+    [MIN_LADEZIEL_PCT, Maximum-Ladestand] — über den Deckel hinaus kann der
+    Fahrplan ohnehin nicht laden.
     """
     raw = config.get(CONF_SCHEDULE_LADEZIEL_PCT)
-    if raw is None or raw == "":
-        return DEFAULT_LADEZIEL_PCT
-    try:
-        wert = float(raw)
-    except (TypeError, ValueError):
-        return DEFAULT_LADEZIEL_PCT
-    if not math.isfinite(wert) or wert <= 0:
-        return DEFAULT_LADEZIEL_PCT
+    wert = DEFAULT_LADEZIEL_PCT
+    if raw is not None and raw != "":
+        try:
+            gelesen = float(raw)
+        except (TypeError, ValueError):
+            gelesen = DEFAULT_LADEZIEL_PCT
+        if math.isfinite(gelesen):
+            wert = gelesen
+    if wert <= 0:
+        return 0.0
     return max(MIN_LADEZIEL_PCT, min(_max_soc_pct(config), wert))
 
 

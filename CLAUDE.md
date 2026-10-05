@@ -379,8 +379,8 @@ the event loop is long enough for HA to flag a blocking call.
   surplus)` raises `bor` before the reachability cap — while all logic
   (which slot, when to drop it) lives in `HAConfig.ladeziel`. Reach for a
   parameter first: a divergence costs on every upstream merge, forever.
-- **Ladeziel** (`schedule_ladeziel_pct`, settings only, expert mode; empty /
-  0 = off): at the end of each day's PV time — the last slot with surplus,
+- **Ladeziel** (`schedule_ladeziel_pct`, settings only, expert mode; default
+  100 since 2.1.36 — a missing key means 100, a saved 0 / cleared field = off): at the end of each day's PV time — the last slot with surplus,
   only if a non-surplus slot of the same day follows inside the horizon —
   the battery should hold at least the target. Counted in the model window
   `[min SOC, max SOC]`, clamped to `[50, max SOC]`. It enters `bor` *before*

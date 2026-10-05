@@ -294,8 +294,8 @@ const WIZARD_DEFAULTS = {
   // Maximum-Ladestand: 100 heisst bis voll laden (kein eigener Schalter,
   // der Zustand steckt allein im Wert — Migration v27).
   schedule_max_soc_pct: 100,
-  // Ladeziel am Abend: 0 heisst aus (DEFAULT_LADEZIEL_PCT im Backend).
-  schedule_ladeziel_pct: 0,
+  // Ladeziel am Abend: 100 wie DEFAULT_LADEZIEL_PCT im Backend, 0 heisst aus.
+  schedule_ladeziel_pct: 100,
   // Einspeisegrenze (Guard 1 + LP-Modell). Opt-in.
   grid_export_limit_enabled: false,
   grid_export_limit_kw: 4,
@@ -6959,10 +6959,11 @@ class EegOptimizerPanel extends HTMLElement {
         <div class="help-text">0 % heißt: Prognose unverändert, so ist es vorgesehen. Ein Aufschlag macht die Vorhersage nicht besser, er verschiebt sie nur — und weil er Einspeisung aus den Bedarfsstunden der Gemeinschaft in den Speicher verlagert, kostet er Ertrag. Der laufende Slot bleibt immer bei den Messwerten, der Puffer wirkt nur auf die Vorausschau.</div>
       </div>` : "";
     // Ladeziel: wie der Sicherheitspuffer nur in den Einstellungen und nur im
-    // Expertenmodus. Leer oder 0 heißt aus — dann entscheidet der Fahrplan
-    // allein nach Preisen. Sonst geklemmt wie im Backend (schedule.py:
-    // `_ladeziel_pct`): mindestens 50 %, höchstens der Maximum-Ladestand.
-    const zielRoh = Number(d.schedule_ladeziel_pct ?? 0) || 0;
+    // Expertenmodus. Nie gesetzt heißt Vorgabe 100 %, leer oder 0 heißt aus —
+    // dann entscheidet der Fahrplan allein nach Preisen. Sonst geklemmt wie
+    // im Backend (schedule.py: `_ladeziel_pct`): mindestens 50 %, höchstens
+    // der Maximum-Ladestand.
+    const zielRoh = Number(d.schedule_ladeziel_pct ?? 100) || 0;
     const zielDeckel = this._socGrenzen(d).deckel;
     const zielWirkt = zielRoh > 0 ? Math.max(50, Math.min(zielDeckel, zielRoh)) : 0;
     const ladeziel = (prefix && d.expert_mode) ? `
@@ -6973,7 +6974,7 @@ class EegOptimizerPanel extends HTMLElement {
         <div class="help-text">${zielWirkt
           ? `Zum Ende der PV-Zeit soll die Batterie jeden Tag mindestens <strong>${fmtDe(zielWirkt, 0)} %</strong> haben — soweit die Sonne das hergibt. Wann sie tagsüber lädt, entscheidet der Fahrplan weiter selbst.`
           : `Aus: Der Fahrplan lädt nur so weit, wie es sich nach den Preisen lohnt. Das kann heißen, dass die Batterie abends nicht voll wird.`}</div>
-        <div class="help-text">Leer lassen heißt aus. Das Ziel erzwingt nie Strom aus dem Netz: An einem trüben Tag wird daraus, was die PV schafft. Es kostet etwas Einspeisung oder Wärme im Heizstab, die sonst aus demselben Überschuss gekommen wäre. 50 bis ${fmtDe(zielDeckel, 0)} %.</div>
+        <div class="help-text">Vorgabe 100 %, leer lassen heißt aus. Das Ziel erzwingt nie Strom aus dem Netz: An einem trüben Tag wird daraus, was die PV schafft. Es kostet etwas Einspeisung oder Wärme im Heizstab, die sonst aus demselben Überschuss gekommen wäre. 50 bis ${fmtDe(zielDeckel, 0)} %.</div>
       </div>` : "";
     const { deckel, boden, maxBoden } = this._socGrenzen(d);
     // Grenzen der Batterie für die Optimierung. Die frühere Notstromreserve
