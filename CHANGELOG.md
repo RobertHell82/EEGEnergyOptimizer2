@@ -10,6 +10,14 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
+## [2.1.36] - 2026-10-05
+
+### Geändert
+
+- **Einrichtungsanleitungen für Solcast und SolaX überarbeitet.** Ein Mitglied kam bei der Inbetriebnahme nicht weiter: Es fand nicht, wo der Solcast-API-Key eingetragen wird, und die SolaX-Einrichtung brach mit einer Fehlermeldung ab. Die Inbetriebnahme erklärt das Eintragen des Keys jetzt direkt in Schritt 4 mit allen Klicks (Einstellungen → Geräte & Dienste → „+ Integration hinzufügen“ → Solcast PV Forecast), statt nur auf eine andere Anleitung zu verweisen. Die SolaX-Anleitung sagt nun, welche Sticks sich überhaupt per Modbus TCP verbinden lassen (der ältere Pocket WiFi 2.0 nicht), wo man die IP-Adresse findet, wie man prüft, ob die Integration schon installiert ist, und was die typischen Fehlermeldungen bedeuten.
+- **Der Assistent sagt „Eingerichtet“ statt „Installiert“.** Geprüft wird, ob die Integration in Home Assistant eingerichtet und verbunden ist, nicht nur, ob sie installiert ist. Eine installierte Solcast-Integration ohne API-Key stand deshalb als „Nicht installiert“ da, obwohl nur noch der Key fehlte. Die Meldungen beim Weiterklicken sagen jetzt auch, wo man die Integration einrichtet.
+- **Das Ladeziel steht ab Werk auf 100 %.** Die Batterie soll damit zum Ende der PV-Zeit voll sein, soweit die Sonne es hergibt. Wer das nicht will, leert das Feld in den Einstellungen (Tab „Anlage“, Expertenmodus).
+
 ## [2.1.35] - 2026-10-04
 
 ### Hinzugefügt
