@@ -10,6 +10,12 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
+## [2.1.38] - 2026-10-06
+
+### Hinzugefügt
+
+- **Der Prognosevergleich geht an die EEG-Statistik.** Ob die eigene PV-Prognose so gut ist wie Solcast, war bisher nur auf jeder Anlage einzeln zu sehen, in der Karte „Prognosevergleich“. Die Statistik kannte nur die Prognose der steuernden Quelle, und das nur als Tagessumme. Jetzt meldet die Anlage jeden abgeschlossenen Tag: die gemessene Erzeugung und was Solcast (oder Forecast.Solar) und die eigene Berechnung am Morgen für den Tag vorhergesagt haben – die eigene auch ohne Kalibrierung, damit sichtbar wird, was die Kalibrierung bringt. Gesendet werden Tagessummen und Halbstundenwerte, wie sie die Karte zeigt. Nach dem Update kommt einmalig das ganze Archiv nach, seit dem 27.09. also jeder aufgezeichnete Tag. Das betrifft nur Anlagen mit eingeschaltetem Prognosevergleich oder steuernder eigener Prognose, und nur mit eingeschalteter EEG-Statistik. Die Datenschutz-Liste im Panel und im README nennt die neuen Daten.
+
 ## [2.1.37] - 2026-10-05
 
 ### Hinzugefügt
