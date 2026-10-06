@@ -84,17 +84,32 @@ def tag_payload(datum: str, ergebnis: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-class BilanzVersand:
-    """Merkt sich die gemeldeten Tage und schickt die übrigen."""
+class TageVersand:
+    """Merkt sich die gemeldeten Tage und schickt die übrigen.
+
+    Grundlage für jede Tagesreihe, die die Anlage nachliefert (Bilanztage,
+    Prognosetage): Unterklassen legen Speichername, Paketgröße, Payload und
+    den Aufruf am Reporter fest.
+    """
+
+    SPEICHER = "bilanz_telemetrie"
+    PAKET = PAKET_TAGE
+    NAME = "Bilanz-Telemetrie"
 
     def __init__(self, hass: Any, entry_id: str) -> None:
         self._store: Any = (
-            Store(hass, 1, f"{DOMAIN}_{entry_id}_bilanz_telemetrie")
+            Store(hass, 1, f"{DOMAIN}_{entry_id}_{self.SPEICHER}")
             if Store is not None else None
         )
         self._kennung: str | None = None
         self._gesendet: set[str] = set()
         self._geladen = False
+
+    def payload(self, datum: str, tag: dict[str, Any]) -> dict[str, Any]:
+        return tag_payload(datum, tag)
+
+    async def _senden(self, reporter: Any, payloads: list[dict[str, Any]]) -> None:
+        await reporter.send_balance(payloads)
 
     async def _laden(self) -> None:
         if self._geladen:
@@ -118,7 +133,7 @@ class BilanzVersand:
                 "gesendet": sorted(self._gesendet),
             })
         except Exception as err:  # noqa: BLE001
-            _LOGGER.warning("Bilanz-Telemetrie: Merker nicht speicherbar: %s", err)
+            _LOGGER.warning("%s: Merker nicht speicherbar: %s", self.NAME, err)
 
     async def async_senden(
         self, reporter: Any, kennung: str | None, tage: dict[str, dict[str, Any]]
@@ -149,16 +164,20 @@ class BilanzVersand:
                 await self._speichern()
             return 0
         gesendet = 0
-        for i in range(0, len(offen), PAKET_TAGE):
-            paket = offen[i:i + PAKET_TAGE]
+        for i in range(0, len(offen), self.PAKET):
+            paket = offen[i:i + self.PAKET]
             try:
-                await reporter.send_balance([tag_payload(d, tage[d]) for d in paket])
+                await self._senden(reporter, [self.payload(d, tage[d]) for d in paket])
             except Exception:  # noqa: BLE001 - Telemetrie darf nie den Takt kippen
-                _LOGGER.exception("Bilanz-Telemetrie: Senden fehlgeschlagen")
+                _LOGGER.exception("%s: Senden fehlgeschlagen", self.NAME)
                 break
             self._gesendet.update(paket)
             gesendet += len(paket)
         await self._speichern()
         if gesendet:
-            _LOGGER.info("Bilanz-Telemetrie: %d Bilanztag(e) gemeldet", gesendet)
+            _LOGGER.info("%s: %d Tag(e) gemeldet", self.NAME, gesendet)
         return gesendet
+
+
+class BilanzVersand(TageVersand):
+    """Die Bilanztage der Einspeise-Karte an ``/v1/balance``."""

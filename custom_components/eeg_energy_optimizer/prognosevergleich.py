@@ -454,6 +454,15 @@ class Prognosevergleich:
         tag = self._tage.get(datum) or {}
         return tag.get("fremd") is not None, tag.get("eigen") is not None
 
+    def abgeschlossene_tage(self, jetzt: datetime | None = None) -> dict[str, dict[str, Any]]:
+        """Tage, an denen sich nichts mehr ändert (Archiv), mit mindestens
+        einer Prognose — die gehen an die Telemetrie."""
+        jetzt = jetzt or _utcnow()
+        return {
+            d: t for d, t in self._tage.items()
+            if self._ist_archiv(d, jetzt) and (t.get(QUELLE_FREMD) or t.get(QUELLE_EIGEN))
+        }
+
     def lerntage(self) -> list[dict[str, Any]]:
         """Alle Tage für die Kalibrierung — sie filtert selbst."""
         return list(self._tage.values())

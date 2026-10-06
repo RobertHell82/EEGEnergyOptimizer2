@@ -2505,19 +2505,32 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 from .bilanz_telemetrie import BilanzVersand
 
                 bilanz_versand = BilanzVersand(hass, entry.entry_id)
+                # Dasselbe für den Prognosevergleich (prognose_telemetrie.py):
+                # gemessene PV und die Morgenprognosen beider Quellen je Tag.
+                from .prognose_telemetrie import PrognoseVersand
+
+                prognose_versand = PrognoseVersand(hass, entry.entry_id)
 
                 async def _bilanz_melden() -> None:
                     bilanz_obj = data.get("bilanz")
                     ident = telemetry_buffer.get_identity() or {}
-                    if bilanz_obj is None or not _telemetry_an():
+                    if not _telemetry_an():
                         return
+                    if bilanz_obj is not None:
+                        try:
+                            await bilanz_versand.async_senden(
+                                reporter, ident.get("installation_id"),
+                                bilanz_obj.archivierte_tage(),
+                            )
+                        except Exception:  # pragma: no cover
+                            _LOGGER.exception("Telemetry: Bilanztage nicht gemeldet")
                     try:
-                        await bilanz_versand.async_senden(
+                        await prognose_versand.async_melden(
                             reporter, ident.get("installation_id"),
-                            bilanz_obj.archivierte_tage(),
+                            data.get("prognosevergleich"),
                         )
                     except Exception:  # pragma: no cover
-                        _LOGGER.exception("Telemetry: Bilanztage nicht gemeldet")
+                        _LOGGER.exception("Telemetry: Prognosetage nicht gemeldet")
 
                 async def _telemetry_flush(_now=None):
                     if not (

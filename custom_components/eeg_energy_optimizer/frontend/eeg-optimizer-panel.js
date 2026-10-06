@@ -8697,6 +8697,7 @@ class EegOptimizerPanel extends HTMLElement {
               <li><strong>Failure</strong> (bei Auftreten): Kategorie, Schweregrad, gehashte Fehlermeldung, technischer Kontext (z. B. Wechselrichter-Typ, Grund)</li>
               <li><strong>Momentaufnahme</strong> (alle 30 Minuten): Ladestand, PV-, Haus-, Netz- und Batterieleistung, Modus, was die Steuerung gerade tut, Mindest-Ladestand des Fahrplans</li>
               <li><strong>Bilanztag</strong> (einmal täglich; nach dem Update einmalig das Archiv bis 400 Tage): die Energiemengen der Einspeise-Karte — eingespeist, davon aus der Batterie und an die Gemeinschaft, PV, Netzbezug, Haus- und Heizstabverbrauch, Anteil im Modus Ein, die höchste Viertelstunde Netzbezug mit Uhrzeit, dieselben Mengen im simulierten Standardbetrieb. Keine Geldbeträge</li>
+              <li><strong>Prognosetag</strong> (einmal täglich, nur mit Prognosevergleich oder eigener Prognose; nach dem Update einmalig das Archiv bis 400 Tage): gemessene PV-Erzeugung und die Morgenprognosen der Fremdquelle und der eigenen Berechnung (mit und ohne Kalibrierung), als Tagessumme und in Halbstunden</li>
                 <li><strong>Tagesbilanz</strong> (einmal täglich): PV-Erzeugung, Verbrauch und Einspeisung des Vortags, höchste Leistung, Ladestand am Anfang und Ende, PV- und Verbrauchsprognose für denselben Tag aus dem Fahrplan des Vorabends und dem von zwei Tagen davor</li>
             </ul>
             <strong>Nicht übermittelt:</strong>
