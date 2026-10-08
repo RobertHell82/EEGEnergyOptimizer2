@@ -10,6 +10,16 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
+## [2.1.39] - 2026-10-08
+
+### Geändert
+
+- **Das Ladeziel hält auch, wenn die Prognose zu gut war.** Bisher galt das Ladeziel nur am Ende der PV-Zeit, und ob es erreichbar ist, rechnete der Fahrplan mit der erwarteten Prognose. Davor durfte er beliebig einspeisen, solange die Prognose versprach, es mittags wieder hereinzuholen. Bei einem Mitglied (34,5 kWh Batterie, 12,3 kWp) sagte die Prognose am 07.10. 29 kWh voraus. Der Fahrplan speiste nachts 5,5 kWh aus der Batterie und vormittags 2,5 kWh PV ins Netz. Es kamen 21 kWh, und die Batterie stand abends bei 77 % statt 100 %, vor einem trüben Tag. Jetzt muss die Batterie vor dem Termin so viel halten, dass sie das Ziel auch dann erreicht, wenn nur die vorsichtige Prognose eintrifft (das untere Band von Solcast, sonst 60 % der Erwartung). Nachts und vormittags geht nur noch hinaus, was auch ein schwacher Tag sicher wieder hereinbringt. An klaren Tagen ändert sich wenig, an unsicheren wird deutlich weniger eingespeist. Nachgerechnet an einem nachgebauten Fall dieser Größe: Ist die Prognose 30 % zu hoch, sinkt die nächtliche Einspeisung von 9,6 auf 0,6 kWh, und die Batterie geht mit 63 % statt 36 % in den Tag. Zusätzlicher Netzbezug entsteht dabei keiner.
+
+### Behoben
+
+- **Die Reserve konnte im laufenden Slot Netzbezug erzwingen.** Die Schranke, die Reserve und Ladeziel auf das ohne Netzbezug Erreichbare begrenzt, rechnete mit dem Ladestand am Beginn eines Viertelstunden-Slots. Gefordert wird im Modell aber der Stand am Ende. Lag eine Forderung genau auf dem Stand am Beginn, durfte die Batterie in diesem Slot nichts abgeben, und das Haus bezog seine Last aus dem Netz. Die Schranke rechnet jetzt mit dem Stand am Ende des Slots.
+
 ## [2.1.38] - 2026-10-06
 
 ### Hinzugefügt
