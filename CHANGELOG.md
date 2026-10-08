@@ -10,6 +10,12 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
+## [2.1.40] - 2026-10-08
+
+### Behoben
+
+- **Nach Sonnenuntergang kein Herunterzählen des Ladelimits mehr.** Will der Fahrplan abends „nicht laden“, nachdem der Wechselrichter vorher freigegeben war, stand das Ladelimit noch auf dem Maximum. Guard 1 nahm es dann in halbierenden Schritten zurück, wie mittags, wenn ein zu schneller Sprung den ganzen PV-Überschuss auf einmal ins Netz schicken und eine Abregelung auslösen würde. Ohne Sonne schützt diese Vorsicht nichts: Auf einer Anlage liefen am 08.10. um 19:48 bei null PV fünf Schreibvorgänge in drei Minuten über das Aktivitätsprotokoll (6 → 3 → 1,5 → 0,75 → 0,25 → 0 kW). Liegt die gemessene PV-Leistung schon unter der Einspeisegrenze, kann auch ein Ladelimit von 0 keine Abregelung auslösen. Dann wird der Planwert jetzt in einem Schritt gesetzt.
+
 ## [2.1.39] - 2026-10-08
 
 ### Geändert
