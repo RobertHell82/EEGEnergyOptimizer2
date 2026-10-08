@@ -1299,6 +1299,14 @@ class ScheduleExecutor:
             self._guard_einschwing_laeufe -= 1
             return basis, "Guard 1: Nachführung abwarten"
         if export < limit_kw - GUARD_EXPORT_RELEASE_KW:
+            # Reicht schon die ganze PV-Leistung nicht an die Grenze heran,
+            # kann auch Ladelimit 0 keine Abregelung auslösen — die
+            # Rücknahme in Schritten schützt dann nichts. Ohne diese Abkürzung
+            # lief sie nach Sonnenuntergang vom freigegebenen Maximum in fünf
+            # Schreibvorgängen auf 0 (6 → 3 → 1,5 → 0,75 → 0,25 → 0).
+            pv = compute_pv_now_kw(self._hass, self._config)
+            if pv is not None and pv < limit_kw - GUARD_EXPORT_RELEASE_KW:
+                return plan_kw, "Planwert"
             # Deutlich unter der Grenze → zurück Richtung Fahrplanwert, nie
             # darunter. Je Lauf wird der halbe Abstand abgebaut, mindestens
             # aber ein voller Schritt: das Ziel ist bekannt (siehe

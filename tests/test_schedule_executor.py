@@ -423,6 +423,31 @@ async def test_guard1_ruecknahme_naehert_sich_an_statt_zu_springen(
     assert len(verlauf) <= 8, verlauf                # und zwar zuegig
 
 
+async def test_guard1_ohne_pv_springt_direkt_auf_den_planwert(mock_hass, mock_inverter):
+    """Nach Sonnenuntergang: Limit steht nach einer Freigabe auf dem Maximum,
+    der Plan will 0. Ohne PV kann nichts abgeregelt werden — ein Schreibvorgang
+    statt der halbierenden Rücknahme (6 → 3 → 1,5 → 0,75 → 0,25 → 0)."""
+    mock_inverter.async_get_charge_limit_kw.return_value = 6.0
+    ex = _make_executor(mock_hass, mock_inverter, dict(CFG_LIMIT))
+
+    with _messwerte(export=-0.4, pv=0.0):
+        await ex.async_guard_cycle(_state(_slot(0, battery_p=0.0)), MODE_EIN, now=NOW)
+
+    mock_inverter.async_set_charge_limit.assert_called_once_with(0.0)
+    assert "Guard 1" not in ex.last_status
+
+
+async def test_guard1_mit_pv_ueber_der_grenze_bleibt_schrittweise(mock_hass, mock_inverter):
+    """Kann die PV die Grenze erreichen, bleibt es bei der Rücknahme in Schritten."""
+    mock_inverter.async_get_charge_limit_kw.return_value = 6.0
+    ex = _make_executor(mock_hass, mock_inverter, dict(CFG_LIMIT))
+
+    with _messwerte(export=3.5, pv=8.0):
+        await ex.async_guard_cycle(_state(_slot(0, battery_p=0.0)), MODE_EIN, now=NOW)
+
+    mock_inverter.async_set_charge_limit.assert_called_once_with(3.0)
+
+
 async def test_guard1_totes_band_aendert_nichts(mock_hass, mock_inverter):
     """Zwischen Grenze − 0,3 und Grenze − 0,1 wird weder angehoben noch
     zurückgenommen — das asymmetrische tote Band verhindert Pendeln."""
