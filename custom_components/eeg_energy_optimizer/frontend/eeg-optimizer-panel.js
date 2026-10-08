@@ -6977,7 +6977,7 @@ class EegOptimizerPanel extends HTMLElement {
         <input type="number" data-field="${prefix}schedule_ladeziel_pct"
                value="${zielWirkt || ""}" min="0" max="${zielDeckel}" step="1" placeholder="aus">
         <div class="help-text">${zielWirkt
-          ? `Zum Ende der PV-Zeit soll die Batterie jeden Tag mindestens <strong>${fmtDe(zielWirkt, 0)} %</strong> haben — soweit die Sonne das hergibt. Wann sie tagsüber lädt, entscheidet der Fahrplan weiter selbst.`
+          ? `Zum Ende der PV-Zeit soll die Batterie jeden Tag mindestens <strong>${fmtDe(zielWirkt, 0)} %</strong> haben — soweit die Sonne das hergibt. Wann sie tagsüber lädt, entscheidet der Fahrplan weiter selbst. Nachts und vormittags gibt sie nur ab, was auch ein schwächerer Tag als vorhergesagt wieder hereinbringt.`
           : `Aus: Der Fahrplan lädt nur so weit, wie es sich nach den Preisen lohnt. Das kann heißen, dass die Batterie abends nicht voll wird.`}</div>
         <div class="help-text">Vorgabe 100 %, leer lassen heißt aus. Das Ziel erzwingt nie Strom aus dem Netz: An einem trüben Tag wird daraus, was die PV schafft. Es kostet etwas Einspeisung oder Wärme im Heizstab, die sonst aus demselben Überschuss gekommen wäre. 50 bis ${fmtDe(zielDeckel, 0)} %.</div>
       </div>` : "";

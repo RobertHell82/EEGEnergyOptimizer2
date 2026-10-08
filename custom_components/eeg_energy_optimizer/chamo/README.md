@@ -135,6 +135,26 @@ Tests: `test_reserve_verlangt_nie_mehr_als_ohne_netzbezug_erreichbar`,
 und `test_reserve_verlangt_nie_mehr_als_die_ladeleistung_schafft` in
 `tests/test_schedule.py`, mit den echten Prognosereihen der Anlage als Fixture.
 
+### 2b. Die Schranke gilt für das Ende des Slots (08.10.2026)
+
+`bor[i]` begrenzt `battery_free[i]`, und das ist laut Bilanz-Nebenbedingung
+(`battery_free = battery_free.shift(fill_value=c.battery_free) + Fluss`) der
+Stand **nach** Slot i. Die Schranke aus Abschnitt 2 schrieb aber den Stand
+**vor** dem Schritt in `reachable`. In einem Defizit-Slot liegt der Stand am
+Beginn um die Hauslast des Slots über dem am Ende. Eine Forderung genau auf
+dem Stand am Beginn verbot deshalb jede Entladung in diesem Slot, und das Haus
+kaufte seine Last zu. Das ist genau das, was Abschnitt 2 ausschließen soll.
+
+Sichtbar wurde es mit der Untergrenze des Ladeziels vor dem Termin
+(Abschnitt 3), die nachts in jedem Slot greift: Im ersten Slot des Plans
+kaufte das Haus 0,52 kW, obwohl die Batterie bei 70 % stand. Die Schranke
+hängt jetzt den Stand nach dem Schritt an. In Überschuss-Slots lässt sie
+damit eine Viertelstunde Laden mehr zu, was die Batterie in diesem Slot
+tatsächlich schafft (der Schritt ist weiter auf die Ladeleistung gedeckelt).
+
+Die beiden Eigenschaftstests aus Abschnitt 2/2a vergleichen jetzt mit dem
+Stand nach dem Schritt.
+
 ### 3. Ladeziel zum Ende der PV-Zeit (04.10.2026)
 
 Eine Vorgabe des Betreibers, kein Modellfehler: „Abends soll die Batterie
@@ -172,6 +192,13 @@ Nachgerechnet an allen archivierten Plänen von Grünbach (27.09.–04.10.2026)
 mit Ladeziel 100 %: alle **1004 Pläne lösbar**, in keinem mehr Netzbezug als
 ohne Ladeziel. 1462 Ziel-Termine, geplanter Ladestand dort im Median 100 %,
 am tiefsten 59,8 % — an trüben Tagen das, was die PV hergab.
+
+Seit 08.10.2026 liefert `HAConfig.ladeziel` nicht nur am Termin einen Wert,
+sondern auch davor: den Inhalt, der nötig ist, damit das Ziel auch auf dem
+vorsichtigen Pfad (`parameters.min_production`) noch erreicht wird, rückwärts
+vom Termin gerechnet. Der Hook hier bleibt unverändert, nur die Werte sind
+andere. Anlass war eine Anlage in der Schweiz: Erwartet waren 29 kWh, der Plan
+speiste davor 8 kWh ein, es kamen 21 kWh, und abends standen 77 % statt 100 %.
 
 Tests: `tests/test_ladeziel.py`.
 

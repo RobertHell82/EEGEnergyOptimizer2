@@ -392,9 +392,21 @@ the event loop is long enough for HA to flag a blocking call.
   load plus allowed export in non-surplus slots) is dropped — that end
   condition is why `fullcharge_try` is unusable. Why it exists: Grünbach,
   04.10.2026 — OeMAG (10.17 ct) rose above the community's day rate, feed-in
-  went flat, and the plan only charged what the night needed (73–85 %). The
-  plan carries `ladeziel` (`ziel_pct`, `termine` with planned SOC) for the
-  small marker in the SOC chart. Tests: `tests/test_ladeziel.py`.
+  went flat, and the plan only charged what the night needed (73–85 %).
+  **Before the target slot** (`HAConfig.ladeziel_termine`) the floor is
+  propagated backwards on the *cautious* path (`min_production`: Solcast p10,
+  else 60 % of expectation): surplus slots lower it by what they charge in the
+  bad case, deficit slots raise it by the house load. Night/morning export
+  is therefore limited to what a weak day still refills. Why: a Swiss plant,
+  07.10.2026 — expected 29 kWh, the plan exported 8 kWh before PV, 21 kWh
+  came, evening SOC 77 % instead of 100 % before a dull day. The termin-only
+  floor measured reachability on the *expected* path and could not see that.
+  All floors mean the level at the END of a slot, like `battery_free[i]` —
+  the reachability cap in `opt_highs.py` was fixed to the end level too
+  (`chamo/README.md` § 2b; the start level let a floor forbid discharge and
+  force a purchase in that slot). The plan carries `ladeziel` (`ziel_pct`,
+  `termine` with planned SOC) for the small marker in the SOC chart.
+  Tests: `tests/test_ladeziel.py`.
 - **Vormittags bevorzugt netzdienlich** (`schedule_netzdienlich`, `_bis`
   default 11:00, `_bonus` default 0.05 €/kWh; settings only, expert mode,
   default off): a pure `HAConfig` parameter, no `LOCAL CHANGE`. In slots

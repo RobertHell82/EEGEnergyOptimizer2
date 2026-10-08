@@ -103,11 +103,15 @@ def opt(c, start_time):
 	ladeziel = getattr(c, 'ladeziel', None)
 	if ladeziel is not None:
 		bor = bor.clip(lower=ladeziel(parameters, surplus))
+	# LOCAL CHANGE (see README.md 2b): the level at the END of each slot,
+	# because bor bounds battery_free[i], which is the state after slot i.
+	# With the start level a demand equal to it allowed no discharge in that
+	# slot, and the house bought its load from the grid instead.
 	level = bat_content
 	reachable = []
 	for step in steps.values:
-		reachable.append(level)   # level at the START of the slot
 		level = min(c.battery_capacity, max(0.0, level + min(step, max_step)))
+		reachable.append(level)
 	bor.clip(upper=pd.Series(reachable, index=parameters.index), inplace=True)
 
 	battery_free_ub = c.battery_capacity - bor

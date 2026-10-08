@@ -1978,6 +1978,12 @@ def test_reserve_verlangt_nie_mehr_als_ohne_netzbezug_erreichbar():
     sie gegen die Forderung, die im Plan steht (``battery_ub``). Bewusst
     die EIGENSCHAFT und keine Zahl: ein anderer Prognosepfad verschiebt die
     Werte, die Aussage bleibt.
+
+    ``battery_ub`` begrenzt den Stand am ENDE des Slots (``battery_free[i]``
+    in opt_highs.py), also gilt der Vergleich nach dem Schritt des Slots.
+    Bis 2.1.38 rechnete die Schranke mit dem Stand am Beginn — eine
+    Forderung in Höhe dieses Standes verbot dann jede Entladung im Slot,
+    und das Haus kaufte seine Last zu (chamo/README.md § 2b).
     """
     pytest.importorskip("pandas")
     pytest.importorskip("highspy")
@@ -1993,14 +1999,15 @@ def test_reserve_verlangt_nie_mehr_als_ohne_netzbezug_erreichbar():
     stand = kapazitaet - inputs.battery_free_kwh
 
     for slot in slots:
+        bilanz = slot["PV"] - slot["consumption"] / sched.HAConfig.ac_efficiency
+        schritt = (max(bilanz, 0.0) * verluste + min(bilanz, 0.0) / verluste) * 0.25
+        schritt = min(schritt, inputs.battery_power_limit_kw * 0.25)
+        stand = min(kapazitaet, max(0.0, stand + schritt))
         gefordert = kapazitaet - slot["battery_ub"]
         assert gefordert <= stand + 0.01, (
             f"{slot['t']}: Reserve verlangt {gefordert:.2f} kWh, ohne Netzbezug "
             f"erreichbar sind {stand:.2f} kWh"
         )
-        bilanz = slot["PV"] - slot["consumption"] / sched.HAConfig.ac_efficiency
-        schritt = (max(bilanz, 0.0) * verluste + min(bilanz, 0.0) / verluste) * 0.25
-        stand = min(kapazitaet, max(0.0, stand + schritt))
 
 
 def test_fahrplan_kauft_nicht_mehr_als_der_standardbetrieb():
@@ -2237,13 +2244,14 @@ def test_reserve_verlangt_nie_mehr_als_die_ladeleistung_schafft():
     max_schritt = inputs.battery_power_limit_kw * 0.25
     stand = kapazitaet - inputs.battery_free_kwh
 
+    # Stand am Ende des Slots — das begrenzt battery_ub (chamo/README.md § 2b).
     for slot in slots:
+        bilanz = slot["PV"] - slot["consumption"] / sched.HAConfig.ac_efficiency
+        schritt = (max(bilanz, 0.0) * verluste + min(bilanz, 0.0) / verluste) * 0.25
+        stand = min(kapazitaet, max(0.0, stand + min(schritt, max_schritt)))
         gefordert = kapazitaet - slot["battery_ub"]
         assert gefordert <= stand + 0.01, (
             f"{slot['t']}: Reserve verlangt {gefordert:.2f} kWh, mit "
             f"{inputs.battery_power_limit_kw:.1f} kW erreichbar sind "
             f"{stand:.2f} kWh"
         )
-        bilanz = slot["PV"] - slot["consumption"] / sched.HAConfig.ac_efficiency
-        schritt = (max(bilanz, 0.0) * verluste + min(bilanz, 0.0) / verluste) * 0.25
-        stand = min(kapazitaet, max(0.0, stand + min(schritt, max_schritt)))

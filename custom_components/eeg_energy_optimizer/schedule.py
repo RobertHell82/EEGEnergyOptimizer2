@@ -766,6 +766,64 @@ class HAConfig:
         hergibt, nie eine Forderung, die nur ein Zukauf oder gar kein Plan
         erfüllt.
 
+        Am Termin (``ladeziel_termine``) steht das Ziel selbst. Davor steht,
+        was die Batterie mindestens halten muss, damit sie das Ziel auch dann
+        noch erreicht, wenn nur der vorsichtige Pfad (``min_production``: p10,
+        sonst 60 % der Erwartung) eintrifft — rückwärts vom Termin gerechnet:
+        Überschuss-Slots senken die Forderung um das, was sie im schlechten
+        Fall laden, Defizit-Slots heben sie um das, was das Haus dort aus der
+        Batterie nimmt.
+
+        Warum (Anlage Schweiz, 07.10.2026): Mit dem Ziel nur am Termin
+        rechnete der Plan mit der ERWARTETEN Prognose von 29 kWh, speiste
+        nachts 5,5 kWh und vormittags 2,5 kWh aus der Batterie bzw. der PV ein
+        und wollte mittags nachladen. Es kamen 21 kWh, abends standen 77 %
+        statt 100. Mit der Untergrenze darf nur hinaus, was auch ein
+        schwacher Tag sicher wieder hereinbringt. Ohne ``min_production`` in
+        den Parametern (Tests mit Hand-Parametern) gilt der Erwartungswert,
+        dann ist die Untergrenze vor dem Termin ein reines Haus-Defizit.
+        """
+        import pandas as pd
+
+        ziel = pd.Series(0.0, index=ueberschuss.index)
+        termine = self.ladeziel_termine(parameters, ueberschuss)
+        if not termine:
+            return ziel
+
+        p2e = self.time_res / 3600.0
+        if "min_production" in parameters:
+            vorsichtig = (
+                parameters["min_production"] - parameters["consumption"] / self.ac_efficiency
+            )
+            werte = [float(v) for v in vorsichtig.values]
+        else:
+            werte = [float(v) for v in ueberschuss.values]
+        # Dieselben Lade-/Entladeverluste wie die Erreichbarkeitsschranke in
+        # opt_highs.py, gedeckelt durch die Batterieleistung.
+        wirkung = 1 - 2 * self.battery_resistance
+        grenze = float(self.battery_power_limit)
+        schritt = [
+            (min(w * wirkung, grenze) if w > 0 else -min(-w / wirkung, grenze)) * p2e
+            for w in werte
+        ]
+        # Wie bor in opt() gilt jeder Wert für den Stand am ENDE des Slots
+        # (battery_free[i]): Vom Ende von k auf das Ende von k+1 wirkt
+        # der Schritt von k+1.
+        forderung = [0.0] * len(werte)
+        for i in termine:
+            bedarf = self.ladeziel_kwh
+            forderung[i] = max(forderung[i], bedarf)
+            for k in range(i - 1, -1, -1):
+                bedarf = min(self.battery_capacity, max(0.0, bedarf - schritt[k + 1]))
+                if bedarf <= 0.0:
+                    break
+                forderung[k] = max(forderung[k], bedarf)
+        ziel[:] = forderung
+        return ziel
+
+    def ladeziel_termine(self, parameters, ueberschuss) -> list[int]:
+        """Slots, an denen das Ladeziel gilt (Positionen in ``ueberschuss``).
+
         Der Zeitpunkt ist je Kalendertag der letzte Slot mit Überschuss, also
         das Ende der PV-Zeit. Nur wenn danach am selben Tag noch ein Slot im
         Horizont liegt: Endet der Horizont mitten am Nachmittag, ist der
@@ -780,11 +838,9 @@ class HAConfig:
         LP unlösbar; es bleibt weg. Der nächste Planlauf rückt den Tag ohnehin
         weiter nach vorn, dann gilt es wieder.
         """
-        import pandas as pd
-
-        ziel = pd.Series(0.0, index=ueberschuss.index)
+        termine: list[int] = []
         if self.ladeziel_kwh <= 0 or len(ueberschuss) == 0:
-            return ziel
+            return termine
 
         p2e = self.time_res / 3600.0
         werte = [float(v) for v in ueberschuss.values]
@@ -823,8 +879,8 @@ class HAConfig:
                 continue  # nur eine Wolke, später am Tag kommt noch Sonne
             if self.ladeziel_kwh - ende_halb > rest[naechster] + 1e-9:
                 continue  # vom Ziel käme der Plan nicht mehr auf halb
-            ziel.iloc[i] = self.ladeziel_kwh
-        return ziel
+            termine.append(i)
+        return termine
 
     def feedin_price(self, start_time):
         """Einspeisepreis: Basistarif, Nachtfenster und EEG-Aufschlag.
@@ -2491,12 +2547,11 @@ def _ladeziel_termine(
     if config.ladeziel_kwh <= 0 or table is None or len(table) == 0:
         return None
     ueberschuss = table["PV"] - table["consumption"] / config.ac_efficiency
-    ziele = config.ladeziel(table, ueberschuss)
     ziel_pct = round(min(float(inputs.ladeziel_pct), float(inputs.max_soc_pct)), 1)
     termine = [
         {"t": slots[i]["t"], "geplant_pct": slots[i]["soc"]}
-        for i, wert in enumerate(ziele.values)
-        if wert > 0 and i < len(slots)
+        for i in config.ladeziel_termine(table, ueberschuss)
+        if i < len(slots)
     ]
     return {"ziel_pct": ziel_pct, "termine": termine}
 

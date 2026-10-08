@@ -72,6 +72,8 @@ Ohne Ladeziel lädt der Fahrplan nur so weit, wie es sich nach den Preisen lohnt
 
 Mit einem Ladeziel von z. B. 100 % soll die Batterie jeden Tag **zum Ende der PV-Zeit** mindestens so voll sein, also dann, wenn die PV unter den Hausverbrauch fällt. Wann sie tagsüber lädt, entscheidet der Fahrplan weiter selbst. Erlaubt sind 50 % bis zum Maximum-Ladestand.
 
+Damit das Ziel nicht an einer zu guten Prognose scheitert, rechnet der Fahrplan vorsichtig: Nachts und am Vormittag gibt die Batterie nur so viel ins Netz ab, wie sie auch an einem schwächeren Tag als vorhergesagt wieder hereinbekommt. Dafür nimmt er das untere Band der Prognose (bei Solcast den p10-Wert, sonst 60 % der Erwartung). An klaren Tagen ändert das wenig. Ist der Tag unsicher, bleibt mehr in der Batterie.
+
 Das Ziel holt nie Strom aus dem Netz. An einem trüben Tag wird daraus, was die PV schafft. Im Diagramm des Fahrplans steht das Ziel als kleiner Kreis, und bleibt die Kurve darunter, sagt der Kreis beim Darüberfahren, warum. Es kostet etwas Einspeisung oder Wärme im Heizstab, die sonst aus demselben Überschuss gekommen wäre.
 
 ### Vormittags bevorzugt netzdienlich
