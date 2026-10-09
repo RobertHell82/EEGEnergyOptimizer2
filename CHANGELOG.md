@@ -10,6 +10,17 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
+## [2.1.41] - 2026-10-09
+
+### Geändert
+
+- **„Vormittags bevorzugt netzdienlich“ nur noch an Tagen mit echtem Überschuss.** Der Vormittagsbonus gilt an einem Tag nur noch, wenn die Sonne dort auch bei vorsichtiger Rechnung (Solcast-p10, sonst 60 % der Prognose) mindestens 1,2-mal so viel Überschuss bringt, wie in der Batterie Platz ist, bis zum Ladeziel. Heute zählt der gemessene Ladestand, an Folgetagen der Platz ab dem Mindest-Ladestand. Anlass war eine Anlage mit 34,5 kWh Batterie an 12,3 kWp am 09.10.: Der ganze Oktobertag reichte gerade, die Batterie zu füllen. Das Ladeziel verlangte deshalb schon am Vormittag Ladung, der Bonus wollte einspeisen, und das Ladelimit sprang zwischen 8:30 und 9:41 alle paar Minuten zwischen 0 und 2 kW. An sonnigen Tagen bleibt die Funktion, wie sie war; am Grünbach-Plan vom 05.10. gilt der Bonus bei voller Prognose weiter und fällt bei 80 % der Prognose weg.
+- **Gemittelte Messwerte für den laufenden Slot.** Der Fahrplan wird weiter jede Minute gerechnet, nimmt PV und Hauslast für den laufenden Slot aber als Mittel der letzten 5 Minuten statt als Augenblickswert. Eine einzelne Wolke kippt den Plan dadurch nicht mehr; ein echter Anstieg ist nach zwei Minuten zur Hälfte im Plan angekommen und nach fünf Minuten ganz.
+
+### Behoben
+
+- **Sonne über der Prognose geht wieder in die Batterie.** Plante ein Slot Laden ohne Einspeisung, setzte die Steuerung das Ladelimit auf die geplante Ladeleistung. Was die Sonne darüber hinaus lieferte, ging ins Netz, denn Guard 1 hebt das Limit nur an der Einspeisegrenze an, und die erreicht ein Herbsttag nie. Solche Slots geben den Wechselrichter jetzt frei („Normalbetrieb (Plan lädt den ganzen Überschuss)“), und er lädt den ganzen Überschuss selbst. Das Ladelimit bleibt, wo der Plan einen Teil ins Netz oder in den Heizstab schicken will und wo ein maximaler Ladestand unter 100 % eingestellt ist.
+
 ## [2.1.40] - 2026-10-08
 
 ### Behoben
