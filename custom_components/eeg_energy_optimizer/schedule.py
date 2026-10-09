@@ -253,6 +253,11 @@ DEFAULT_NETZDIENLICH_BIS_STUNDE = 11
 # auf Ladung, die später nicht mehr hereinkommt — das fängt das Ladeziel ab.
 DEFAULT_NETZDIENLICH_BONUS = 0.05
 MAX_NETZDIENLICH_BONUS = 0.20
+# Der Bonus gilt nur an Tagen, deren Überschuss auf dem vorsichtigen Pfad
+# den freien Platz in der Batterie um diesen Faktor übersteigt (siehe
+# HAConfig.netzdienlich_tage). Darunter will das Ladeziel jede kWh in der
+# Batterie, und Bonus und Ziel ringen Minute für Minute um den Vormittag.
+NETZDIENLICH_UEBERSCHUSS_FAKTOR = 1.2
 
 # Deckel und Boden des Einspeisepreises sind Dauerzustände, keine Ereignisse:
 # Greift einer, greift er meist über Tage, denn er hängt an der Konfiguration
@@ -305,6 +310,15 @@ def _preishinweis_faellig(kennung: str, greift: bool) -> bool:
 # wieder der Abbruch: Ein dauerhaft toter Sensor soll auffallen und nicht
 # stillschweigend mit einem alten Wert weitergefahren werden.
 BATTERIE_PUFFER_MAX_S = 300
+
+# Über so viele Sekunden werden PV und Hauslast für den ersten Stützpunkt
+# gemittelt (``_messmittel``). Der Augenblickswert einer Minute ließ das LP an
+# Tagen, an denen „jetzt laden" und „später laden" fast gleich viel wert sind,
+# zwischen beidem kippen — eine Wolke, ein Wasserkocher, und das Ladelimit
+# sprang zwischen 0 und 2 kW (Winterthur, 09.10.2026). Ein seltenerer Planlauf
+# hätte dasselbe Rauschen nur länger festgehalten; das Mittel nimmt es heraus
+# und lässt einen echten Trend nach ein, zwei Minuten durch.
+MESSMITTEL_S = 300
 
 # Slotlänge, bewusst nicht einstellbar: 15 Minuten sind das Abrechnungsraster.
 # Feiner bringt keine bessere Entscheidung, kostet aber Rechenzeit; gröber
@@ -723,15 +737,82 @@ class HAConfig:
         if self._netzdienlich is None:
             pv = self._inputs.production_kw
             haus = self._inputs.consumption_kw
+            tage = self.netzdienlich_tage()
             werte: list[float | None] = []
             for i, stamp in enumerate(self._inputs.timestamps):
-                if i >= len(pv) or i >= len(haus) or stamp.hour >= bis:
+                if (
+                    i >= len(pv) or i >= len(haus) or stamp.hour >= bis
+                    or not tage.get(stamp.date(), False)
+                ):
                     werte.append(None)
                     continue
                 ueberschuss = float(pv[i]) * self.ac_efficiency - float(haus[i])
                 werte.append(ueberschuss if ueberschuss > 0 else None)
             self._netzdienlich = werte
         return self._netzdienlich
+
+    def netzdienlich_tage(self) -> dict:
+        """Je Kalendertag (Ortszeit), ob der Vormittagsbonus dort gilt.
+
+        Nur an Tagen, deren Überschuss auf dem vorsichtigen Pfad (p10, sonst
+        ``worst_case_factor`` der Erwartung — derselbe wie in ``ladeziel()``)
+        den freien Platz in der Batterie um ``NETZDIENLICH_UEBERSCHUSS_FAKTOR``
+        übersteigt. Freier Platz heißt: bis zum Ladeziel, ohne Ladeziel bis zum
+        Deckel; heute ab dem gemessenen Stand, an Folgetagen ab dem Boden —
+        wie voll die Batterie morgen früh ist, steht noch nicht fest, und
+        jeder Planlauf am Morgen rechnet mit dem echten Stand neu. Ein Tag,
+        den der Horizont nicht ganz enthält, bekommt keinen Bonus.
+
+        Warum (Anlage Schweiz, 09.10.2026, 34,5 kWh an 12,3 kWp): Im Oktober
+        reichte der ganze Tag gerade, die Batterie zu füllen. Das Ladeziel
+        verlangte deshalb schon vormittags Ladung, der Bonus wollte
+        einspeisen, und das LP gab nur den Rest frei — der hing jede Minute an
+        der gemessenen PV, das Ladelimit sprang zwischen 0 und 2 kW.
+        Gedacht ist der Bonus für Tage, an denen die Batterie mittags sicher
+        voll wird.
+        """
+        stempel = self._inputs.timestamps
+        pv = self._inputs.production_kw
+        haus = self._inputs.consumption_kw
+        p10 = self._inputs.min_production_kw
+        faktor = float(self._inputs.worst_case_factor)
+        n = min(len(stempel), len(pv), len(haus))
+        if n == 0:
+            return {}
+
+        wirkung = 1 - 2 * self.battery_resistance
+        grenze = float(self.battery_power_limit)
+        ueberschuss: dict = {}
+        for i in range(n):
+            if i + 1 < len(stempel):
+                dauer_h = (stempel[i + 1] - stempel[i]).total_seconds() / 3600.0
+            else:
+                dauer_h = (stempel[i] - stempel[i - 1]).total_seconds() / 3600.0 if i else 0.0
+            vorsichtig = float(pv[i]) * faktor
+            if p10 is not None and i < len(p10):
+                vorsichtig = max(float(p10[i]), vorsichtig)
+            w = vorsichtig - float(haus[i]) / self.ac_efficiency
+            tag = stempel[i].date()
+            ueberschuss[tag] = ueberschuss.get(tag, 0.0) + (
+                min(w * wirkung, grenze) * dauer_h if w > 0 else 0.0
+            )
+
+        ziel = self.ladeziel_kwh if self.ladeziel_kwh > 0 else self.battery_capacity
+        heute = stempel[0].date()
+        letzter = stempel[n - 1].date()
+        # Endet der Horizont mitten in der PV-Zeit, fehlt dem letzten Tag ein
+        # Teil seines Überschusses — dann kein Bonus. Liegt das Ende danach
+        # (Abend), ist der Tag vollständig.
+        ende_offen = float(pv[n - 1]) * self.ac_efficiency > float(haus[n - 1])
+        tage: dict = {}
+        for tag, summe in ueberschuss.items():
+            if tag == letzter and ende_offen:
+                tage[tag] = False
+                continue
+            inhalt = self.battery_capacity - self.battery_free if tag == heute else 0.0
+            platz = max(0.0, ziel - inhalt)
+            tage[tag] = summe >= NETZDIENLICH_UEBERSCHUSS_FAKTOR * platz
+        return tage
 
     def feedin_limit(self, start_time):
         """Einspeisegrenze — mit „Vormittags bevorzugt netzdienlich" je Slot.
@@ -1405,6 +1486,31 @@ def _batteriewerte_mit_puffer(
     return soc, capacity, alter
 
 
+def _messmittel(
+    data: dict, schluessel: str, wert: float | None, now: datetime
+) -> float | None:
+    """Mittel der Messwerte der letzten ``MESSMITTEL_S`` Sekunden.
+
+    Jeder Planlauf legt seinen Messwert ab; zurück kommt das Mittel über alle,
+    die noch im Fenster liegen, den neuen eingeschlossen. Ein nicht lesbarer
+    Wert legt nichts ab, das Mittel der übrigen gilt weiter — fehlt alles,
+    kommt None (dann bleibt die Prognose stehen, wie bisher).
+
+    Wie ``_batteriewerte_mit_puffer`` in ``hass.data``: Nach dem Neuladen
+    beginnt das Fenster leer, und ein Zeitsprung rückwärts verwirft es.
+    """
+    puffer = data.setdefault("messmittel", {}).setdefault(schluessel, [])
+    puffer[:] = [
+        (zeit, w) for zeit, w in puffer
+        if 0 <= (now - zeit).total_seconds() < MESSMITTEL_S
+    ]
+    if wert is not None:
+        puffer.append((now, float(wert)))
+    if not puffer:
+        return None
+    return sum(w for _, w in puffer) / len(puffer)
+
+
 def _grid_timestamps(
     start: datetime, hours: int, step_min: int = GRID_STEP_MIN
 ) -> list[datetime]:
@@ -2049,13 +2155,17 @@ async def async_collect_inputs(
     # ist die aktuelle Messung der beste Schätzer, und nur der erste Slot wird
     # gefahren — die späteren Stützpunkte dienen der Vorausschau und bleiben
     # bei der Prognose (opt() interpoliert bis zum nächsten 30-Minuten-
-    # Stützpunkt zurück). Nicht lesbare Messwerte lassen die Prognose stehen.
-    pv_now = compute_pv_now_kw(hass, config)
+    # Stützpunkt zurück). Gemessen heißt: gemittelt über MESSMITTEL_S, nicht
+    # der Augenblick dieser Minute. Ist nichts Lesbares im Fenster, bleibt die
+    # Prognose stehen.
+    pv_now = _messmittel(data, "pv", compute_pv_now_kw(hass, config), now)
     if pv_now is not None:
         production[0] = round(pv_now, 4)
         if min_production is not None:
             min_production[0] = round(pv_now, 4)
-    house_load_now = compute_house_load_kw(hass, config)
+    house_load_now = _messmittel(
+        data, "haus", compute_house_load_kw(hass, config), now
+    )
     if house_load_now is not None:
         consumption[0] = round(house_load_now, 4)
 

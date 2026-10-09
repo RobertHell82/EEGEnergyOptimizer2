@@ -89,6 +89,10 @@ _EPS_KW = 0.001
 # (``_batterie_gesaettigt``): Nur DIESE Freigabe heißt „die Batterie nimmt
 # nichts mehr auf" — die Freigabe für die Entladung fürs Haus heißt es nicht.
 RELEASE_GRUND_BATTERIE_VOLL = "Normalbetrieb (Batterie voll)"
+# Freigabe, weil der Slot den ganzen Überschuss laden will (``_laedt_alles``).
+RELEASE_GRUND_ALLES_LADEN = "Normalbetrieb (Plan lädt den ganzen Überschuss)"
+# Geplante Einspeisung bis hierher gilt als LP-Rauschen, nicht als Absicht.
+_ALLES_LADEN_EXPORT_KW = 0.05
 # Unter dieser Entladeleistung lohnt keine erzwungene Entladung — die
 # gemessene PV deckt die geplante Einspeisung bereits, der Automatikmodus
 # speist den Überschuss von selbst ein.
@@ -137,6 +141,28 @@ def _voll_ab(result: dict | None) -> float:
     return deckel - (100.0 - SCHEDULE_BATTERY_FULL_SOC_PCT)
 
 
+def _laedt_alles(slot: dict, result: dict | None, grid_p: float) -> bool:
+    """Plant der Slot, den ganzen Überschuss in die Batterie zu laden?
+
+    Nur dann ist Freigeben dasselbe wie der Plan. Drei Fälle brauchen das
+    Ladelimit weiter: geplante Einspeisung (der Plan will einen Teil im
+    Netz), geplante Wärme oder Abregelung (der Heizstab bekommt seinen Teil
+    nur, wenn die Batterie gedeckelt ist) und ein Ladedeckel unter 100 %
+    (der Automatikmodus des Geräts lüde darüber hinaus).
+    """
+    if grid_p > _ALLES_LADEN_EXPORT_KW:
+        return False
+    try:
+        if float(slot.get("heizstab") or 0.0) > _EPS_KW:
+            return False
+        if float(slot.get("discard") or 0.0) > _EPS_KW:
+            return False
+        deckel = float((result or {}).get("max_soc_pct") or 100.0)
+    except (TypeError, ValueError):
+        return False
+    return deckel >= 100.0
+
+
 def plan_action(result: dict | None, now: datetime) -> PlanAction | None:
     """Übersetzt den laufenden Slot in eine Absicht. None = kein Slot.
 
@@ -155,6 +181,20 @@ def plan_action(result: dict | None, now: datetime) -> PlanAction | None:
     consumption = slot.get("consumption")
 
     if battery_p < -_EPS_KW:
+        if _laedt_alles(slot, result, grid_p):
+            # Der Slot plant Laden und keine Einspeisung: Alles, was übrig
+            # ist, soll in die Batterie. Ein Ladelimit auf die Planleistung
+            # schickte jede Sonne über der Prognose ins Netz — Guard 1 hebt
+            # nur an der Einspeisegrenze an, und die erreicht ein Herbsttag
+            # nie. Der Automatikmodus lädt den ganzen Überschuss von selbst.
+            # Winterthur, 09.10.2026: Planwerte von 0–2 kW, je nach Minute,
+            # an einem Tag, der gerade zum Vollladen reichte.
+            return PlanAction(
+                "release",
+                slot_t=slot_t,
+                consumption_kw=consumption,
+                reason=RELEASE_GRUND_ALLES_LADEN,
+            )
         # Slot plant Laden → Ladelimit auf die Planleistung. Guard 1 hebt es
         # bei stiller Abregelung an.
         return PlanAction(

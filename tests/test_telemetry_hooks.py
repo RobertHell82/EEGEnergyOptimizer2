@@ -137,7 +137,7 @@ async def test_executor_failure_callback_on_charge_limit_error(mock_hass, mock_i
 
     p1, p2, p3 = _no_measurements()
     with p1, p2, p3:
-        await ex.async_guard_cycle(_plan(_slot(battery_p=-2.0)), MODE_EIN, now=NOW)
+        await ex.async_guard_cycle(_plan(_slot(battery_p=-2.0, grid_p=0.5)), MODE_EIN, now=NOW)
 
     callback.assert_called_once_with("charge_limit", None)
 
@@ -198,7 +198,7 @@ async def test_executor_failure_callback_default_none(mock_hass, mock_inverter):
 
     p1, p2, p3 = _no_measurements()
     with p1, p2, p3:
-        await ex.async_guard_cycle(_plan(_slot(battery_p=-2.0)), MODE_EIN, now=NOW)
+        await ex.async_guard_cycle(_plan(_slot(battery_p=-2.0, grid_p=0.5)), MODE_EIN, now=NOW)
 
     assert ex.write_failures == 1  # gezählt, aber kein Callback nötig
 
@@ -211,7 +211,7 @@ async def test_executor_failure_callback_never_raises(mock_hass, mock_inverter):
 
     p1, p2, p3 = _no_measurements()
     with p1, p2, p3:
-        await ex.async_guard_cycle(_plan(_slot(battery_p=-2.0)), MODE_EIN, now=NOW)
+        await ex.async_guard_cycle(_plan(_slot(battery_p=-2.0, grid_p=0.5)), MODE_EIN, now=NOW)
 
     assert callback.call_count == 1
     assert "Schreibfehler" in ex.last_status

@@ -14,6 +14,7 @@ Was diese Tests festhalten:
 """
 
 from dataclasses import replace
+from datetime import date
 
 import pytest
 
@@ -159,3 +160,75 @@ def test_bonus_ist_kein_geld():
     slots = sched.solve(inputs)["slots"]
     assert sched._basistarif_je_slot(slots, inputs) == sched._basistarif_je_slot(slots, _an(inputs))
     assert sched.bewerte_geldfluesse(slots, inputs) == sched.bewerte_geldfluesse(slots, _an(inputs))
+
+
+# ---------------------------------------------------------------------------
+# Nur an Tagen mit echtem Überschuss (Anlage Schweiz, 09.10.2026)
+# ---------------------------------------------------------------------------
+
+
+def _ab(inputs: sched.ScheduleInputs, von: str, bis: str | None = None, **felder):
+    """Schneidet den Horizont auf [von, bis) zu — so wird aus dem Folgetag
+    der Fixture „heute" mit gemessenem Stand."""
+    idx = [
+        i for i, t in enumerate(inputs.timestamps)
+        if t.isoformat() >= von and (bis is None or t.isoformat() < bis)
+    ]
+    p10 = inputs.min_production_kw
+    return replace(
+        inputs,
+        start=inputs.timestamps[idx[0]],
+        timestamps=[inputs.timestamps[i] for i in idx],
+        consumption_kw=[inputs.consumption_kw[i] for i in idx],
+        production_kw=[inputs.production_kw[i] for i in idx],
+        min_production_kw=None if p10 is None else [p10[i] for i in idx],
+        feedin_price_series=None if inputs.feedin_price_series is None
+        else [inputs.feedin_price_series[i] for i in idx],
+        **felder,
+    )
+
+
+def test_trueber_tag_ohne_bonus():
+    """Reicht der Tag auf dem vorsichtigen Pfad nicht, die Batterie zu füllen,
+    gibt es keinen Bonus — der Plan ist dann derselbe wie ohne die Option.
+    Sonst ringen Ladeziel und Bonus Minute für Minute um den Vormittag."""
+    pytest.importorskip("pandas")
+    pytest.importorskip("highspy")
+    inputs = _inputs_gruenbach(ladeziel_pct=100.0, pv_faktor=0.6)
+    config = sched.HAConfig(_an(inputs))
+    assert not any(config.netzdienlich_tage().values())
+    assert all(m is None for m in config.netzdienlich_slots())
+    ohne = sched.solve(inputs)["slots"]
+    mit = sched.solve(_an(inputs))["slots"]
+    assert [s["battery_p"] for s in mit] == [s["battery_p"] for s in ohne]
+
+
+def test_sonniger_tag_behaelt_den_bonus():
+    pytest.importorskip("pandas")
+    tage = sched.HAConfig(_an(_inputs_gruenbach(ladeziel_pct=100.0))).netzdienlich_tage()
+    assert tage[date(2026, 10, 5)] is True
+
+
+@pytest.mark.parametrize("frei_kwh,erwartet", [(1.0, True), (13.0, False)])
+def test_heute_zaehlt_der_gemessene_stand(frei_kwh, erwartet):
+    """Heute zählt der Platz ab dem gemessenen Stand: dieselbe Sonne reicht
+    für eine fast volle Batterie, für eine leere nicht."""
+    pytest.importorskip("pandas")
+    inputs = _ab(
+        _inputs_gruenbach(ladeziel_pct=100.0, pv_faktor=0.8),
+        "2026-10-05T06:00", battery_free_kwh=frei_kwh,
+    )
+    tage = sched.HAConfig(_an(inputs)).netzdienlich_tage()
+    assert tage[date(2026, 10, 5)] is erwartet
+
+
+def test_horizont_endet_in_der_pv_zeit():
+    """Fehlt dem letzten Tag der Nachmittag, ist seine Summe zu klein — kein
+    Bonus statt eines falschen Urteils. Endet der Horizont am Abend, zählt
+    der Tag."""
+    pytest.importorskip("pandas")
+    basis = _an(_inputs_gruenbach(ladeziel_pct=100.0))
+    mittags = sched.HAConfig(_ab(basis, "2026-10-04T20:00", "2026-10-06T12:00"))
+    assert mittags.netzdienlich_tage()[date(2026, 10, 6)] is False
+    abends = sched.HAConfig(basis)
+    assert abends.netzdienlich_tage()[date(2026, 10, 6)] is True

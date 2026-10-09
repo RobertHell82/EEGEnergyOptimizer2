@@ -82,7 +82,7 @@ Auch diese Option gibt es nur in den **Einstellungen** und nur im **Expertenmodu
 
 Ohne die Option lädt der Fahrplan die Batterie oft schon am Morgen, langsam und gleichmäßig. Bringt Einspeisen um 8 Uhr gleich viel wie um 12 Uhr, ist das für ihn die günstigste Art zu laden, weil langsames Laden weniger Batterieverluste kostet.
 
-Mit der Option geht der PV-Überschuss **bis zur eingestellten Uhrzeit** (Vorgabe 11 Uhr) lieber ins Netz. Die Batterie lädt danach mit voller Leistung, also in der Mittagsspitze, wenn das Netz die Einspeisung am wenigsten braucht. Das gilt nur, soweit es sich ausgeht: Reicht die Sonne am Nachmittag nicht mehr zum Vollladen, lädt der Fahrplan trotzdem früher.
+Mit der Option geht der PV-Überschuss **bis zur eingestellten Uhrzeit** (Vorgabe 11 Uhr) lieber ins Netz. Die Batterie lädt danach mit voller Leistung, also in der Mittagsspitze, wenn das Netz die Einspeisung am wenigsten braucht. Das gilt nur an Tagen, an denen die Sonne auch bei vorsichtiger Rechnung deutlich mehr bringt, als in die Batterie passt. Reicht der Tag gerade zum Vollladen, wie im Herbst und Winter oft, ist die Option an diesem Tag ohne Wirkung und alles geht in die Batterie.
 
 Dafür rechnet der Fahrplan mit einem **Bonus** auf die Einspeisung am Vormittag (Vorgabe 5 ct/kWh). Ausgezahlt wird der Bonus nicht, er dient nur der Steuerung. Die Bilanz rechnet weiter mit deinem echten Tarif. Ein kleiner Bonus verschiebt kaum etwas. Den Bonus bekommt nur Sonnenstrom: In diesen Stunden entlädt der Fahrplan die Batterie nicht ins Netz.
 

@@ -37,8 +37,13 @@ CFG_LIMIT = {
 }
 
 
-def _slot(offset_min: int, battery_p=0.0, grid_p=0.0, soc=50.0, consumption=0.6,
+def _slot(offset_min: int, battery_p=0.0, grid_p=None, soc=50.0, consumption=0.6,
           heizstab=0.0):
+    if grid_p is None:
+        # Ein Ladeslot plant hier etwas Einspeisung, damit er ein Ladelimit
+        # bleibt; Laden ganz ohne Einspeisung gibt frei (_laedt_alles) und
+        # setzt grid_p=0.0 ausdrücklich.
+        grid_p = 0.5 if battery_p < 0 else 0.0
     return {
         "t": (NOW + timedelta(minutes=offset_min)).isoformat(),
         "battery_p": battery_p,
@@ -95,11 +100,46 @@ def _messwerte(export=None, haus=None, pv=None, batt=None):
 
 
 def test_laden_wird_ladelimit():
-    """battery_p negativ (chamo: laden) → Ladelimit auf die Planleistung."""
-    action = plan_action({"slots": [_slot(0, battery_p=-2.4)]}, NOW)
+    """battery_p negativ (chamo: laden) neben geplanter Einspeisung →
+    Ladelimit auf die Planleistung."""
+    action = plan_action({"slots": [_slot(0, battery_p=-2.4, grid_p=1.0)]}, NOW)
     assert action == PlanAction(
         "charge_limit", power_kw=2.4, slot_t=_slot(0)["t"], consumption_kw=0.6
     )
+
+
+def test_alles_laden_gibt_frei():
+    """Laden ohne Einspeisung heißt: der ganze Überschuss in die Batterie.
+    Ein Ladelimit auf die Planleistung schickte jede Sonne über der Prognose
+    ins Netz (Winterthur, 09.10.2026) — also freigeben."""
+    for grid_p in (0.0, 0.04, -0.2):
+        action = plan_action({"slots": [_slot(0, battery_p=-2.4, grid_p=grid_p)]}, NOW)
+        assert action == PlanAction(
+            "release", slot_t=_slot(0)["t"], consumption_kw=0.6,
+            reason=sx.RELEASE_GRUND_ALLES_LADEN,
+        ), grid_p
+
+
+@pytest.mark.parametrize("slot,result", [
+    (_slot(0, battery_p=-2.4, grid_p=0.3), {}),             # Einspeisung geplant
+    (_slot(0, battery_p=-2.4, grid_p=0.0, heizstab=1.5), {}),        # Wärme geplant
+    ({**_slot(0, battery_p=-2.4, grid_p=0.0), "discard": 0.8}, {}),  # Abregelung geplant
+    (_slot(0, battery_p=-2.4, grid_p=0.0), {"max_soc_pct": 90.0}),   # Ladedeckel
+])
+def test_alles_laden_braucht_sonst_das_ladelimit(slot, result):
+    """Wo der Plan einen Teil woanders hin will — Netz, Heizstab — oder der
+    Automatikmodus über den Ladedeckel hinaus lüde, bleibt das Ladelimit."""
+    action = plan_action({**result, "slots": [slot]}, NOW)
+    assert action.kind == "charge_limit"
+    assert action.power_kw == pytest.approx(2.4)
+
+
+def test_alles_laden_zaehlt_nicht_als_volle_batterie():
+    """Nur „Batterie voll" gibt dem Heizstab den ganzen Überschuss — die
+    Freigabe zum Laden heißt das Gegenteil."""
+    action = plan_action({"slots": [_slot(0, battery_p=-2.4, grid_p=0.0)]}, NOW)
+    assert action.kind == "release"
+    assert action.reason != sx.RELEASE_GRUND_BATTERIE_VOLL
 
 
 def test_kein_laden_geplant_blockiert_das_laden():

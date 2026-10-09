@@ -7028,7 +7028,7 @@ class EegOptimizerPanel extends HTMLElement {
           <input type="checkbox" data-field="${prefix}schedule_netzdienlich" ${an ? "checked" : ""}>
           <div>
             <div style="font-weight:500">Vormittags bevorzugt netzdienlich</div>
-            <div class="help-text" style="margin-top:4px">Bis zur eingestellten Uhrzeit geht der PV-Überschuss lieber ins Netz als in die Batterie. Sie lädt dann mittags mit voller Leistung, also dann, wenn das Netz die Einspeisung am wenigsten braucht. Das gilt nur, soweit es sich ausgeht: Reicht die Sonne danach nicht mehr zum Vollladen, lädt der Fahrplan trotzdem früher.</div>
+            <div class="help-text" style="margin-top:4px">Bis zur eingestellten Uhrzeit geht der PV-Überschuss lieber ins Netz als in die Batterie. Sie lädt dann mittags mit voller Leistung, also dann, wenn das Netz die Einspeisung am wenigsten braucht. Das gilt nur an Tagen, an denen die Sonne auch bei vorsichtiger Rechnung deutlich mehr bringt, als in die Batterie passt. Reicht der Tag gerade zum Vollladen, geht alles in die Batterie.</div>
           </div>
         </label>
       </div>

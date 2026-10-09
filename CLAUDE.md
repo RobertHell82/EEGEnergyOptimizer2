@@ -204,7 +204,12 @@ three intents. `Fahrplan-Status` shows what actually happened:
 - **Laden begrenzt auf x kW** — the plan wants surplus in the grid rather than
   in the battery, so the charge limit is capped (0 kW = charging blocked).
   Guard 1 raises the cap again when the measured export sticks to the limit,
-  which is the signature of silent curtailment.
+  which is the signature of silent curtailment. A slot that charges and
+  plans **no** export (≤ 0.05 kW), no heat, no curtailment, with max SOC
+  100 % is a release instead (`_laedt_alles`, reason
+  „Normalbetrieb (Plan lädt den ganzen Überschuss)“, 2.1.41): a cap at the
+  planned power sent every kW above the forecast into the grid, and Guard 1
+  never lifts it below the export limit (Winterthur 09.10.2026).
 - **Einspeisung x kW bis y %** — forced discharge, named after the *planned export*, not the battery setpoint (which includes the house load); „Entladung x kW …“ only when no plan value is known; the target SOC comes **from
   the plan**, there is no independent floor. Guard 2 tracks the setpoint from
   planned export + measured house load.
@@ -360,7 +365,12 @@ the event loop is long enough for HA to flag a blocking call.
 ## Key Domain Concepts
 
 - **Fahrplan (Schedule)**: 15-minute slots over a 48-hour horizon, recomputed
-  every minute. 15 min is the settlement grid — finer costs time without
+  every minute. The first support point takes PV and house load as the
+  **mean of the last `MESSMITTEL_S` = 300 s** (`_messmittel`, kept in
+  `hass.data`), not the instant reading: on a day where charging now or later
+  is worth almost the same, one cloud flipped the LP and the charge limit
+  jumped 0 ↔ 2 kW every few minutes (Winterthur 09.10.2026). A slower plan
+  cadence would have held the same noise longer; the mean removes it. 15 min is the settlement grid — finer costs time without
   changing decisions, coarser blurs short price and load windows. Neither the
   slot length nor the horizon is configurable. **`start` is rounded down to
   that grid** (since 2.1.1-dev36): `opt()` resamples every series to
@@ -425,7 +435,17 @@ the event loop is long enough for HA to flag a blocking call.
   import, real money ≈ −0.2 ct per plan. 1 ct moved too little; without
   the Ladeziel a cloudy afternoon ends up to 18 points emptier. The bonus is
   steering only — `bewerte_geldfluesse`/bilanz never see it, and the price-cap
-  warning ignores slots that only the bonus pushed over the cap. Tests:
+  warning ignores slots that only the bonus pushed over the cap.
+  **Only on days with real surplus** (`HAConfig.netzdienlich_tage`, 2.1.41):
+  the bonus applies on a calendar day only if its surplus on the *cautious*
+  path (p10, else `worst_case_factor`) exceeds the free room up to the
+  Ladeziel (else the max SOC) by `NETZDIENLICH_UEBERSCHUSS_FAKTOR` = 1.2 —
+  today from the measured level, later days from the floor; a day the
+  horizon cuts mid-PV gets none. Why: Winterthur 09.10.2026 (34.5 kWh at
+  12.3 kWp) — the whole October day barely filled the battery, the
+  Ladeziel wanted charging in the morning, the bonus wanted export, and
+  the LP released only the slack, which hung on the minute's measurement:
+  the charge limit jumped 0 ↔ 2 kW every few minutes. Tests:
   `tests/test_netzdienlich.py`.
 - **The blackout reserve must never force a purchase**: `bor`
   is capped at the fill level reachable *without buying* — house first,
