@@ -784,6 +784,8 @@ class EegOptimizerPanel extends HTMLElement {
     this._bilanzBusy = false;
     this._bilanzGeholt = 0;
     this._bilanzDetailsOpen = false;
+    // Popup „Monat"/„Jahr" der Bilanzkarte: { zeitraum, punkte, fehler } oder null.
+    this._bilanzVerlauf = null;
     // Karte „Einspeisung": Energie statt Geld — was ins Netz ging, woher
     // und wer es genommen hat. Ein Zeitraum auf einmal, gemerkt.
     this._einspeisung = null;
@@ -962,6 +964,7 @@ class EegOptimizerPanel extends HTMLElement {
       if (e.target.classList.contains("dialog-overlay")) {
         this._showDialog = null;
         this._overrideDialog = null;
+        this._bilanzVerlauf = null;
         this._render();
         return;
       }
@@ -1856,20 +1859,11 @@ class EegOptimizerPanel extends HTMLElement {
       case "show-entity": {
         const entityId = dataset.entity;
         // Monat und Jahr: Der Standard-Dialog zeigt fix 24 Stunden — beim
-        // Monatswert sieht man so nur den heutigen Anstieg. Stattdessen den
-        // Verlauf ab Periodenbeginn öffnen (Bilanztag beginnt um 04:00).
+        // Monatswert sieht man so nur den heutigen Anstieg. Stattdessen ein
+        // eigenes Popup mit Tages- bzw. Monatsbalken aus der Statistik.
         const zeitraum = dataset.zeitraum;
         if (entityId && (zeitraum === "monat" || zeitraum === "jahr")) {
-          const jetzt = new Date();
-          const bezug = new Date(jetzt.getTime() - 4 * 3600 * 1000);
-          const start = zeitraum === "monat"
-            ? new Date(bezug.getFullYear(), bezug.getMonth(), 1, 4)
-            : new Date(bezug.getFullYear(), 0, 1, 4);
-          const url = `/history?entity_id=${encodeURIComponent(entityId)}`
-            + `&start_date=${encodeURIComponent(start.toISOString())}`
-            + `&end_date=${encodeURIComponent(jetzt.toISOString())}`;
-          history.pushState(null, "", url);
-          window.dispatchEvent(new CustomEvent("location-changed", { detail: { replace: false } }));
+          this._bilanzVerlaufOeffnen(zeitraum, dataset.tagesEntity || entityId);
           break;
         }
         if (entityId) {
@@ -1885,6 +1879,10 @@ class EegOptimizerPanel extends HTMLElement {
         break;
       case "override-modus":
         this._overrideModus = dataset?.modus === "soc" ? "soc" : "dauer";
+        this._render();
+        break;
+      case "bilanz-verlauf-close":
+        this._bilanzVerlauf = null;
         this._render();
         break;
       case "override-close":
@@ -4193,6 +4191,115 @@ class EegOptimizerPanel extends HTMLElement {
   // denen die Beträge darunter bewertet sind — kurz, ohne Herleitung (die
   // steht in den Einstellungen unter Tarife). Dieselben Zeilen wie die
   // Zusammenfassung des Assistenten (_tarifZeilen), nur knapper beschriftet.
+  // Popup „Monat"/„Jahr": Zuwachs des Heute-Sensors je Tag bzw. Monat aus der
+  // Langzeitstatistik des Recorders. Beginnt beim ersten vorhandenen Wert —
+  // wer die Integration erst im Februar eingerichtet hat, sieht kein leeres
+  // Jänner-Feld.
+  async _bilanzVerlaufOeffnen(zeitraum, entityId) {
+    this._bilanzVerlauf = { zeitraum, punkte: null, fehler: null };
+    this._render();
+    const jetzt = new Date();
+    // Bilanztag 04:00–04:00: um 02:00 am 1. läuft noch der Vormonat.
+    const bezug = new Date(jetzt.getTime() - 4 * 3600 * 1000);
+    const start = zeitraum === "monat"
+      ? new Date(bezug.getFullYear(), bezug.getMonth(), 1)
+      : new Date(bezug.getFullYear(), 0, 1);
+    try {
+      const r = await this._hass.callWS({
+        type: "recorder/statistics_during_period",
+        start_time: start.toISOString(),
+        end_time: jetzt.toISOString(),
+        statistic_ids: [entityId],
+        period: zeitraum === "monat" ? "day" : "month",
+        types: ["change"],
+      });
+      const zeilen = (r && r[entityId]) || [];
+      let punkte = zeilen.map((z) => ({
+        start: new Date(typeof z.start === "number" ? z.start : Date.parse(z.start)),
+        wert: z.change == null ? null : Number(z.change),
+      }));
+      // Bis zum ersten echten Wert abschneiden.
+      const erster = punkte.findIndex((p) => p.wert != null && p.wert !== 0);
+      punkte = erster < 0 ? [] : punkte.slice(erster);
+      if (this._bilanzVerlauf?.zeitraum === zeitraum) this._bilanzVerlauf.punkte = punkte;
+    } catch (e) {
+      console.warn("Bilanz-Verlauf nicht abrufbar:", e);
+      if (this._bilanzVerlauf?.zeitraum === zeitraum) {
+        this._bilanzVerlauf.fehler = e?.message || String(e);
+      }
+    }
+    this._render();
+  }
+
+  _renderBilanzVerlauf() {
+    const v = this._bilanzVerlauf;
+    if (!v) return "";
+    const monat = v.zeitraum === "monat";
+    const waehrung = this._bilanz?.waehrung === "EUR" || !this._bilanz?.waehrung
+      ? "€" : this._escapeHtml(this._bilanz.waehrung);
+    const titel = monat ? "Ersparnis durch PV diesen Monat" : "Ersparnis durch PV dieses Jahr";
+    let body;
+    if (v.fehler) {
+      body = `<p style="color:var(--error-color,#db4437)">Verlauf nicht ladbar: ${this._escapeHtml(v.fehler)}</p>`;
+    } else if (v.punkte == null) {
+      body = `<p style="color:var(--secondary-text-color)">Lade Verlauf…</p>`;
+    } else if (v.punkte.length === 0) {
+      body = `<p style="color:var(--secondary-text-color)">Für diesen Zeitraum gibt es noch keine Werte.</p>`;
+    } else {
+      const p = v.punkte;
+      const schmal = !!this._narrow;
+      const W = schmal ? Math.max(260, Math.min(440, (window.innerWidth || 400) - 72)) : 440;
+      const H = schmal ? 190 : 220;
+      const pad = { top: 22, right: 6, bottom: 24, left: 6 };
+      const cw = W - pad.left - pad.right;
+      const ch = H - pad.top - pad.bottom;
+      const max = Math.max(...p.map((x) => Math.max(0, x.wert || 0)), 0.01) * 1.12;
+      const slot = cw / p.length;
+      const bw = Math.max(2, slot * 0.7);
+      const fs = 10;
+      // Werte über den Balken nur, solange sie nebeneinander Platz haben.
+      const mitWerten = slot >= 26;
+      const jedes = Math.max(1, Math.ceil(p.length / (schmal ? 8 : 12)));
+      const monate = ["Jän", "Feb", "Mär", "Apr", "Mai", "Jun", "Jul", "Aug", "Sep", "Okt", "Nov", "Dez"];
+      let bars = "";
+      p.forEach((x, i) => {
+        const w = Math.max(0, x.wert || 0);
+        const h = (w / max) * ch;
+        const bx = pad.left + i * slot + (slot - bw) / 2;
+        const by = pad.top + ch - h;
+        bars += `<rect x="${bx}" y="${by}" width="${bw}" height="${h}" rx="2" fill="var(--success-color,#0f9d58)"/>`;
+        if (mitWerten && x.wert != null) {
+          bars += `<text x="${bx + bw / 2}" y="${by - 4}" text-anchor="middle" font-size="${fs}" fill="var(--primary-text-color)">${fmtDe(x.wert, monat ? 2 : 0)}</text>`;
+        }
+        if (i % jedes === 0) {
+          const lab = monat ? `${x.start.getDate()}.` : monate[x.start.getMonth()];
+          bars += `<text x="${bx + bw / 2}" y="${H - 8}" text-anchor="middle" font-size="${fs}" fill="var(--secondary-text-color)">${lab}</text>`;
+        }
+      });
+      const summe = p.reduce((a, x) => a + (x.wert || 0), 0);
+      const ab = monat
+        ? `${p[0].start.getDate()}.${p[0].start.getMonth() + 1}.`
+        : `${monate[p[0].start.getMonth()]}`;
+      body = `
+        <svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block">${bars}</svg>
+        <div style="font-size:13px;color:var(--secondary-text-color);margin-top:8px;line-height:1.5">
+          ${p.length} ${monat ? (p.length === 1 ? "Tag" : "Tage") : (p.length === 1 ? "Monat" : "Monate")} ab ${ab},
+          zusammen <strong>${fmtDe(summe, 2)}&nbsp;${waehrung}</strong>.
+          Tage zählen nach Kalendertag, der Kartenwert nach Bilanztag (ab 04:00) — kleine Abweichungen sind deshalb normal.
+        </div>`;
+    }
+    return `
+      <div class="dialog-overlay">
+        <div class="dialog-card" style="max-width:480px">
+          <h3 style="margin:0 0 12px">${titel}</h3>
+          ${body}
+          <div style="text-align:right;margin-top:16px">
+            <button class="btn-primary" data-action="bilanz-verlauf-close">Schließen</button>
+          </div>
+        </div>
+      </div>`;
+  }
+
   _renderTarifPopup() {
     const d = this._config;
     if (!d) return "";
@@ -4247,14 +4354,19 @@ class EegOptimizerPanel extends HTMLElement {
     // Verlauf. Entity-IDs kommen aufgeloest aus dem Backend (die Entitaeten
     // koennen umbenannt worden sein), verlinkt wird nur, was auch da ist.
     const ent = b.entities || {};
+    // Die Tageswerte kommen aus dem Heute-Sensor: Er setzt mit last_reset
+    // täglich zurück, seine Statistik liefert je Tag bzw. Monat den Zuwachs.
+    // Monat- und Jahr-Sensor springen beim Periodenwechsel zurück.
+    const tagesEntity = ent.pv_ersparnis?.heute || "";
+    const schmal = !!this._narrow;
     const spalte = (titel, wert, gross, entity, zeitraum = "heute") => {
       const klickbar = entity && this._readState(entity);
       const attrs = klickbar
-        ? ` class="bilanz-zeile-klickbar" data-action="show-entity" data-entity="${entity}" data-zeitraum="${zeitraum}" title="Verlauf anzeigen"`
+        ? ` class="bilanz-zeile-klickbar" data-action="show-entity" data-entity="${entity}" data-zeitraum="${zeitraum}" data-tages-entity="${tagesEntity}" title="Verlauf anzeigen"`
         : "";
       return `
       <div${attrs} style="flex:1;min-width:0;text-align:center;border-radius:8px;padding:4px 2px">
-        <div style="font-size:${gross ? "26px" : "17px"};font-weight:600;color:var(--success-color,#0f9d58);white-space:nowrap">${eur(wert)}</div>
+        <div style="font-size:${schmal ? "18px" : "22px"};font-weight:600;color:var(--success-color,#0f9d58);white-space:nowrap">${eur(wert)}</div>
         <div style="font-size:12px;color:var(--secondary-text-color);margin-top:2px">${titel}</div>
       </div>`;
     };
@@ -10759,6 +10871,7 @@ class EegOptimizerPanel extends HTMLElement {
     // und ein „Anleitung"-Knopf kann ueberall stehen.
     content += this._renderDialog();
     content += this._renderOverrideDialog();
+    content += this._renderBilanzVerlauf();
 
     this._shadow.innerHTML = `
       <style>
