@@ -4187,10 +4187,6 @@ class EegOptimizerPanel extends HTMLElement {
   // Vorausschau — neben drei gemessenen Zahlen las er sich wie eine vierte.
   // Vorausgeschaut wird in der Karte „Optimierungsgewinn"; die Sensoren
   // „Ersparnis durch Optimierung" gibt es unveraendert weiter.
-  // €-Symbol in der Kopfzeile von „Was deine PV bringt": die Sätze, mit
-  // denen die Beträge darunter bewertet sind — kurz, ohne Herleitung (die
-  // steht in den Einstellungen unter Tarife). Dieselben Zeilen wie die
-  // Zusammenfassung des Assistenten (_tarifZeilen), nur knapper beschriftet.
   // Popup „Monat"/„Jahr": Zuwachs des Heute-Sensors je Tag bzw. Monat aus der
   // Langzeitstatistik des Recorders. Beginnt beim ersten vorhandenen Wert —
   // wer die Integration erst im Februar eingerichtet hat, sieht kein leeres
@@ -4300,6 +4296,10 @@ class EegOptimizerPanel extends HTMLElement {
       </div>`;
   }
 
+  // €-Symbol in der Kopfzeile von „Was deine PV bringt": die Sätze, mit
+  // denen die Beträge darunter bewertet sind — kurz, ohne Herleitung (die
+  // steht in den Einstellungen unter Tarife). Dieselben Zeilen wie die
+  // Zusammenfassung des Assistenten (_tarifZeilen), nur knapper beschriftet.
   _renderTarifPopup() {
     const d = this._config;
     if (!d) return "";
@@ -4359,7 +4359,7 @@ class EegOptimizerPanel extends HTMLElement {
     // Monat- und Jahr-Sensor springen beim Periodenwechsel zurück.
     const tagesEntity = ent.pv_ersparnis?.heute || "";
     const schmal = !!this._narrow;
-    const spalte = (titel, wert, gross, entity, zeitraum = "heute") => {
+    const spalte = (titel, wert, entity, zeitraum = "heute") => {
       const klickbar = entity && this._readState(entity);
       const attrs = klickbar
         ? ` class="bilanz-zeile-klickbar" data-action="show-entity" data-entity="${entity}" data-zeitraum="${zeitraum}" data-tages-entity="${tagesEntity}" title="Verlauf anzeigen"`
@@ -4437,9 +4437,9 @@ class EegOptimizerPanel extends HTMLElement {
           ${this._renderTarifPopup()}
         </h3>
         <div style="display:flex;gap:8px;align-items:flex-end;margin-top:14px">
-          ${spalte("heute", pv.heute, true, ent.pv_ersparnis?.heute)}
-          ${spalte("diesen Monat", pv.monat, false, ent.pv_ersparnis?.monat, "monat")}
-          ${spalte("dieses Jahr", pv.jahr, false, ent.pv_ersparnis?.jahr, "jahr")}
+          ${spalte("heute", pv.heute, ent.pv_ersparnis?.heute)}
+          ${spalte("diesen Monat", pv.monat, ent.pv_ersparnis?.monat, "monat")}
+          ${spalte("dieses Jahr", pv.jahr, ent.pv_ersparnis?.jahr, "jahr")}
         </div>
         ${davon}
         <div data-action="toggle-bilanz-details" style="margin-top:12px;font-size:13px;color:var(--primary-color,#03a9f4);cursor:pointer;user-select:none;text-align:center">
