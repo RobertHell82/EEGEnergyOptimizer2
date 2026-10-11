@@ -10,6 +10,16 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
+## [2.1.42] - 2026-10-11
+
+### Behoben
+
+- **„Monat“ und „Jahr“ in „Was deine PV bringt“ öffnen wieder etwas, auch am iPhone.** Seit 2.1.34 sprang ein Tipp auf die beiden Beträge ins Verlauf-Panel von Home Assistant. In der iPhone-App und im Safari kam dieser Sprung nie an, der Tipp blieb ohne Wirkung. Jetzt öffnet sich ein eigenes Fenster im Panel: beim Monat ein Balken pro Tag, beim Jahr einer pro Monat, mit der Summe darunter. Die Werte kommen aus der Langzeitstatistik des Sensors „Ersparnis durch PV heute“ und beginnen beim ersten vorhandenen Wert, wer erst im Februar eingerichtet hat, sieht also kein leeres Jänner-Feld. Die Statistik zählt nach Kalendertag, die Karte nach Bilanztag ab 04:00, deshalb kann die Summe im Fenster leicht vom Kartenwert abweichen; das Fenster sagt das dazu. Beitrag von andi-arbeit-agent (#2).
+
+### Geändert
+
+- **Heute, Monat und Jahr gleich groß.** „heute“ stand mit 26 px neben 17 px für Monat und Jahr und wirkte am Handy zu dominant. Alle drei Beträge stehen jetzt gleichrangig nebeneinander, 18 px am Handy und 22 px am Desktop.
+
 ## [2.1.41] - 2026-10-09
 
 ### Geändert
