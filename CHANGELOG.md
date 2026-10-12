@@ -10,6 +10,16 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
+## [2.1.43-beta.1] - 2026-10-12
+
+### Hinzugefügt
+
+- **Batterie aus dem Netz laden (Beta, nur Huawei).** Ein Mitglied wollte in den Monaten, in denen die PV den Speicher nicht füllt, aus dem Netz nachladen. Die neue Option in den Einstellungen (Tab Tarife, Expertenmodus) lässt den Fahrplan das Ladeziel auch mit Netzstrom erreichen, aber nur in Viertelstunden, in denen der Netzstrom billiger ist als der Strom, den die Batterie danach in der Nacht ersetzt, nach Lade- und Entladeverlust, Alterungskosten und einem Mindestvorteil (Vorgabe 2 ct). Billiger ist er mit Spot-Bezug, mit Bezug aus der Energiegemeinschaft (verringertes Netznutzungsentgelt, lokal −57 % bzw. regional −28 %, ohne Elektrizitätsabgabe und Erneuerbaren-Förderbeitrag nach § 75 Abs. 5 EAG und § 2 Abs. 1 Z 4 ElAbgG, nur so weit die Gemeinschaft laut PeakShare Überschuss hat) oder mit einem eigenen SNAP-/WiNAP-Arbeitspreis. Die neuen Preisfelder erscheinen erst mit dem Haken und sind erst dann Pflicht; ohne Haken rechnet der Fahrplan genau wie vorher. Am Grünbach-Plan: an einem sonnigen Tag kein Kauf, an einem trüben Tag mit 15 ct mittags gegen 20 ct nachts rund 7 kWh Zukauf und abends voll, ohne Preisvorteil kein Kauf. Der Wechselrichter lädt dann per `forcible_charge_soc` mit der geplanten Leistung bis zum geplanten Ladestand („Netzladung x kW bis y %“, violett im Diagramm); jeder andere Befehl, Modus Aus und der Failsafe beenden das zuerst, der Heizstab bleibt währenddessen aus. Offen für den Feldtest: ob der Huawei dafür „Laden aus dem Netz“ eingeschaltet braucht.
+
+### Behoben
+
+- **Ein dunkler Horizont hat wieder einen Fahrplan.** Haralds Modell verlangt am Ende der 48 Stunden eine halb volle Batterie. Stand die Batterie darunter und brachte die Prognose zu wenig Sonne, gab es dafür keine Lösung, und mit erlaubtem Netzladen hätte das Modell nur dafür Strom gekauft. Der Endstand ist jetzt auf das begrenzt, was die PV allein erreicht. Pläne, die schon lösbar waren, bleiben gleich.
+
 ## [2.1.42] - 2026-10-11
 
 ### Behoben
