@@ -101,8 +101,14 @@ def opt(c, start_time):
 	# can reach without buying - like every other part of the reserve.
 	# Without the method nothing changes.
 	ladeziel = getattr(c, 'ladeziel', None)
-	if ladeziel is not None:
-		bor = bor.clip(lower=ladeziel(parameters, surplus))
+	# LOCAL CHANGE (see README.md 5): optional grid charging in chosen slots.
+	# The config returns a lower bound for dc_p per slot (<= 0, kW DC) or
+	# None; None keeps the model exactly as without it.
+	netzladen = getattr(c, 'netzladen', None)
+	dc_lb = netzladen(parameters, surplus) if netzladen is not None else None
+	ziel = ladeziel(parameters, surplus) if ladeziel is not None else None
+	if ziel is not None and dc_lb is None:
+		bor = bor.clip(lower=ziel)
 	# LOCAL CHANGE (see README.md 2b): the level at the END of each slot,
 	# because bor bounds battery_free[i], which is the state after slot i.
 	# With the start level a demand equal to it allowed no discharge in that
@@ -113,6 +119,20 @@ def opt(c, start_time):
 		level = min(c.battery_capacity, max(0.0, level + min(step, max_step)))
 		reachable.append(level)
 	bor.clip(upper=pd.Series(reachable, index=parameters.index), inplace=True)
+	if ziel is not None and dc_lb is not None:
+		# LOCAL CHANGE (see README.md 5): the charge target may use the grid
+		# where the config allows it - its own reachability counts the house
+		# from the grid and the battery charging from PV plus grid there. The
+		# reserve keeps the cap above: it never buys.
+		level = bat_content
+		reachable_netz = []
+		for step, pv, lb in zip(steps.values, parameters.dc_production.values, dc_lb.values):
+			if lb < 0:
+				step = (pv - lb) * efficiency * p2e
+			level = min(c.battery_capacity, max(0.0, level + min(step, max_step)))
+			reachable_netz.append(level)
+		ziel = ziel.clip(upper=pd.Series(reachable_netz, index=parameters.index))
+		bor = bor.clip(lower=ziel)
 
 	battery_free_ub = c.battery_capacity - bor
 	battery_free_ub.index = parameters.i
@@ -131,7 +151,16 @@ def opt(c, start_time):
 	if c.fullcharge_try:
 		battery_free[len(battery_free)-1] = 0
 	else:
-		battery_free.iloc[len(battery_free)-1] = c.battery_capacity / 2
+		# LOCAL CHANGE (see README.md 4): half full at the end, but never more
+		# than the battery can reach from PV alone - holding what it has and
+		# taking every surplus step. Starting below half with little PV the
+		# fixed half was out of reach: no solution without grid charging, a
+		# purchase made only for the end condition with it. Wherever half is
+		# reachable nothing changes.
+		level = bat_content
+		for step in steps.values:
+			level = min(c.battery_capacity, level + min(max(step, 0.0), max_step))
+		battery_free.iloc[len(battery_free)-1] = c.battery_capacity - min(c.battery_capacity / 2, level)
 	battery_p_pos = parameters.i.map(lambda i: Variable('battery_p_pos' + i, lb = 0, ub = c.battery_power_limit))
 	battery_p_neg = parameters.i.map(lambda i: Variable('battery_p_neg' + i, lb = 0, ub = c.battery_power_limit))
 	grid_p_pos = pd.Series(index=parameters.index, data=pd.RangeIndex(stop=len(parameters)).map(
@@ -217,7 +246,14 @@ def opt(c, start_time):
 	model.add(battery_p_max_constr)
 	model.add(grid_p_max_constr)
 	if c.no_grid_charging:
-		dc_constr = dc_p.map(lambda ex: Constraint(ex, lb = 0))
+		if dc_lb is None:
+			dc_constr = dc_p.map(lambda ex: Constraint(ex, lb = 0))
+		else:
+			# LOCAL CHANGE (see README.md 5): below zero where grid charging
+			# is allowed, bounded by the configured grid power.
+			dc_constr = pd.Series(
+				[Constraint(ex, lb = float(lb)) for ex, lb in zip(dc_p.values, dc_lb.values)],
+				index=dc_p.index)
 		model.add(dc_constr)
 	model.add(ac_constr)
 	model.add(battery_constr)

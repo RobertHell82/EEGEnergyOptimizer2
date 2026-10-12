@@ -97,6 +97,8 @@ _ALLES_LADEN_EXPORT_KW = 0.05
 # gemessene PV deckt die geplante Einspeisung bereits, der Automatikmodus
 # speist den Überschuss von selbst ein.
 _MIN_DISCHARGE_KW = 0.05
+# Geplante Netzladung darunter ist LP-Rauschen — kein Ladebefehl dafür.
+_MIN_NETZLADUNG_KW = 0.1
 
 # Fehlgeschlagene Freigaben beim Start, nach denen der Fahrplan trotzdem
 # übernimmt (siehe ``_start_release_pending``).
@@ -107,9 +109,10 @@ START_RELEASE_MAX_VERSUCHE = 3
 class PlanAction:
     """Treiberneutrale Absicht des laufenden Fahrplan-Slots."""
 
-    kind: str  # "charge_limit" | "discharge" | "release"
+    kind: str  # "charge_limit" | "discharge" | "grid_charge" | "release"
     # charge_limit: geplante Ladeleistung (Obergrenze, 0 = Laden blockiert);
-    # discharge: geplante Netzeinspeisung (grid_p) des Slots.
+    # discharge: geplante Netzeinspeisung (grid_p) des Slots;
+    # grid_charge: geplante Ladeleistung der Batterie (PV + Netz).
     power_kw: float = 0.0
     # discharge: SOC am ENDE des laufenden Slots (chamo-Batteriebilanz:
     # battery_free[t] = battery_free[t-1] + battery_p[t]·dt — der Wert eines
@@ -180,6 +183,22 @@ def plan_action(result: dict | None, now: datetime) -> PlanAction | None:
     slot_t = slot.get("t")
     consumption = slot.get("consumption")
 
+    try:
+        netzladung = float(slot.get("netzladung") or 0.0)
+    except (TypeError, ValueError):
+        netzladung = 0.0
+    if battery_p < -_EPS_KW and netzladung >= _MIN_NETZLADUNG_KW:
+        # „Aus dem Netz laden": Der Slot lädt mehr, als die PV liefert. Der
+        # Automatikmodus nähme nur den Überschuss — es braucht einen Ladebefehl
+        # mit der ganzen geplanten Ladeleistung, den Rest holt das Gerät aus
+        # dem Netz. Nur in Plänen mit Netzladen gibt es die Spalte.
+        return PlanAction(
+            "grid_charge",
+            power_kw=-battery_p,
+            target_soc=slot.get("soc"),
+            slot_t=slot_t,
+            consumption_kw=consumption,
+        )
     if battery_p < -_EPS_KW:
         if _laedt_alles(slot, result, grid_p):
             # Der Slot plant Laden und keine Einspeisung: Alles, was übrig
@@ -276,7 +295,7 @@ class ScheduleExecutor:
         # abwarten, bevor eine Lücke wieder als „zu viel" gilt.
         self._guard_einschwing_laeufe = 0
         # Wird bei Schreibfehlern mit der Aktion ("charge_limit" / "discharge"
-        # / "release") aufgerufen — Telemetrie-Anbindung aus __init__.py.
+        # / "grid_charge" / "release") aufgerufen — Telemetrie-Anbindung aus __init__.py.
         self._failure_callback = failure_callback
         self._created_at = _now_local()
 
@@ -285,6 +304,9 @@ class ScheduleExecutor:
         self._written_charge_limit_kw: float | None = None
         self._written_discharge_kw: float | None = None
         self._written_target_soc: float | None = None
+        # „Aus dem Netz laden": zuletzt befohlene Ladeleistung (Ziel-SOC teilt
+        # sich ``_written_target_soc`` mit der Entladung — es läuft nur eins).
+        self._written_grid_charge_kw: float | None = None
 
         # Fahrplan-Frische (Failsafe).
         self._plan_seen_at: datetime | None = None
@@ -541,6 +563,7 @@ class ScheduleExecutor:
         ok = await self._inverter.async_stop_forcible()
         self._written_charge_limit_kw = None
         self._written_discharge_kw = None
+        self._written_grid_charge_kw = None
         self._written_target_soc = None
         self.last_write_ok = ok
         self._release_pending = not ok
@@ -926,6 +949,8 @@ class ScheduleExecutor:
             await self._apply_release(action.reason or "Normalbetrieb")
         elif action.kind == "charge_limit":
             await self._apply_charge_limit(action)
+        elif action.kind == "grid_charge":
+            await self._apply_grid_charge(action)
         else:
             await self._apply_discharge(action)
 
@@ -941,6 +966,7 @@ class ScheduleExecutor:
             "written_charge_limit_kw": self._written_charge_limit_kw,
             "written_discharge_kw": self._written_discharge_kw,
             "written_target_soc": self._written_target_soc,
+            "written_grid_charge_kw": self._written_grid_charge_kw,
             "plan_action": None
             if action is None
             else {
@@ -1146,6 +1172,15 @@ class ScheduleExecutor:
             if (now - self._created_at).total_seconds() < STARTUP_GRACE_SECONDS:
                 await hz.async_set_sollwert(0.0, "Startphase")
                 return
+            # Netzladung: Es gibt keinen Überschuss, die Batterie nimmt PV und
+            # Netz. Gekauften Strom bekommt der Heizstab nie — die
+            # Komfortgrenze (Mindesttemperatur) auch nicht, sie dürfte sonst
+            # gegen die Zwangsladung um denselben Netzbezug ringen.
+            if self._active_kind == "grid_charge" or (
+                self.last_action is not None and self.last_action.kind == "grid_charge"
+            ):
+                await hz.async_set_sollwert(0.0, "Netzladung — kein Überschuss")
+                return
             entladung = self._active_kind == "discharge" or (
                 self.last_action is not None and self.last_action.kind == "discharge"
             )
@@ -1224,6 +1259,9 @@ class ScheduleExecutor:
         # Wechsel von Einspeisung auf keine Einspeisung → erzwungene
         # Entladung zuerst stoppen (stop_forcible stellt bei Huawei auch das
         # Ladelimit auf Maximum zurück; direkt danach wird der Planwert gesetzt).
+        if self._active_kind == "grid_charge":
+            if not await self._netzladung_beenden("Ladelimit"):
+                return
         if self._active_kind == "discharge":
             if not await self._inverter.async_stop_forcible():
                 # Ergebnis nicht ignorieren: sonst wird gleich ein Ladelimit
@@ -1279,6 +1317,113 @@ class ScheduleExecutor:
             self._notify_failure("charge_limit")
             self.last_status = f"Schreibfehler: Ladelimit {ziel:.2f} kW nicht gesetzt"
             _LOGGER.warning("Executor: Ladelimit %.2f kW nicht gesetzt", ziel)
+
+    async def _netzladung_beenden(self, wofuer: str) -> bool:
+        """Laufende Netzladung stoppen, bevor ein anderer Befehl kommt.
+
+        Wie beim Wechsel aus der Entladung: Ein Ladelimit oder ein
+        Entladebefehl hält eine Zwangsladung nicht sicher an — sie liefe bis
+        zum Ziel-Ladestand weiter und kaufte Strom, den der Plan nicht mehr
+        will. Scheitert der Stopp, bleibt es bei der Netzladung, und der
+        nächste Lauf versucht es erneut.
+        """
+        if await self._inverter.async_stop_forcible():
+            self._written_grid_charge_kw = None
+            self._written_target_soc = None
+            return True
+        self.write_failures += 1
+        self.last_write_ok = False
+        self._notify_failure("release")
+        _LOGGER.warning(
+            "Executor: Netzladung vor %s zu stoppen ist fehlgeschlagen", wofuer
+        )
+        self.last_status = (
+            "Schreibfehler: Netzladung konnte nicht gestoppt werden — wird wiederholt"
+        )
+        return False
+
+    async def _apply_grid_charge(self, action: PlanAction) -> None:
+        """„Aus dem Netz laden": Batterie mit der geplanten Leistung laden.
+
+        Die Leistung ist die ganze geplante Ladeleistung — PV und Netz
+        zusammen, das Gerät nimmt zuerst die PV und den Rest aus dem Netz.
+        Gedeckelt durch die Ladeleistung des Geräts (bzw. die konfigurierte
+        Batterieleistung). Das Ziel ist der Ladestand am Slotende aus dem Plan,
+        wie bei der Entladung — eine eigene Obergrenze gibt es nicht.
+
+        Ein Treiber ohne Netzladen bekommt stattdessen das Ladelimit: Der Plan
+        enthält Netzladung nur, wenn der Treiber sie kann, aber ein Plan aus
+        der Zeit davor soll nicht zu einem Fehler führen.
+        """
+        if not getattr(self._inverter, "supports_grid_charge", False):
+            await self._apply_charge_limit(
+                PlanAction(
+                    "charge_limit",
+                    power_kw=action.power_kw,
+                    slot_t=action.slot_t,
+                    consumption_kw=action.consumption_kw,
+                )
+            )
+            return
+        if self._active_kind == "discharge":
+            if not await self._inverter.async_stop_forcible():
+                self.write_failures += 1
+                self.last_write_ok = False
+                self._notify_failure("release")
+                self.last_status = (
+                    "Schreibfehler: Entladung konnte nicht gestoppt werden — wird wiederholt"
+                )
+                return
+            self._written_discharge_kw = None
+            self._written_target_soc = None
+
+        cap = self._inverter.get_charge_limit_max_kw()
+        if cap is None:
+            cap = float(
+                self._config.get(CONF_DISCHARGE_POWER_KW, DEFAULT_DISCHARGE_POWER_KW)
+                or 0.0
+            ) or None
+        power = max(0.0, action.power_kw)
+        if cap is not None:
+            power = min(power, cap)
+        ziel_soc = action.target_soc
+
+        kind_change = self._active_kind != "grid_charge"
+        power_same = (
+            self._written_grid_charge_kw is not None
+            and abs(power - self._written_grid_charge_kw) <= EXECUTOR_DISCHARGE_DEADBAND_KW
+        )
+        soc_same = ziel_soc is None or (
+            self._written_target_soc is not None
+            and abs(ziel_soc - self._written_target_soc) < EXECUTOR_TARGET_SOC_DEADBAND_PCT
+        )
+        soc_text = f" bis {ziel_soc:.0f} %" if ziel_soc is not None else ""
+        if not kind_change and power_same and soc_same:
+            self.last_status = (
+                f"Netzladung {self._written_grid_charge_kw:.2f} kW{soc_text} (unverändert)"
+            )
+            return
+
+        if self._bremse_greift("grid_charge"):
+            self.last_status = (
+                f"Netzladung {power:.2f} kW nicht gesetzt — nächster Versuch in "
+                f"{self._write_retry_wait + 1} Läufen"
+            )
+            return
+
+        ok = await self._inverter.async_set_grid_charge(power, target_soc=ziel_soc)
+        self.last_write_ok = ok
+        self._write_quittieren(ok, "grid_charge")
+        if ok:
+            self._active_kind = "grid_charge"
+            self._written_grid_charge_kw = power
+            self._written_target_soc = ziel_soc
+            self.last_status = f"Netzladung {power:.2f} kW{soc_text} (Plan aus PV und Netz)"
+        else:
+            self.write_failures += 1
+            self._notify_failure("grid_charge")
+            self.last_status = f"Schreibfehler: Netzladung {power:.2f} kW nicht gesetzt"
+            _LOGGER.warning("Executor: Netzladung %.2f kW nicht gesetzt", power)
 
     async def _resolve_charge_limit(self, plan_kw: float) -> tuple[float, str]:
         """Zielwert für das Ladelimit: Fahrplanwert oder Guard-1-Anpassung.
@@ -1372,6 +1517,9 @@ class ScheduleExecutor:
         Läuft noch PV, liefert sie einen Teil der Einspeisung selbst und wird
         abgezogen (nachts 0, dann exakt die Formel aus dem Umbauplan).
         """
+        if self._active_kind == "grid_charge":
+            if not await self._netzladung_beenden("Entladung"):
+                return
         haus = compute_house_load_kw(self._hass, self._config)
         haus_quelle = "gemessen"
         if haus is None:

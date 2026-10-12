@@ -30,10 +30,10 @@ Zwei Änderungen sind rein technisch und berühren die Rechnung nicht:
   Rückfall auf den flachen Import, damit Haralds Skript-Workflow
   (`python3 -i opt_test.py`) weiter funktioniert.
 
-Dazu kommen **vier Abweichungen in `opt()`**, alle im Code mit `LOCAL CHANGE`
+Dazu kommen **sechs Abweichungen in `opt()`**, alle im Code mit `LOCAL CHANGE`
 markiert (`grep -n "LOCAL CHANGE" opt_highs.py`). Wer mit Haralds Stand
 abgleicht, muss genau diese Stellen gesondert behandeln — alles andere im
-Modell ist unangetastet. Drei davon greifen in die Rechnung ein, die vierte
+Modell ist unangetastet. Fünf davon greifen in die Rechnung ein, die sechste
 ist eine Fehlermeldung: nach `model.optimize()` wird der Solver-Status
 geprüft, weil die Ergebnistabelle sonst an `None - None` scheitert und nicht
 sagt, woran es lag.
@@ -201,6 +201,76 @@ andere. Anlass war eine Anlage in der Schweiz: Erwartet waren 29 kWh, der Plan
 speiste davor 8 kWh ein, es kamen 21 kWh, und abends standen 77 % statt 100 %.
 
 Tests: `tests/test_ladeziel.py`.
+
+### 4. Endstand nur, soweit die PV hinkommt (12.10.2026)
+
+Ohne `fullcharge_try` legt `opt()` den letzten Slot auf halben Inhalt fest
+(`battery_free.iloc[-1] = battery_capacity / 2`). Das ist eine Gleichung, keine
+Untergrenze: Startet die Batterie unter halb und bringt die Sonne sie im
+Horizont nicht dorthin, gibt es ohne Netzladen keinen Weg — das LP ist
+unlösbar, es gibt keinen Fahrplan, nach 15 Minuten greift der Failsafe.
+
+Nachgerechnet am Grünbach-Plan vom 04.10.2026 (16,6 kWh, Mindest-Ladestand
+20 %, Endstand also 60 %), PV skaliert, Start bei 25 %:
+
+| PV im Horizont | vorher | mit `no_grid_charging = False` | jetzt |
+|---|---|---|---|
+| 101 / 20 kWh | lösbar | identisch | identisch |
+| 5 kWh | `infeasible` | kauft 5,8 kWh **nur für den Endstand** | lösbar, hält 25 % |
+| 0 kWh | `infeasible` | kauft 5,8 kWh **nur für den Endstand** | lösbar, hält 25 % |
+
+Aufgefallen ist es nicht, weil das LP noch keinen Winter erlebt hat: Es
+braucht zwei fast sonnenlose Tage und eine Batterie unter der Mitte des
+Modellfensters — Dezembernebel.
+
+Der Endstand ist jetzt *min(halb, PV-erreichbar)*. PV-erreichbar heißt: Die
+Batterie hält, was sie hat, und nimmt jeden Überschuss-Schritt auf (dieselben
+`steps` und dieselbe Ladeleistungsgrenze wie in Abschnitt 2a); das Haus darf
+dabei aus dem Netz leben. Bewusst nicht der Stand aus `reachable`
+(„Haus zuerst aus der Batterie“): Der liegt an trüben Tagen auch dann unter
+halb, wenn halb erreichbar wäre, und hätte Pläne geändert, die heute lösbar
+sind. So ändert sich nur, was vorher keine Lösung hatte.
+
+Gleichzeitig Voraussetzung für Netzladen (`no_grid_charging = False`):
+Sonst wird die Endbedingung zum Kaufbefehl.
+
+Tests: `tests/test_endstand.py`.
+
+### 5. Netzladen in ausgewählten Slots (12.10.2026, Beta)
+
+„Batterie aus dem Netz laden": Schafft die Sonne das Ladeziel nicht, darf der
+Plan zukaufen — nur in Slots, in denen Netzstrom billiger ist als der Strom,
+den die Batterie danach ersetzt. Haralds Modell kennt dafür nur den globalen
+Schalter `no_grid_charging` (`dc_p ≥ 0` in jedem Slot oder in keinem). Ein
+Parameter, der „in diesen Slots, bis zu dieser Leistung" ausdrückt, fehlt.
+
+Die Änderung hat drei Teile, alle hinter einer Methode
+`netzladen(parameters, surplus)` der Konfiguration. Sie liefert je Slot eine
+Untergrenze für `dc_p` (≤ 0, kW DC) oder `None`:
+
+* **`dc_p ≥ Untergrenze`** statt `dc_p ≥ 0`. Wo die Grenze 0 ist, bleibt
+  alles wie bisher.
+* **Ladeziel mit eigener Erreichbarkeit.** Das Ladeziel wird gegen einen
+  zweiten Füllstandsverlauf gekappt, der in den erlaubten Slots das Haus aus
+  dem Netz und die Batterie aus PV plus Netz rechnet. Die Reserve bleibt beim
+  Verlauf ohne Kauf — sie kauft nie.
+* Liefert die Methode `None` (oder fehlt sie), ist das Modell Zeile für Zeile
+  das ohne Netzladen: Das Ladeziel geht wie in Abschnitt 3 vor der Kappung in
+  `bor` ein (`test_aus_ist_identisch` in `tests/test_netzladen.py`).
+
+Welcher Slot erlaubt ist, steht in `HAConfig.netzladen` in `schedule.py`:
+vor dem Ende der PV-Zeit, Bezugspreis + Alterung + Mindestvorteil unter dem
+lastgewichteten Bezugspreis der folgenden Nacht × `ac_efficiency`², und nur
+mit veröffentlichtem Preis.
+
+Eine Eigenheit des Modells, die beim Netzladen sichtbar wird und hier
+bewusst **nicht** korrigiert ist: Die AC-Bilanz rechnet `dc_p · η` auch für
+negatives `dc_p`. Aus 0,95 kWh Netzbezug werden so 1 kWh in der Batterie,
+Laden aus dem Netz gilt dem Modell als verlustfrei. Ohne Netzladen tritt das
+nie auf. Die Slot-Auswahl rechnet deshalb mit beiden Wandlungen selbst; das
+LP überschätzt nur, wie viel sich innerhalb eines erlaubten Slots lohnt.
+
+Tests: `tests/test_netzladen.py`.
 
 ## Was von uns ist
 

@@ -64,6 +64,11 @@ schedule_executor.py: ScheduleExecutor (execution, 30 s)
         Deadbands — 0.2 kW / 1 % SOC, so we don't write on LP noise
         Write brake — a failed write is not retried every run; the gap
                   doubles (1, 2, 4 … 10 runs) for the intent that failed
+  → Netzladung (beta, Huawei only): a slot whose `netzladung` column (charge
+    beyond PV, `schedule.netzladung_kw`) is ≥ 0.1 kW becomes intent
+    `grid_charge` → `async_set_grid_charge(planned battery charge, slot-end
+    SOC)`; any other intent stops it first (`_netzladung_beenden`), the
+    heater is 0 meanwhile
   → writes only via InverterBase, only in mode "Ein", only for drivers with
     supports_schedule_control=True (Fronius, Huawei, Kostal, Sigenergy, SMA, SolaX).
     Guard 2 asks `discharge_is_grid_setpoint`: SMA takes a GRID setpoint
@@ -106,7 +111,7 @@ schedule_executor.py: ScheduleExecutor (execution, 30 s)
 | `tagesbilanz.py` | Daily outcome for the telemetry (`/v1/outcome`): forecast vs. measurement of the finished day, with the plans of the evening before and two days before (built nightly 00:15 or via `tagesbilanz_jetzt`) |
 | `schedule_archive.py` | Rolling archive of computed plans (7 days, gzip, ~8 KB each) for after-the-fact debugging. Each entry: plan (`to_dict()`), filtered settings (allowlist incl. `heizstab_*`, blocklist host/port/token/…) and, since 2.1.24, `eingaben` — the `ScheduleInputs` fields the plan does not carry (p10 path `min_production_kw`, base tariff `feedin_price_series`, `eeg_tarife`/`eeg_bedarf`, heater budget/temperature), so a plan can be replayed exactly |
 | `schedule_archive_view.py` | HTTP view that packs archive + settings + measured history into a downloadable ZIP |
-| `chamo/` | Harald Geyer's LP optimizer (`opt_highs.py`, `timetableopt`) plus a HiGHS adapter. `opt_highs.py` carries four local additions, all marked `LOCAL CHANGE` and documented in `chamo/README.md`: the heater as a valued sink (`heater_p`, 2.1.1-dev2), the blackout reserve capped at what is reachable **without buying**, a solver-status check after `optimize()` and the Ladeziel hook (`c.ladeziel`, 2.1.35) — everything else is upstream |
+| `chamo/` | Harald Geyer's LP optimizer (`opt_highs.py`, `timetableopt`) plus a HiGHS adapter. `opt_highs.py` carries six local additions, all marked `LOCAL CHANGE` and documented in `chamo/README.md`: the heater as a valued sink (`heater_p`, 2.1.1-dev2), the blackout reserve capped at what is reachable **without buying**, a solver-status check after `optimize()`, the Ladeziel hook (`c.ladeziel`, 2.1.35), the end state capped at what PV alone reaches (§ 4) and the grid-charging hook (`c.netzladen`, § 5) — everything else is upstream |
 | `sensor.py` | 26 sensors (+ up to 21 conditional): consumption profile, forecasts, power flows, plan values, grid discharge energy, register writes, Fahrplan-Status, money balance |
 | `bilanz.py` | Energy balance in money — records 96 quarter-hours per day (energy, SOC, **frozen** prices and community balances), evaluates them with `bewerte_geldfluesse`, and derives the optimiser advantage against a simulated standard operation over the measured series. The balance day runs 04:00–04:00 (night discharge stays in one day; old midnight-based records are migrated on load). Days where the battery behaved like the reference (power deviation ≤ max(1 kWh, 10 % of throughput)) report advantage 0 with `kein_eingriff`; the raw difference stays in `vorteil_roh`. Also backs the **Einspeisung** card (`einspeisung()`): per day `haus_kwh`, `batterie_export_kwh` (export in slots with PV below `BATTERIE_EXPORT_PV_SCHWELLE_KW`, `ohne_pv()` — *not* only controlled discharge, unlike `statistics.py`) and the same amounts of the reference run as `ref_*` (None without a reference). Month/year come from the 400-day archive, not `_monate`; `gesamt` adds the `_monate` sums for months *before* the oldest archived day (never overlapping, their `ref_*` dropped) and returns a gap-free series per year (months are what `jahr` shows); ratios are formed from sums at query time, and the comparison uses only days with `ref_*` on both sides. The per-slot community share comes from `schedule.eeg_aufnahme_je_slot`, which shares `_eeg_zuteilung` with `bewerte_geldfluesse` — one settlement rule |
 | `override.py` | Time-boxed user override — **Pause** (behave like mode Aus) with two end conditions: expiry time (`stunden`, 0.25–48 h) and/or target SOC (`bis_soc_pct`, 50–100 %; ends when the measured SOC reaches it, 48 h cap as safety net). Persisted via `Store` so a restart mid-pause does not resume control. Evaluated in the guard cycle in `__init__.py` (`async_tick(now, soc_pct)`); exposed as HA services `pause` / `aufheben` (`services.yaml`) |
@@ -210,6 +215,9 @@ three intents. `Fahrplan-Status` shows what actually happened:
   „Normalbetrieb (Plan lädt den ganzen Überschuss)“, 2.1.41): a cap at the
   planned power sent every kW above the forecast into the grid, and Guard 1
   never lifts it below the export limit (Winterthur 09.10.2026).
+- **Netzladung x kW bis y %** — beta, Huawei only: the slot charges more than
+  PV delivers, so the battery is force-charged with the planned charge power
+  (PV first, the rest from the grid) up to the plan's slot-end SOC.
 - **Einspeisung x kW bis y %** — forced discharge, named after the *planned export*, not the battery setpoint (which includes the house load); „Entladung x kW …“ only when no plan value is known; the target SOC comes **from
   the plan**, there is no independent floor. Guard 2 tracks the setpoint from
   planned export + measured house load.
@@ -314,6 +322,9 @@ InverterBase (ABC)
   ├── get_charge_limit_max_kw() → float|None    (upper bound for Guard 1)
   ├── get_max_discharge_power_kw() → float|None (upper bound for Guard 2)
   ├── get_backup_reserve_soc_pct() → float|None (raises the min-SOC floor)
+  ├── supports_grid_charge → bool               (default False; Huawei True)
+  ├── async_set_grid_charge(kw, target_soc)     (beta: force charge from PV +
+  │                                              grid, Huawei forcible_charge_soc)
   └── get_control_entities() → list[dict]       (panel transparency view)
 
 Implementations:
@@ -417,6 +428,34 @@ the event loop is long enough for HA to flag a blocking call.
   force a purchase in that slot). The plan carries `ladeziel` (`ziel_pct`,
   `termine` with planned SOC) for the small marker in the SOC chart.
   Tests: `tests/test_ladeziel.py`.
+- **Batterie aus dem Netz laden** (`schedule_netzladen`, beta, settings
+  only, expert mode, Huawei only — `InverterBase.supports_grid_charge`;
+  decision 12.10.2026): the **Ladeziel may be reached with grid power, but
+  only in slots where grid power is cheaper than what the battery replaces
+  afterwards** — the load-weighted purchase price of the night after the PV
+  end, compared per kWh after `ac_efficiency`², aging (`battery_cost`) and
+  `schedule_netzladen_vorteil` (default 2 ct). Whether the night needs the
+  energy is deliberately not asked: what is left is exported later if that
+  pays, the price of "full in the evening". Slots before each day's PV end
+  (`pv_enden`), only with published prices (`consumption_price_fest`; spot
+  never extrapolated), at most `schedule_netzladen_max_kw` (empty = battery
+  power; the 2027 capacity charge is not valued by the LP). Without the
+  switch the model is line for line the old one. The cheaper prices only
+  exist with the switch: **spot purchase** (`schedule_bezug_quelle = "spot"`,
+  `(spot + spot_bezug_aufschlag + |spot|·pct) × VAT + grid fee`) and **EEG
+  purchase** per community (`peakshare_bezug_price[_2]`, `_ebene` lokal −57 %
+  / regional −28 % of the Netznutzungsentgelt, without SNAP/WiNAP, which do
+  not apply to community energy; Netzverlust stays, both kWh levies drop —
+  Förderbeitrag per § 75 Abs. 5 EAG, Elektrizitätsabgabe per § 2 Abs. 1 Z 4
+  ElAbgG with § 2 Abs. 1 ElAbg-ESBV, BGBl. II 121/2025), weighted by the community's PeakShare
+  surplus per quarter hour (quote mode: no surplus known → no EEG purchase).
+  Both need a grid area (`bezugsreihe_netzladen` returns nothing without
+  `Netzgebuehr`). The series replaces scalar and window prices in
+  `bezugspreis_zu`, so bilanz and `bewerte_geldfluesse` use the same prices.
+  Known artefact: on dark days the lowered end state (§ 4) makes the plan
+  export bought energy on the horizon's last evening — never executed, every
+  run moves that evening. Field test open: whether Huawei needs „Laden aus
+  dem Netz" enabled for `forcible_charge_soc`. Tests: `tests/test_netzladen.py`.
 - **Vormittags bevorzugt netzdienlich** (`schedule_netzdienlich`, `_bis`
   default 11:00, `_bonus` default 0.05 €/kWh; settings only, expert mode,
   default off): a pure `HAConfig` parameter, no `LOCAL CHANGE`. In slots
@@ -861,7 +900,12 @@ absent for every other source.
   (heater, blackout reserve) — both marked `LOCAL CHANGE`, both explained in
   `chamo/README.md`, both reported upstream; a third `LOCAL CHANGE` only
   checks the solver status, a fourth is the Ladeziel hook (logic in
-  `HAConfig.ladeziel`, `chamo/README.md` § 3). Another one needs a reason of
+  `HAConfig.ladeziel`, `chamo/README.md` § 3), a fifth caps Harald's fixed
+  end state (half full) at what PV alone can reach — without it a dark
+  horizon with the battery below half had no solution (`chamo/README.md`
+  § 4, `tests/test_endstand.py`), a sixth is the grid-charging hook
+  (`c.netzladen`: per-slot lower bound of `dc_p`, the Ladeziel's own
+  reachability with grid; logic in `HAConfig.netzladen`, § 5). Another one needs a reason of
   the same weight: the model is provably wrong, or an operator wish no
   parameter can express — and no parameter can express the fix. `tests/test_chamo_highs_adapter.py` compares HiGHS against GLPK
   column by column and stays valid (it loads the same file twice).

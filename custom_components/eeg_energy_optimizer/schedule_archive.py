@@ -69,6 +69,8 @@ EINSTELLUNGEN_PRAEFIXE = (
     # ohne sie ließ sich ein archivierter Plan nicht nachrechnen (Replay
     # 28.09.2026). Host und Port hält die Sperrliste unten zurück.
     "heizstab_",
+    # Spot-Bezug für „aus dem Netz laden" (spot_bezug_aufschlag[_pct]).
+    "spot_bezug_",
 )
 EINSTELLUNGEN_KEYS = frozenset({
     "enable_peakshare",

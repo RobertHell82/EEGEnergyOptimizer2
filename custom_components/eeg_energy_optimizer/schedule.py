@@ -21,6 +21,7 @@ und Nachführen (30 s, Event-Loop, Messwerte) verschiedene Takte haben.
 
 from __future__ import annotations
 
+import bisect
 import logging
 import math
 import time
@@ -55,6 +56,7 @@ from .heizstab.controller import heizstab_max_kw, heizstab_waermewert
 from .netzentgelt import (  # noqa: F401 — Schlüssel hier mit-exportiert
     CONF_SCHEDULE_NETWORK_FEE,
     CONF_SCHEDULE_NETZBEREICH,
+    MWST,
     SNAP_RABATT,
     Netzgebuehr,
     Tariftabelle,
@@ -259,6 +261,58 @@ MAX_NETZDIENLICH_BONUS = 0.20
 # Batterie, und Bonus und Ziel ringen Minute für Minute um den Vormittag.
 NETZDIENLICH_UEBERSCHUSS_FAKTOR = 1.2
 
+# „Batterie aus dem Netz laden" (Beta, nur Huawei, Expertenmodus): Bringt die
+# PV die Batterie bis zum Ende der PV-Zeit nicht aufs Ladeziel, darf der Plan
+# zukaufen — aber nur in Slots, in denen Netzstrom billiger ist als der Strom,
+# den die Batterie danach ersetzt (die Nacht bis zur nächsten PV-Zeit). Der
+# Vergleich zählt je kWh, nicht ob die Nacht die Energie auch braucht: Was
+# übrig bleibt, speist der Plan später ein, wenn es sich lohnt, oder trägt es
+# in den nächsten Tag. Das ist der Preis für „abends voll" (Entscheidung
+# 12.10.2026). Ohne den Schalter ist das Modell Zeile für Zeile das alte.
+#
+# Mit dem Schalter kommen die Bezugspreise dazu, die einen günstigeren Slot
+# überhaupt erst sichtbar machen: Spot-Bezug (Börsenpreis + Aufschlag) und
+# EEG-Bezug je Gemeinschaft (Energiepreis + um den Ortstarif verringertes
+# Netznutzungsentgelt, gewichtet mit dem Überschuss der Gemeinschaft).
+CONF_SCHEDULE_NETZLADEN = "schedule_netzladen"
+# Höchste Netzbezugsleistung, die in die Batterie gehen darf (kW, AC). 0 oder
+# leer = die Batterieleistung. Eigene Grenze, weil ab 2027 die Bezugsspitze
+# des Monats Geld kostet (leistungsspitze.py) — das LP bewertet sie nicht.
+CONF_SCHEDULE_NETZLADEN_MAX_KW = "schedule_netzladen_max_kw"
+# Mindestvorteil je kWh (€/kWh): Netzstrom muss um so viel billiger sein als
+# der ersetzte, nach Lade- und Entladeverlusten und Alterung. Fängt ab, dass
+# die PV-Prognose unsicher ist — ein Kauf um einen Zehntelcent Vorteil, den
+# die Sonne dann doch hereingebracht hätte, ist ein Verlust.
+CONF_SCHEDULE_NETZLADEN_VORTEIL = "schedule_netzladen_vorteil"
+DEFAULT_NETZLADEN_VORTEIL = 0.02
+MAX_NETZLADEN_VORTEIL = 0.20
+# Bezugstarif: fester Arbeitspreis (wie bisher) oder Börsenpreis. Wird nur mit
+# CONF_SCHEDULE_NETZLADEN gelesen.
+CONF_SCHEDULE_BEZUG_QUELLE = "schedule_bezug_quelle"
+BEZUG_QUELLE_FIX = "fix"
+BEZUG_QUELLE_SPOT = "spot"
+# Aufschlag auf den Börsenpreis, NETTO (€/kWh und Prozent vom Betrag) — so
+# stehen sie in den Preisblättern der Spot-Tarife; die MwSt kommt danach auf
+# den ganzen Energiepreis.
+CONF_SPOT_BEZUG_AUFSCHLAG = "spot_bezug_aufschlag"
+CONF_SPOT_BEZUG_AUFSCHLAG_PCT = "spot_bezug_aufschlag_pct"
+# EEG-Bezug je Gemeinschaft: Energiepreis brutto (€/kWh) und Ebene. Suffix
+# "_2" für die zweite Gemeinschaft, wie bei den übrigen peakshare_*-Schlüsseln.
+CONF_PEAKSHARE_BEZUG_PRICE = "peakshare_bezug_price"
+CONF_PEAKSHARE_BEZUG_EBENE = "peakshare_bezug_ebene"
+# Verringerung des Netznutzungsentgelts (Arbeitspreis) für Energie aus der
+# Gemeinschaft (Ortstarif der Systemnutzungsentgelte-Verordnung): lokal
+# (Netzebene 6–7) 57 %, regional (Netzebene 4–5) 28 %. Das
+# Netzverlustentgelt bleibt voll. Beide kWh-Abgaben entfallen für Mengen aus
+# der Gemeinschaft: der Erneuerbaren-Förderbeitrag nach § 75 Abs. 5 EAG
+# („innerhalb einer Erneuerbare-Energie-Gemeinschaft erzeugte und verbrauchte
+# Mengen bleiben außer Betracht"), die Elektrizitätsabgabe nach § 2 Abs. 1 Z 4
+# ElAbgG iVm § 2 Abs. 1 ElAbg-ESBV (BGBl. II 121/2025: die einem Mitglied
+# bilanziell zugeordnete Menge gilt nicht als Einspeisung, also als
+# befreiter Eigenverbrauch).
+EEG_BEZUG_REDUKTION = {"lokal": 0.57, "regional": 0.28}
+DEFAULT_EEG_BEZUG_EBENE = "lokal"
+
 # Deckel und Boden des Einspeisepreises sind Dauerzustände, keine Ereignisse:
 # Greift einer, greift er meist über Tage, denn er hängt an der Konfiguration
 # (Anlage Traun: Basistarif 2 ct gegen Gemeinschaftswerte bis 10,2 ct — der
@@ -450,6 +504,17 @@ class ScheduleInputs:
     # der Verordnung, nicht aus der Konfiguration.
     consumption_price_snap: float | None = None
     consumption_price_winap: float | None = None
+    # Bezugspreis je ``timestamps``-Eintrag (€/kWh) — nur mit „aus dem Netz
+    # laden" (CONF_SCHEDULE_NETZLADEN) und Spot- oder EEG-Bezug. Ersetzt dann
+    # Skalar und Fensterpreise; die Fenster sind darin schon eingerechnet.
+    consumption_price_series: list[float] | None = None
+    # Je Eintrag, ob der Preis feststeht. False = Börsenpreis vom Vortag
+    # fortgeschrieben — darauf baut kein Netzkauf. None = alle fest.
+    consumption_price_fest: list[bool] | None = None
+    # „Aus dem Netz laden": höchste Netzbezugsleistung in die Batterie (kW,
+    # AC); 0 = aus. Mindestvorteil je kWh in €/kWh (siehe HAConfig.netzladen).
+    netzladen_max_kw: float = 0.0
+    netzladen_vorteil: float = DEFAULT_NETZLADEN_VORTEIL
     forecast_source: str = ""
     # Preisaufschlag je Zeitpunkt aus dem Bedarf der Energiegemeinschaften
     # (€/kWh, siehe eeg_price.py). Leer = keine Gemeinschaft wirkt mit.
@@ -557,6 +622,29 @@ class _Forecast:
         return self._min_series.loc[start_time:].clip(
             lower=erwartung * self._inputs.worst_case_factor
         )
+
+
+def pv_enden(werte: list[float], tage: list) -> list[int]:
+    """Je Kalendertag der letzte Slot mit Überschuss — das Ende der PV-Zeit.
+
+    Nur wenn danach am selben Tag noch ein Slot im Horizont liegt (sonst ist
+    es das Ende der Rechnung, nicht der Sonne) und nicht nur eine Wolke
+    dazwischen war. ``werte`` ist der Überschuss je Slot, ``tage`` das Datum.
+    Gemeinsam für Ladeziel und Netzladen.
+    """
+    enden: list[int] = []
+    for i in range(len(werte)):
+        if werte[i] <= 0:
+            continue
+        naechster = i + 1
+        if naechster >= len(werte) or tage[naechster] != tage[i]:
+            continue  # Horizont- oder Tagesende, kein PV-Ende
+        if werte[naechster] > 0:
+            continue  # Überschuss geht weiter
+        if any(werte[k] > 0 for k in range(naechster, len(werte)) if tage[k] == tage[i]):
+            continue  # nur eine Wolke, später am Tag kommt noch Sonne
+        enden.append(i)
+    return enden
 
 
 class HAConfig:
@@ -945,23 +1033,94 @@ class HAConfig:
         rest = [0.0] * (len(abbau) + 1)
         for j in range(len(abbau) - 1, -1, -1):
             rest[j] = rest[j + 1] + abbau[j]
-        ende_halb = self.battery_capacity / 2.0
+        # Der Endstand, wie opt() ihn setzt (chamo/README.md § 4): halb, aber
+        # nie mehr, als die Batterie aus PV allein erreicht. Mit Netzladen
+        # kann ein Ziel erreichbar sein, von dem aus der Plan nur auf halb,
+        # nicht aber auf diesen tieferen Stand zurückkäme.
+        wirkung = 1 - 2 * self.battery_resistance
+        stand = self.battery_capacity - self.battery_free
+        for w in werte:
+            if w > 0:
+                stand = min(
+                    self.battery_capacity,
+                    stand + min(w * wirkung, float(self.battery_power_limit)) * p2e,
+                )
+        ende_halb = min(self.battery_capacity / 2.0, stand)
 
         tage = [stempel.date() for stempel in ueberschuss.index]
-        for i in range(len(werte)):
-            if werte[i] <= 0:
-                continue
-            naechster = i + 1
-            if naechster >= len(werte) or tage[naechster] != tage[i]:
-                continue  # Horizont- oder Tagesende, kein PV-Ende
-            if werte[naechster] > 0:
-                continue  # Überschuss geht weiter
-            if any(werte[k] > 0 for k in range(naechster, len(werte)) if tage[k] == tage[i]):
-                continue  # nur eine Wolke, später am Tag kommt noch Sonne
-            if self.ladeziel_kwh - ende_halb > rest[naechster] + 1e-9:
+        for i in pv_enden(werte, tage):
+            if self.ladeziel_kwh - ende_halb > rest[i + 1] + 1e-9:
                 continue  # vom Ziel käme der Plan nicht mehr auf halb
             termine.append(i)
         return termine
+
+    def netzladen(self, parameters, ueberschuss):
+        """Untergrenze von ``dc_p`` je Slot (kW, DC, ≤ 0) — oder None.
+
+        Aufgerufen von ``opt_highs.opt`` (LOCAL CHANGE, ``chamo/README.md``
+        § 5). Wo die Grenze unter null liegt, darf das LP aus dem Netz laden,
+        höchstens ``netzladen_max_kw`` (AC). None heißt: nirgends — dann ist
+        das Modell Zeile für Zeile das ohne Netzladen.
+
+        Erlaubt ist ein Slot vor dem Ende der PV-Zeit eines Tages (ab dem
+        vorigen PV-Ende), wenn Netzstrom dort billiger ist als der Strom, den
+        die Batterie danach ersetzt: der nach Hauslast gewichtete Bezugspreis
+        der Nacht bis zum nächsten Überschuss. Billiger heißt nach beiden
+        Wandlungen (AC→DC→AC, ``ac_efficiency``²), Alterung
+        (``battery_cost``) und Mindestvorteil (``netzladen_vorteil``). Ein
+        Slot mit fortgeschriebenem Börsenpreis ist nie erlaubt.
+
+        Der Vergleich gilt je kWh. Ob die Nacht die Energie auch braucht,
+        entscheidet er nicht — das Ladeziel darf diese Slots nutzen
+        (``opt_highs``: Erreichbarkeit mit Netzladen) und füllt dann bis zum
+        Ziel, auch wenn ein Teil später eingespeist wird.
+        """
+        max_kw = float(self._inputs.netzladen_max_kw or 0.0)
+        if max_kw <= 0 or len(ueberschuss) == 0:
+            return None
+        import pandas as pd
+
+        p2e = self.time_res / 3600.0
+        preise = [float(v) / p2e for v in parameters["consumption_price"].values]
+        haus = [float(v) for v in parameters["consumption"].values]
+        werte = [float(v) for v in ueberschuss.values]
+        stempel = list(ueberschuss.index)
+        tage = [s.date() for s in stempel]
+        fest = self._preis_fest_je_slot(stempel)
+        wandlung = self.ac_efficiency ** 2
+        aufschlag = float(self.battery_cost or 0.0) + float(self._inputs.netzladen_vorteil or 0.0)
+        grenze = -max_kw / self.ac_efficiency
+
+        untergrenze = [0.0] * len(werte)
+        von = 0
+        for i in pv_enden(werte, tage):
+            k = i + 1
+            gewicht = summe = 0.0
+            while k < len(werte) and werte[k] <= 0:
+                gewicht += haus[k]
+                summe += haus[k] * preise[k]
+                k += 1
+            if gewicht > 0:
+                ersetzt = summe / gewicht
+                for j in range(von, i + 1):
+                    if fest[j] and preise[j] + aufschlag < ersetzt * wandlung:
+                        untergrenze[j] = grenze
+            von = i + 1
+        if not any(u < 0 for u in untergrenze):
+            return None
+        return pd.Series(untergrenze, index=ueberschuss.index)
+
+    def _preis_fest_je_slot(self, stempel) -> list[bool]:
+        """``consumption_price_fest`` auf die Slots des LP umgelegt."""
+        fest = self._inputs.consumption_price_fest
+        if not fest:
+            return [True] * len(stempel)
+        quelle = self._inputs.timestamps
+        ergebnis = []
+        for s in stempel:
+            pos = bisect.bisect_right(quelle, s) - 1
+            ergebnis.append(bool(fest[min(max(pos, 0), len(fest) - 1)]))
+        return ergebnis
 
     def feedin_price(self, start_time):
         """Einspeisepreis: Basistarif, Nachtfenster und EEG-Aufschlag.
@@ -1096,6 +1255,15 @@ class HAConfig:
         Mit SNAP oder WiNAP muss es eine Reihe sein, sonst plant das LP im
         Fenster gegen einen Preis, den es dort gar nicht gibt.
         """
+        if self._inputs.consumption_price_series:
+            if self._consumption_price_series is None:
+                import pandas as pd
+
+                self._consumption_price_series = pd.Series(
+                    [float(p) for p in self._inputs.consumption_price_series],
+                    index=pd.DatetimeIndex(self._inputs.timestamps),
+                )
+            return self._consumption_price_series.loc[start_time:]
         if (
             self._inputs.consumption_price_snap is None
             and getattr(self._inputs, "consumption_price_winap", None) is None
@@ -1181,7 +1349,16 @@ def bezugspreis_zu(inputs: ScheduleInputs, stamp: datetime) -> float:
     Im SNAP-Fenster der Sommer-Mittagspreis, im WiNAP-Fenster der Winter-
     Nachtpreis, sonst der eine Bezugspreis. Die Fenster überschneiden sich
     nicht (Sommer/Winter). Ohne Zeitfenster ist es rund um die Uhr derselbe.
+
+    Mit einer Bezugsreihe (Spot-/EEG-Bezug, nur mit „aus dem Netz laden")
+    gilt deren Wert des Zeitpunkts, der zuletzt vor ``stamp`` beginnt — die
+    Fenster sind darin schon enthalten.
     """
+    reihe = getattr(inputs, "consumption_price_series", None)
+    if reihe:
+        stempel = inputs.timestamps
+        pos = bisect.bisect_right(stempel, stamp) - 1
+        return float(reihe[min(max(pos, 0), len(reihe) - 1)])
     snap = getattr(inputs, "consumption_price_snap", None)
     if snap is not None and ist_im_snap_fenster(stamp):
         return float(snap)
@@ -1193,6 +1370,9 @@ def bezugspreis_zu(inputs: ScheduleInputs, stamp: datetime) -> float:
 
 def _tiefster_bezugspreis(inputs: ScheduleInputs) -> float:
     """Der niedrigste Bezugspreis, der irgendwo im Horizont gelten kann."""
+    reihe = getattr(inputs, "consumption_price_series", None)
+    if reihe:
+        return min(float(p) for p in reihe)
     preise = [inputs.consumption_price]
     for name in ("consumption_price_snap", "consumption_price_winap"):
         wert = getattr(inputs, name, None)
@@ -1270,6 +1450,154 @@ def bezugspreise_aus_config(
         if netz.winap is not None and netz.winap < netz.ap:
             winap = energie + netz.winap
     return bezug, snap, winap
+
+
+def netzladen_max_kw(config: dict, inverter: Any = None) -> float:
+    """Netzbezugsleistung in die Batterie (kW) — 0 heißt „aus dem Netz laden" aus.
+
+    Nur mit dem Schalter und nur, wenn der Treiber Netzladen kann
+    (``supports_grid_charge``, derzeit Huawei). Ein leeres Feld (0) heißt:
+    so viel, wie die Batterie aufnimmt.
+    """
+    if not config.get(CONF_SCHEDULE_NETZLADEN):
+        return 0.0
+    if inverter is not None and not getattr(inverter, "supports_grid_charge", False):
+        return 0.0
+    batterie = float(
+        config.get(CONF_DISCHARGE_POWER_KW, DEFAULT_DISCHARGE_POWER_KW)
+        or DEFAULT_DISCHARGE_POWER_KW
+    )
+    wert = _preis_oder_none(config.get(CONF_SCHEDULE_NETZLADEN_MAX_KW))
+    return min(wert, batterie) if wert is not None else batterie
+
+
+def netzladen_vorteil(config: dict) -> float:
+    """Mindestvorteil je kWh (€/kWh), gekappt; leer heißt Vorgabe, 0 ist erlaubt."""
+    roh = config.get(CONF_SCHEDULE_NETZLADEN_VORTEIL)
+    if roh is None or roh == "":
+        return DEFAULT_NETZLADEN_VORTEIL
+    try:
+        zahl = float(roh)
+    except (TypeError, ValueError):
+        return DEFAULT_NETZLADEN_VORTEIL
+    if not math.isfinite(zahl):
+        return DEFAULT_NETZLADEN_VORTEIL
+    return max(0.0, min(MAX_NETZLADEN_VORTEIL, zahl))
+
+
+def eeg_bezug_aus_config(config: dict) -> list[dict]:
+    """Die Gemeinschaften mit eingetragenem Bezugspreis.
+
+    Je Eintrag ``{"name", "preis" (€/kWh brutto), "reduktion" (0..1)}``.
+    Ohne Name oder ohne Preis zählt eine Gemeinschaft nicht.
+    """
+    ergebnis = []
+    for s in ("", "_2"):
+        name = str(config.get(f"peakshare_community{s}") or "").strip()
+        preis = _preis_oder_none(config.get(CONF_PEAKSHARE_BEZUG_PRICE + s))
+        if not name or preis is None:
+            continue
+        ebene = str(config.get(CONF_PEAKSHARE_BEZUG_EBENE + s) or DEFAULT_EEG_BEZUG_EBENE).lower()
+        reduktion = EEG_BEZUG_REDUKTION.get(ebene, EEG_BEZUG_REDUKTION[DEFAULT_EEG_BEZUG_EBENE])
+        ergebnis.append({"name": name, "preis": preis, "reduktion": reduktion})
+    return ergebnis
+
+
+def bezugsreihe_netzladen(
+    config: dict,
+    stamps: list[datetime],
+    bezug: float,
+    bezug_snap: float | None,
+    bezug_winap: float | None,
+    netz: Netzgebuehr | None,
+    spot_netto: list[float] | None,
+    spot_fest: list[bool] | None,
+    eeg_bedarf: dict[str, dict[int, float]] | None,
+    consumption_kw: list[float],
+    production_kw: list[float],
+    max_kw: float,
+) -> tuple[list[float] | None, list[bool] | None]:
+    """Bezugspreis je Zeitpunkt mit Spot- und EEG-Bezug (€/kWh brutto).
+
+    Rückgabe (Reihe, fest je Zeitpunkt) — oder (None, None), wenn weder
+    Spot- noch EEG-Bezug etwas ändern; dann gelten Skalar und Fensterpreise
+    wie bisher.
+
+    * **Lieferant**: fester Arbeitspreis (wie bisher, mit SNAP/WiNAP) oder,
+      mit Spot-Bezug, (Börsenpreis + Aufschlag + Prozent vom Betrag) × MwSt
+      plus Netzgebühr des Zeitpunkts.
+    * **Gemeinschaft**: Energiepreis plus Netznutzungsentgelt, verringert um
+      den Ortstarif (lokal/regional), plus Netzverlust — ohne SNAP/WiNAP,
+      die für Gemeinschaftsmengen nicht gelten, und ohne Elektrizitätsabgabe
+      und Förderbeitrag, die dafür entfallen. Ihr
+      Anteil am Bezug ist der Überschuss der Gemeinschaft im Verhältnis zu
+      dem, was wir dort höchstens beziehen (Hausdefizit + Netzladeleistung) —
+      dieselbe Vorsicht wie bei der Einspeisung: EEG-Preis nur für Energie,
+      die die Gemeinschaft laut Saldo hat. Die billigere Gemeinschaft zuerst.
+    """
+    # Beides braucht die Netzgebühr: Ohne sie wäre der Spot- wie der
+    # EEG-Preis reine Energie und läge weit unter einem Bezugspreis, der sie
+    # enthält — ein Netzkauf aus einem Rechenfehler.
+    if netz is None:
+        return None, None
+    spot = (
+        str(config.get(CONF_SCHEDULE_BEZUG_QUELLE) or BEZUG_QUELLE_FIX).lower() == BEZUG_QUELLE_SPOT
+        and bool(spot_netto)
+        and len(spot_netto) == len(stamps)
+    )
+    gemeinschaften = [
+        g for g in eeg_bezug_aus_config(config) if eeg_bedarf and g["name"] in eeg_bedarf
+    ]
+    if not spot and not gemeinschaften:
+        return None, None
+
+    aufschlag = _endlicher_preis(config.get(CONF_SPOT_BEZUG_AUFSCHLAG)) or 0.0
+    aufschlag_pct = (_endlicher_preis(config.get(CONF_SPOT_BEZUG_AUFSCHLAG_PCT)) or 0.0) / 100.0
+    rest = netz.ap - netz.netznutzung
+
+    reihe: list[float] = []
+    for i, stamp in enumerate(stamps):
+        # Netznutzungsentgelt dieses Zeitpunkts — im SNAP-/WiNAP-Fenster der
+        # verbilligte Satz, aber nur, wo der Fensterpreis überhaupt gilt.
+        nutzung = netz.netznutzung
+        lieferant = bezug
+        if bezug_snap is not None and ist_im_snap_fenster(stamp):
+            lieferant = bezug_snap
+            if netz.snap is not None:
+                nutzung = netz.snap - rest
+        elif bezug_winap is not None and ist_im_winap_fenster(stamp):
+            lieferant = bezug_winap
+            if netz.winap is not None:
+                nutzung = netz.winap - rest
+        if spot:
+            s = float(spot_netto[i])
+            lieferant = (s + aufschlag + abs(s) * aufschlag_pct) * MWST + nutzung + rest
+
+        anteil_frei = 1.0
+        preis = 0.0
+        haus = float(consumption_kw[i]) if i < len(consumption_kw) else 0.0
+        pv = float(production_kw[i]) if i < len(production_kw) else 0.0
+        hoechstens_kwh = (max(0.0, haus - pv * HAConfig.ac_efficiency) + max_kw) * 0.25
+        viertel = int(stamp.timestamp() // 900)
+        # Für Mengen aus der Gemeinschaft gilt kein SNAP/WiNAP — dort zählt
+        # der volle Satz, verringert um den Ortstarif.
+        for g in sorted(
+            gemeinschaften, key=lambda g: g["preis"] + netz.netznutzung * (1 - g["reduktion"])
+        ):
+            # Elektrizitätsabgabe und Förderbeitrag entfallen (siehe
+            # EEG_BEZUG_REDUKTION), das Netzverlustentgelt bleibt.
+            if anteil_frei <= 0 or hoechstens_kwh <= 0:
+                break
+            saldo = eeg_bedarf[g["name"]].get(viertel)
+            if saldo is None or saldo >= 0:
+                continue  # kein Überschuss in der Gemeinschaft
+            anteil = min(anteil_frei, -float(saldo) / hoechstens_kwh)
+            preis += anteil * (g["preis"] + netz.netznutzung * (1 - g["reduktion"]) + netz.netzverlust)
+            anteil_frei -= anteil
+        reihe.append(round(preis + anteil_frei * lieferant, 6))
+
+    fest = list(spot_fest) if spot and spot_fest and len(spot_fest) == len(stamps) else None
+    return reihe, fest
 
 
 def max_min_soc_pct(config: dict) -> float:
@@ -2464,6 +2792,22 @@ async def async_collect_inputs(
         basis_reihe=feedin_reihe,
     )
 
+    # „Aus dem Netz laden" (Beta, nur mit passendem Treiber): erst damit
+    # zählen Spot- und EEG-Bezug. Ohne den Schalter bleibt alles beim Alten.
+    netzlade_kw = netzladen_max_kw(config, inverter)
+    bezug_reihe = bezug_fest = None
+    if netzlade_kw > 0:
+        spot_netto = spot_fest = None
+        if str(config.get(CONF_SCHEDULE_BEZUG_QUELLE) or "").lower() == BEZUG_QUELLE_SPOT:
+            spot_provider = data.get("spot")
+            if spot_provider is not None:
+                spot_netto, _ = spot_provider.reihe_fuer(stamps)
+                spot_fest = spot_provider.bekannt(stamps) if spot_netto else None
+        bezug_reihe, bezug_fest = bezugsreihe_netzladen(
+            config, stamps, bezug, bezug_snap, bezug_winap, netz,
+            spot_netto, spot_fest, eeg_bedarf, consumption, production, netzlade_kw,
+        )
+
     inputs = ScheduleInputs(
         start=start,
         time_res_s=time_res_min * 60,
@@ -2492,6 +2836,10 @@ async def async_collect_inputs(
         consumption_price=bezug,
         consumption_price_snap=bezug_snap,
         consumption_price_winap=bezug_winap,
+        consumption_price_series=bezug_reihe,
+        consumption_price_fest=bezug_fest,
+        netzladen_max_kw=netzlade_kw,
+        netzladen_vorteil=netzladen_vorteil(config),
         # Wie bei den übrigen Fahrplan-Zahlen zählt auch hier ein leeres Feld
         # als „nicht gesetzt": das Panel speicherte leere Zahlenfelder als 0,
         # und eine 0 hieße, die Optimierung schont die Batterie überhaupt
@@ -2603,12 +2951,12 @@ _ENDLICH_SKALARE = (
     "ac_limit_kw", "feedin_limit_kw", "feedin_price", "feedin_price_night",
     "consumption_price", "consumption_price_snap", "consumption_price_winap",
     "battery_cost", "min_soc_pct", "max_soc_pct", "ladeziel_pct", "worst_case_factor",
-    "netzdienlich_bonus",
+    "netzdienlich_bonus", "netzladen_max_kw", "netzladen_vorteil",
     "heizstab_max_kw", "heizstab_waermewert", "heizstab_budget_kwh",
 )
 _ENDLICH_REIHEN = (
     "consumption_kw", "production_kw", "min_production_kw", "eeg_bonus",
-    "feedin_price_series",
+    "feedin_price_series", "consumption_price_series",
 )
 
 
@@ -2666,6 +3014,24 @@ def _ladeziel_termine(
     return {"ziel_pct": ziel_pct, "termine": termine}
 
 
+def netzladung_kw(slot: dict, ac_efficiency: float) -> float:
+    """Was die Batterie in diesem Slot aus dem Netz lädt (kW, AC).
+
+    Ladung über die PV hinaus: ``dc_p < 0`` in ``opt_highs``, auf der AC-Seite
+    mal Wirkungsgrad wie im Modell. Lädt die Batterie nur aus PV, während das
+    Haus aus dem Netz lebt, ist das hier 0 — das kann das Modell auch ohne
+    Netzladen, und der Wechselrichter braucht dafür keinen Ladebefehl.
+    """
+    try:
+        laden = max(0.0, -float(slot.get("battery_p") or 0.0))
+        pv = float(slot.get("PV") or 0.0)
+        abgeregelt = float(slot.get("discard") or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+    wert = max(0.0, laden - pv + abgeregelt) * ac_efficiency
+    return round(wert, 4) if wert > 0.005 else 0.0
+
+
 def solve(inputs: ScheduleInputs) -> dict[str, Any]:
     """Rechnet den Fahrplan. Läuft im Executor — hier kein hass-Zugriff."""
     from .chamo import opt_highs
@@ -2711,6 +3077,8 @@ def solve(inputs: ScheduleInputs) -> dict[str, Any]:
         slot["heizstab"] = _heizstab_plan_kw(
             slot.get("discard"), inputs, row.get("heater")
         )
+        if inputs.netzladen_max_kw > 0:
+            slot["netzladung"] = netzladung_kw(slot, HAConfig.ac_efficiency)
         slots.append(slot)
     # Puffertemperatur je Slot — Nachrechnung aus der geplanten Wärme, das
     # LP bleibt davon unberührt.

@@ -161,6 +161,27 @@ class InverterBase(ABC):
         """
         return False
 
+    @property
+    def supports_grid_charge(self) -> bool:
+        """Kann der Treiber die Batterie aus dem Netz laden (Beta)?
+
+        Nur dann bietet der Fahrplan „Batterie aus dem Netz laden" an
+        (``schedule.netzladen_max_kw``). Default False — derzeit kann es nur
+        Huawei (``forcible_charge_soc``).
+        """
+        return False
+
+    async def async_set_grid_charge(
+        self, power_kw: float, target_soc: float | None = None
+    ) -> bool:
+        """Batterie mit ``power_kw`` laden, PV zuerst, Rest aus dem Netz.
+
+        Bis ``target_soc`` (Prozent), dann hört das Gerät selbst auf. Beendet
+        wird wie jede Zwangsladung mit ``async_stop_forcible()``. Default:
+        nicht unterstützt.
+        """
+        return self._fehler("Netzladen nicht unterstützt")
+
     async def async_get_control_values(self) -> list[dict]:
         """Stellgrößen, die NICHT an einer HA-Entität hängen.
 

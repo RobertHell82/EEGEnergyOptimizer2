@@ -195,6 +195,12 @@ class SpotProvider:
     def reihe_fuer(self, stamps: list[datetime]) -> tuple[list[float] | None, int]:
         return reihe_fuer(self._preise, stamps)
 
+    def bekannt(self, stamps: list[datetime]) -> list[bool]:
+        """Je Zeitstempel, ob der Börsenpreis veröffentlicht ist — und nicht
+        vom Vortag fortgeschrieben. Ein Netzkauf darf nur auf echte Preise
+        bauen (``schedule.HAConfig.netzladen``)."""
+        return [int(stamp.timestamp() // 900) in self._preise for stamp in stamps]
+
     def preis_jetzt(self) -> float | None:
         """Preis des aktuellen Viertelstundenslots, oder None."""
         if not self._preise:

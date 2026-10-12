@@ -156,6 +156,29 @@ const quoteLuecken = (d) => {
     .map(([, name]) => name);
 };
 
+// „Batterie aus dem Netz laden" (Beta): nur Einstellungen, Expertenmodus,
+// Huawei — derselbe Treiber-Schalter wie im Backend (supports_grid_charge).
+const netzladenSichtbar = (d, prefix) =>
+  !!prefix && !!d.expert_mode && d.inverter_type === "huawei_sun2000";
+
+// Was mit eingeschaltetem Netzladen fehlt. Ohne einen Preis, der irgendwo
+// billiger ist als die Nacht, kauft der Fahrplan nie — der Haken wäre
+// wirkungslos. Spot- und Gemeinschaftsbezug brauchen die Netzgebühr.
+const netzladenLuecken = (d) => {
+  if (!d.expert_mode || d.inverter_type !== "huawei_sun2000" || !d.schedule_netzladen) return [];
+  const spot = String(d.schedule_bezug_quelle || "fix") === "spot";
+  const eeg = [["", d.peakshare_community], ["_2", d.peakshare_community_2]]
+    .some(([sfx, name]) => name && Number(d[`peakshare_bezug_price${sfx}`] ?? 0) > 0);
+  const fehlt = [];
+  if (!spot && !eeg && !d.schedule_snap_enabled) {
+    fehlt.push("Bezugspreis fürs Laden aus dem Netz (Spot-Tarif, Bezugspreis der Gemeinschaft oder zeitvariable Netzentgelte)");
+  }
+  if ((spot || eeg) && !d.schedule_netzbereich) {
+    fehlt.push("Netzbereich (Spot- und Gemeinschaftsbezug brauchen die Netzgebühr)");
+  }
+  return fehlt;
+};
+
 // Auswaehlbar ist genau, was der Fahrplan auch steuern kann (Entscheid
 // 28.08.2026): alles andere waere reine Anzeige. Die uebrigen Karten sind
 // nur AUSGEBLENDET, ihr Code bleibt vollstaendig — ein Eintrag in
@@ -1167,6 +1190,11 @@ class EegOptimizerPanel extends HTMLElement {
             }
             // Die Vertragsvariante blendet den angezeigten SUNNY-Wert um.
             if (realField === "awattar_sunny_vertrag") this._render();
+            // Bezugstarif fürs Laden aus dem Netz: Spot blendet die Aufschläge ein.
+            if (realField === "schedule_bezug_quelle") {
+              if (target.value === "spot") this._ensureSpotStatus();
+              this._render();
+            }
             // Quellenwechsel der PV-Prognose: Sensoren vorbelegen bzw.
             // Flächen anlegen, dann die passenden Felder zeigen.
             if (realField === "forecast_source") {
@@ -2870,6 +2898,7 @@ class EegOptimizerPanel extends HTMLElement {
       fehlt.push(`Anteile der Gemeinschaften (Summe ${fmtDe(anteile, 0)} % statt maximal 100 %)`);
     }
     for (const name of quoteLuecken(d)) fehlt.push(`Abnahmequote der Gemeinschaft ${name}`);
+    for (const luecke of netzladenLuecken(d)) fehlt.push(luecke);
     return fehlt;
   }
 
@@ -3315,6 +3344,7 @@ class EegOptimizerPanel extends HTMLElement {
           + line("Batterie", batText, "", bat > 0 ? "#1e88e5" : "#ef6c00")
           + line("Ladestand", d.psoc, "%", "#7cb342")
           + (d.pheiz != null ? line("Heizstab", d.pheiz, "kW", "#c62828") : "")
+          + (d.pnetzl != null ? line("Netzladung", d.pnetzl, "kW", "#6a1b9a") : "")
           + (d.ptemp != null ? line("Puffertemperatur", d.ptemp, "\u00b0C", "#8e24aa") : "");
       }
       if (d.preis != null) {
@@ -3428,6 +3458,8 @@ class EegOptimizerPanel extends HTMLElement {
     // sobald ein Heizstab konfiguriert ist: sonst sieht man einem Plan ohne
     // Überschuss nicht an, ob der Heizstab überhaupt mitgedacht wird.
     const hatHeizstab = slots.some(s => Number(s.heizstab) > 0.01);
+    // „Batterie aus dem Netz laden" (Beta): Spalte nur in Plänen mit Netzladen.
+    const hatNetzladung = slots.some(s => Number(s.netzladung) > 0.01);
     const heizstabKonfiguriert = !!this._config?.heizstab_enabled;
     const heizstabPlanKwh = slots.reduce((sum, s) => sum + (Number(s.heizstab) || 0), 0)
       * (Math.max(1, Number(d.time_res_min) || 15) / 60);
@@ -3585,6 +3617,7 @@ class EegOptimizerPanel extends HTMLElement {
       for (const key of ["PV", "consumption", "grid_p"]) messen(s[key] ?? 0);
       messen(slotBat[i] ?? 0);
       if (hatHeizstab) messen(s.heizstab ?? 0);
+      if (hatNetzladung) messen(s.netzladung ?? 0);
     });
     // Der Ist-Verlauf gehört auf dieselbe Achse — sonst wird er abgeschnitten.
     for (const r of rows) {
@@ -3976,6 +4009,7 @@ class EegOptimizerPanel extends HTMLElement {
         + ` data-ppv="${kw(p ? p.PV : null)}" data-pcons="${kw(p ? p.consumption : null)}"`
         + ` data-pgrid="${kw(pGrid)}" data-pbat="${kw(pBat)}" data-psoc="${pct(p ? p.soc : null)}"`
         + (hatHeizstab ? ` data-pheiz="${kw(p ? p.heizstab : null)}"` : "")
+        + (hatNetzladung ? ` data-pnetzl="${kw(p ? p.netzladung : null)}"` : "")
         + (hatPufferTemp ? ` data-ptemp="${p && p.puffer_temp_c != null ? fmtDe(p.puffer_temp_c, 1) : "---"}"` : "")
         + (ist
           ? ` data-past="1" data-ipv="${kw(ist.pv)}" data-icons="${kw(ist.cons)}"`
@@ -4011,6 +4045,7 @@ class EegOptimizerPanel extends HTMLElement {
       ["#616161", "Verbrauch (Prognose)", "cons"],
       ["#43a047", "Netz geplant", "grid"],
       ...((hatHeizstab || heizstabKonfiguriert) ? [["#c62828", "Heizstab geplant", "heiz"]] : []),
+      ...(hatNetzladung ? [["#6a1b9a", "Netzladung geplant", "netzl"]] : []),
       ...(hatPufferTemp ? [["#8e24aa", "Puffertemperatur (Prognose)", "temp"]] : []),
       // Farbe und Beschriftung nach Darstellung: die Börsenlinie ist rot mit
       // eigener Achse, das Band grün in der Lücke (dunkel = teuer).
@@ -4152,6 +4187,7 @@ class EegOptimizerPanel extends HTMLElement {
               ${imBild("cons") ? `<path d="${path("consumption")}" fill="none" stroke="#616161" stroke-width="1.5" stroke-dasharray="4 3"/>` : ""}
               ${imBild("grid") ? `<path d="${path("grid_p")}" fill="none" stroke="#43a047" stroke-width="2"/>` : ""}
               ${hatHeizstab && imBild("heiz") ? `<path d="${path("heizstab")}" fill="none" stroke="#c62828" stroke-width="1.8" stroke-dasharray="6 3"/>` : ""}
+              ${hatNetzladung && imBild("netzl") ? `<path d="${path("netzladung")}" fill="none" stroke="#6a1b9a" stroke-width="1.8" stroke-dasharray="3 2"/>` : ""}
               ${histLinien}
               <path d="${socPath}" fill="none" stroke="#7cb342" stroke-width="2"/>
               ${socIstPath ? `<path d="${socIstPath}" fill="none" stroke="#7cb342" stroke-width="1.2" stroke-opacity="0.55"/>` : ""}
@@ -6999,7 +7035,68 @@ class EegOptimizerPanel extends HTMLElement {
         <input type="number" data-field="${prefix}schedule_battery_cost" data-unit="ct"
                value="${ctAus(Number(d.schedule_battery_cost) > 0 ? d.schedule_battery_cost : 0.01)}" min="0.1" max="100" step="0.1">
         <div class="help-text">Was eine durchgesetzte Kilowattstunde die Batterie an Lebensdauer kostet. Höhere Werte machen die Optimierung zurückhaltender: sie speichert nur, wenn sich der Umweg lohnt. Ein leeres Feld gilt als 1 ct — ohne Alterungskosten lädt und entlädt die Optimierung ohne jede Zurückhaltung. Bei der Entladung in die Gemeinschaft ist der Wert die Schwelle: Sie kommt erst zustande, wenn der Nachtsatz über der Einspeisevergütung plus Alterungskosten liegt.</div>
-      </div>` : ""}`;
+      </div>` : ""}
+      ${this._netzladenFeld(d, prefix)}`;
+  }
+
+  // „Batterie aus dem Netz laden" (Beta): nur in den Einstellungen, nur im
+  // Expertenmodus, nur für Huawei (schedule.py: CONF_SCHEDULE_NETZLADEN,
+  // InverterBase.supports_grid_charge). Erst mit dem Haken erscheinen die
+  // Bezugspreise, die ein billigeres Fenster sichtbar machen — der
+  // EEG-Bezugspreis steht bei der jeweiligen Gemeinschaft.
+  _netzladenFeld(d, prefix) {
+    if (!netzladenSichtbar(d, prefix)) return "";
+    const an = !!d.schedule_netzladen;
+    const quelle = String(d.schedule_bezug_quelle || "fix");
+    const vorteilRoh = d.schedule_netzladen_vorteil;
+    const vorteil = (vorteilRoh === undefined || vorteilRoh === null || vorteilRoh === "") ? 0.02 : Number(vorteilRoh);
+    const maxKw = Number(d.schedule_netzladen_max_kw) > 0 ? d.schedule_netzladen_max_kw : "";
+    const batterieKw = Number(d.discharge_power_kw) > 0 ? fmtDe(Number(d.discharge_power_kw), 1) : "der Batterie";
+    return `
+      <div class="field-group" style="margin-top:8px">
+        <label style="display:flex;align-items:center;gap:12px;cursor:pointer">
+          <input type="checkbox" data-field="${prefix}schedule_netzladen" ${an ? "checked" : ""}>
+          <div>
+            <div style="font-weight:500">Batterie aus dem Netz laden${BETA_BADGE}</div>
+            <div class="help-text" style="margin-top:4px">Schafft die Sonne das Ladeziel bis zum Ende der PV-Zeit nicht, darf der Fahrplan Strom zukaufen — aber nur in Viertelstunden, in denen Netzstrom billiger ist als der Strom, den die Batterie danach in der Nacht ersetzt. Gerechnet wird je Kilowattstunde, nach den Verlusten beim Laden und Entladen. Was die Nacht nicht braucht, speist der Fahrplan später ein, wenn es sich lohnt; das kann Geld kosten und ist der Preis für eine abends volle Batterie. Nur Huawei, nur mit Ladeziel.</div>
+          </div>
+        </label>
+      </div>
+      ${an ? `
+      <div class="field-group">
+        <label>Bezugstarif deines Lieferanten</label>
+        <select data-field="${prefix}schedule_bezug_quelle">
+          <option value="fix" ${quelle !== "spot" ? "selected" : ""}>Fester Arbeitspreis (wie oben)</option>
+          <option value="spot" ${quelle === "spot" ? "selected" : ""}>Börsenpreis (Spot, stündlich)</option>
+        </select>
+        <div class="help-text">Mit einem Spot-Tarif ist der Strom in manchen Stunden deutlich billiger. Gekauft wird nur auf veröffentlichte Börsenpreise, nie auf eine Schätzung für morgen.</div>
+      </div>
+      ${quelle === "spot" ? `
+      <div class="field-group">
+        <label>Aufschlag auf den Börsenpreis (ct/kWh, netto)</label>
+        <input type="number" data-field="${prefix}spot_bezug_aufschlag" data-unit="ct"
+               value="${d.spot_bezug_aufschlag ? ctAus(d.spot_bezug_aufschlag) : ""}" min="-50" max="50" step="0.01" placeholder="z. B. 1,5">
+        <div class="help-text">Der feste Aufschlag deines Lieferanten je Kilowattstunde, ohne Mehrwertsteuer, so wie er im Preisblatt steht.</div>
+      </div>
+      <div class="field-group">
+        <label>Aufschlag in Prozent vom Börsenpreis</label>
+        <input type="number" data-field="${prefix}spot_bezug_aufschlag_pct"
+               value="${d.spot_bezug_aufschlag_pct ? d.spot_bezug_aufschlag_pct : ""}" min="0" max="100" step="0.1" placeholder="z. B. 3">
+        <div class="help-text">Vom Betrag des Börsenpreises, auch bei negativen Preisen. Danach kommen Mehrwertsteuer und die Netzgebühr oben dazu.</div>
+      </div>` : ""}
+      <div class="field-group">
+        <label>Höchste Leistung aus dem Netz in die Batterie (kW)</label>
+        <input type="number" data-field="${prefix}schedule_netzladen_max_kw"
+               value="${maxKw}" min="0" max="100" step="0.1" placeholder="${batterieKw}">
+        <div class="help-text">Leer heißt: so viel, wie die Batterie aufnimmt (${batterieKw} kW). Ab 2027 kostet die höchste Viertelstunde Netzbezug im Monat Geld — eine kleinere Grenze hält diese Spitze niedrig.</div>
+      </div>
+      <div class="field-group">
+        <label>Mindestvorteil (ct/kWh)</label>
+        <input type="number" data-field="${prefix}schedule_netzladen_vorteil" data-unit="ct"
+               value="${ctAus(vorteil)}" min="0" max="20" step="0.5">
+        <div class="help-text">Um so viel muss Netzstrom billiger sein als der Strom, den er später ersetzt. Vorgabe 2 ct. Die PV-Prognose ist unsicher: Ein Kauf um einen Zehntelcent Vorteil, den die Sonne dann doch geliefert hätte, ist ein Verlust.</div>
+      </div>
+      <div class="help-text" style="margin-bottom:16px">Einen günstigeren Bezugspreis aus der Energiegemeinschaft trägst du bei der Gemeinschaft ein. Spot- und Gemeinschaftsbezug brauchen einen Netzbereich, sonst fehlt die Netzgebühr. Mit fester Abnahmequote statt PeakShare kennt der Fahrplan keinen Überschuss der Gemeinschaft und rechnet ohne Gemeinschaftsbezug.</div>` : ""}`;
   }
 
   // Boden und Deckel des Ladestands — genau die Regeln aus dem Backend
@@ -7357,6 +7454,23 @@ class EegOptimizerPanel extends HTMLElement {
             </div>
           </div>
           <div class="help-text" style="margin-bottom:8px">Welcher Teil deiner angebotenen Einspeisung erfahrungsgemäß in der Gemeinschaft landet — steht in der EEG-Monatsabrechnung als Anteil der Einspeisung, der in der Gemeinschaft verbraucht wurde. Mittags im Sommer ist die Quote niedrig, weil alle einspeisen; nachts liegt sie nahe 100 %, solange die Gemeinschaft nachts mehr verbraucht, als eingespeist wird.</div>` : ""}
+          ${netzladenSichtbar(d, prefix) && d.schedule_netzladen && !quoten ? `
+          <div style="display:flex;gap:12px;flex-wrap:wrap">
+            <div class="field-group" style="flex:1;min-width:140px">
+              <label>Bezugspreis aus der Gemeinschaft (ct/kWh)</label>
+              <input type="number" data-field="${prefix}peakshare_bezug_price${s}" data-unit="ct"
+                     value="${Number(d[`peakshare_bezug_price${s}`] ?? 0) > 0 ? ctAus(d[`peakshare_bezug_price${s}`]) : ""}"
+                     min="0" max="200" step="0.1" placeholder="leer = kein Bezug">
+            </div>
+            <div class="field-group" style="flex:1;min-width:140px">
+              <label>Gemeinschaft ist</label>
+              <select data-field="${prefix}peakshare_bezug_ebene${s}">
+                <option value="lokal" ${(d[`peakshare_bezug_ebene${s}`] || "lokal") === "lokal" ? "selected" : ""}>lokal (−57 % Netznutzung)</option>
+                <option value="regional" ${d[`peakshare_bezug_ebene${s}`] === "regional" ? "selected" : ""}>regional (−28 % Netznutzung)</option>
+              </select>
+            </div>
+          </div>
+          <div class="help-text" style="margin-bottom:8px">Für „Batterie aus dem Netz laden": der Energiepreis, den die Gemeinschaft für bezogenen Strom verrechnet, inklusive Mehrwertsteuer. Das verringerte Netznutzungsentgelt und das Netzverlustentgelt rechnet der Fahrplan selbst dazu (ohne SNAP und WiNAP, die für Gemeinschaftsmengen nicht gelten); Elektrizitätsabgabe und Erneuerbaren-Förderbeitrag entfallen für Gemeinschaftsstrom. Als Gemeinschaftsstrom zählt nur, was die Gemeinschaft laut PeakShare in der Viertelstunde übrig hat; der Rest kommt zum Preis deines Lieferanten.</div>` : ""}
           <div class="help-text" style="margin-bottom:8px">${wirkung}</div>
         </div>`;
     };
@@ -9084,6 +9198,9 @@ class EegOptimizerPanel extends HTMLElement {
     if (a.aktiv === "discharge" && a.entladeleistung_kw != null) {
       gesetzt.push(`Batterie-Sollwert <strong>${fmtDe(a.entladeleistung_kw, 2)} kW</strong>`);
       if (a.ziel_soc != null) gesetzt.push(`Ziel-Ladestand <strong>${Math.round(a.ziel_soc)} %</strong>`);
+    } else if (a.aktiv === "grid_charge" && a.netzladeleistung_kw != null) {
+      gesetzt.push(`Netzladung <strong>${fmtDe(a.netzladeleistung_kw, 2)} kW</strong> (PV zuerst, Rest aus dem Netz)`);
+      if (a.ziel_soc != null) gesetzt.push(`Ziel-Ladestand <strong>${Math.round(a.ziel_soc)} %</strong>`);
     } else if (a.aktiv === "charge_limit" && a.ladelimit_kw != null) {
       gesetzt.push(Number(a.ladelimit_kw) <= 0.05
         ? "Ladelimit <strong>0 kW</strong> (Laden blockiert)"
@@ -9555,6 +9672,7 @@ class EegOptimizerPanel extends HTMLElement {
       if (e.status && e.status !== e.zustand) details.push(this._escapeHtml(e.status));
       if (e.plan && e.plan.kind === "discharge") details.push(`Plan: Einspeisung ${fmtDe(e.plan.power_kw ?? 0, 1)} kW`);
       else if (e.plan && e.plan.kind === "charge_limit") details.push(`Plan: Ladelimit ${fmtDe(e.plan.power_kw ?? 0, 1)} kW`);
+      else if (e.plan && e.plan.kind === "grid_charge") details.push(`Plan: Netzladung ${fmtDe(e.plan.power_kw ?? 0, 1)} kW`);
       // Legacy-Felder (Einträge vor dem Umbau)
       if (e.bedarf != null && e.status == null) details.push(`Gesamtbedarf ${fmtDe(e.bedarf, 1)} kWh`);
       return `<div class="activity-entry">

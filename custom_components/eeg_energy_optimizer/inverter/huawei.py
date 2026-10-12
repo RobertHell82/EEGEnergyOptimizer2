@@ -22,6 +22,7 @@ der alte globale States-Scan als Fallback.
 from __future__ import annotations
 
 import logging
+import math
 import re
 import time
 from typing import Any
@@ -712,6 +713,72 @@ class HuaweiInverter(InverterBase):
                 # Nur der Ausnahmetyp, nie die Meldung: Sie trägt die
                 # device_id und machte aus jeder Anlage einen eigenen Fall.
                 self._fehler(f"forcible_discharge_soc: {type(exc).__name__}")
+        return self._erfolg() if (any_ok and all_ok) else False
+
+    @property
+    def supports_grid_charge(self) -> bool:
+        """„Batterie aus dem Netz laden" (Beta) — über forcible_charge_soc."""
+        return True
+
+    async def async_set_grid_charge(
+        self, power_kw: float, target_soc: float | None = None
+    ) -> bool:
+        """Zwangsladung mit ``power_kw`` bis ``target_soc`` auf allen Geräten.
+
+        Aufgeteilt wie das Ladelimit, nach freiem Platz. Vorher geht das
+        Ladelimit je Gerät auf sein Maximum: Steht vom vorigen Slot noch
+        „Laden begrenzt auf 0 kW", liefe die Zwangsladung sonst gegen diesen
+        Deckel. Beendet wird sie mit ``async_stop_forcible()``
+        (``stop_forcible_charge`` stoppt Laden wie Entladen).
+
+        Feldtest offen: ob das Gerät dafür „Laden aus dem Netz" eingeschaltet
+        braucht (Netzlade-Abschalt-SOC, maximale Netzladeleistung).
+        """
+        if self._nicht_endlich(power_kw, target_soc):
+            return False
+        soc = 100 if target_soc is None else int(math.ceil(float(target_soc)))
+        soc = max(12, min(100, soc))
+        distribution = self._compute_charge_distribution(power_kw)
+        if distribution is None:
+            per = power_kw / len(self._device_ids)
+            distribution = {did: per for did in self._device_ids}
+        _LOGGER.info(
+            "Huawei: Netzladung %.2f kW bis %d %%: %s",
+            power_kw, soc, {did: f"{kw:.2f}kW" for did, kw in distribution.items()},
+        )
+        any_ok = False
+        all_ok = True
+        for did in self._device_ids:
+            eid = self._ensure_charge_entity(did)
+            if eid is not None:
+                try:
+                    await self._hass.services.async_call(
+                        "number",
+                        "set_value",
+                        {"entity_id": eid, "value": self._get_max_charge_power(eid)},
+                        blocking=True,
+                    )
+                except Exception as exc:
+                    _LOGGER.exception("Huawei: Ladelimit vor der Netzladung auf %s", did)
+                    all_ok = False
+                    self._fehler(f"number.set_value: {type(exc).__name__}")
+                    continue
+            try:
+                await self._hass.services.async_call(
+                    HUAWEI_DOMAIN,
+                    "forcible_charge_soc",
+                    {
+                        "device_id": did,
+                        "power": str(int(distribution.get(did, 0.0) * 1000)),
+                        "target_soc": soc,
+                    },
+                    blocking=True,
+                )
+                any_ok = True
+            except Exception as exc:
+                _LOGGER.exception("Huawei: Netzladung auf %s fehlgeschlagen", did)
+                all_ok = False
+                self._fehler(f"forcible_charge_soc: {type(exc).__name__}")
         return self._erfolg() if (any_ok and all_ok) else False
 
     async def async_stop_forcible(self) -> bool:

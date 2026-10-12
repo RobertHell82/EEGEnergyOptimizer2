@@ -817,6 +817,11 @@ def fahrplan_kurzstatus(status: dict) -> str:
             power = status.get("written_discharge_kw") or 0.0
             return f"Entladung {power:.2f} kW{soc_text}"
         return f"Einspeisung {einspeisung:.2f} kW{soc_text}"
+    if kind == "grid_charge":
+        power = status.get("written_grid_charge_kw") or 0.0
+        soc = status.get("written_target_soc")
+        soc_text = f" bis {soc:.0f} %" if soc is not None else ""
+        return f"Netzladung {power:.2f} kW{soc_text}"
     return "Normalbetrieb"
 
 
@@ -859,6 +864,7 @@ class FahrplanStatusSensor(SensorEntity):
             "aktiv": status.get("active_kind"),
             "ladelimit_kw": status.get("written_charge_limit_kw"),
             "entladeleistung_kw": status.get("written_discharge_kw"),
+            "netzladeleistung_kw": status.get("written_grid_charge_kw"),
             "ziel_soc": status.get("written_target_soc"),
             "plan_aktion": action.get("kind"),
             "plan_leistung_kw": action.get("power_kw"),

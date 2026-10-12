@@ -315,7 +315,7 @@ def _snapshot_state(status: dict) -> str:
 
     ``unsupported`` (Treiber wird nicht gesteuert) → ``emergency`` (Not-Aus
     sperrt die Entladung) → ``failsafe`` (kein brauchbarer Plan, Wechselrichter
-    freigegeben) → die laufende Stellgröße (``charge_limit`` / ``discharge`` /
+    freigegeben) → die laufende Stellgröße (``charge_limit`` / ``discharge`` / ``grid_charge`` /
     ``release``) → ``normal``.
     """
     if status.get("supported") is False:
@@ -325,7 +325,7 @@ def _snapshot_state(status: dict) -> str:
     if status.get("failsafe_released"):
         return "failsafe"
     kind = status.get("active_kind")
-    if kind in ("charge_limit", "discharge", "release"):
+    if kind in ("charge_limit", "discharge", "grid_charge", "release"):
         return kind
     return "normal"
 
@@ -2426,7 +2426,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 quelle_basis = str(
                     cfg.get("schedule_feedin_source") or "manual"
                 ).lower()
-                if quelle_basis == "spot":
+                # Auch als Bezugstarif, aber nur mit „aus dem Netz laden":
+                # ohne den Schalter liest der Fahrplan keinen Spot-Bezug.
+                if quelle_basis == "spot" or (
+                    cfg.get("schedule_netzladen")
+                    and str(cfg.get("schedule_bezug_quelle") or "").lower() == "spot"
+                ):
                     namen.append("spot")
                 if quelle_basis == "oemag_estimate":
                     namen.append("oemag_schaetzung")
