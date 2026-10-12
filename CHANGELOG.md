@@ -10,6 +10,20 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
+## [2.1.43-beta.2] - 2026-10-12
+
+### Geändert
+
+- **Gemeinschaftsbezug beim Netzladen wird zugeteilt wie die Einspeisung.** Bisher nahm der Fahrplan beim Bezug die billigere Gemeinschaft zuerst, so weit sie laut PeakShare Überschuss hatte, und ließ den Aufteilungsschlüssel außer Acht. Jetzt bekommt jede Gemeinschaft wie bei der Einspeisung deinen Anteil am Bezug angeboten und liefert davon, was sie übrig hat; der Rest kostet den Preis deines Lieferanten. Anlass war eine Anlage in zwei Gemeinschaften, BEG zu 1 % und EEG zu 99 %: Mit einem eingetragenen BEG-Preis hätte der Plan einen Großteil des Bezugs der BEG zugerechnet.
+
+### Hinzugefügt
+
+- **Bürgerenergiegemeinschaft als dritte Art beim Bezugspreis.** Neben „lokal“ und „regional“ gibt es „Bürgerenergiegemeinschaft (volle Netzgebühr)“. Eine BEG reicht über Netzgebiete hinweg, hat keinen Ortstarif und keine Befreiung vom Förderbeitrag, billiger kann dort nur der Energiepreis sein. Mit den Netz-OÖ-Sätzen sind das 9,0 ct Netzanteil je kWh statt 3,9 ct bei einer lokalen EEG.
+
+### Bestätigt
+
+- **Die Huawei-Zwangsladung braucht „Laden aus dem Netz“ nicht.** Am 12.10. lud ein SUN2000 mit ausgeschaltetem Schalter 5 kW aus dem Netz, drei Sekunden nach dem Befehl.
+
 ## [2.1.43-beta.1] - 2026-10-12
 
 ### Hinzugefügt
