@@ -310,7 +310,11 @@ CONF_PEAKSHARE_BEZUG_EBENE = "peakshare_bezug_ebene"
 # ElAbgG iVm § 2 Abs. 1 ElAbg-ESBV (BGBl. II 121/2025: die einem Mitglied
 # bilanziell zugeordnete Menge gilt nicht als Einspeisung, also als
 # befreiter Eigenverbrauch).
-EEG_BEZUG_REDUKTION = {"lokal": 0.57, "regional": 0.28}
+# Eine Bürgerenergiegemeinschaft (BEG) reicht über Netzgebiete hinweg: kein
+# Ortstarif, und § 75 Abs. 5 EAG nennt nur die EEG — dort zählt die volle
+# Netzgebühr samt Abgaben, billiger sein kann nur der Energiepreis.
+EEG_BEZUG_REDUKTION = {"lokal": 0.57, "regional": 0.28, "beg": 0.0}
+EEG_BEZUG_ABGABENFREI = {"lokal": True, "regional": True, "beg": False}
 DEFAULT_EEG_BEZUG_EBENE = "lokal"
 
 # Deckel und Boden des Einspeisepreises sind Dauerzustände, keine Ereignisse:
@@ -1488,18 +1492,26 @@ def netzladen_vorteil(config: dict) -> float:
 def eeg_bezug_aus_config(config: dict) -> list[dict]:
     """Die Gemeinschaften mit eingetragenem Bezugspreis.
 
-    Je Eintrag ``{"name", "preis" (€/kWh brutto), "reduktion" (0..1)}``.
-    Ohne Name oder ohne Preis zählt eine Gemeinschaft nicht.
+    Je Eintrag ``{"name", "preis" (€/kWh brutto), "anteil" (0..1),
+    "reduktion" (0..1), "abgabenfrei"}``. Ohne Name, ohne Preis oder mit
+    Anteil 0 zählt eine Gemeinschaft nicht — der Aufteilungsschlüssel gilt
+    für Bezug und Einspeisung gleich.
     """
     ergebnis = []
     for s in ("", "_2"):
         name = str(config.get(f"peakshare_community{s}") or "").strip()
         preis = _preis_oder_none(config.get(CONF_PEAKSHARE_BEZUG_PRICE + s))
-        if not name or preis is None:
+        anteil = min(1.0, max(0.0, (_endlicher_preis(config.get(f"peakshare_share_pct{s}")) or 0.0) / 100.0))
+        if not name or preis is None or anteil <= 0:
             continue
         ebene = str(config.get(CONF_PEAKSHARE_BEZUG_EBENE + s) or DEFAULT_EEG_BEZUG_EBENE).lower()
-        reduktion = EEG_BEZUG_REDUKTION.get(ebene, EEG_BEZUG_REDUKTION[DEFAULT_EEG_BEZUG_EBENE])
-        ergebnis.append({"name": name, "preis": preis, "reduktion": reduktion})
+        if ebene not in EEG_BEZUG_REDUKTION:
+            ebene = DEFAULT_EEG_BEZUG_EBENE
+        ergebnis.append({
+            "name": name, "preis": preis, "anteil": anteil,
+            "reduktion": EEG_BEZUG_REDUKTION[ebene],
+            "abgabenfrei": EEG_BEZUG_ABGABENFREI[ebene],
+        })
     return ergebnis
 
 
@@ -1528,12 +1540,13 @@ def bezugsreihe_netzladen(
       plus Netzgebühr des Zeitpunkts.
     * **Gemeinschaft**: Energiepreis plus Netznutzungsentgelt, verringert um
       den Ortstarif (lokal/regional), plus Netzverlust — ohne SNAP/WiNAP,
-      die für Gemeinschaftsmengen nicht gelten, und ohne Elektrizitätsabgabe
-      und Förderbeitrag, die dafür entfallen. Ihr
-      Anteil am Bezug ist der Überschuss der Gemeinschaft im Verhältnis zu
-      dem, was wir dort höchstens beziehen (Hausdefizit + Netzladeleistung) —
-      dieselbe Vorsicht wie bei der Einspeisung: EEG-Preis nur für Energie,
-      die die Gemeinschaft laut Saldo hat. Die billigere Gemeinschaft zuerst.
+      die für Gemeinschaftsmengen nicht gelten, und bei einer EEG ohne
+      Elektrizitätsabgabe und Förderbeitrag, die dafür entfallen; eine BEG
+      zahlt die volle Netzgebühr. Die Zuteilung spiegelt die Einspeisung
+      (``_eeg_zuteilung``): Jede Gemeinschaft bekommt ihren Anteil
+      (Aufteilungsschlüssel) des Bezugs angeboten und liefert davon, was sie
+      laut Saldo übrig hat; der Rest kostet den Lieferantenpreis. Als Bezug
+      gilt, was wir höchstens beziehen (Hausdefizit + Netzladeleistung).
     """
     # Beides braucht die Netzgebühr: Ohne sie wäre der Spot- wie der
     # EEG-Preis reine Energie und läge weit unter einem Bezugspreis, der sie
@@ -1580,19 +1593,20 @@ def bezugsreihe_netzladen(
         hoechstens_kwh = (max(0.0, haus - pv * HAConfig.ac_efficiency) + max_kw) * 0.25
         viertel = int(stamp.timestamp() // 900)
         # Für Mengen aus der Gemeinschaft gilt kein SNAP/WiNAP — dort zählt
-        # der volle Satz, verringert um den Ortstarif.
-        for g in sorted(
-            gemeinschaften, key=lambda g: g["preis"] + netz.netznutzung * (1 - g["reduktion"])
-        ):
-            # Elektrizitätsabgabe und Förderbeitrag entfallen (siehe
-            # EEG_BEZUG_REDUKTION), das Netzverlustentgelt bleibt.
-            if anteil_frei <= 0 or hoechstens_kwh <= 0:
+        # der volle Satz, verringert um den Ortstarif. Elektrizitätsabgabe und
+        # Förderbeitrag entfallen bei einer EEG (siehe EEG_BEZUG_REDUKTION),
+        # das Netzverlustentgelt bleibt.
+        for g in gemeinschaften:
+            if hoechstens_kwh <= 0:
                 break
             saldo = eeg_bedarf[g["name"]].get(viertel)
             if saldo is None or saldo >= 0:
                 continue  # kein Überschuss in der Gemeinschaft
-            anteil = min(anteil_frei, -float(saldo) / hoechstens_kwh)
-            preis += anteil * (g["preis"] + netz.netznutzung * (1 - g["reduktion"]) + netz.netzverlust)
+            anteil = min(g["anteil"], -float(saldo) / hoechstens_kwh, anteil_frei)
+            netzanteil = netz.netznutzung * (1 - g["reduktion"]) + (
+                netz.netzverlust if g["abgabenfrei"] else rest
+            )
+            preis += anteil * (g["preis"] + netzanteil)
             anteil_frei -= anteil
         reihe.append(round(preis + anteil_frei * lieferant, 6))
 

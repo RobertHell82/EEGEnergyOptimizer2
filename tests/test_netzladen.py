@@ -116,6 +116,7 @@ def test_spot_bezug_mit_aufschlag_und_mwst():
 def test_eeg_bezug_nur_soweit_die_gemeinschaft_ueberschuss_hat():
     config = {
         "peakshare_community": "Sonnenhof",
+        "peakshare_share_pct": 100,
         "peakshare_bezug_price": 0.08,
         "peakshare_bezug_ebene": "lokal",
     }
@@ -136,7 +137,7 @@ def test_eeg_bezug_ohne_snap_rabatt():
     bekommt ihn, der EEG-Teil rechnet mit dem vollen Netznutzungsentgelt."""
     sommer = [datetime(2026, 6, 12, 11, 0, tzinfo=TZ)]
     netz = dataclasses.replace(NETZ, snap=0.088)   # Netznutzung 4,8 statt 6 ct
-    config = {"peakshare_community": "Sonnenhof", "peakshare_bezug_price": 0.08}
+    config = {"peakshare_community": "Sonnenhof", "peakshare_share_pct": 100, "peakshare_bezug_price": 0.08}
     v = int(sommer[0].timestamp() // 900)
     reihe, _ = sched.bezugsreihe_netzladen(
         config, sommer, 0.25, 0.238, None, netz, None, None,
@@ -147,9 +148,44 @@ def test_eeg_bezug_ohne_snap_rabatt():
 
 def test_eeg_bezug_ohne_saldo_zaehlt_nicht():
     """Quotenmodus (kein Saldo) oder unbekannte Gemeinschaft: kein EEG-Bezug."""
-    config = {"peakshare_community": "Sonnenhof", "peakshare_bezug_price": 0.08}
+    config = {"peakshare_community": "Sonnenhof", "peakshare_share_pct": 100, "peakshare_bezug_price": 0.08}
     assert _reihe(config, bedarf=None) == (None, None)
     assert _reihe(config, bedarf={"Andere": {}}) == (None, None)
+
+
+def test_eeg_bezug_wie_die_einspeisung_nur_der_anteil():
+    """Der Aufteilungsschlüssel gilt für den Bezug wie für die Einspeisung:
+    Traun 12.10.2026 — BEG 1 %, EEG Pucking 99 %. Auch mit reichlich
+    Überschuss kommt aus der BEG höchstens 1 % des Bezugs."""
+    config = {
+        "peakshare_community": "BEG", "peakshare_share_pct": 1,
+        "peakshare_bezug_price": 0.05, "peakshare_bezug_ebene": "beg",
+        "peakshare_community_2": "Pucking", "peakshare_share_pct_2": 99,
+        "peakshare_bezug_price_2": 0.08, "peakshare_bezug_ebene_2": "lokal",
+    }
+    v0 = int(STAMPS[0].timestamp() // 900)
+    v1 = int(STAMPS[1].timestamp() // 900)
+    bedarf = {"BEG": {v0: -50.0, v1: -50.0}, "Pucking": {v0: -50.0}}
+    reihe, _ = _reihe(config, bedarf=bedarf)
+    beg = 0.05 + NETZ.ap                              # volle Netzgebühr samt Abgaben
+    eeg = 0.08 + 0.06 * (1 - 0.57) + 0.01
+    assert reihe[0] == pytest.approx(0.01 * beg + 0.99 * eeg)
+    assert reihe[1] == pytest.approx(0.01 * beg + 0.99 * 0.25)  # Pucking ohne Überschuss
+
+
+def test_eeg_bezug_anteil_null_zaehlt_nicht():
+    config = {"peakshare_community": "Sonnenhof", "peakshare_share_pct": 0, "peakshare_bezug_price": 0.01}
+    assert sched.eeg_bezug_aus_config(config) == []
+
+
+def test_beg_zahlt_die_volle_netzgebuehr():
+    config = {
+        "peakshare_community": "BEG", "peakshare_share_pct": 100,
+        "peakshare_bezug_price": 0.08, "peakshare_bezug_ebene": "beg",
+    }
+    v0 = int(STAMPS[0].timestamp() // 900)
+    reihe, _ = _reihe(config, bedarf={"BEG": {v0: -50.0}})
+    assert reihe[0] == pytest.approx(0.08 + NETZ.ap)
 
 
 def test_bezugspreis_zu_liest_die_reihe():

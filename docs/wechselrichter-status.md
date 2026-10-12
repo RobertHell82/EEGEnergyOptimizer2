@@ -61,8 +61,8 @@ EMMA-Energiemanagement (`sensor.emma_*`-Sensoren, Netz-Vorzeichen wird
 automatisch korrigiert).
 **Beta: Batterie aus dem Netz laden** (seit 2.1.43-beta.1, nur Huawei):
 Zwangsladung über `forcible_charge_soc` mit Leistung und Ziel-Ladestand aus
-dem Fahrplan. Am Gerät noch nicht geprüft, ob dafür „Laden aus dem Netz“
-eingeschaltet sein muss. Beschreibung: [tarife.md](guides/tarife.md).
+dem Fahrplan. Am Gerät geprüft (Traun, 12.10.2026): lädt auch mit
+ausgeschaltetem „Laden aus dem Netz“, 3 s nach dem Befehl. Beschreibung: [tarife.md](guides/tarife.md).
 Guide: [huawei.md](guides/huawei.md) · [Akkukapazität-Sensor](guides/capacity_sensor.md)
 
 ### Kostal Plenticore

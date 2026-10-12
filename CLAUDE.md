@@ -447,15 +447,19 @@ the event loop is long enough for HA to flag a blocking call.
   / regional −28 % of the Netznutzungsentgelt, without SNAP/WiNAP, which do
   not apply to community energy; Netzverlust stays, both kWh levies drop —
   Förderbeitrag per § 75 Abs. 5 EAG, Elektrizitätsabgabe per § 2 Abs. 1 Z 4
-  ElAbgG with § 2 Abs. 1 ElAbg-ESBV, BGBl. II 121/2025), weighted by the community's PeakShare
-  surplus per quarter hour (quote mode: no surplus known → no EEG purchase).
+  ElAbgG with § 2 Abs. 1 ElAbg-ESBV, BGBl. II 121/2025; a BEG — `_ebene`
+  `beg` — pays the full fee, § 75 Abs. 5 names the EEG only), allocated
+  like feed-in (`_eeg_zuteilung`): each community gets its share
+  (`peakshare_share_pct[_2]`, the same key for purchase and feed-in) of the
+  purchase and delivers what its PeakShare surplus covers (quote mode: no
+  surplus known → no EEG purchase).
   Both need a grid area (`bezugsreihe_netzladen` returns nothing without
   `Netzgebuehr`). The series replaces scalar and window prices in
   `bezugspreis_zu`, so bilanz and `bewerte_geldfluesse` use the same prices.
   Known artefact: on dark days the lowered end state (§ 4) makes the plan
   export bought energy on the horizon's last evening — never executed, every
-  run moves that evening. Field test open: whether Huawei needs „Laden aus
-  dem Netz" enabled for `forcible_charge_soc`. Tests: `tests/test_netzladen.py`.
+  run moves that evening. Verified on a SUN2000 (Traun 12.10.2026):
+  `forcible_charge_soc` charges from the grid with „Laden aus dem Netz" off. Tests: `tests/test_netzladen.py`.
 - **Vormittags bevorzugt netzdienlich** (`schedule_netzdienlich`, `_bis`
   default 11:00, `_bonus` default 0.05 €/kWh; settings only, expert mode,
   default off): a pure `HAConfig` parameter, no `LOCAL CHANGE`. In slots

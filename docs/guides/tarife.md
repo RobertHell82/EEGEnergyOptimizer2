@@ -97,7 +97,7 @@ Mit Haken darf der Fahrplan das **Ladeziel** auch mit Netzstrom erreichen, wenn 
 Billiger als die Nacht ist Netzstrom nur in drei Fällen, und mindestens einer muss eingerichtet sein:
 
 - **Spot-Bezug.** Unter **Bezugstarif deines Lieferanten** wählst du **Börsenpreis (Spot)**. Der Preis ist dann Börsenpreis plus **Aufschlag auf den Börsenpreis (ct/kWh, netto)** plus **Aufschlag in Prozent** vom Betrag, darauf die Mehrwertsteuer, plus die Netzgebühr. Gekauft wird nur zu veröffentlichten Börsenpreisen, nie zu geschätzten.
-- **Bezug aus der Gemeinschaft.** Je Gemeinschaft trägst du den **Bezugspreis aus der Gemeinschaft (ct/kWh)** inklusive Mehrwertsteuer ein und ob sie **lokal** oder **regional** ist. Der Fahrplan rechnet das Netznutzungsentgelt um 57 % (lokal) bzw. 28 % (regional) verringert dazu, dazu das volle Netzverlustentgelt. Elektrizitätsabgabe und Erneuerbaren-Förderbeitrag entfallen für Gemeinschaftsstrom (§ 75 Abs. 5 EAG, § 2 Abs. 1 Z 4 ElAbgG), SNAP und WiNAP gelten dafür nicht. Als Gemeinschaftsstrom zählt nur, was die Gemeinschaft laut PeakShare in der Viertelstunde übrig hat, der Rest kostet den Preis deines Lieferanten. Im Quotenmodus gibt es keinen Gemeinschaftsbezug, weil kein Überschuss bekannt ist.
+- **Bezug aus der Gemeinschaft.** Je Gemeinschaft trägst du den **Bezugspreis aus der Gemeinschaft (ct/kWh)** inklusive Mehrwertsteuer ein und welche Art sie ist. Bei einer EEG **lokal** oder **regional**: Der Fahrplan rechnet das Netznutzungsentgelt um 57 % bzw. 28 % verringert dazu, dazu das volle Netzverlustentgelt; Elektrizitätsabgabe und Erneuerbaren-Förderbeitrag entfallen (§ 75 Abs. 5 EAG, § 2 Abs. 1 Z 4 ElAbgG). Bei einer **Bürgerenergiegemeinschaft** gilt die volle Netzgebühr, billiger kann dort nur der Energiepreis sein. SNAP und WiNAP gelten für Gemeinschaftsstrom nicht. Zugeteilt wird wie bei der Einspeisung: Aus einer Gemeinschaft kommt höchstens dein **Anteil** am Bezug, und nur so viel, wie sie laut PeakShare in der Viertelstunde übrig hat; der Rest kostet den Preis deines Lieferanten. Lässt du den Bezugspreis leer, zählt die Gemeinschaft für das Netzladen nicht. Im Quotenmodus gibt es keinen Gemeinschaftsbezug, weil kein Überschuss bekannt ist.
 - **SNAP/WiNAP** mit einem eigenen Arbeitspreis im Fenster.
 
 Spot- und Gemeinschaftsbezug brauchen einen **Netzbereich**, sonst fehlt die Netzgebühr und der Netzstrom sähe zu billig aus.
@@ -110,7 +110,7 @@ Spot- und Gemeinschaftsbezug brauchen einen **Netzbereich**, sonst fehlt die Net
 Während der Netzladung lädt der Wechselrichter mit der geplanten Leistung bis zum geplanten Ladestand, der Statussensor zeigt „Netzladung x kW bis y %“, im Diagramm ist sie violett gestrichelt. Der Heizstab bleibt dabei aus.
 
 > [!WARNING]
-> **Beta.** Noch nicht geprüft ist, ob der Huawei dafür die Einstellung „Laden aus dem Netz“ eingeschaltet braucht. Lädt die Batterie während „Netzladung“ nicht, schalte sie in der FusionSolar-App ein.
+> **Beta.** Die Zwangsladung ist an einem SUN2000 geprüft, sie braucht die Einstellung „Laden aus dem Netz“ nicht. Der Betrieb über den Fahrplan ist noch im Feldtest.
 
 ## Nachtsatz und Nachtfenster
 

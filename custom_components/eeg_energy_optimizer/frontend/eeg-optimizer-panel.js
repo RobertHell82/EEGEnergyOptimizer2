@@ -7467,10 +7467,11 @@ class EegOptimizerPanel extends HTMLElement {
               <select data-field="${prefix}peakshare_bezug_ebene${s}">
                 <option value="lokal" ${(d[`peakshare_bezug_ebene${s}`] || "lokal") === "lokal" ? "selected" : ""}>lokal (−57 % Netznutzung)</option>
                 <option value="regional" ${d[`peakshare_bezug_ebene${s}`] === "regional" ? "selected" : ""}>regional (−28 % Netznutzung)</option>
+                <option value="beg" ${d[`peakshare_bezug_ebene${s}`] === "beg" ? "selected" : ""}>Bürgerenergiegemeinschaft (volle Netzgebühr)</option>
               </select>
             </div>
           </div>
-          <div class="help-text" style="margin-bottom:8px">Für „Batterie aus dem Netz laden": der Energiepreis, den die Gemeinschaft für bezogenen Strom verrechnet, inklusive Mehrwertsteuer. Das verringerte Netznutzungsentgelt und das Netzverlustentgelt rechnet der Fahrplan selbst dazu (ohne SNAP und WiNAP, die für Gemeinschaftsmengen nicht gelten); Elektrizitätsabgabe und Erneuerbaren-Förderbeitrag entfallen für Gemeinschaftsstrom. Als Gemeinschaftsstrom zählt nur, was die Gemeinschaft laut PeakShare in der Viertelstunde übrig hat; der Rest kommt zum Preis deines Lieferanten.</div>` : ""}
+          <div class="help-text" style="margin-bottom:8px">Für „Batterie aus dem Netz laden": der Energiepreis, den die Gemeinschaft für bezogenen Strom verrechnet, inklusive Mehrwertsteuer. Die Netzgebühr rechnet der Fahrplan selbst dazu, ohne SNAP und WiNAP, die für Gemeinschaftsmengen nicht gelten: bei einer EEG das verringerte Netznutzungsentgelt plus Netzverlust (Elektrizitätsabgabe und Erneuerbaren-Förderbeitrag entfallen), bei einer Bürgerenergiegemeinschaft die volle Netzgebühr. Wie bei der Einspeisung kommt aus der Gemeinschaft höchstens dein Anteil, und nur so viel, wie sie laut PeakShare in der Viertelstunde übrig hat; der Rest kostet den Preis deines Lieferanten. Leer = diese Gemeinschaft zählt für das Netzladen nicht.</div>` : ""}
           <div class="help-text" style="margin-bottom:8px">${wirkung}</div>
         </div>`;
     };
