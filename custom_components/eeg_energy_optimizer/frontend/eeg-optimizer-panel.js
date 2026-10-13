@@ -7085,10 +7085,10 @@ class EegOptimizerPanel extends HTMLElement {
         <div class="help-text">Vom Betrag des Börsenpreises, auch bei negativen Preisen. Danach kommen Mehrwertsteuer und die Netzgebühr oben dazu.</div>
       </div>` : ""}
       <div class="field-group">
-        <label>Höchste Leistung aus dem Netz in die Batterie (kW)</label>
+        <label>Höchster Netzbezug beim Laden aus dem Netz (kW)</label>
         <input type="number" data-field="${prefix}schedule_netzladen_max_kw"
-               value="${maxKw}" min="0" max="100" step="0.1" placeholder="${batterieKw}">
-        <div class="help-text">Leer heißt: so viel, wie die Batterie aufnimmt (${batterieKw} kW). Ab 2027 kostet die höchste Viertelstunde Netzbezug im Monat Geld — eine kleinere Grenze hält diese Spitze niedrig.</div>
+               value="${maxKw}" min="0" max="100" step="0.1" placeholder="keine Grenze">
+        <div class="help-text">Gilt am Zähler, für Haus und Batterie zusammen. Der Fahrplan rechnet dafür mit Hausverbrauch und PV-Prognose, die Steuerung führt die Ladeleistung alle 30 Sekunden an den Messwerten nach: Läuft der Herd oder kommt weniger Sonne, lädt die Batterie langsamer. Das Haus selbst wird nie begrenzt. Leer heißt: keine eigene Grenze — die Batterie lädt mit bis zu ${batterieKw} kW, das Haus kommt dazu. Ab 2027 kostet die höchste Viertelstunde Netzbezug im Monat Geld — eine Grenze hält diese Spitze niedrig.</div>
       </div>
       <div class="field-group">
         <label>Mindestvorteil (ct/kWh)</label>

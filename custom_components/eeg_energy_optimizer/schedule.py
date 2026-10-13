@@ -516,8 +516,11 @@ class ScheduleInputs:
     # fortgeschrieben — darauf baut kein Netzkauf. None = alle fest.
     consumption_price_fest: list[bool] | None = None
     # „Aus dem Netz laden": höchste Netzbezugsleistung in die Batterie (kW,
-    # AC); 0 = aus. Mindestvorteil je kWh in €/kWh (siehe HAConfig.netzladen).
+    # AC, = Batterieleistung); 0 = aus. ``netzladen_netzgrenze_kw`` deckelt
+    # den GESAMTEN Netzbezug (Haus + Batterie) in Slots mit Netzladung; 0 =
+    # keine eigene Grenze. Mindestvorteil je kWh in €/kWh (HAConfig.netzladen).
     netzladen_max_kw: float = 0.0
+    netzladen_netzgrenze_kw: float = 0.0
     netzladen_vorteil: float = DEFAULT_NETZLADEN_VORTEIL
     forecast_source: str = ""
     # Preisaufschlag je Zeitpunkt aus dem Bedarf der Energiegemeinschaften
@@ -1066,6 +1069,13 @@ class HAConfig:
         höchstens ``netzladen_max_kw`` (AC). None heißt: nirgends — dann ist
         das Modell Zeile für Zeile das ohne Netzladen.
 
+        Mit ``netzladen_netzgrenze_kw`` gilt die Grenze für den ganzen
+        Netzbezug: Netzbezug = Hauslast − ``dc_p``·η, also darf die Batterie
+        dort höchstens ``Grenze − Hauslast`` aus dem Netz ziehen (die PV kommt
+        obendrauf, sie steckt schon in ``dc_p``). Liegt die Hauslast allein
+        über der Grenze, wird in dem Slot nichts gekauft — gedeckelt wird nur
+        die Netzladung, nie das Haus.
+
         Erlaubt ist ein Slot vor dem Ende der PV-Zeit eines Tages (ab dem
         vorigen PV-Ende), wenn Netzstrom dort billiger ist als der Strom, den
         die Batterie danach ersetzt: der nach Hauslast gewichtete Bezugspreis
@@ -1093,7 +1103,13 @@ class HAConfig:
         fest = self._preis_fest_je_slot(stempel)
         wandlung = self.ac_efficiency ** 2
         aufschlag = float(self.battery_cost or 0.0) + float(self._inputs.netzladen_vorteil or 0.0)
-        grenze = -max_kw / self.ac_efficiency
+        netzgrenze = float(self._inputs.netzladen_netzgrenze_kw or 0.0)
+        if netzgrenze > 0:
+            grenzen = [
+                -min(max_kw, max(0.0, netzgrenze - h)) / self.ac_efficiency for h in haus
+            ]
+        else:
+            grenzen = [-max_kw / self.ac_efficiency] * len(haus)
 
         untergrenze = [0.0] * len(werte)
         von = 0
@@ -1108,7 +1124,7 @@ class HAConfig:
                 ersetzt = summe / gewicht
                 for j in range(von, i + 1):
                     if fest[j] and preise[j] + aufschlag < ersetzt * wandlung:
-                        untergrenze[j] = grenze
+                        untergrenze[j] = grenzen[j]
             von = i + 1
         if not any(u < 0 for u in untergrenze):
             return None
@@ -1460,19 +1476,31 @@ def netzladen_max_kw(config: dict, inverter: Any = None) -> float:
     """Netzbezugsleistung in die Batterie (kW) — 0 heißt „aus dem Netz laden" aus.
 
     Nur mit dem Schalter und nur, wenn der Treiber Netzladen kann
-    (``supports_grid_charge``, derzeit Huawei). Ein leeres Feld (0) heißt:
-    so viel, wie die Batterie aufnimmt.
+    (``supports_grid_charge``, derzeit Huawei). Das ist die Batterieleistung;
+    die Grenze am Zähler ist ``netzladen_netzgrenze_kw``.
     """
     if not config.get(CONF_SCHEDULE_NETZLADEN):
         return 0.0
     if inverter is not None and not getattr(inverter, "supports_grid_charge", False):
         return 0.0
-    batterie = float(
+    return float(
         config.get(CONF_DISCHARGE_POWER_KW, DEFAULT_DISCHARGE_POWER_KW)
         or DEFAULT_DISCHARGE_POWER_KW
     )
+
+
+def netzladen_netzgrenze_kw(config: dict) -> float:
+    """Höchster gesamter Netzbezug beim Laden aus dem Netz (kW) — 0 = keine Grenze.
+
+    Gilt für Haus und Batterie zusammen, also am Zähler: Plan
+    (``HAConfig.netzladen``) und Executor (``_apply_grid_charge``, mit der
+    gemessenen Hauslast und PV) lassen die Batterie nur so viel aus dem Netz
+    ziehen, dass der Bezug darunter bleibt. Leer oder 0 heißt: keine eigene
+    Grenze, die Batterieleistung begrenzt allein. Schlüssel aus 2.1.43-beta.1,
+    damals Grenze nur für die Batterie.
+    """
     wert = _preis_oder_none(config.get(CONF_SCHEDULE_NETZLADEN_MAX_KW))
-    return min(wert, batterie) if wert is not None else batterie
+    return wert if wert is not None else 0.0
 
 
 def netzladen_vorteil(config: dict) -> float:
@@ -2853,6 +2881,7 @@ async def async_collect_inputs(
         consumption_price_series=bezug_reihe,
         consumption_price_fest=bezug_fest,
         netzladen_max_kw=netzlade_kw,
+        netzladen_netzgrenze_kw=netzladen_netzgrenze_kw(config) if netzlade_kw > 0 else 0.0,
         netzladen_vorteil=netzladen_vorteil(config),
         # Wie bei den übrigen Fahrplan-Zahlen zählt auch hier ein leeres Feld
         # als „nicht gesetzt": das Panel speicherte leere Zahlenfelder als 0,
@@ -2965,7 +2994,7 @@ _ENDLICH_SKALARE = (
     "ac_limit_kw", "feedin_limit_kw", "feedin_price", "feedin_price_night",
     "consumption_price", "consumption_price_snap", "consumption_price_winap",
     "battery_cost", "min_soc_pct", "max_soc_pct", "ladeziel_pct", "worst_case_factor",
-    "netzdienlich_bonus", "netzladen_max_kw", "netzladen_vorteil",
+    "netzdienlich_bonus", "netzladen_max_kw", "netzladen_netzgrenze_kw", "netzladen_vorteil",
     "heizstab_max_kw", "heizstab_waermewert", "heizstab_budget_kwh",
 )
 _ENDLICH_REIHEN = (

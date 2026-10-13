@@ -79,7 +79,7 @@ from .power_readings import (
     compute_house_load_kw,
     compute_pv_now_kw,
 )
-from .schedule import DEFAULT_AC_LIMIT_KW, _now_local, slot_for
+from .schedule import DEFAULT_AC_LIMIT_KW, _now_local, netzladen_netzgrenze_kw, slot_for
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -1351,6 +1351,12 @@ class ScheduleExecutor:
         Batterieleistung). Das Ziel ist der Ladestand am Slotende aus dem Plan,
         wie bei der Entladung — eine eigene Obergrenze gibt es nicht.
 
+        Mit einer Netzgrenze (``netzladen_netzgrenze_kw``) wird die Leistung
+        in jedem Lauf an der GEMESSENEN Hauslast und PV nachgeführt:
+        Batterie ≤ Grenze − Haus + PV. Kommt weniger Sonne als geplant oder
+        läuft der Herd, lädt die Batterie langsamer, statt dass der Zähler
+        über die Grenze geht. Fehlt die Hauslast, gilt die des Plans.
+
         Ein Treiber ohne Netzladen bekommt stattdessen das Ladelimit: Der Plan
         enthält Netzladung nur, wenn der Treiber sie kann, aber ein Plan aus
         der Zeit davor soll nicht zu einem Fehler führen.
@@ -1386,6 +1392,17 @@ class ScheduleExecutor:
         power = max(0.0, action.power_kw)
         if cap is not None:
             power = min(power, cap)
+        netzgrenze = netzladen_netzgrenze_kw(self._config)
+        grenz_text = ""
+        if netzgrenze > 0:
+            haus = compute_house_load_kw(self._hass, self._config)
+            if haus is None:
+                haus = float(action.consumption_kw or 0.0)
+            pv = compute_pv_now_kw(self._hass, self._config) or 0.0
+            erlaubt = max(0.0, netzgrenze - haus + pv)
+            if erlaubt < power:
+                power = erlaubt
+                grenz_text = f", Netzbezug ≤ {netzgrenze:.1f} kW"
         ziel_soc = action.target_soc
 
         kind_change = self._active_kind != "grid_charge"
@@ -1418,7 +1435,7 @@ class ScheduleExecutor:
             self._active_kind = "grid_charge"
             self._written_grid_charge_kw = power
             self._written_target_soc = ziel_soc
-            self.last_status = f"Netzladung {power:.2f} kW{soc_text} (Plan aus PV und Netz)"
+            self.last_status = f"Netzladung {power:.2f} kW{soc_text} (Plan aus PV und Netz{grenz_text})"
         else:
             self.write_failures += 1
             self._notify_failure("grid_charge")

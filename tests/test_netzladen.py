@@ -51,14 +51,17 @@ def test_ohne_treiber_faehigkeit_kein_netzladen():
     assert sched.netzladen_max_kw(config, object()) == 0.0
 
 
-@pytest.mark.parametrize("roh,erwartet", [(None, 5.0), ("", 5.0), (0, 5.0), (3, 3.0), (9, 5.0)])
-def test_netzladeleistung_hoechstens_die_batterieleistung(roh, erwartet):
-    config = {
-        "schedule_netzladen": True,
-        "discharge_power_kw": 5.0,
-        "schedule_netzladen_max_kw": roh,
-    }
-    assert sched.netzladen_max_kw(config, _Treiber(True)) == erwartet
+def test_netzladeleistung_ist_die_batterieleistung():
+    config = {"schedule_netzladen": True, "discharge_power_kw": 5.0,
+              "schedule_netzladen_max_kw": 3}
+    assert sched.netzladen_max_kw(config, _Treiber(True)) == 5.0
+
+
+@pytest.mark.parametrize("roh,erwartet", [(None, 0.0), ("", 0.0), (0, 0.0), (-2, 0.0),
+                                          ("x", 0.0), (7, 7.0), (12.5, 12.5)])
+def test_netzgrenze_leer_heisst_keine(roh, erwartet):
+    """Das Feld deckelt den ganzen Netzbezug — auch über der Batterieleistung."""
+    assert sched.netzladen_netzgrenze_kw({"schedule_netzladen_max_kw": roh}) == erwartet
 
 
 @pytest.mark.parametrize("roh,erwartet", [
@@ -291,6 +294,26 @@ def test_netzladung_hoechstens_die_eingestellte_leistung(lp):
     assert _netzladung_kwh(plan) > 0
 
 
+def test_netzgrenze_gilt_fuer_haus_und_batterie(lp):
+    """Mit 2 kW Grenze bleibt der geplante Netzbezug in jedem Netzlade-Slot
+    bei höchstens 2 kW (oder der Hauslast, wenn die allein darüber liegt) —
+    die Batterie lädt um die Hauslast langsamer."""
+    ohne = sched.solve(_inputs(pv=0.1))
+    plan = sched.solve(dataclasses.replace(_inputs(pv=0.1), netzladen_netzgrenze_kw=2.0))
+    geladen = [s for s in plan["slots"] if s.get("netzladung", 0.0) > 0]
+    assert geladen
+    for slot in geladen:
+        bezug = -float(slot["grid_p"])
+        assert bezug <= max(2.0, float(slot["consumption"])) + 1e-6, slot
+    assert max(-float(s["grid_p"]) for s in ohne["slots"] if s.get("netzladung", 0.0) > 0) > 2.0
+
+
+def test_hauslast_ueber_der_netzgrenze_kauft_nichts(lp):
+    inputs = _inputs(pv=0.1)
+    plan = sched.solve(dataclasses.replace(inputs, netzladen_netzgrenze_kw=0.05))
+    assert _netzladung_kwh(plan) == pytest.approx(0.0, abs=1e-6)
+
+
 def test_geschaetzte_preise_tragen_keinen_kauf(lp):
     inputs = _inputs(pv=0.3)
     fest = [False] * len(inputs.timestamps)
@@ -357,6 +380,33 @@ async def test_netzladung_gedeckelt_auf_die_ladeleistung(mock_hass, mock_inverte
     with _messwerte(haus=0.6, pv=0.5):
         await ex.async_guard_cycle(_state(_netzslot()), MODE_EIN, now=NOW)
     mock_inverter.async_set_grid_charge.assert_awaited_once_with(2.0, target_soc=60.0)
+
+
+async def test_netzgrenze_fuehrt_die_ladeleistung_an_der_messung_nach(mock_hass, mock_inverter):
+    """Grenze 3 kW, Haus 1,5 kW, PV 0,5 kW → Batterie ≤ 2 kW, nicht die
+    geplanten 3 kW. Geht der Herd aus, steigt sie wieder auf den Plan."""
+    mock_inverter.supports_grid_charge = True
+    config = {**_make_executor(mock_hass, mock_inverter)._config,
+              "schedule_netzladen_max_kw": 3.0}
+    ex = _make_executor(mock_hass, mock_inverter, config)
+    with _messwerte(haus=1.5, pv=0.5):
+        await ex.async_guard_cycle(_state(_netzslot()), MODE_EIN, now=NOW)
+    mock_inverter.async_set_grid_charge.assert_awaited_once_with(2.0, target_soc=60.0)
+    assert "Netzbezug ≤ 3.0 kW" in ex.last_status
+
+    with _messwerte(haus=0.3, pv=0.5):
+        await ex.async_guard_cycle(_state(_netzslot()), MODE_EIN, now=NOW + timedelta(seconds=30))
+    assert mock_inverter.async_set_grid_charge.await_args.args[0] == pytest.approx(3.0)
+
+
+async def test_hauslast_ueber_der_netzgrenze_laedt_mit_null(mock_hass, mock_inverter):
+    mock_inverter.supports_grid_charge = True
+    config = {**_make_executor(mock_hass, mock_inverter)._config,
+              "schedule_netzladen_max_kw": 2.0}
+    ex = _make_executor(mock_hass, mock_inverter, config)
+    with _messwerte(haus=4.0, pv=0.5):
+        await ex.async_guard_cycle(_state(_netzslot()), MODE_EIN, now=NOW)
+    mock_inverter.async_set_grid_charge.assert_awaited_once_with(0.0, target_soc=60.0)
 
 
 async def test_treiber_ohne_netzladen_bekommt_das_ladelimit(mock_hass, mock_inverter):

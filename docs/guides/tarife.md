@@ -92,7 +92,7 @@ Nur sichtbar, wenn im Tab **System** der Expertenmodus eingeschaltet ist. **Alte
 
 Nur in den **Einstellungen**, nur mit Expertenmodus und nur mit einem Huawei-Wechselrichter. Ohne Haken rechnet der Fahrplan genau wie vorher, und keines der Felder darunter ist Pflicht.
 
-Mit Haken darf der Fahrplan das **Ladeziel** auch mit Netzstrom erreichen, wenn die Sonne an einem trüben Tag nicht reicht. Er kauft aber nur in Viertelstunden, in denen der Netzstrom billiger ist als der Strom, den die Batterie danach ersetzt: der Bezugspreis der Nacht nach dem Ende der PV-Zeit, abzüglich Lade- und Entladeverlust, Alterungskosten und Mindestvorteil. Gekauft wird nur vor dem Ende der PV-Zeit. Ob die Nacht die Energie wirklich braucht, fragt er nicht: Was übrig bleibt, speist er später ein, wenn sich das lohnt. Der Preis dafür ist eine volle Batterie am Abend.
+Mit Haken darf der Fahrplan das **Ladeziel** auch mit Netzstrom erreichen, wenn die Sonne an einem trüben Tag nicht reicht. Er kauft aber nur in Viertelstunden, in denen der Netzstrom billiger ist als der Strom, den die Batterie danach ersetzt: der Bezugspreis der Nacht nach dem Ende der PV-Zeit, abzüglich Lade- und Entladeverlust, Alterungskosten und Mindestvorteil. Gekauft wird nur vor dem Ende der PV-Zeit. Ob die Nacht die Energie wirklich braucht, fragt er nicht: Was übrig bleibt, speist er später ein, wenn sich das lohnt. Der Preis dafür ist eine volle Batterie am Abend. Höher als der **maximale Ladestand** (Anlage & Batterie) lädt er nie, und nie schneller als die Batterieleistung.
 
 Billiger als die Nacht ist Netzstrom nur in drei Fällen, und mindestens einer muss eingerichtet sein:
 
@@ -104,7 +104,7 @@ Spot- und Gemeinschaftsbezug brauchen einen **Netzbereich**, sonst fehlt die Net
 
 | Feld | Bedeutung |
 |---|---|
-| **Höchste Leistung aus dem Netz in die Batterie (kW)** | Leer = Batterieleistung. Für die Leistungsgebühr ab 2027 lohnt eine kleinere Grenze: Der Fahrplan bewertet die Bezugsspitze nicht |
+| **Höchster Netzbezug beim Laden aus dem Netz (kW)** | Gilt am Zähler, Haus und Batterie zusammen. Plan und Steuerung rechnen mit Hausverbrauch und PV (die Steuerung alle 30 s mit den Messwerten) und lassen die Batterie nur so schnell laden, dass der Bezug darunter bleibt. Das Haus wird nie begrenzt. Leer = keine Grenze, die Batterie lädt mit ihrer vollen Leistung. Für die Leistungsgebühr ab 2027 lohnt eine Grenze: Der Fahrplan bewertet die Bezugsspitze sonst nicht |
 | **Mindestvorteil (ct/kWh)** | Um so viel muss der Netzstrom billiger sein als die Nacht. Vorgabe 2 ct |
 
 Während der Netzladung lädt der Wechselrichter mit der geplanten Leistung bis zum geplanten Ladestand, der Statussensor zeigt „Netzladung x kW bis y %“, im Diagramm ist sie violett gestrichelt. Der Heizstab bleibt dabei aus.

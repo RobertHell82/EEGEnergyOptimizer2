@@ -438,8 +438,14 @@ the event loop is long enough for HA to flag a blocking call.
   energy is deliberately not asked: what is left is exported later if that
   pays, the price of "full in the evening". Slots before each day's PV end
   (`pv_enden`), only with published prices (`consumption_price_fest`; spot
-  never extrapolated), at most `schedule_netzladen_max_kw` (empty = battery
-  power; the 2027 capacity charge is not valued by the LP). Without the
+  never extrapolated), never above the max SOC nor faster than the battery
+  power. `schedule_netzladen_max_kw` is the limit **at the meter** (house +
+  battery, `netzladen_netzgrenze_kw`, empty = none; until beta.2 it capped
+  the battery part only): the plan bounds the grid charge per slot by
+  `limit − forecast house load` (PV already sits in `dc_p`), the executor
+  re-derives the charge power every run as `min(plan, limit − measured
+  house + measured PV)`, floored at 0; the house itself is never capped
+  (the 2027 capacity charge is not valued by the LP). Without the
   switch the model is line for line the old one. The cheaper prices only
   exist with the switch: **spot purchase** (`schedule_bezug_quelle = "spot"`,
   `(spot + spot_bezug_aufschlag + |spot|·pct) × VAT + grid fee`) and **EEG
