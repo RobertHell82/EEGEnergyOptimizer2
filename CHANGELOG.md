@@ -10,6 +10,12 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
+## [2.1.43-beta.3] - 2026-10-13
+
+### Geändert
+
+- **Die Leistungsgrenze beim Netzladen gilt jetzt am Zähler.** Das Feld heißt „Höchster Netzbezug beim Laden aus dem Netz“ und begrenzt Haus und Batterie zusammen, bisher nur den Anteil der Batterie — der Hausverbrauch kam obendrauf. Der Fahrplan rechnet dafür mit Hausverbrauch und PV-Prognose, die Steuerung führt die Ladeleistung alle 30 Sekunden an den gemessenen Werten nach: Läuft der Herd oder kommt weniger Sonne als geplant, lädt die Batterie langsamer, statt dass der Bezug über die Grenze steigt. Das Haus selbst wird nie begrenzt. Leer heißt jetzt: keine eigene Grenze. **Wer in beta.1/beta.2 einen Wert eingetragen hat, prüft ihn** — er meint jetzt den ganzen Bezug.
+
 ## [2.1.43-beta.2] - 2026-10-12
 
 ### Geändert
