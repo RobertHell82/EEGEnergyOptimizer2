@@ -10,6 +10,20 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
+## [2.1.43] - 2026-10-18
+
+### Geändert
+
+- **Neues Energieflussdiagramm in der Statuskarte.** Daniel war das alte Diagramm zu fad; Vorbild ist die Karte „Energieverteilung“ von Home Assistant. Die Knoten sind jetzt Kreise im Kreuz: PV oben, Netz links, Haus rechts, Batterie unten, der Heizstab klein oben rechts neben der PV. Jede Leitung hat ihre eigene Spur mit runden Ecken. Wandernde Punkte zeigen, wohin Strom fließt, je mehr Leistung, desto schneller, und gleich schnell auf jeder Leitung. Beim Neuzeichnen laufen sie dort weiter, wo sie standen, auch nach einem Tab im Hintergrund. Der Ring ums Haus zeigt, woher der Verbrauch kommt, der Ring um die Batterie ihren Ladestand. Wie viel über jede Leitung fließt, steht in einer Zeile unter dem Diagramm, auch am Handy lesbar. Ein auf 0 begrenzter Hausverbrauch ist wie in der Werte-Ansicht mit „Haus *“ markiert. Mit „Bewegung reduzieren“ gibt es durchgezogene Linien statt Punkte. Beitrag von andi-arbeit-agent (#3), nach zwei Review-Runden überarbeitet.
+
+### Entfernt
+
+- **„Batterie aus dem Netz laden“ ist vorerst zurückgezogen.** Die Option aus den Betas 2.1.43-beta.1 bis beta.3 ist in den Einstellungen nicht mehr zu sehen, und ein dort gesetzter Haken wirkt nicht mehr: Der Fahrplan kauft keinen Strom für die Batterie. Ausgeblendet und trotzdem aktiv hätte er sich nicht mehr abschalten lassen. Die Berechnung bleibt im Code und kann später wieder freigegeben werden.
+
+### Aus den Betas übernommen
+
+- **Ein dunkler Horizont hat wieder einen Fahrplan** (aus beta.1). Haralds Modell verlangt am Ende der 48 Stunden eine halb volle Batterie. Stand sie darunter und brachte die Prognose zu wenig Sonne, gab es keine Lösung. Der Endstand ist jetzt auf das begrenzt, was die PV allein erreicht; Pläne, die schon lösbar waren, bleiben gleich.
+
 ## [2.1.43-beta.3] - 2026-10-13
 
 ### Geändert
