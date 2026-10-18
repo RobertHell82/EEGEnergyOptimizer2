@@ -9861,26 +9861,30 @@ class EegOptimizerPanel extends HTMLElement {
     // bleibt und Schriften lesbar sind.
     const narrow = !!this._narrow;
     const W = narrow ? 360 : 600;
-    const H = narrow ? 414 : 400;
+    const H = narrow ? 420 : 408;
     const R = narrow ? 44 : 48;
     // Spurabstand neben der Mittellinie und Radius der Ecken
     const L = narrow ? 14 : 16;
     const RR = 22;
-    // Der Heizstab sitzt unten rechts zwischen Haus und Batterie, kleiner,
-    // weil er nur Senke ist. Seine Leitungen von PV und Netz laufen schräg
-    // durch die Lücken neben Haus und Batterie.
+    // Der Heizstab sitzt oben rechts neben der PV, kleiner, weil er nur
+    // Senke ist. Unten rechts stand das Haus genau zwischen PV und Heizstab:
+    // die Leitung streifte den Hauskreis und lief anfangs mit PV→Haus
+    // zusammen. Hier ist PV→Heizstab eine kurze Waagrechte; nur der seltene
+    // Bezug beim Komfortheizen läuft schräg vom Netz herauf.
+    // Oben bleibt Platz für den Titel über der PV, sonst schneidet die
+    // viewBox die Oberlängen ab.
     const positions = narrow ? {
-      pv:    { cx: 180, cy: 64,  r: R },
-      grid:  { cx: 64,  cy: 206, r: R },
-      house: { cx: 296, cy: 206, r: R },
-      bat:   { cx: 180, cy: 344, r: R },
-      heiz:  { cx: 306, cy: 350, r: 34 },
+      pv:    { cx: 180, cy: 70,  r: R },
+      grid:  { cx: 64,  cy: 212, r: R },
+      house: { cx: 296, cy: 212, r: R },
+      bat:   { cx: 180, cy: 350, r: R },
+      heiz:  { cx: 300, cy: 70,  r: 34 },
     } : {
-      pv:    { cx: 300, cy: 66,  r: R },
-      grid:  { cx: 150, cy: 196, r: R },
-      house: { cx: 450, cy: 196, r: R },
-      bat:   { cx: 300, cy: 326, r: R },
-      heiz:  { cx: 470, cy: 330, r: 36 },
+      pv:    { cx: 300, cy: 74,  r: R },
+      grid:  { cx: 150, cy: 204, r: R },
+      house: { cx: 450, cy: 204, r: R },
+      bat:   { cx: 300, cy: 334, r: R },
+      heiz:  { cx: 460, cy: 74,  r: 36 },
     };
     Object.entries(positions).forEach(([k, p]) => { p.key = k; });
 
@@ -9946,6 +9950,33 @@ class EegOptimizerPanel extends HTMLElement {
       ] : []),
     ];
 
+    // Länge einer Bahn in viewBox-Pixeln: Geraden exakt, die Rundung der
+    // Ecke (quadratische Bézierkurve) über ein paar Stützpunkte.
+    const bahnLaenge = d => {
+      const z = d.match(/-?\d+(?:\.\d+)?/g).map(Number);
+      if (z.length === 4) return Math.hypot(z[2] - z[0], z[3] - z[1]);
+      const [ax, ay, p1x, p1y, cx, cy, p2x, p2y, bx, by] = z;
+      let kurve = 0, px = p1x, py = p1y;
+      for (let i = 1; i <= 8; i++) {
+        const t = i / 8, u = 1 - t;
+        const x = u * u * p1x + 2 * u * t * cx + t * t * p2x;
+        const y = u * u * p1y + 2 * u * t * cy + t * t * p2y;
+        kurve += Math.hypot(x - px, y - py);
+        px = x; py = y;
+      }
+      return Math.hypot(p1x - ax, p1y - ay) + kurve + Math.hypot(bx - p2x, by - p2y);
+    };
+    // Bei „Bewegung reduzieren" gar keine Punkte anlegen statt sie nur
+    // auszublenden — ausgeblendete SMIL-Animationen laufen weiter.
+    const ruhig = !!window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    // Fortschritt der Punkte je Fluss über das Neuzeichnen hinweg: Das Panel
+    // baut das SVG bei jeder Sensoränderung neu, jedes neue SVG startet
+    // seine Uhr bei 0, und mit der Leistung ändert sich das Tempo. Gemerkt
+    // wird, wo die Punkte standen; die neue Animation setzt dort an.
+    const jetzt = Date.now() / 1000;
+    const altePhasen = this._efPhasen || new Map();
+    const phasen = new Map();
+
     let activeLines = "";
     const spuren = new Map();
     flows.forEach(f => {
@@ -9954,23 +9985,40 @@ class EegOptimizerPanel extends HTMLElement {
       if (!spuren.has(paar)) spuren.set(paar, bahn);
       if (!(f.value > 0.02)) return;
       const sw = Math.min(Math.max(2, f.value * 0.7), 4.5);
-      activeLines += `<path class="flow-line" d="${bahn}" stroke="${f.color}" stroke-width="${sw}" stroke-opacity="0.45" fill="none"><title>${fmtDe(f.value, 2)} kW</title></path>`;
+      activeLines += `<path class="flow-line" d="${bahn}" stroke="${f.color}" stroke-width="${sw}" stroke-opacity="0.45" fill="none"/>`;
+      if (ruhig) return;
       // Wandernde Punkte zeigen die Richtung; je mehr Leistung, desto
+      // schneller. Das Tempo ist in Pixel je Sekunde festgelegt, nicht als
+      // Dauer je Bahn — sonst wirkten lange Bahnen bei gleicher Leistung
       // schneller. SMIL statt CSS-offset-path, weil iOS Safari das
-      // zuverlässig kann. Negative begin-Werte verteilen die Punkte gleich
-      // auf der Strecke, statt sie alle am Start loslaufen zu lassen.
-      // Das Panel zeichnet bei jeder Sensoränderung neu, und jedes neue SVG
-      // startet seine Uhr bei 0. Die Phase hängt deshalb an der Wanduhr, und
-      // die Dauer ist auf Zehntel gerastet: so laufen die Punkte über das
-      // Neuzeichnen hinweg weiter, statt an den Anfang zurückzuspringen.
-      const dur = Math.round(Math.min(Math.max(3.2 - f.value * 0.35, 1.1), 3.2) * 10) / 10;
-      const phase = (Date.now() / 1000) % dur;
-      for (let k = 0; k < 3; k++) {
-        activeLines += `<circle class="ef-dot" r="${(sw / 2 + 1.2).toFixed(1)}" fill="${f.color}" filter="url(#ef-glow)">
-          <animateMotion dur="${dur}s" begin="${(-phase - k * dur / 3).toFixed(3)}s" repeatCount="indefinite" path="${bahn}"/>
+      // zuverlässig kann. Ohne Filter: Weichzeichner auf bewegten Punkten
+      // zeichnet jedes Bild neu, auf einem Wandtablet den ganzen Tag.
+      const len = bahnLaenge(bahn);
+      const tempo = Math.min(Math.max(55 + 35 * f.value, 55), 180);
+      const dur = len / tempo;
+      const schluessel = `${f.from.key}-${f.to.key}`;
+      const alt = altePhasen.get(schluessel);
+      const fortschritt = alt ? (alt.fortschritt + (jetzt - alt.zeit) / alt.dur) % 1 : 0;
+      phasen.set(schluessel, { fortschritt, zeit: jetzt, dur });
+      // Ein Punkt je rund 70 px, damit lange Bahnen nicht leer wirken und
+      // kurze nicht überladen
+      const n = Math.max(2, Math.round(len / 70));
+      for (let k = 0; k < n; k++) {
+        const begin = -((fortschritt + k / n) % 1) * dur;
+        activeLines += `<circle class="ef-dot" r="${(sw / 2 + 1.2).toFixed(1)}" fill="${f.color}">
+          <animateMotion dur="${dur.toFixed(3)}s" begin="${begin.toFixed(3)}s" repeatCount="indefinite" path="${bahn}"/>
         </circle>`;
       }
     });
+    this._efPhasen = phasen;
+
+    // Leistung je Leitung als Text unter dem Diagramm: ein <title> zeigt
+    // sich auf Touch-Geräten nie, und Beschriftungen auf den Leitungen
+    // überdecken sich im Kreuz, wo die Spuren eng nebeneinander laufen.
+    const NAMEN = { pv: "PV", house: "Haus", bat: "Batterie", grid: "Netz", heiz: "Heizstab" };
+    const flussListe = flows.filter(f => f.value > 0.02).map(f =>
+      `<span class="ef-fluss"><span class="ef-fluss-punkt" style="background:${f.color}"></span>${NAMEN[f.from.key]} → ${NAMEN[f.to.key]} <b>${fmtDe(f.value, 2)} kW</b></span>`
+    ).join("");
     let inactiveLines = "";
     spuren.forEach(d => {
       inactiveLines += `<path d="${d}" stroke="var(--divider-color, #e0e0e0)" stroke-width="1.5" fill="none" opacity="0.7"/>`;
@@ -9981,9 +10029,8 @@ class EegOptimizerPanel extends HTMLElement {
     // die Herkunft des Verbrauchs, bei der Batterie der Ladestand. Ohne
     // Liste ist der Rand voll in der Akzentfarbe. Die Bögen rechnen mit dem
     // echten Umfang statt pathLength, das Safari auf <circle> nicht immer kann.
-    // fuellstand (0..100) macht aus dem Symbol eine Füllanzeige.
     const node = (pos, iconPath, title, mainText, subText, accent, active, entityId,
-                  { ring = null, fuellstand = null, subColor = null } = {}) => {
+                  { ring = null, subColor = null } = {}) => {
       const { cx, cy, r } = pos;
       const klein = r < 40;
       const opacity = active ? 1 : 0.55;
@@ -9991,18 +10038,7 @@ class EegOptimizerPanel extends HTMLElement {
       const iconSize = klein ? 20 : 24;
       const iconX = cx - iconSize / 2;
       const iconY = cy - (klein ? 24 : 30);
-      const iconTf = `translate(${iconX} ${iconY}) scale(${iconSize / 24})`;
-      let icon = `<path d="${iconPath}" fill="${accent}" transform="${iconTf}"/>`;
-      if (fuellstand != null) {
-        const f = Math.min(Math.max(fuellstand, 0), 100) / 100;
-        // Batteriesymbol reicht von y=2 bis y=22 im 24er-Raster
-        const top = 22 - 20 * f;
-        icon = `<clipPath id="ef-bat-clip"><path d="${iconPath}"/></clipPath>
-          <g transform="${iconTf}">
-            <path d="${iconPath}" fill="${accent}" opacity="0.28"/>
-            <rect x="0" y="${top}" width="24" height="${24 - top}" fill="${accent}" clip-path="url(#ef-bat-clip)"/>
-          </g>`;
-      }
+      const icon = `<path d="${iconPath}" fill="${accent}" transform="translate(${iconX} ${iconY}) scale(${iconSize / 24})"/>`;
       const sw = active ? 3 : 2;
       let rand = `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${accent}" stroke-width="${sw}"/>`;
       if (ring) {
@@ -10050,7 +10086,7 @@ class EegOptimizerPanel extends HTMLElement {
     }
     const batAktiv = batCharge > 0.02 || batDischarge > 0.02;
     const batNode = node(positions.bat, ICON_PATHS.battery, "Batterie", batMain, batSub, batAccent, batAktiv, ids.batEntity,
-                         { fuellstand: soc, subColor: batAktiv ? batAccent : null,
+                         { subColor: batAktiv ? batAccent : null,
                            ring: soc != null ? [{ anteil: soc / 100, color: batAccent }] : null });
 
     // House — Rand zeigt, woher der Verbrauch gerade kommt. Die drei Anteile
@@ -10091,14 +10127,11 @@ class EegOptimizerPanel extends HTMLElement {
              "#c62828", heizKw > 0.02, ids.heizEntity)
       : "";
 
-    // ef-blur/ef-glow: weicher Schein um aktive Kreise und die Flusspunkte.
+    // ef-blur: weicher Schein um aktive Kreise (steht still, wird nur
+    // einmal gezeichnet).
     return `<svg class="energy-flow-svg${narrow ? " narrow" : ""}" viewBox="0 0 ${W} ${H}">
       <defs>
         <filter id="ef-blur" x="-30%" y="-30%" width="160%" height="160%"><feGaussianBlur stdDeviation="5"/></filter>
-        <filter id="ef-glow" x="-200%" y="-200%" width="500%" height="500%">
-          <feGaussianBlur stdDeviation="2" result="b"/>
-          <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
-        </filter>
       </defs>
       ${inactiveLines}
       ${activeLines}
@@ -10107,7 +10140,7 @@ class EegOptimizerPanel extends HTMLElement {
       ${houseNode}
       ${gridNode}
       ${heizNode}
-    </svg>`;
+    </svg>${flussListe ? `<div class="ef-fluesse">${flussListe}</div>` : ""}`;
   }
 
   // Sonnenauf-/-untergang waren früher Parameter, werden im Diagramm aber
@@ -11400,9 +11433,13 @@ class EegOptimizerPanel extends HTMLElement {
         .energy-flow-svg.narrow { max-height: 460px; margin: 0 auto; }
         .energy-flow-svg .flow-line { stroke-linecap: round; }
         @media (prefers-reduced-motion: reduce) {
-          .energy-flow-svg .ef-dot { display: none; }
           .energy-flow-svg .flow-line { stroke-opacity: 0.85; }
         }
+        .ef-fluesse { display: flex; flex-wrap: wrap; justify-content: center; gap: 4px 14px;
+          margin-top: 4px; font-size: 12px; color: var(--secondary-text-color); }
+        .ef-fluss { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+        .ef-fluss b { color: var(--primary-text-color); font-weight: 600; }
+        .ef-fluss-punkt { width: 8px; height: 8px; border-radius: 50%; flex: none; }
         .energy-flow-svg .ef-node { cursor: pointer; }
         @media (hover: hover) {
           .energy-flow-svg .ef-node { transition: transform 0.15s; }
