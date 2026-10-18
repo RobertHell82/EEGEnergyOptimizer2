@@ -10,6 +10,12 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
+## [2.1.44-beta.1] - 2026-10-18
+
+### Geändert
+
+- **„Batterie aus dem Netz laden“ ist in der Beta wieder da.** Im Release 2.1.43 war die Option ausgeblendet und ohne Wirkung; in dieser Beta steht sie wieder in den Einstellungen (Tab Tarife, Expertenmodus, nur Huawei) und arbeitet wie in 2.1.43-beta.3, samt der Grenze am Zähler und der Zuteilung des Gemeinschaftsbezugs nach Anteil. Ein in den früheren Betas gesetzter Haken wirkt damit wieder. Die Beschreibung steht wieder in der Tarife-Anleitung.
+
 ## [2.1.43] - 2026-10-18
 
 ### Geändert
