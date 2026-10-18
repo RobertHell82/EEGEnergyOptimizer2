@@ -9853,43 +9853,36 @@ class EegOptimizerPanel extends HTMLElement {
     const batToGrid = Math.min(Math.max(batDischarge - hausFromBat, 0), Math.max(gridExport - pvToGrid, 0));
 
     // --- Layout ---
+    // Kreuz wie die Energieverteilung von Home Assistant: PV oben, Netz
+    // links, Haus rechts, Batterie unten, jeder Knoten ein Kreis. Die
+    // Leitungen laufen auf eigenen Spuren aus den Kreisen und biegen mit
+    // runden Ecken ab, so liegen sie nicht übereinander.
     // Narrow (Smartphone): kompaktere viewBox, damit die SVG-Skalierung nahe 1:1
-    // bleibt und Schriften lesbar sind (600er-viewBox auf ~340px = ~55% Schriftgröße).
+    // bleibt und Schriften lesbar sind.
     const narrow = !!this._narrow;
-    // Mit Heizstab teilen sich Haus und Heizstab die untere Reihe — beide
-    // sind Senken. Am Handy braucht das mehr Zeichenfläche: bliebe die
-    // viewBox bei 360, liefe die Diagonale PV→Haus mitsamt ihrem Label durch
-    // den Batteriekasten. Die 420 kosten rund ein Siebtel Schriftgröße,
-    // schmalere Kästen hätten dagegen „PHOTOVOLTAIK" abgeschnitten.
-    const W = narrow ? (heizAn ? 420 : 360) : 600;
-    const H = narrow ? (heizAn ? 400 : 390) : 320;
-    const NW = narrow ? (heizAn ? 132 : 140) : 150;
-    const NH = 64;
-    const positions = narrow
-      ? (heizAn ? {
-          pv:    { cx: 210, cy: 50 },
-          bat:   { cx: 76,  cy: 170 },
-          house: { cx: 116, cy: 340 },
-          grid:  { cx: 344, cy: 170 },
-          heiz:  { cx: 304, cy: 340 },
-        } : {
-          pv:    { cx: 180, cy: 50 },
-          bat:   { cx: 78,  cy: 195 },
-          house: { cx: 180, cy: 340 },
-          grid:  { cx: 282, cy: 195 },
-        })
-      : (heizAn ? {
-          pv:    { cx: 300, cy: 50 },
-          bat:   { cx: 95,  cy: 160 },
-          house: { cx: 205, cy: 270 },
-          grid:  { cx: 505, cy: 160 },
-          heiz:  { cx: 395, cy: 270 },
-        } : {
-          pv:    { cx: 300, cy: 50 },
-          bat:   { cx: 95,  cy: 160 },
-          house: { cx: 300, cy: 270 },
-          grid:  { cx: 505, cy: 160 },
-        });
+    const W = narrow ? 360 : 600;
+    const H = narrow ? 414 : 400;
+    const R = narrow ? 44 : 48;
+    // Spurabstand neben der Mittellinie und Radius der Ecken
+    const L = narrow ? 14 : 16;
+    const RR = 22;
+    // Der Heizstab sitzt unten rechts zwischen Haus und Batterie, kleiner,
+    // weil er nur Senke ist. Seine Leitungen von PV und Netz laufen schräg
+    // durch die Lücken neben Haus und Batterie.
+    const positions = narrow ? {
+      pv:    { cx: 180, cy: 64,  r: R },
+      grid:  { cx: 64,  cy: 206, r: R },
+      house: { cx: 296, cy: 206, r: R },
+      bat:   { cx: 180, cy: 344, r: R },
+      heiz:  { cx: 306, cy: 350, r: 34 },
+    } : {
+      pv:    { cx: 300, cy: 66,  r: R },
+      grid:  { cx: 150, cy: 196, r: R },
+      house: { cx: 450, cy: 196, r: R },
+      bat:   { cx: 300, cy: 326, r: R },
+      heiz:  { cx: 470, cy: 330, r: 36 },
+    };
+    Object.entries(positions).forEach(([k, p]) => { p.key = k; });
 
     // MDI-Pfade (24×24) nativ eingebettet — <foreignObject> mit ha-icon wird von
     // iOS Safari in skalierten SVGs falsch positioniert (WebKit-Bug).
@@ -9903,107 +9896,172 @@ class EegOptimizerPanel extends HTMLElement {
       heizstab: "M19 17C20.21 17 22 16.2 22 14S20.21 11 19 11H17V9H19C21.2 9 22 7.21 22 6C22 3.8 20.21 3 19 3H17V2H16V3H8V2H7V3H2V5H7V7H5C3.79 7 2 7.8 2 10S3.79 13 5 13H7V15H5C3.79 15 2 15.8 2 18S3.79 21 5 21H7V22H8V21H16V22H17V21H22V19H17V17H19M19 13C19.45 13 20 13.19 20 14S19.45 15 19 15H17V13H19M16 11H8V9H16V11M19 5C19.45 5 20 5.2 20 6C20 6.45 19.81 7 19 7H17V5H19M8 5H16V7H8V5M5 11C4.55 11 4 10.81 4 10S4.55 9 5 9H7V11H5M8 13H16V15H8V13M5 19C4.55 19 4 18.81 4 18S4.55 17 5 17H7V19H5M16 19H8V17H16V19Z",
     };
 
-    // Trim line to box edge so arrow doesn't hide under the rect
-    const trim = (from, to) => {
-      const dx = to.cx - from.cx;
-      const dy = to.cy - from.cy;
-      const len = Math.hypot(dx, dy) || 1;
-      const ux = dx / len, uy = dy / len;
-      const tFrom = Math.min((NW / 2 + 4) / Math.max(Math.abs(ux), 0.001), (NH / 2 + 4) / Math.max(Math.abs(uy), 0.001));
-      const tTo   = Math.min((NW / 2 + 4) / Math.max(Math.abs(ux), 0.001), (NH / 2 + 4) / Math.max(Math.abs(uy), 0.001));
-      return {
-        x1: from.cx + ux * tFrom,
-        y1: from.cy + uy * tFrom,
-        x2: to.cx - ux * tTo,
-        y2: to.cy - uy * tTo,
-      };
+    // Austrittspunkt am Kreis: PV und Batterie schicken ihre Leitungen
+    // senkrecht (unten bzw. oben) raus, Netz und Haus waagrecht. Die Spur
+    // hängt vom Gegenüber ab — links/oben, Mitte, rechts/unten.
+    const senkrecht = n => n.key === "pv" || n.key === "bat";
+    const port = (n, peer) => {
+      if (senkrecht(n)) {
+        const off = peer.key === "grid" ? -L : peer.key === "house" ? L : 0;
+        const side = n.key === "pv" ? 1 : -1;
+        return { x: n.cx + off, y: n.cy + side * Math.sqrt(n.r * n.r - off * off) };
+      }
+      const off = peer.key === "pv" ? -L : peer.key === "bat" ? L : 0;
+      const side = n.key === "grid" ? 1 : -1;
+      return { x: n.cx + side * Math.sqrt(n.r * n.r - off * off), y: n.cy + off };
+    };
+    const r1 = v => Math.round(v * 10) / 10;
+    const bahnVon = (from, to) => {
+      // Heizstab: gerade Linie von Kreisrand zu Kreisrand
+      if (from.key === "heiz" || to.key === "heiz") {
+        const dx = to.cx - from.cx, dy = to.cy - from.cy;
+        const len = Math.hypot(dx, dy) || 1;
+        const ux = dx / len, uy = dy / len;
+        return `M${r1(from.cx + ux * from.r)} ${r1(from.cy + uy * from.r)} L${r1(to.cx - ux * to.r)} ${r1(to.cy - uy * to.r)}`;
+      }
+      const a = port(from, to), b = port(to, from);
+      if (senkrecht(from) === senkrecht(to)) return `M${r1(a.x)} ${r1(a.y)} L${r1(b.x)} ${r1(b.y)}`;
+      // Eine Ecke mit Rundung: erst in Austrittsrichtung, dann abbiegen
+      const c = senkrecht(from) ? { x: a.x, y: b.y } : { x: b.x, y: a.y };
+      const p1 = { x: c.x - Math.sign(c.x - a.x) * RR, y: c.y - Math.sign(c.y - a.y) * RR };
+      const p2 = { x: c.x + Math.sign(b.x - c.x) * RR, y: c.y + Math.sign(b.y - c.y) * RR };
+      return `M${r1(a.x)} ${r1(a.y)} L${r1(p1.x)} ${r1(p1.y)} Q${r1(c.x)} ${r1(c.y)} ${r1(p2.x)} ${r1(p2.y)} L${r1(b.x)} ${r1(b.y)}`;
     };
 
     // --- Flow lines ---
-    // labelT: Label-Position entlang der Linie (0..1). PV→Haus sitzt bei 0.35,
-    // damit das Label nicht mit dem von Batterie↔Netz im Kreuzungspunkt kollidiert.
-    // skipInactive: Batterie→Netz teilt sich das Segment mit Netz→Batterie —
-    // die inaktive gestrichelte Linie nur einmal zeichnen.
+    // Alle Verbindungen sind immer als dünne Spur da; aktive Flüsse
+    // bekommen Farbe und wandernde Punkte in Flussrichtung. Batterie↔Netz
+    // teilen sich eine Spur, die leere Spur wird nur einmal gezeichnet.
     const flows = [
-      { from: positions.pv,    to: positions.house, value: pvToHaus,      color: "#FFC107", labelT: 0.35 },
+      { from: positions.pv,    to: positions.house, value: pvToHaus,      color: "#FFC107" },
       { from: positions.pv,    to: positions.bat,   value: pvToBat,       color: "#FFC107" },
       { from: positions.pv,    to: positions.grid,  value: pvToGrid,      color: "#4CAF50" },
       { from: positions.bat,   to: positions.house, value: hausFromBat,   color: "#FF9800" },
-      { from: positions.bat,   to: positions.grid,  value: batToGrid,     color: "#4CAF50", skipInactive: true },
+      { from: positions.bat,   to: positions.grid,  value: batToGrid,     color: "#4CAF50" },
       { from: positions.grid,  to: positions.house, value: hausFromGrid,  color: "#F44336" },
       { from: positions.grid,  to: positions.bat,   value: batFromGrid,   color: "#F44336" },
-      // Heizstab: aus PV der Überschuss, aus dem Netz nur beim
-      // Komfortheizen. Das Label sitzt näher am Heizstab, damit es nicht
-      // in der Kreuzung mit Netz→Haus landet.
       ...(heizAn ? [
-        { from: positions.pv,   to: positions.heiz, value: pvToHeiz,     color: "#FFC107", labelT: 0.65 },
+        { from: positions.pv,   to: positions.heiz, value: pvToHeiz,     color: "#FFC107" },
         { from: positions.grid, to: positions.heiz, value: heizFromGrid, color: "#F44336" },
       ] : []),
     ];
 
     let activeLines = "";
-    let inactiveLines = "";
-    let labels = "";
+    const spuren = new Map();
     flows.forEach(f => {
-      const e = trim(f.from, f.to);
-      if (f.value > 0.02) {
-        const sw = Math.min(Math.max(2, f.value * 0.7), 5);
-        activeLines += `<line class="flow-line" x1="${e.x1}" y1="${e.y1}" x2="${e.x2}" y2="${e.y2}" stroke="${f.color}" stroke-width="${sw}" fill="none"/>`;
-        // Label entlang der Linie — Breite dynamisch, damit Werte >= 10 kW nicht überlaufen
-        const t = f.labelT ?? 0.5;
-        const mx = e.x1 + (e.x2 - e.x1) * t;
-        const my = e.y1 + (e.y2 - e.y1) * t;
-        const txt = fmtDe(f.value, 2);
-        const lw = Math.max(44, txt.length * 7 + 16);
-        labels += `<g transform="translate(${mx} ${my})">
-          <rect class="ef-flow-label" x="${-lw / 2}" y="-10" width="${lw}" height="20" rx="10"/>
-          <text class="ef-flow-text" x="0" y="4" text-anchor="middle">${txt}</text>
-        </g>`;
-      } else if (!f.skipInactive) {
-        inactiveLines += `<line x1="${e.x1}" y1="${e.y1}" x2="${e.x2}" y2="${e.y2}" stroke="var(--divider-color, #e0e0e0)" stroke-width="1.5" stroke-dasharray="2 5" opacity="0.5"/>`;
+      const bahn = bahnVon(f.from, f.to);
+      const paar = [f.from.key, f.to.key].sort().join("-");
+      if (!spuren.has(paar)) spuren.set(paar, bahn);
+      if (!(f.value > 0.02)) return;
+      const sw = Math.min(Math.max(2, f.value * 0.7), 4.5);
+      activeLines += `<path class="flow-line" d="${bahn}" stroke="${f.color}" stroke-width="${sw}" stroke-opacity="0.45" fill="none"><title>${fmtDe(f.value, 2)} kW</title></path>`;
+      // Wandernde Punkte zeigen die Richtung; je mehr Leistung, desto
+      // schneller. SMIL statt CSS-offset-path, weil iOS Safari das
+      // zuverlässig kann. Negative begin-Werte verteilen die Punkte gleich
+      // auf der Strecke, statt sie alle am Start loslaufen zu lassen.
+      // Das Panel zeichnet bei jeder Sensoränderung neu, und jedes neue SVG
+      // startet seine Uhr bei 0. Die Phase hängt deshalb an der Wanduhr, und
+      // die Dauer ist auf Zehntel gerastet: so laufen die Punkte über das
+      // Neuzeichnen hinweg weiter, statt an den Anfang zurückzuspringen.
+      const dur = Math.round(Math.min(Math.max(3.2 - f.value * 0.35, 1.1), 3.2) * 10) / 10;
+      const phase = (Date.now() / 1000) % dur;
+      for (let k = 0; k < 3; k++) {
+        activeLines += `<circle class="ef-dot" r="${(sw / 2 + 1.2).toFixed(1)}" fill="${f.color}" filter="url(#ef-glow)">
+          <animateMotion dur="${dur}s" begin="${(-phase - k * dur / 3).toFixed(3)}s" repeatCount="indefinite" path="${bahn}"/>
+        </circle>`;
       }
+    });
+    let inactiveLines = "";
+    spuren.forEach(d => {
+      inactiveLines += `<path d="${d}" stroke="var(--divider-color, #e0e0e0)" stroke-width="1.5" fill="none" opacity="0.7"/>`;
     });
 
     // --- Node renderer ---
-    const node = (pos, iconPath, title, mainText, subText, accent, active, entityId) => {
-      const x = pos.cx - NW / 2;
-      const y = pos.cy - NH / 2;
+    // ring: Liste von { anteil (0..1), color } für den Kreisrand — beim Haus
+    // die Herkunft des Verbrauchs, bei der Batterie der Ladestand. Ohne
+    // Liste ist der Rand voll in der Akzentfarbe. Die Bögen rechnen mit dem
+    // echten Umfang statt pathLength, das Safari auf <circle> nicht immer kann.
+    // fuellstand (0..100) macht aus dem Symbol eine Füllanzeige.
+    const node = (pos, iconPath, title, mainText, subText, accent, active, entityId,
+                  { ring = null, fuellstand = null, subColor = null } = {}) => {
+      const { cx, cy, r } = pos;
+      const klein = r < 40;
       const opacity = active ? 1 : 0.55;
       const clickable = entityId ? `data-action="show-entity" data-entity="${entityId}" style="cursor:pointer"` : "";
-      const iconSize = narrow ? 26 : 30;
-      const iconX = x + (narrow ? 8 : 12);
-      const iconY = y + (NH - iconSize) / 2;
-      const textX = x + (narrow ? 42 : 54);
+      const iconSize = klein ? 20 : 24;
+      const iconX = cx - iconSize / 2;
+      const iconY = cy - (klein ? 24 : 30);
+      const iconTf = `translate(${iconX} ${iconY}) scale(${iconSize / 24})`;
+      let icon = `<path d="${iconPath}" fill="${accent}" transform="${iconTf}"/>`;
+      if (fuellstand != null) {
+        const f = Math.min(Math.max(fuellstand, 0), 100) / 100;
+        // Batteriesymbol reicht von y=2 bis y=22 im 24er-Raster
+        const top = 22 - 20 * f;
+        icon = `<clipPath id="ef-bat-clip"><path d="${iconPath}"/></clipPath>
+          <g transform="${iconTf}">
+            <path d="${iconPath}" fill="${accent}" opacity="0.28"/>
+            <rect x="0" y="${top}" width="24" height="${24 - top}" fill="${accent}" clip-path="url(#ef-bat-clip)"/>
+          </g>`;
+      }
+      const sw = active ? 3 : 2;
+      let rand = `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${accent}" stroke-width="${sw}"/>`;
+      if (ring) {
+        // Bögen beginnend oben im Uhrzeigersinn
+        const umfang = 2 * Math.PI * r;
+        let start = 0;
+        rand = `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${accent}" stroke-opacity="0.22" stroke-width="${sw}"/>`;
+        ring.forEach(t => {
+          const len = Math.min(Math.max(t.anteil, 0), 1) * umfang;
+          if (len < 0.5) return;
+          rand += `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${t.color}" stroke-width="${sw}"
+            stroke-dasharray="${len.toFixed(2)} ${umfang.toFixed(2)}" stroke-dashoffset="${(-start).toFixed(2)}"
+            transform="rotate(-90 ${cx} ${cy})"/>`;
+          start += len;
+        });
+      }
+      // Titel wie bei HA außerhalb: PV darüber, alle anderen darunter
+      const titleY = pos.key === "pv" ? cy - r - 9 : cy + r + 17;
       return `<g class="ef-node" opacity="${opacity}" ${clickable}>
-        <rect x="${x}" y="${y}" width="${NW}" height="${NH}" rx="14"
-          fill="var(--card-background-color, #fff)"
-          stroke="${accent}" stroke-width="${active ? 2.5 : 1.5}"/>
-        <path d="${iconPath}" fill="${accent}"
-          transform="translate(${iconX} ${iconY}) scale(${iconSize / 24})"/>
-        <text class="ef-node-title" x="${textX}" y="${y + 22}" fill="var(--secondary-text-color)">${title.toUpperCase()}</text>
-        <text class="ef-node-main" x="${textX}" y="${y + 40}" fill="var(--primary-text-color)">${mainText}</text>
-        ${subText ? `<text class="ef-node-sub" x="${textX}" y="${y + 55}" fill="var(--secondary-text-color)">${subText}</text>` : ""}
+        ${active ? `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${accent}" stroke-width="4" opacity="0.5" filter="url(#ef-blur)"/>` : ""}
+        <circle cx="${cx}" cy="${cy}" r="${r}" fill="var(--card-background-color, #fff)"/>
+        <circle cx="${cx}" cy="${cy}" r="${r}" fill="${accent}" fill-opacity="${active ? 0.1 : 0.04}"/>
+        ${rand}
+        ${icon}
+        <text class="ef-node-main${klein ? " klein" : ""}" x="${cx}" y="${cy + (klein ? 10 : 12)}" text-anchor="middle" fill="var(--primary-text-color)">${mainText}</text>
+        ${subText ? `<text class="ef-node-sub" x="${cx}" y="${cy + (klein ? 23 : 27)}" text-anchor="middle" fill="${subColor || "var(--secondary-text-color)"}">${subText}</text>` : ""}
+        <text class="ef-node-title" x="${cx}" y="${titleY}" text-anchor="middle" fill="var(--secondary-text-color)">${title}</text>
       </g>`;
     };
 
     // PV
     const pvNode = node(positions.pv, ICON_PATHS.solar, "Photovoltaik", `${fmtDe(pv, 2)} kW`, "", "#FFC107", pv > 0.02, ids.pvEntity);
 
-    // Battery — im Narrow-Layout nur Vorzeichen statt "· Ladung/Entladung" (Platz)
-    let batMain = socVal != null ? `${socVal} %` : "—";
+    // Battery — Rand zeigt den Ladestand, Unterzeile Lade-/Entladeleistung
+    const soc = socVal != null && isFinite(Number(socVal)) ? Number(socVal) : null;
+    let batMain = soc != null ? `${socVal} %` : "—";
     let batSub = "Idle";
     let batAccent = "#9E9E9E";
     if (batCharge > 0.02) {
-      batSub = narrow ? `+${fmtDe(batCharge, 2)} kW` : `+${fmtDe(batCharge, 2)} kW · Ladung`;
+      batSub = `↓ ${fmtDe(batCharge, 2)} kW`;
       batAccent = "#4CAF50";
     } else if (batDischarge > 0.02) {
-      batSub = narrow ? `−${fmtDe(batDischarge, 2)} kW` : `${fmtDe(batDischarge, 2)} kW · Entladung`;
+      batSub = `↑ ${fmtDe(batDischarge, 2)} kW`;
       batAccent = "#FF9800";
     }
-    const batNode = node(positions.bat, ICON_PATHS.battery, "Batterie", batMain, batSub, batAccent, batCharge > 0.02 || batDischarge > 0.02, ids.batEntity);
+    const batAktiv = batCharge > 0.02 || batDischarge > 0.02;
+    const batNode = node(positions.bat, ICON_PATHS.battery, "Batterie", batMain, batSub, batAccent, batAktiv, ids.batEntity,
+                         { fuellstand: soc, subColor: batAktiv ? batAccent : null,
+                           ring: soc != null ? [{ anteil: soc / 100, color: batAccent }] : null });
 
-    // House
-    const houseNode = node(positions.house, ICON_PATHS.home, "Haus", `${fmtDe(haus, 2)} kW`, "", "#2196F3", haus > 0.02, ids.hausEntity);
+    // House — Rand zeigt, woher der Verbrauch gerade kommt. Die drei Anteile
+    // ergeben zusammen den Hausverbrauch, weil der Netzanteil den Rest deckt.
+    const hausRing = haus > 0.02 ? [
+      { anteil: pvToHaus / haus, color: "#FFC107" },
+      { anteil: hausFromBat / haus, color: "#FF9800" },
+      { anteil: hausFromGrid / haus, color: "#F44336" },
+    ] : null;
+    const houseNode = node(positions.house, ICON_PATHS.home, "Haus", `${fmtDe(haus, 2)} kW`, "", "#2196F3", haus > 0.02, ids.hausEntity,
+                           { ring: hausRing });
 
     // Grid
     let gridMain = "0 kW";
@@ -10018,7 +10076,9 @@ class EegOptimizerPanel extends HTMLElement {
       gridSub = "Bezug";
       gridAccent = "#F44336";
     }
-    const gridNode = node(positions.grid, ICON_PATHS.grid, "Netz", gridMain, gridSub, gridAccent, gridExport > 0.02 || gridImport > 0.02, ids.gridEntity);
+    const gridAktiv = gridExport > 0.02 || gridImport > 0.02;
+    const gridNode = node(positions.grid, ICON_PATHS.grid, "Netz", gridMain, gridSub, gridAccent, gridAktiv, ids.gridEntity,
+                          { subColor: gridAktiv ? gridAccent : null });
 
     // Heizstab — Leistung groß, Wassertemperatur klein darunter (wie die
     // Batterie Ladestand und Leistung zeigt). Antwortet der Ohmpilot nicht,
@@ -10026,15 +10086,22 @@ class EegOptimizerPanel extends HTMLElement {
     // wie zu wissen, dass er aus ist.
     const heizNode = heizAn
       ? node(positions.heiz, ICON_PATHS.heizstab, "Heizstab",
-             heiz.kw == null ? "\u2014" : `${fmtDe(heizKw, 2)} kW`,
+             heiz.kw == null ? "—" : `${fmtDe(heizKw, 2)} kW`,
              heiz.tempC == null ? "" : `${fmtDe(heiz.tempC, 0)} °C`,
              "#c62828", heizKw > 0.02, ids.heizEntity)
       : "";
 
+    // ef-blur/ef-glow: weicher Schein um aktive Kreise und die Flusspunkte.
     return `<svg class="energy-flow-svg${narrow ? " narrow" : ""}" viewBox="0 0 ${W} ${H}">
+      <defs>
+        <filter id="ef-blur" x="-30%" y="-30%" width="160%" height="160%"><feGaussianBlur stdDeviation="5"/></filter>
+        <filter id="ef-glow" x="-200%" y="-200%" width="500%" height="500%">
+          <feGaussianBlur stdDeviation="2" result="b"/>
+          <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+        </filter>
+      </defs>
       ${inactiveLines}
       ${activeLines}
-      ${labels}
       ${pvNode}
       ${batNode}
       ${houseNode}
@@ -11329,22 +11396,23 @@ class EegOptimizerPanel extends HTMLElement {
         /* Auch die Kartentitel des Dashboards im EEG-Grün (Nutzerwunsch
            27.08.) — Ausnahmen setzen ihre Farbe inline und bleiben. */
         .card h3 { color: var(--success-color, #43a047); }
-        .energy-flow-svg { width: 100%; height: auto; max-height: 360px; display: block; }
+        .energy-flow-svg { width: 100%; height: auto; max-height: 420px; display: block; }
         .energy-flow-svg.narrow { max-height: 460px; margin: 0 auto; }
-        .energy-flow-svg .flow-line { stroke-linecap: round; stroke-dasharray: 6 6; animation: flow-anim 1.2s linear infinite; }
-        @keyframes flow-anim { to { stroke-dashoffset: -24; } }
+        .energy-flow-svg .flow-line { stroke-linecap: round; }
+        @media (prefers-reduced-motion: reduce) {
+          .energy-flow-svg .ef-dot { display: none; }
+          .energy-flow-svg .flow-line { stroke-opacity: 0.85; }
+        }
         .energy-flow-svg .ef-node { cursor: pointer; }
         @media (hover: hover) {
           .energy-flow-svg .ef-node { transition: transform 0.15s; }
           .energy-flow-svg .ef-node:hover { transform: scale(1.04); transform-origin: center; transform-box: fill-box; }
         }
-        .energy-flow-svg .ef-flow-label { fill: var(--card-background-color, #fff); stroke: var(--divider-color, #e0e0e0); stroke-width: 1; }
-        .energy-flow-svg .ef-flow-text { fill: var(--primary-text-color); font-size: 11px; font-weight: 500; pointer-events: none; }
-        .energy-flow-svg .ef-node-title { font-size: 11px; letter-spacing: 0.5px; }
-        .energy-flow-svg .ef-node-main { font-size: 15px; font-weight: 600; }
-        .energy-flow-svg .ef-node-sub { font-size: 10px; }
-        .energy-flow-svg.narrow .ef-node-title { font-size: 10px; letter-spacing: 0.2px; }
-        .energy-flow-svg.narrow .ef-flow-text { font-size: 12px; }
+        .energy-flow-svg .ef-node-title { font-size: 13px; }
+        .energy-flow-svg .ef-node-main { font-size: 15px; font-weight: 700; }
+        .energy-flow-svg .ef-node-main.klein { font-size: 12px; }
+        .energy-flow-svg .ef-node-sub { font-size: 10.5px; font-weight: 500; }
+        .energy-flow-svg.narrow .ef-node-title { font-size: 12px; }
         .header-timestamps { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 4px 12px; margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--divider-color, #e0e0e0); font-size: 11px; color: var(--secondary-text-color, #999); }
         .status-card-title { display: flex; align-items: center; gap: 8px; margin: 0 0 8px; font-size: 16px; }
         .info-popup-trigger {
