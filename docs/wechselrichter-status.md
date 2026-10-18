@@ -59,10 +59,11 @@ Steuerung über die [Huawei Solar](https://github.com/wlcrs/huawei_solar)
 Integration. Direkte Anbindung an Wechselrichter/Dongle oder über das
 EMMA-Energiemanagement (`sensor.emma_*`-Sensoren, Netz-Vorzeichen wird
 automatisch korrigiert).
-**Beta: Batterie aus dem Netz laden** (seit 2.1.43-beta.1, nur Huawei):
-Zwangsladung über `forcible_charge_soc` mit Leistung und Ziel-Ladestand aus
-dem Fahrplan. Am Gerät geprüft (Traun, 12.10.2026): lädt auch mit
-ausgeschaltetem „Laden aus dem Netz“, 3 s nach dem Befehl. Beschreibung: [tarife.md](guides/tarife.md).
+**Batterie aus dem Netz laden** (Beta 2.1.43-beta.1 bis beta.3, nur Huawei,
+seit 2.1.43 zurückgezogen und ausgeblendet): Zwangsladung über
+`forcible_charge_soc` mit Leistung und Ziel-Ladestand aus dem Fahrplan. Am
+Gerät geprüft (Traun, 12.10.2026): lädt auch mit ausgeschaltetem „Laden aus
+dem Netz“, 3 s nach dem Befehl.
 Guide: [huawei.md](guides/huawei.md) · [Akkukapazität-Sensor](guides/capacity_sensor.md)
 
 ### Kostal Plenticore

@@ -430,7 +430,12 @@ the event loop is long enough for HA to flag a blocking call.
   Tests: `tests/test_ladeziel.py`.
 - **Batterie aus dem Netz laden** (`schedule_netzladen`, beta, settings
   only, expert mode, Huawei only — `InverterBase.supports_grid_charge`;
-  decision 12.10.2026): the **Ladeziel may be reached with grid power, but
+  decision 12.10.2026). **Withdrawn in 2.1.43:** hidden in the panel
+  (`NETZLADEN_SICHTBAR = false`) and inert in the backend
+  (`schedule.NETZLADEN_FREIGEGEBEN = False`, gate in `netzladen_max_kw`), so
+  a box ticked during the beta cannot keep buying unseen; the tests switch it
+  back on via fixture. Re-enabling = both true plus the guide section from
+  git history (`docs/guides/tarife.md` before 2.1.43). What it does: the **Ladeziel may be reached with grid power, but
   only in slots where grid power is cheaper than what the battery replaces
   afterwards** — the load-weighted purchase price of the night after the PV
   end, compared per kWh after `ac_efficiency`², aging (`battery_cost`) and

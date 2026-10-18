@@ -158,14 +158,17 @@ const quoteLuecken = (d) => {
 
 // „Batterie aus dem Netz laden" (Beta): nur Einstellungen, Expertenmodus,
 // Huawei — derselbe Treiber-Schalter wie im Backend (supports_grid_charge).
+// Vorerst ausgeblendet (2.1.43), das Backend wirkt dann ebenfalls nicht
+// (schedule.NETZLADEN_FREIGEGEBEN) — wieder einblenden heißt: beide true.
+const NETZLADEN_SICHTBAR = false;
 const netzladenSichtbar = (d, prefix) =>
-  !!prefix && !!d.expert_mode && d.inverter_type === "huawei_sun2000";
+  NETZLADEN_SICHTBAR && !!prefix && !!d.expert_mode && d.inverter_type === "huawei_sun2000";
 
 // Was mit eingeschaltetem Netzladen fehlt. Ohne einen Preis, der irgendwo
 // billiger ist als die Nacht, kauft der Fahrplan nie — der Haken wäre
 // wirkungslos. Spot- und Gemeinschaftsbezug brauchen die Netzgebühr.
 const netzladenLuecken = (d) => {
-  if (!d.expert_mode || d.inverter_type !== "huawei_sun2000" || !d.schedule_netzladen) return [];
+  if (!NETZLADEN_SICHTBAR || !d.expert_mode || d.inverter_type !== "huawei_sun2000" || !d.schedule_netzladen) return [];
   const spot = String(d.schedule_bezug_quelle || "fix") === "spot";
   const eeg = [["", d.peakshare_community], ["_2", d.peakshare_community_2]]
     .some(([sfx, name]) => name && Number(d[`peakshare_bezug_price${sfx}`] ?? 0) > 0);

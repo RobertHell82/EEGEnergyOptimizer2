@@ -275,6 +275,11 @@ NETZDIENLICH_UEBERSCHUSS_FAKTOR = 1.2
 # EEG-Bezug je Gemeinschaft (Energiepreis + um den Ortstarif verringertes
 # Netznutzungsentgelt, gewichtet mit dem Überschuss der Gemeinschaft).
 CONF_SCHEDULE_NETZLADEN = "schedule_netzladen"
+# Netzladen vorerst zurückgezogen (2.1.43): Das Panel zeigt den Schalter
+# nicht (NETZLADEN_SICHTBAR), und ein in der Beta gesetzter Haken wirkt
+# nicht weiter — ausgeblendet und trotzdem aktiv ließe er sich nicht mehr
+# abschalten. Wieder freigeben heißt: hier und im Panel true setzen.
+NETZLADEN_FREIGEGEBEN = False
 # Höchste Netzbezugsleistung, die in die Batterie gehen darf (kW, AC). 0 oder
 # leer = die Batterieleistung. Eigene Grenze, weil ab 2027 die Bezugsspitze
 # des Monats Geld kostet (leistungsspitze.py) — das LP bewertet sie nicht.
@@ -1479,7 +1484,7 @@ def netzladen_max_kw(config: dict, inverter: Any = None) -> float:
     (``supports_grid_charge``, derzeit Huawei). Das ist die Batterieleistung;
     die Grenze am Zähler ist ``netzladen_netzgrenze_kw``.
     """
-    if not config.get(CONF_SCHEDULE_NETZLADEN):
+    if not NETZLADEN_FREIGEGEBEN or not config.get(CONF_SCHEDULE_NETZLADEN):
         return 0.0
     if inverter is not None and not getattr(inverter, "supports_grid_charge", False):
         return 0.0

@@ -30,6 +30,18 @@ from custom_components.eeg_energy_optimizer.sensor import fahrplan_kurzstatus
 from .test_ladeziel import _inputs_gruenbach
 from .test_schedule_executor import NOW, _make_executor, _messwerte, _slot, _state
 
+@pytest.fixture(autouse=True)
+def _netzladen_freigegeben(monkeypatch):
+    """Seit 2.1.43 zurückgezogen (NETZLADEN_FREIGEGEBEN = False) — die Tests
+    halten die Funktion für die Wiederfreigabe fest."""
+    monkeypatch.setattr(sched, "NETZLADEN_FREIGEGEBEN", True)
+
+
+def test_zurueckgezogen_wirkt_nicht(monkeypatch):
+    monkeypatch.setattr(sched, "NETZLADEN_FREIGEGEBEN", False)
+    assert sched.netzladen_max_kw({"schedule_netzladen": True}) == 0.0
+
+
 # ---------------------------------------------------------------------------
 # Einstellungen
 # ---------------------------------------------------------------------------
