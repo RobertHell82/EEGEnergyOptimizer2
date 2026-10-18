@@ -10,6 +10,13 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
+## [2.1.44] - 2026-10-18
+
+### Geändert
+
+- **Die Einspeise-Karte sagt, was sie wirklich zählt.** Die Kachel hieß „an die Gemeinschaft“ und zählte nur die Einspeisung in Viertelstunden, in denen die Gemeinschaft laut PeakShare-Prognose unterversorgt war, höchstens ihren Restbedarf. Mittags, wenn die Gemeinschaft Überschuss hat, ergab das 0 kWh. Tatsächlich bekommt aber auch dann jeder Erzeuger anteilig etwas zugeteilt, ungefähr im Verhältnis Verbrauch zu Erzeugung der Gemeinschaft. Wie viel, lässt sich nicht berechnen, weil PeakShare nur den Saldo liefert und nicht Verbrauch und Erzeugung getrennt. Die Kachel heißt deshalb jetzt „bei Gemeinschaftsbedarf“, der Rest im Diagramm „übrige Einspeisung“ statt „zum Basistarif“, und ein Hinweis unter der Karte erklärt das, auch am Handy lesbar. Im Quotenmodus bleibt alles wie bisher.
+- **„Batterie aus dem Netz laden“ bleibt den Betas vorbehalten.** Wie in 2.1.43 ist die Option im Release ausgeblendet und ohne Wirkung; wer sie testen will, nimmt die Beta.
+
 ## [2.1.44-beta.1] - 2026-10-18
 
 ### Geändert
