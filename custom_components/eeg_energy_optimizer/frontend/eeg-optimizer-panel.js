@@ -158,9 +158,9 @@ const quoteLuecken = (d) => {
 
 // „Batterie aus dem Netz laden" (Beta): nur Einstellungen, Expertenmodus,
 // Huawei — derselbe Treiber-Schalter wie im Backend (supports_grid_charge).
-// Vorerst ausgeblendet (2.1.43), das Backend wirkt dann ebenfalls nicht
-// (schedule.NETZLADEN_FREIGEGEBEN) — wieder einblenden heißt: beide true.
-const NETZLADEN_SICHTBAR = false;
+// Gemeinsam mit schedule.NETZLADEN_FREIGEGEBEN umlegen (im Release 2.1.43
+// beide aus, seit 2.1.44-beta.1 wieder an).
+const NETZLADEN_SICHTBAR = true;
 const netzladenSichtbar = (d, prefix) =>
   NETZLADEN_SICHTBAR && !!prefix && !!d.expert_mode && d.inverter_type === "huawei_sun2000";
 
