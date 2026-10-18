@@ -73,6 +73,13 @@ const BETA_BADGE = `<span style="display:inline-block;margin-left:8px;padding:1p
   background:var(--warning-color,#ff9800);color:#fff;font-size:11px;font-weight:600;
   letter-spacing:.04em;vertical-align:middle">BETA</span>`;
 
+// Was die Einspeise-Karte ohne Quotenmodus als „bei Gemeinschaftsbedarf“
+// zählt. Bewusst nicht „an die Gemeinschaft“: PeakShare liefert nur den
+// Saldo (Defizit/Überschuss), und bei Überschuss rechnen wir 0 — die
+// Gemeinschaft nimmt aber auch dann anteilig auf (Verbrauch ÷ Erzeugung),
+// nur lässt sich das ohne Brutto-Werte nicht beziffern.
+const EINSP_BEDARF_HINWEIS = "„Bei Gemeinschaftsbedarf“ zählt die Einspeisung in Viertelstunden, in denen die Gemeinschaft laut PeakShare-Prognose unterversorgt war, höchstens ihren Restbedarf. Auch bei Überschuss nimmt sie anteilig etwas auf; wie viel, lässt sich ohne ihre Verbrauchs- und Erzeugungsdaten nicht sagen.";
+
 // Spitzenkappung vorerst ausgeblendet: kein Reiter in den Einstellungen.
 // Das Backend (spitzenkappung.py) bleibt, es schaltet nur bei
 // spitzenkappung_enabled — wieder einblenden heißt: true setzen.
@@ -158,9 +165,9 @@ const quoteLuecken = (d) => {
 
 // „Batterie aus dem Netz laden" (Beta): nur Einstellungen, Expertenmodus,
 // Huawei — derselbe Treiber-Schalter wie im Backend (supports_grid_charge).
-// Gemeinsam mit schedule.NETZLADEN_FREIGEGEBEN umlegen (im Release 2.1.43
-// beide aus, seit 2.1.44-beta.1 wieder an).
-const NETZLADEN_SICHTBAR = true;
+// Gemeinsam mit schedule.NETZLADEN_FREIGEGEBEN umlegen: in Releases aus,
+// in Betas an.
+const NETZLADEN_SICHTBAR = false;
 const netzladenSichtbar = (d, prefix) =>
   NETZLADEN_SICHTBAR && !!prefix && !!d.expert_mode && d.inverter_type === "huawei_sun2000";
 
@@ -4530,11 +4537,11 @@ class EegOptimizerPanel extends HTMLElement {
         [batterieAnteil, vergleichZeile("batterie_export_kwh", kwh)].filter(Boolean).join("<br>"),
         "Einspeisung in Viertelstunden ohne PV-Leistung."),
       d.gemeinschaft ? kachel(pct(k.eeg_anteil),
-        d.quotenmodus ? "an die Gemeinschaft (Quote)" : "an die Gemeinschaft",
+        d.quotenmodus ? "an die Gemeinschaft (Quote)" : "bei Gemeinschaftsbedarf",
         vergleichZeile("eeg_anteil", pct),
         d.quotenmodus
           ? "Nach der eingestellten Abnahmequote — eine Annahme aus deiner EEG-Abrechnung, keine Messung."
-          : "Anteil der Einspeisung, den der Bedarf der Gemeinschaft in derselben Viertelstunde aufnehmen konnte. Beruht auf der Bedarfsprognose — endgültig steht es erst mit der EEG-Abrechnung fest.") : "",
+          : EINSP_BEDARF_HINWEIS) : "",
       kachel(ct(k.erloes_je_kwh), "Erlös je kWh", vergleichZeile("erloes_je_kwh", ct)),
       kachel(pct(k.autarkie), "Autarkie", "",
         "Anteil des Verbrauchs (Haus und Heizstab), der nicht aus dem Netz kam."),
@@ -4558,6 +4565,8 @@ class EegOptimizerPanel extends HTMLElement {
     const hinweise = ["„Aus der Batterie“ ist die Einspeisung in Viertelstunden ohne PV-Leistung."];
     if (d.gemeinschaft && d.quotenmodus) {
       hinweise.push("„An die Gemeinschaft“ folgt der eingestellten Abnahmequote — eine Annahme, keine Messung.");
+    } else if (d.gemeinschaft) {
+      hinweise.push(EINSP_BEDARF_HINWEIS);
     }
     if (zeitraum !== "heute" && d.batterie_seit && d.erster_tag && d.batterie_seit > d.erster_tag) {
       hinweise.push(`Der Batterie-Anteil wird erst seit ${datumKurz(d.batterie_seit)} erfasst; die Tage davor zählen nur zur Einspeisung.`);
@@ -4667,7 +4676,7 @@ class EegOptimizerPanel extends HTMLElement {
           : jeJahr ? String(r.jahr)
           : new Date(`${r.monat}-01T00:00:00`).toLocaleDateString("de-DE", { month: "long" }),
         `${fmtDe(exp, zeitraum === "heute" ? 2 : 1)} kWh eingespeist`,
-        mitEeg ? `davon ${fmtDe(eeg, zeitraum === "heute" ? 2 : 1)} kWh an die Gemeinschaft` : "",
+        mitEeg ? `davon ${fmtDe(eeg, zeitraum === "heute" ? 2 : 1)} kWh ${d.quotenmodus ? "an die Gemeinschaft" : "bei Gemeinschaftsbedarf"}` : "",
         r.batterie != null ? `davon ${fmtDe(bat, zeitraum === "heute" ? 2 : 1)} kWh aus der Batterie` : "",
       ].filter(Boolean);
       details[k] = titel;
@@ -4723,8 +4732,8 @@ class EegOptimizerPanel extends HTMLElement {
        </span>`;
     const schraffurCss = "background:repeating-linear-gradient(135deg,#ef6c00 0 1.5px,transparent 1.5px 4px);border:1px solid #ef6c00;box-sizing:border-box";
     const legende = [
-      mitEeg ? legendeEintrag(`background:${farbeEeg}`, "an die Gemeinschaft") : "",
-      mitEeg ? legendeEintrag(`background:${farbeRest}`, "zum Basistarif") : legendeEintrag(`background:${farbeAlle}`, "eingespeist"),
+      mitEeg ? legendeEintrag(`background:${farbeEeg}`, d.quotenmodus ? "an die Gemeinschaft" : "bei Gemeinschaftsbedarf") : "",
+      mitEeg ? legendeEintrag(`background:${farbeRest}`, d.quotenmodus ? "zum Basistarif" : "übrige Einspeisung") : legendeEintrag(`background:${farbeAlle}`, "eingespeist"),
       legendeEintrag(schraffurCss, "davon aus der Batterie"),
       zeitraum === "heute" && mitEeg && !d.quotenmodus
         ? legendeEintrag(`background:${farbeEeg};opacity:.2`, "Bedarf der Gemeinschaft") : "",

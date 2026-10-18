@@ -276,10 +276,10 @@ NETZDIENLICH_UEBERSCHUSS_FAKTOR = 1.2
 # Netznutzungsentgelt, gewichtet mit dem Überschuss der Gemeinschaft).
 CONF_SCHEDULE_NETZLADEN = "schedule_netzladen"
 # Schalter für das ganze Netzladen, zusammen mit NETZLADEN_SICHTBAR im
-# Panel. Im Release 2.1.43 aus, seit 2.1.44-beta.1 wieder an. Immer beide
-# gemeinsam umlegen: nur ausgeblendet, aber wirksam, ließe sich ein in der
-# Beta gesetzter Haken nicht mehr abschalten.
-NETZLADEN_FREIGEGEBEN = True
+# Panel: in Releases aus, in Betas an. Immer beide gemeinsam umlegen — nur
+# ausgeblendet, aber wirksam, ließe sich ein in der Beta gesetzter Haken
+# nicht mehr abschalten.
+NETZLADEN_FREIGEGEBEN = False
 # Höchste Netzbezugsleistung, die in die Batterie gehen darf (kW, AC). 0 oder
 # leer = die Batterieleistung. Eigene Grenze, weil ab 2027 die Bezugsspitze
 # des Monats Geld kostet (leistungsspitze.py) — das LP bewertet sie nicht.

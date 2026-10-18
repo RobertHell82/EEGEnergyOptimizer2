@@ -137,8 +137,8 @@ data:
 <td>Einspeisung in Viertelstunden <strong>ohne PV-Leistung</strong> (unter 50 W) — egal, ob die Optimierung dabei entladen hat. Darunter der Anteil an der gesamten Einspeisung</td>
 </tr>
 <tr>
-<td><strong>an die Gemeinschaft</strong></td>
-<td>Anteil der Einspeisung, den der Bedarf deiner Energiegemeinschaft in derselben Viertelstunde aufnehmen konnte. Nur mit eingerichteter Gemeinschaft; im Quotenmodus mit „(Quote)“ — dann eine Annahme aus der Abnahmequote, keine Messung</td>
+<td><strong>bei Gemeinschaftsbedarf</strong></td>
+<td>Anteil der Einspeisung in Viertelstunden, in denen deine Energiegemeinschaft laut PeakShare-Prognose unterversorgt war, höchstens ihr Restbedarf. Das ist <strong>nicht</strong> alles, was die Gemeinschaft aufnimmt: Auch wenn sie Überschuss hat, bekommt jeder Erzeuger anteilig etwas zugeteilt. Wie viel, lässt sich ohne ihre Verbrauchs- und Erzeugungsdaten nicht sagen, PeakShare liefert nur den Saldo. Nur mit eingerichteter Gemeinschaft; im Quotenmodus heißt die Kachel „an die Gemeinschaft (Quote)“ und folgt der Abnahmequote, eine Annahme, keine Messung</td>
 </tr>
 <tr>
 <td><strong>Erlös je kWh</strong></td>
@@ -155,7 +155,7 @@ data:
 </tbody>
 </table>
 <p>Wo es sinnvoll ist, steht klein darunter der <strong>Standardbetrieb</strong> zum Vergleich („ohne Optimierung …“) — dieselbe Simulation wie beim Optimierungsgewinn, aber über die gemessenen Werte. Liegt der Vergleich nicht für alle Tage des Zeitraums vor, steht dort „an N Tagen: … statt …“: Ist- und Vergleichswert gelten dann für dieselben Tage.</p>
-<p>Das <strong>Diagramm</strong> zeigt die Einspeisung als gestapelte Balken — grün, was die Gemeinschaft genommen hat, grau der Rest zum Basistarif, der Batterie-Anteil orange schraffiert darüber. Heute je Viertelstunde, dahinter blassgrün die Viertelstunden, in denen die Gemeinschaft Bedarf hatte; im Monat je Tag, im Jahr je Monat, bei Gesamt je Jahr. Ein Tipp oder Klick auf einen Balken zeigt seine Werte darunter.</p>
+<p>Das <strong>Diagramm</strong> zeigt die Einspeisung als gestapelte Balken — grün die Einspeisung bei Gemeinschaftsbedarf, grau die übrige, der Batterie-Anteil orange schraffiert darüber. Heute je Viertelstunde, dahinter blassgrün die Viertelstunden, in denen die Gemeinschaft Bedarf hatte; im Monat je Tag, im Jahr je Monat, bei Gesamt je Jahr. Ein Tipp oder Klick auf einen Balken zeigt seine Werte darunter.</p>
 <p><em>Der Batterie-Anteil und der Vergleich mit dem Standardbetrieb werden erst seit Version 2.1.26 aufgezeichnet; ältere Tage zählen nur zur Einspeisung, die Karte sagt das dazu. Der Sensor <strong>Entladung ins Netz</strong> zählt dagegen nur die Energie, die während einer gesteuerten Entladung ins Netz ging — eine andere Frage, deshalb eine andere Zahl.</em></p>
 <h3>Optimierungsgewinn</h3>
 <p>Diese Karte vergleicht den Plan mit einem simulierten <strong>Standardbetrieb</strong>: PV-Überschuss lädt zuerst die Batterie, ein Defizit entlädt sie bis zum Mindest-Ladestand; ein Heizstab bekommt, was sonst abgeregelt würde, höchstens so viel, wie der Puffer je Tag aufnimmt. Die Zahl im Kopf ist der erwartete Mehrerlös — auf Prognosebasis, kein Messwert. Gezählt werden mindestens 24 Stunden und dann bis zur nächsten Mitternacht (mittags also rund 36 Stunden), damit jeder Tag samt Pufferbudget ganz im Fenster liegt; die Stundenzahl steht in der Überschrift. Aufgeklappt stehen die Geldposten beider Betriebsarten nebeneinander und ein Diagramm, wie die Einspeisung ohne Optimierung aussähe.</p>

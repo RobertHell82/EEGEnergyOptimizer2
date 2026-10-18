@@ -104,14 +104,14 @@ Diese Karte zeigt in **Energie** statt in Geld, was ins Netz ging, woher es kam 
 |---|---|
 | **eingespeist** | Alles, was ins Netz ging |
 | **aus der Batterie** | Einspeisung in Viertelstunden **ohne PV-Leistung** (unter 50 W) — egal, ob die Optimierung dabei entladen hat. Darunter der Anteil an der gesamten Einspeisung |
-| **an die Gemeinschaft** | Anteil der Einspeisung, den der Bedarf deiner Energiegemeinschaft in derselben Viertelstunde aufnehmen konnte. Nur mit eingerichteter Gemeinschaft; im Quotenmodus mit „(Quote)“ — dann eine Annahme aus der Abnahmequote, keine Messung |
+| **bei Gemeinschaftsbedarf** | Anteil der Einspeisung in Viertelstunden, in denen deine Energiegemeinschaft laut PeakShare-Prognose unterversorgt war, höchstens ihr Restbedarf. Das ist **nicht** alles, was die Gemeinschaft aufnimmt: Auch wenn sie Überschuss hat, bekommt jeder Erzeuger anteilig etwas zugeteilt. Wie viel, lässt sich ohne ihre Verbrauchs- und Erzeugungsdaten nicht sagen, PeakShare liefert nur den Saldo. Nur mit eingerichteter Gemeinschaft; im Quotenmodus heißt die Kachel „an die Gemeinschaft (Quote)“ und folgt der Abnahmequote, eine Annahme, keine Messung |
 | **Erlös je kWh** | Einspeiseerlös geteilt durch die eingespeiste Energie — der Durchschnittspreis, den eine Kilowattstunde gebracht hat |
 | **Autarkie** | Anteil des Verbrauchs (Haus und Heizstab), der nicht aus dem Netz kam |
 | **Eigenverbrauch** | Anteil der erzeugten PV-Energie, der nicht ins Netz ging |
 
 Wo es sinnvoll ist, steht klein darunter der **Standardbetrieb** zum Vergleich („ohne Optimierung …“) — dieselbe Simulation wie beim Optimierungsgewinn, aber über die gemessenen Werte. Liegt der Vergleich nicht für alle Tage des Zeitraums vor, steht dort „an N Tagen: … statt …“: Ist- und Vergleichswert gelten dann für dieselben Tage.
 
-Das **Diagramm** zeigt die Einspeisung als gestapelte Balken — grün, was die Gemeinschaft genommen hat, grau der Rest zum Basistarif, der Batterie-Anteil orange schraffiert darüber. Heute je Viertelstunde, dahinter blassgrün die Viertelstunden, in denen die Gemeinschaft Bedarf hatte; im Monat je Tag, im Jahr je Monat, bei Gesamt je Jahr. Ein Tipp oder Klick auf einen Balken zeigt seine Werte darunter.
+Das **Diagramm** zeigt die Einspeisung als gestapelte Balken — grün die Einspeisung bei Gemeinschaftsbedarf, grau die übrige, der Batterie-Anteil orange schraffiert darüber. Heute je Viertelstunde, dahinter blassgrün die Viertelstunden, in denen die Gemeinschaft Bedarf hatte; im Monat je Tag, im Jahr je Monat, bei Gesamt je Jahr. Ein Tipp oder Klick auf einen Balken zeigt seine Werte darunter.
 
 _Der Batterie-Anteil und der Vergleich mit dem Standardbetrieb werden erst seit Version 2.1.26 aufgezeichnet; ältere Tage zählen nur zur Einspeisung, die Karte sagt das dazu. Der Sensor **Entladung ins Netz** zählt dagegen nur die Energie, die während einer gesteuerten Entladung ins Netz ging — eine andere Frage, deshalb eine andere Zahl._
 

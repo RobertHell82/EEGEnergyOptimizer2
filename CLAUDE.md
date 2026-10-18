@@ -433,9 +433,12 @@ the event loop is long enough for HA to flag a blocking call.
   decision 12.10.2026). Two switches, always flipped together: panel
   `NETZLADEN_SICHTBAR`, backend `schedule.NETZLADEN_FREIGEGEBEN` (gate in
   `netzladen_max_kw`) — hidden but active, a box ticked in a beta could not
-  be switched off. Off in the 2.1.43 release (guide section removed there
-  too), on again since 2.1.44-beta.1; the tests force it on via fixture and
-  pin the off state in `test_zurueckgezogen_wirkt_nicht`. What it does: the **Ladeziel may be reached with grid power, but
+  be switched off. **Off in stable releases, on in betas** (since 2.1.43):
+  a release flips both to false and removes the section „Batterie aus dem
+  Netz laden" from `docs/guides/tarife.md` (rebuild guides), the next beta
+  flips them back and restores the section from git. The tests force it on
+  via fixture and pin the off state in `test_zurueckgezogen_wirkt_nicht`.
+  What it does: the **Ladeziel may be reached with grid power, but
   only in slots where grid power is cheaper than what the battery replaces
   afterwards** — the load-weighted purchase price of the night after the PV
   end, compared per kWh after `ac_efficiency`², aging (`battery_cost`) and
