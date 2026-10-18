@@ -9811,7 +9811,7 @@ class EegOptimizerPanel extends HTMLElement {
     return `<svg data-cw="bar" viewBox="0 0 ${width} ${height}" style="width:100%;height:auto;">${yLines}${bars}${legend}</svg>`;
   }
 
-  _renderEnergyFlow(pvKw, batKw, gridKw, hausKw, socVal, ids = {}, heiz = null) {
+  _renderEnergyFlow(pvKw, batKw, gridKw, hausKw, socVal, ids = {}, heiz = null, hausGeklemmt = false) {
     // --- Decompose flows from the four signed values ---
     const pv = Math.max(pvKw, 0);
     const batCharge = Math.max(batKw, 0);          // battery charging (sink)
@@ -9838,9 +9838,12 @@ class EegOptimizerPanel extends HTMLElement {
     pvLeft -= pvToBat;
     const pvToGrid = Math.min(pvLeft, gridExport);
 
-    // Remaining demand on the house side
+    // Remaining demand on the house side. Der Netzanteil ist auf den
+    // gemessenen Bezug gedeckelt: Stammen die Werte aus verschiedenen
+    // Sekunden, bliebe sonst ein Rest, den Ring und Liste als Netzbezug
+    // zeigten, während der Netzkreis „Einspeisung" sagt.
     const hausFromBat = Math.min(haus - pvToHaus, batDischarge);
-    const hausFromGrid = Math.max(haus - pvToHaus - hausFromBat, 0);
+    const hausFromGrid = Math.min(Math.max(haus - pvToHaus - hausFromBat, 0), gridImport);
     // Rest des Heizstabs aus dem Netz — das gibt es nur beim Komfortheizen
     // unter der Mindesttemperatur. Aus der Batterie heizt die Steuerung nie,
     // deshalb gedeckelt auf den Bezug, der nach dem Haus übrig ist: sonst
@@ -9915,27 +9918,49 @@ class EegOptimizerPanel extends HTMLElement {
       return { x: n.cx + side * Math.sqrt(n.r * n.r - off * off), y: n.cy + off };
     };
     const r1 = v => Math.round(v * 10) / 10;
+    const strecke = (p, q) => Math.hypot(q.x - p.x, q.y - p.y);
+    // Liefert den Pfad und seine Länge in viewBox-Pixeln (für das Tempo
+    // der Punkte) aus derselben Geometrie.
     const bahnVon = (from, to) => {
       // Heizstab: gerade Linie von Kreisrand zu Kreisrand
       if (from.key === "heiz" || to.key === "heiz") {
         const dx = to.cx - from.cx, dy = to.cy - from.cy;
-        const len = Math.hypot(dx, dy) || 1;
-        const ux = dx / len, uy = dy / len;
-        return `M${r1(from.cx + ux * from.r)} ${r1(from.cy + uy * from.r)} L${r1(to.cx - ux * to.r)} ${r1(to.cy - uy * to.r)}`;
+        const abstand = Math.hypot(dx, dy) || 1;
+        const ux = dx / abstand, uy = dy / abstand;
+        const a = { x: from.cx + ux * from.r, y: from.cy + uy * from.r };
+        const b = { x: to.cx - ux * to.r, y: to.cy - uy * to.r };
+        return { d: `M${r1(a.x)} ${r1(a.y)} L${r1(b.x)} ${r1(b.y)}`, len: strecke(a, b) };
       }
       const a = port(from, to), b = port(to, from);
-      if (senkrecht(from) === senkrecht(to)) return `M${r1(a.x)} ${r1(a.y)} L${r1(b.x)} ${r1(b.y)}`;
+      if (senkrecht(from) === senkrecht(to)) {
+        return { d: `M${r1(a.x)} ${r1(a.y)} L${r1(b.x)} ${r1(b.y)}`, len: strecke(a, b) };
+      }
       // Eine Ecke mit Rundung: erst in Austrittsrichtung, dann abbiegen
       const c = senkrecht(from) ? { x: a.x, y: b.y } : { x: b.x, y: a.y };
       const p1 = { x: c.x - Math.sign(c.x - a.x) * RR, y: c.y - Math.sign(c.y - a.y) * RR };
       const p2 = { x: c.x + Math.sign(b.x - c.x) * RR, y: c.y + Math.sign(b.y - c.y) * RR };
-      return `M${r1(a.x)} ${r1(a.y)} L${r1(p1.x)} ${r1(p1.y)} Q${r1(c.x)} ${r1(c.y)} ${r1(p2.x)} ${r1(p2.y)} L${r1(b.x)} ${r1(b.y)}`;
+      // Die Rundung (quadratische Bézierkurve) über ein paar Stützpunkte
+      let kurve = 0, vor = p1;
+      for (let i = 1; i <= 8; i++) {
+        const t = i / 8, u = 1 - t;
+        const p = { x: u * u * p1.x + 2 * u * t * c.x + t * t * p2.x,
+                    y: u * u * p1.y + 2 * u * t * c.y + t * t * p2.y };
+        kurve += strecke(vor, p);
+        vor = p;
+      }
+      return {
+        d: `M${r1(a.x)} ${r1(a.y)} L${r1(p1.x)} ${r1(p1.y)} Q${r1(c.x)} ${r1(c.y)} ${r1(p2.x)} ${r1(p2.y)} L${r1(b.x)} ${r1(b.y)}`,
+        len: strecke(a, p1) + kurve + strecke(p2, b),
+      };
     };
 
     // --- Flow lines ---
     // Alle Verbindungen sind immer als dünne Spur da; aktive Flüsse
     // bekommen Farbe und wandernde Punkte in Flussrichtung. Batterie↔Netz
     // teilen sich eine Spur, die leere Spur wird nur einmal gezeichnet.
+    // Ausnahme Netz→Heizstab (nurAktiv): Den Bezug gibt es nur beim
+    // Komfortheizen, und seine Schräge kreuzt drei PV-Leitungen — als
+    // ständige graue Spur schnitte sie den ganzen Tag durchs Kreuz.
     const flows = [
       { from: positions.pv,    to: positions.house, value: pvToHaus,      color: "#FFC107" },
       { from: positions.pv,    to: positions.bat,   value: pvToBat,       color: "#FFC107" },
@@ -9946,44 +9971,34 @@ class EegOptimizerPanel extends HTMLElement {
       { from: positions.grid,  to: positions.bat,   value: batFromGrid,   color: "#F44336" },
       ...(heizAn ? [
         { from: positions.pv,   to: positions.heiz, value: pvToHeiz,     color: "#FFC107" },
-        { from: positions.grid, to: positions.heiz, value: heizFromGrid, color: "#F44336" },
+        { from: positions.grid, to: positions.heiz, value: heizFromGrid, color: "#F44336", nurAktiv: true },
       ] : []),
     ];
 
-    // Länge einer Bahn in viewBox-Pixeln: Geraden exakt, die Rundung der
-    // Ecke (quadratische Bézierkurve) über ein paar Stützpunkte.
-    const bahnLaenge = d => {
-      const z = d.match(/-?\d+(?:\.\d+)?/g).map(Number);
-      if (z.length === 4) return Math.hypot(z[2] - z[0], z[3] - z[1]);
-      const [ax, ay, p1x, p1y, cx, cy, p2x, p2y, bx, by] = z;
-      let kurve = 0, px = p1x, py = p1y;
-      for (let i = 1; i <= 8; i++) {
-        const t = i / 8, u = 1 - t;
-        const x = u * u * p1x + 2 * u * t * cx + t * t * p2x;
-        const y = u * u * p1y + 2 * u * t * cy + t * t * p2y;
-        kurve += Math.hypot(x - px, y - py);
-        px = x; py = y;
-      }
-      return Math.hypot(p1x - ax, p1y - ay) + kurve + Math.hypot(bx - p2x, by - p2y);
-    };
     // Bei „Bewegung reduzieren" gar keine Punkte anlegen statt sie nur
     // auszublenden — ausgeblendete SMIL-Animationen laufen weiter.
     const ruhig = !!window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
     // Fortschritt der Punkte je Fluss über das Neuzeichnen hinweg: Das Panel
     // baut das SVG bei jeder Sensoränderung neu, jedes neue SVG startet
     // seine Uhr bei 0, und mit der Leistung ändert sich das Tempo. Gemerkt
-    // wird, wo die Punkte standen; die neue Animation setzt dort an.
-    const jetzt = Date.now() / 1000;
-    const altePhasen = this._efPhasen || new Map();
+    // wird, wo die Punkte zur Zeit 0 des SVG standen; mit der Uhr des noch
+    // sichtbaren alten SVG ergibt das, wo sie jetzt stehen. Dessen Uhr statt
+    // der Wanduhr, weil sie im Hintergrund-Tab anhält — sonst sprängen die
+    // Punkte nach der Rückkehr. Ohne altes SVG (erster Aufbau, Werte-Ansicht)
+    // beginnen sie von vorn.
+    const altesSvg = this._shadow?.querySelector?.("svg.energy-flow-svg");
+    const svgZeit = typeof altesSvg?.getCurrentTime === "function" ? altesSvg.getCurrentTime() : null;
+    const altePhasen = svgZeit != null ? (this._efPhasen || new Map()) : new Map();
     const phasen = new Map();
 
     let activeLines = "";
     const spuren = new Map();
     flows.forEach(f => {
-      const bahn = bahnVon(f.from, f.to);
+      const { d: bahn, len } = bahnVon(f.from, f.to);
+      const aktiv = f.value > 0.02;
       const paar = [f.from.key, f.to.key].sort().join("-");
-      if (!spuren.has(paar)) spuren.set(paar, bahn);
-      if (!(f.value > 0.02)) return;
+      if (!spuren.has(paar) && (aktiv || !f.nurAktiv)) spuren.set(paar, bahn);
+      if (!aktiv) return;
       const sw = Math.min(Math.max(2, f.value * 0.7), 4.5);
       activeLines += `<path class="flow-line" d="${bahn}" stroke="${f.color}" stroke-width="${sw}" stroke-opacity="0.45" fill="none"/>`;
       if (ruhig) return;
@@ -9993,19 +10008,18 @@ class EegOptimizerPanel extends HTMLElement {
       // schneller. SMIL statt CSS-offset-path, weil iOS Safari das
       // zuverlässig kann. Ohne Filter: Weichzeichner auf bewegten Punkten
       // zeichnet jedes Bild neu, auf einem Wandtablet den ganzen Tag.
-      const len = bahnLaenge(bahn);
-      const tempo = Math.min(Math.max(55 + 35 * f.value, 55), 180);
+      const tempo = Math.min(55 + 35 * f.value, 180);
       const dur = len / tempo;
       const schluessel = `${f.from.key}-${f.to.key}`;
       const alt = altePhasen.get(schluessel);
-      const fortschritt = alt ? (alt.fortschritt + (jetzt - alt.zeit) / alt.dur) % 1 : 0;
-      phasen.set(schluessel, { fortschritt, zeit: jetzt, dur });
+      const fortschritt = alt ? (alt.fortschritt + svgZeit / alt.dur) % 1 : 0;
+      phasen.set(schluessel, { fortschritt, dur });
       // Ein Punkt je rund 70 px, damit lange Bahnen nicht leer wirken und
       // kurze nicht überladen
       const n = Math.max(2, Math.round(len / 70));
       for (let k = 0; k < n; k++) {
         const begin = -((fortschritt + k / n) % 1) * dur;
-        activeLines += `<circle class="ef-dot" r="${(sw / 2 + 1.2).toFixed(1)}" fill="${f.color}">
+        activeLines += `<circle r="${(sw / 2 + 1.2).toFixed(1)}" fill="${f.color}">
           <animateMotion dur="${dur.toFixed(3)}s" begin="${begin.toFixed(3)}s" repeatCount="indefinite" path="${bahn}"/>
         </circle>`;
       }
@@ -10057,8 +10071,11 @@ class EegOptimizerPanel extends HTMLElement {
       }
       // Titel wie bei HA außerhalb: PV darüber, alle anderen darunter
       const titleY = pos.key === "pv" ? cy - r - 9 : cy + r + 17;
+      // Schein um aktive Kreise als breiter, blasser Rand statt
+      // Weichzeichner: das SVG wird bei jeder Sensoränderung neu gebaut, ein
+      // Filter jedes Mal neu gerastert.
       return `<g class="ef-node" opacity="${opacity}" ${clickable}>
-        ${active ? `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${accent}" stroke-width="4" opacity="0.5" filter="url(#ef-blur)"/>` : ""}
+        ${active ? `<circle cx="${cx}" cy="${cy}" r="${r + 4}" fill="none" stroke="${accent}" stroke-width="7" stroke-opacity="0.14"/>` : ""}
         <circle cx="${cx}" cy="${cy}" r="${r}" fill="var(--card-background-color, #fff)"/>
         <circle cx="${cx}" cy="${cy}" r="${r}" fill="${accent}" fill-opacity="${active ? 0.1 : 0.04}"/>
         ${rand}
@@ -10074,7 +10091,8 @@ class EegOptimizerPanel extends HTMLElement {
 
     // Battery — Rand zeigt den Ladestand, Unterzeile Lade-/Entladeleistung
     const soc = socVal != null && isFinite(Number(socVal)) ? Number(socVal) : null;
-    let batMain = soc != null ? `${socVal} %` : "—";
+    // Gerundet wie in der Werte-Ansicht — der Sensor liefert auch 67.300003
+    let batMain = soc != null ? `${Math.round(soc)} %` : "—";
     let batSub = "Idle";
     let batAccent = "#9E9E9E";
     if (batCharge > 0.02) {
@@ -10089,14 +10107,19 @@ class EegOptimizerPanel extends HTMLElement {
                          { subColor: batAktiv ? batAccent : null,
                            ring: soc != null ? [{ anteil: soc / 100, color: batAccent }] : null });
 
-    // House — Rand zeigt, woher der Verbrauch gerade kommt. Die drei Anteile
-    // ergeben zusammen den Hausverbrauch, weil der Netzanteil den Rest deckt.
+    // House — Rand zeigt, woher der Verbrauch gerade kommt. Geht die Bilanz
+    // nicht auf (Werte aus verschiedenen Sekunden), bleibt ein Teil blass:
+    // eine Herkunft, die die Messung nicht hergibt, wird nicht erfunden.
     const hausRing = haus > 0.02 ? [
       { anteil: pvToHaus / haus, color: "#FFC107" },
       { anteil: hausFromBat / haus, color: "#FF9800" },
       { anteil: hausFromGrid / haus, color: "#F44336" },
     ] : null;
-    const houseNode = node(positions.house, ICON_PATHS.home, "Haus", `${fmtDe(haus, 2)} kW`, "", "#2196F3", haus > 0.02, ids.hausEntity,
+    // Auf 0 begrenzt (bilanz_unvollstaendig): Stern wie in der Werte-Ansicht
+    // und ein sichtbarer Hinweis im Kreis, denn ein Tooltip erreicht Touch
+    // nicht — diese 0 ist eine Grenze, kein Messwert.
+    const houseNode = node(positions.house, ICON_PATHS.home, hausGeklemmt ? "Haus *" : "Haus", `${fmtDe(haus, 2)} kW`,
+                           hausGeklemmt ? "begrenzt" : "", "#2196F3", haus > 0.02, ids.hausEntity,
                            { ring: hausRing });
 
     // Grid
@@ -10127,12 +10150,7 @@ class EegOptimizerPanel extends HTMLElement {
              "#c62828", heizKw > 0.02, ids.heizEntity)
       : "";
 
-    // ef-blur: weicher Schein um aktive Kreise (steht still, wird nur
-    // einmal gezeichnet).
     return `<svg class="energy-flow-svg${narrow ? " narrow" : ""}" viewBox="0 0 ${W} ${H}">
-      <defs>
-        <filter id="ef-blur" x="-30%" y="-30%" width="160%" height="160%"><feGaussianBlur stdDeviation="5"/></filter>
-      </defs>
       ${inactiveLines}
       ${activeLines}
       ${pvNode}
@@ -10780,7 +10798,7 @@ class EegOptimizerPanel extends HTMLElement {
           ${this._statusViewVariant === "flow"
             ? this._renderEnergyFlow(pvKw, batKw, gridKw, hausKw, socVal,
                 {pvEntity, batEntity, gridEntity, hausEntity, socEntity, heizEntity},
-                heizAktiv ? { kw: heizKw, tempC: heizTempC } : null)
+                heizAktiv ? { kw: heizKw, tempC: heizTempC } : null, hausGeklemmt)
             : `<div class="header-grid">
                 <div class="hlv${pvEntity ? " hlv-clickable" : ""}" ${pvEntity ? `data-action="show-entity" data-entity="${pvEntity}"` : ""}><span class="hlv-label">PV</span><span class="hlv-val val-green">${fmtDe(pvKw, 2)} kW</span></div>
                 <div class="hlv${batEntity ? " hlv-clickable" : ""}" ${batEntity ? `data-action="show-entity" data-entity="${batEntity}"` : ""}><span class="hlv-label">Batterie</span><span class="hlv-val ${batColor}">${fmtDe(Math.abs(batKw), 2)} kW <small>(${batLabel})</small></span></div>
