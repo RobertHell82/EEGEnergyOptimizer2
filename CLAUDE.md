@@ -214,7 +214,12 @@ three intents. `Fahrplan-Status` shows what actually happened:
   100 % is a release instead (`_laedt_alles`, reason
   „Normalbetrieb (Plan lädt den ganzen Überschuss)“, 2.1.41): a cap at the
   planned power sent every kW above the forecast into the grid, and Guard 1
-  never lifts it below the export limit (Winterthur 09.10.2026).
+  never lifts it below the export limit (Winterthur 09.10.2026). Likewise a
+  slot that plans **no** battery power, no export, no heat, no curtailment
+  and expects no PV surplus (`PV ≤ consumption`, `_ohne_ueberschuss`) is a
+  release („Normalbetrieb (kein PV-Überschuss)“): a charge limit 0 there
+  protected nothing but blocked foreign grid charging (EMMA) at night and on
+  dull afternoons (Winterthur, October 2026).
 - **Netzladung x kW bis y %** — beta, Huawei only: the slot charges more than
   PV delivers, so the battery is force-charged with the planned charge power
   (PV first, the rest from the grid) up to the plan's slot-end SOC.

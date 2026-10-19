@@ -91,6 +91,9 @@ _EPS_KW = 0.001
 RELEASE_GRUND_BATTERIE_VOLL = "Normalbetrieb (Batterie voll)"
 # Freigabe, weil der Slot den ganzen Überschuss laden will (``_laedt_alles``).
 RELEASE_GRUND_ALLES_LADEN = "Normalbetrieb (Plan lädt den ganzen Überschuss)"
+# Freigabe, weil der Slot gar keinen PV-Überschuss erwartet
+# (``_ohne_ueberschuss``) — ein Ladelimit 0 schützte dort nichts.
+RELEASE_GRUND_KEIN_UEBERSCHUSS = "Normalbetrieb (kein PV-Überschuss)"
 # Geplante Einspeisung bis hierher gilt als LP-Rauschen, nicht als Absicht.
 _ALLES_LADEN_EXPORT_KW = 0.05
 # Unter dieser Entladeleistung lohnt keine erzwungene Entladung — die
@@ -164,6 +167,32 @@ def _laedt_alles(slot: dict, result: dict | None, grid_p: float) -> bool:
     except (TypeError, ValueError):
         return False
     return deckel >= 100.0
+
+
+def _ohne_ueberschuss(slot: dict, grid_p: float) -> bool:
+    """Erwartet der Slot keinen PV-Überschuss, den ein Ladelimit lenken müsste?
+
+    Das Ladelimit 0 eines Slots ohne Laden hält Überschuss für die geplante
+    Einspeisung frei. Ohne Überschuss (Nacht, trüber Nachmittag) hält es
+    nichts frei, sperrt aber jedes Laden, das ein anderer Regler auslöst —
+    eine Anlage mit EMMA, die nachts aus dem Netz laden sollte, endete so
+    immer wieder bei „Laden blockiert" (Winterthur, Oktober 2026). Die
+    Entladung fürs Haus ist in beiden Fällen dieselbe. Fehlt die PV-Spalte
+    (Altplan), bleibt es beim Ladelimit.
+    """
+    if grid_p > _ALLES_LADEN_EXPORT_KW:
+        return False
+    try:
+        if float(slot.get("heizstab") or 0.0) > _EPS_KW:
+            return False
+        if float(slot.get("discard") or 0.0) > _EPS_KW:
+            return False
+        pv = slot.get("PV")
+        if pv is None:
+            return False
+        return float(pv) <= float(slot.get("consumption") or 0.0)
+    except (TypeError, ValueError):
+        return False
 
 
 def plan_action(result: dict | None, now: datetime) -> PlanAction | None:
@@ -253,6 +282,13 @@ def plan_action(result: dict | None, now: datetime) -> PlanAction | None:
             slot_t=slot_t,
             consumption_kw=consumption,
             reason=RELEASE_GRUND_BATTERIE_VOLL,
+        )
+    if _ohne_ueberschuss(slot, grid_p):
+        return PlanAction(
+            "release",
+            slot_t=slot_t,
+            consumption_kw=consumption,
+            reason=RELEASE_GRUND_KEIN_UEBERSCHUSS,
         )
     # Batterie hat Platz: Freigeben wäre falsch — der Automatikmodus würde
     # PV-Überschuss in die Batterie laden, den der Plan einspeisen will

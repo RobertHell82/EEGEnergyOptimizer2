@@ -155,6 +155,32 @@ def test_kein_laden_geplant_blockiert_das_laden():
     assert noise.power_kw == 0.0
 
 
+def test_ohne_pv_ueberschuss_freigeben():
+    """Nacht oder trüber Nachmittag: kein Überschuss, den ein Ladelimit 0
+    freihalten müsste — es sperrte nur fremdes Netzladen (EMMA)."""
+    nacht = {**_slot(0, battery_p=0.0, grid_p=0.0, consumption=0.6), "PV": 0.0}
+    action = plan_action({"slots": [nacht]}, NOW)
+    assert action.kind == "release"
+    assert action.reason == sx.RELEASE_GRUND_KEIN_UEBERSCHUSS
+
+    # PV knapp unter dem Hausverbrauch: ebenfalls kein Überschuss
+    trueb = {**_slot(0, battery_p=0.0, grid_p=0.0, consumption=1.2), "PV": 0.9}
+    assert plan_action({"slots": [trueb]}, NOW).kind == "release"
+
+
+def test_mit_pv_ueberschuss_bleibt_das_ladelimit():
+    # Überschuss ohne geplante Einspeisung (z. B. abgeregelt/Heizstab) oder
+    # mit Einspeisung: weiter Ladelimit 0
+    sonnig = {**_slot(0, battery_p=0.0, grid_p=0.0, consumption=0.6), "PV": 2.0}
+    assert plan_action({"slots": [sonnig]}, NOW).kind == "charge_limit"
+    einspeisen = {**_slot(0, battery_p=0.0, grid_p=0.3, consumption=0.6), "PV": 0.2}
+    assert plan_action({"slots": [einspeisen]}, NOW).kind == "charge_limit"
+    heizen = {**_slot(0, battery_p=0.0, grid_p=0.0, consumption=0.6, heizstab=0.5), "PV": 0.4}
+    assert plan_action({"slots": [heizen]}, NOW).kind == "charge_limit"
+    # Altplan ohne PV-Spalte: wie bisher
+    assert plan_action({"slots": [_slot(0, battery_p=0.0, grid_p=0.0)]}, NOW).kind == "charge_limit"
+
+
 def test_einspeisung_aus_der_batterie_wird_entladung():
     """battery_p > 0 und grid_p > 0 → Entladung; Ziel-SOC ist der Wert des
     LAUFENDEN Slots (Zustand am Slot-Ende), nicht der des Folge-Slots."""
