@@ -9987,21 +9987,12 @@ class EegOptimizerPanel extends HTMLElement {
       ] : []),
     ];
 
-    // Bei „Bewegung reduzieren" gar keine Punkte anlegen statt sie nur
-    // auszublenden — ausgeblendete SMIL-Animationen laufen weiter.
+    // Bei „Bewegung reduzieren" gar keine Punkte anlegen.
     const ruhig = !!window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
-    // Fortschritt der Punkte je Fluss über das Neuzeichnen hinweg: Das Panel
-    // baut das SVG bei jeder Sensoränderung neu, jedes neue SVG startet
-    // seine Uhr bei 0, und mit der Leistung ändert sich das Tempo. Gemerkt
-    // wird, wo die Punkte zur Zeit 0 des SVG standen; mit der Uhr des noch
-    // sichtbaren alten SVG ergibt das, wo sie jetzt stehen. Dessen Uhr statt
-    // der Wanduhr, weil sie im Hintergrund-Tab anhält — sonst sprängen die
-    // Punkte nach der Rückkehr. Ohne altes SVG (erster Aufbau, Werte-Ansicht)
-    // beginnen sie von vorn.
-    const altesSvg = this._shadow?.querySelector?.("svg.energy-flow-svg");
-    const svgZeit = typeof altesSvg?.getCurrentTime === "function" ? altesSvg.getCurrentTime() : null;
-    const altePhasen = svgZeit != null ? (this._efPhasen || new Map()) : new Map();
-    const phasen = new Map();
+    // Die Punkte bewegt _efAnimiere() per JavaScript, nicht SMIL: Das
+    // Panel baut das SVG bei jeder Sensoränderung neu, und iOS Safari
+    // startet die Animationen eines frisch eingesetzten SVG nicht
+    // verlässlich — die Punkte blieben links oben am Nullpunkt stehen.
 
     let activeLines = "";
     const spuren = new Map();
@@ -10012,31 +10003,25 @@ class EegOptimizerPanel extends HTMLElement {
       if (!spuren.has(paar) && (aktiv || !f.nurAktiv)) spuren.set(paar, bahn);
       if (!aktiv) return;
       const sw = Math.min(Math.max(2, f.value * 0.7), 4.5);
-      activeLines += `<path class="flow-line" d="${bahn}" stroke="${f.color}" stroke-width="${sw}" stroke-opacity="0.45" fill="none"/>`;
+      activeLines += `<path class="flow-line" data-fluss="${f.from.key}-${f.to.key}" d="${bahn}" stroke="${f.color}" stroke-width="${sw}" stroke-opacity="0.45" fill="none"/>`;
       if (ruhig) return;
       // Wandernde Punkte zeigen die Richtung; je mehr Leistung, desto
       // schneller. Das Tempo ist in Pixel je Sekunde festgelegt, nicht als
       // Dauer je Bahn — sonst wirkten lange Bahnen bei gleicher Leistung
-      // schneller. SMIL statt CSS-offset-path, weil iOS Safari das
-      // zuverlässig kann. Ohne Filter: Weichzeichner auf bewegten Punkten
+      // schneller. Ohne Filter: Weichzeichner auf bewegten Punkten
       // zeichnet jedes Bild neu, auf einem Wandtablet den ganzen Tag.
       const tempo = Math.min(55 + 35 * f.value, 180);
       const dur = len / tempo;
-      const schluessel = `${f.from.key}-${f.to.key}`;
-      const alt = altePhasen.get(schluessel);
-      const fortschritt = alt ? (alt.fortschritt + svgZeit / alt.dur) % 1 : 0;
-      phasen.set(schluessel, { fortschritt, dur });
+      const start = bahn.match(/^M(\S+) (\S+)/);
       // Ein Punkt je rund 70 px, damit lange Bahnen nicht leer wirken und
       // kurze nicht überladen
       const n = Math.max(2, Math.round(len / 70));
       for (let k = 0; k < n; k++) {
-        const begin = -((fortschritt + k / n) % 1) * dur;
-        activeLines += `<circle r="${(sw / 2 + 1.2).toFixed(1)}" fill="${f.color}">
-          <animateMotion dur="${dur.toFixed(3)}s" begin="${begin.toFixed(3)}s" repeatCount="indefinite" path="${bahn}"/>
-        </circle>`;
+        activeLines += `<circle class="ef-punkt" r="${(sw / 2 + 1.2).toFixed(1)}" fill="${f.color}" cx="${start[1]}" cy="${start[2]}"
+          data-fluss="${f.from.key}-${f.to.key}" data-dur="${dur.toFixed(3)}" data-versatz="${(k / n).toFixed(4)}"/>`;
       }
     });
-    this._efPhasen = phasen;
+    if (activeLines.includes("ef-punkt")) this._efAnimiere();
 
     // Leistung je Leitung als Text unter dem Diagramm: ein <title> zeigt
     // sich auf Touch-Geräten nie, und Beschriftungen auf den Leitungen
@@ -11715,6 +11700,51 @@ class EegOptimizerPanel extends HTMLElement {
     if ((this._view === "wizard" || this._view === "settings") && this._hass) {
       requestAnimationFrame(() => this._bindEntityPickers());
     }
+  }
+
+  // Bewegt die Punkte im Energieflussdiagramm (siehe _renderEnergyFlow).
+  // Die Lage eines Punkts hängt nur von der Uhr und seinem Fluss ab, darum
+  // laufen die Punkte über das Neuzeichnen hinweg ruhig weiter; ändert
+  // sich mit der Leistung das Tempo, geht es von der aktuellen Stelle aus
+  // weiter. Rund 30 Bilder je Sekunde reichen und schonen Wandtablets.
+  _efAnimiere() {
+    if (this._efRaf) return;
+    let zuletzt = 0;
+    const schritt = jetzt => {
+      this._efRaf = null;
+      const punkte = this._shadow?.querySelectorAll?.("circle.ef-punkt");
+      if (!punkte || !punkte.length || !this.isConnected) { this._efFluesse = null; return; }
+      this._efRaf = requestAnimationFrame(schritt);
+      if (jetzt - zuletzt < 30) return;
+      zuletzt = jetzt;
+      const t = jetzt / 1000;
+      const fluesse = this._efFluesse || (this._efFluesse = new Map());
+      const gesehen = new Set();
+      const bahnen = new Map();
+      punkte.forEach(c => {
+        const key = c.dataset.fluss, dur = +c.dataset.dur || 1;
+        gesehen.add(key);
+        let fl = fluesse.get(key);
+        if (!fl) fluesse.set(key, fl = { f0: 0, t0: t, dur });
+        else if (fl.dur !== dur) {
+          fl.f0 = (fl.f0 + (t - fl.t0) / fl.dur) % 1;
+          fl.t0 = t;
+          fl.dur = dur;
+        }
+        const anteil = (fl.f0 + (t - fl.t0) / fl.dur + (+c.dataset.versatz || 0)) % 1;
+        let b = bahnen.get(key);
+        if (!b) {
+          const el = this._shadow.querySelector(`path.flow-line[data-fluss="${key}"]`);
+          if (!el) return;
+          bahnen.set(key, b = { el, len: el.getTotalLength() });
+        }
+        const pt = b.el.getPointAtLength(anteil * b.len);
+        c.setAttribute("cx", pt.x.toFixed(1));
+        c.setAttribute("cy", pt.y.toFixed(1));
+      });
+      fluesse.forEach((_, k) => { if (!gesehen.has(k)) fluesse.delete(k); });
+    };
+    this._efRaf = requestAnimationFrame(schritt);
   }
 
   disconnectedCallback() {
