@@ -10,6 +10,16 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
+## [2.1.45] - 2026-10-19
+
+### Behoben
+
+- **Kein „Laden blockiert“ mehr, wenn gar keine Sonne da ist.** Plante eine Viertelstunde weder Laden noch Entladen, setzte die Steuerung das Ladelimit auf 0, damit PV-Überschuss ins Netz geht statt in die Batterie. Nachts und an trüben Nachmittagen gibt es aber keinen Überschuss: Das Limit hielt dort nichts frei und sperrte nur jedes Laden, das ein anderer Regler auslöst. Eine Anlage in Winterthur mit Huawei EMMA, die an trüben Tagen nachts aus dem Netz laden sollte, endete so immer wieder bei „Laden blockiert“; der Betreiber musste die Erweiterung dafür pausieren. Erwartet eine Viertelstunde laut Prognose keinen PV-Überschuss und plant sie weder Einspeisung noch Heizstab, gibt die Steuerung jetzt frei („Normalbetrieb (kein PV-Überschuss)“). Die Entladung fürs Haus ist dieselbe wie vorher.
+
+### Geändert
+
+- **„Batterie aus dem Netz laden“ bleibt den Betas vorbehalten**, im Release ausgeblendet und ohne Wirkung.
+
 ## [2.1.45-beta.1] - 2026-10-18
 
 ### Geändert
