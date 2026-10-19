@@ -10,6 +10,16 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
+## [2.1.46] - 2026-10-19
+
+### Behoben
+
+- **Die Punkte im Energieflussdiagramm laufen auch auf iPhones, auf denen sie stehen blieben.** Auf einem iPhone lief kein Punkt, einer klebte links oben in der Ecke des Diagramms; auf anderen iPhones lief alles. Das Panel baut das Diagramm bei jeder Sensoränderung neu, und die SVG-Animationen (SMIL) des frisch eingesetzten Diagramms starteten dort nicht. Die Punkte bewegt jetzt ein eigenes Skript mit rund 30 Bildern je Sekunde; neue Punkte beginnen am Anfang ihrer Leitung statt in der Ecke, und beim Neuzeichnen laufen sie weiter, wo sie waren. Beitrag von andi-arbeit-agent (#4).
+
+### Geändert
+
+- **„Batterie aus dem Netz laden“ bleibt den Betas vorbehalten**, im Release ausgeblendet und ohne Wirkung.
+
 ## [2.1.46-beta.1] - 2026-10-19
 
 ### Geändert
