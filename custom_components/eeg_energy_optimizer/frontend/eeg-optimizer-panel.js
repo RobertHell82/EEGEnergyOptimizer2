@@ -713,6 +713,11 @@ class EegOptimizerPanel extends HTMLElement {
     // heute). Wird per Tipp auf die Legende gesetzt.
     this._profilHighlight = null;
     this._schedScrub = false;
+    // Ausschnitt der Zeitachse im Optimierungsplan ({von, bis} in ms) —
+    // null zeigt den ganzen Plan. Flüchtig: beim Umstellen von Plan oder
+    // Verlauf geht er zurück auf alles.
+    this._schedZoom = null;
+    this._schedGeste = null;
     this._prerequisites = null;
     this._detectedSensors = null;
     this._wizardLoading = false;
@@ -807,6 +812,10 @@ class EegOptimizerPanel extends HTMLElement {
     // Optimierung" (Auf/Zu bleibt gespeichert), die Geld-Details flüchtig.
     this._gewinnOpen = this._loadPref("gewinn_open", "1", ["0", "1"]) === "1";
     this._gewinnDetailsOpen = false;
+    // Karten „Einspeisung" und „Prognosevergleich" lassen sich zuklappen
+    // wie der Optimierungsgewinn; Auf/Zu bleibt gespeichert.
+    this._einspeisungOpen = this._loadPref("einspeisung_open", "1", ["0", "1"]) === "1";
+    this._vergleichOpen = this._loadPref("vergleich_open", "1", ["0", "1"]) === "1";
     this._lastScheduleReload = 0;
     this._lastPeakshareReload = 0;
 
@@ -951,6 +960,9 @@ class EegOptimizerPanel extends HTMLElement {
     // Finger jedes Mal neu bestimmt).
     this._shadow.addEventListener("pointerdown", (e) => {
       if (e.pointerType === "mouse") return;
+      // Zwei Finger im Optimierungsplan zoomen die Zeitachse — dann kein
+      // Werte-Zeiger.
+      if (this._schedGesteStart(e)) return;
       const hit = e.target.closest?.(".sched-hit");
       if (hit) { this._schedScrub = true; this._showSchedTooltip(hit, e); return; }
       // Daneben tippen raeumt die Werteanzeige wieder ab.
@@ -958,7 +970,9 @@ class EegOptimizerPanel extends HTMLElement {
     }, { passive: true });
 
     this._shadow.addEventListener("pointermove", (e) => {
-      if (!this._schedScrub || e.pointerType === "mouse") return;
+      if (e.pointerType === "mouse") return;
+      if (this._schedGesteBewegen(e)) return;
+      if (!this._schedScrub) return;
       const el = this._shadow.elementFromPoint
         ? this._shadow.elementFromPoint(e.clientX, e.clientY)
         : document.elementFromPoint(e.clientX, e.clientY);
@@ -966,9 +980,39 @@ class EegOptimizerPanel extends HTMLElement {
       if (hit) this._showSchedTooltip(hit, e);
     }, { passive: true });
 
-    const scrubEnde = () => { this._schedScrub = false; };
+    const scrubEnde = (e) => {
+      this._schedScrub = false;
+      this._schedGesteEnde(e);
+    };
     this._shadow.addEventListener("pointerup", scrubEnde, { passive: true });
     this._shadow.addEventListener("pointercancel", scrubEnde, { passive: true });
+
+    // Am PC: Trackpad-Pinch kommt als Rad mit Strg (ebenso Strg + Mausrad)
+    // und zoomt; gezoomt schiebt waagrechtes Wischen bzw. Umschalt + Rad den
+    // Ausschnitt. Ein normales Mausrad blättert weiter die Seite.
+    this._shadow.addEventListener("wheel", (e) => {
+      const svg = e.target.closest?.('svg[data-cw="sched"]');
+      const g = this._schedGeo;
+      if (!svg || !g) return;
+      const quer = Math.abs(e.deltaX) > Math.abs(e.deltaY);
+      if (!e.ctrlKey && !(this._schedZoom && (quer || e.shiftKey))) return;
+      e.preventDefault();
+      const r = svg.getBoundingClientRect();
+      const einheit = g.W / (r.width || g.W);
+      const anteil = ((e.clientX - r.left) * einheit - g.padL) / g.plotW;
+      let { von, breite } = this._schedAusschnitt();
+      if (e.ctrlKey) {
+        const anker = von + anteil * breite;
+        breite *= Math.exp(e.deltaY * 0.01);
+        von = anker - anteil * breite;
+      } else {
+        von += ((quer ? e.deltaX : e.deltaY) * einheit / g.plotW) * breite;
+      }
+      this._schedZoomSetzen(von, breite);
+      this._schedZoomZeichnen();
+      clearTimeout(this._schedRadTimer);
+      this._schedRadTimer = setTimeout(() => this._render(), 250);
+    }, { passive: false });
 
     // Beim Blaettern die Werteanzeige abraeumen: sonst bleibt sie an einer
     // Stelle stehen, die nicht mehr zum Diagramm darunter passt.
@@ -1299,6 +1343,7 @@ class EegOptimizerPanel extends HTMLElement {
       this._render();
       return;
     }
+    this._schedZoom = null;
     if (art === "plan") {
       this._schedPlanRange = wert;
       this._savePref("sched_plan_h", wert);
@@ -1788,6 +1833,10 @@ class EegOptimizerPanel extends HTMLElement {
       case "sched-serien-alle":
         this._schedSerienAlleZeigen();
         break;
+      case "sched-zoom-reset":
+        this._schedZoom = null;
+        this._render();
+        break;
       case "toggle-settings-feature": {
         const feat = dataset?.feature;
         if (feat) {
@@ -2192,6 +2241,16 @@ class EegOptimizerPanel extends HTMLElement {
       case "toggle-gewinn-karte":
         this._gewinnOpen = !this._gewinnOpen;
         this._savePref("gewinn_open", this._gewinnOpen ? "1" : "0");
+        this._render();
+        break;
+      case "toggle-einspeisung-karte":
+        this._einspeisungOpen = !this._einspeisungOpen;
+        this._savePref("einspeisung_open", this._einspeisungOpen ? "1" : "0");
+        this._render();
+        break;
+      case "toggle-vergleich-karte":
+        this._vergleichOpen = !this._vergleichOpen;
+        this._savePref("vergleich_open", this._vergleichOpen ? "1" : "0");
         this._render();
         break;
       case "refresh-archiv":
@@ -3401,15 +3460,19 @@ class EegOptimizerPanel extends HTMLElement {
     const r = hit.getBoundingClientRect();
     const wr = wrapper.getBoundingClientRect();
     const tw = tt.offsetWidth || 0;
-    const th = tt.offsetHeight || 0;
-    // Waagrecht am Slot, aber innerhalb der Karte gehalten.
-    const cx = r.left - wr.left + r.width / 2;
-    const minX = tw / 2 + 4;
-    const maxX = Math.max(minX, wr.width - tw / 2 - 4);
-    tt.style.left = `${Math.min(Math.max(cx, minX), maxX)}px`;
-    // Senkrecht am Zeiger; oben kein Platz -> unter den Zeiger klappen.
-    const cy = (ev && ev.clientY != null ? ev.clientY : r.top) - wr.top;
-    tt.style.top = `${cy - th - 12 < 0 ? cy + th + 16 : cy - 12}px`;
+    // Neben die Zeigerlinie statt mittig darüber, auf der Seite mit mehr
+    // Platz, und oben an den Feldrand statt auf Fingerhöhe: Linie, Punkt
+    // und die Kurven daneben bleiben sichtbar, der Finger verdeckt nichts.
+    // Mittig über dem Zeitpunkt deckte das Fenster genau die Stelle zu, die
+    // man gerade lesen wollte.
+    const sr = svg ? svg.getBoundingClientRect() : r;
+    const massstab = svg?.viewBox?.baseVal?.width ? sr.width / svg.viewBox.baseVal.width : 1;
+    const linieX = d.cx ? sr.left - wr.left + Number(d.cx) * massstab
+      : r.left - wr.left + r.width / 2;
+    const abstand = 12;
+    const links = linieX < wr.width / 2 ? linieX + abstand : linieX - abstand - tw;
+    tt.style.left = `${Math.min(Math.max(links, 4), Math.max(4, wr.width - tw - 4))}px`;
+    tt.style.top = `${r.top - wr.top}px`;
   }
 
   _renderSchedule() {
@@ -3486,6 +3549,13 @@ class EegOptimizerPanel extends HTMLElement {
     const t0 = hist ? Math.min(hist.startMs, slotT[0]) : slotT[0];
     const t1 = Math.max(slotT[slotT.length - 1] + resMs, hist ? hist.endMs : 0);
     const span = Math.max(resMs, t1 - t0);
+    // Gezoomt zeichnet die Achse nur den Ausschnitt; alles darüber hinaus
+    // schneidet der clipPath ab. Mindestens zwei Stunden, sonst stehen nur
+    // noch acht Viertelstunden quer über dem Handy.
+    const zoomMin = Math.min(span, Math.max(4 * resMs, 2 * 3600000));
+    const zoom = this._schedZoomKlemmen(this._schedZoom, t0, t1, zoomMin);
+    const vt0 = zoom ? zoom.von : t0;
+    const vspan = zoom ? zoom.bis - zoom.von : span;
 
     // --- Skalierung -----------------------------------------------------
     // Ein SVG, zwei Felder: oben die Leistungen (kW, Null in der Mitte) und
@@ -3647,8 +3717,10 @@ class EegOptimizerPanel extends HTMLElement {
     const negAnteil = Math.min(0.5, maxNeg / (maxPos + maxNeg));
     const zeroY = padT + plotH * (1 - negAnteil);
 
-    const x = (t) => padL + (plotW * (t - t0)) / span;
-    const xw = (ms) => (plotW * ms) / span;
+    const x = (t) => padL + (plotW * (t - vt0)) / vspan;
+    const xw = (ms) => (plotW * ms) / vspan;
+    // Für die Gesten: wie Zeit und SVG-Einheiten zusammenhängen.
+    this._schedGeo = { t0, t1, vt0, vspan, padL, plotW, W, zoomMin };
     const y = (kw) => kw >= 0
       ? zeroY - (kw / maxPos) * (zeroY - padT)
       : zeroY + (-kw / maxNeg) * (padT + plotH - zeroY);
@@ -3813,14 +3885,17 @@ class EegOptimizerPanel extends HTMLElement {
     // einmal unten. Das bindet die Felder optisch zusammen. Der Abstand
     // richtet sich nach der Breite: mit Rückblick wird die Achse länger, alle
     // 6 h wäre dann Beschriftungssalat.
-    const stepH = xw(6 * 3600000) >= 55 ? 6 : 12;
+    // Gezoomt dürfen die Marken dichter stehen, bis hinunter zur Stunde.
+    const stepH = zoom
+      ? ([1, 2, 3, 6].find(h => xw(h * 3600000) >= 55) || 12)
+      : (xw(6 * 3600000) >= 55 ? 6 : 12);
     let xLabels = "";
-    const marke = new Date(t0);
+    const marke = new Date(vt0);
     marke.setMinutes(0, 0, 0);
-    while (marke.getHours() % stepH !== 0 || marke.getTime() < t0) {
+    while (marke.getHours() % stepH !== 0 || marke.getTime() < vt0) {
       marke.setHours(marke.getHours() + 1);
     }
-    for (let dt = marke; dt.getTime() <= t1; dt.setHours(dt.getHours() + stepH)) {
+    for (let dt = marke; dt.getTime() <= vt0 + vspan; dt.setHours(dt.getHours() + stepH)) {
       const px = x(dt.getTime()).toFixed(1);
       const mitternacht = dt.getHours() === 0;
       xLabels += `<line x1="${px}" y1="${padT}" x2="${px}" y2="${socBottom.toFixed(1)}" stroke="var(--divider-color,#e0e0e0)" stroke-width="${mitternacht ? 1 : 0.7}" stroke-dasharray="2 3"/>`;
@@ -3837,7 +3912,7 @@ class EegOptimizerPanel extends HTMLElement {
 
     // Trennlinie „jetzt" — links davon Messwerte, rechts der Plan.
     let jetztLinie = "";
-    if (hist && nowMs > t0 && nowMs < t1) {
+    if (hist && nowMs > Math.max(t0, vt0) && nowMs < Math.min(t1, vt0 + vspan)) {
       const px = x(nowMs).toFixed(1);
       jetztLinie = `<line x1="${px}" y1="${padT}" x2="${px}" y2="${socBottom.toFixed(1)}" stroke="var(--primary-text-color,#212121)" stroke-opacity="0.5" stroke-width="1.2"/>`
         + `<text x="${(Number(px) - 4).toFixed(1)}" y="${(padT + 9).toFixed(1)}" text-anchor="end" font-size="${fsKlein}" fill="var(--primary-text-color,#212121)" fill-opacity="0.65">jetzt</text>`;
@@ -3849,6 +3924,7 @@ class EegOptimizerPanel extends HTMLElement {
     // Sonst als schmales Band in der Lücke (dunkel = teuer, hell = billig).
     let preisBand = "";
     let preisFeld = "";
+    let preisLinie = "";
     if (preisImFeld) {
       // Eigene Spanne über die volle Feldhöhe, unabhängig von der
       // kW-Nulllinie; bei negativen Börsenpreisen eine gestrichelte
@@ -3868,7 +3944,7 @@ class EegOptimizerPanel extends HTMLElement {
         if (s.feedin_price == null) return;
         preisPfad += `${preisPfad ? "L" : "M"}${x(slotT[i]).toFixed(1)},${yPreis(s.feedin_price).toFixed(1)}`;
       });
-      preisFeld += `<path d="${preisPfad}" fill="none" stroke="#d81b60" stroke-width="1.8"/>`;
+      preisLinie = `<path d="${preisPfad}" fill="none" stroke="#d81b60" stroke-width="1.8"/>`;
     } else if (preisAlsBand) {
       const bandY = padT + plotH + 4;
       const bandH = schmal ? 6 : 7;
@@ -3988,6 +4064,10 @@ class EegOptimizerPanel extends HTMLElement {
       const gruppe = spaltenListe.slice(hi, hi + hitBucket);
       const sp = gruppe[Math.floor((gruppe.length - 1) / 2)];
       const spaltenLinks = x(gruppe[0].t) - xw(resMs) / 2;
+      // Gezoomt: nur Spalten im Ausschnitt, an dessen Rändern beschnitten.
+      const hitL = Math.max(padL, spaltenLinks);
+      const hitR = Math.min(W - padR, spaltenLinks + hitW);
+      if (hitR - hitL < 0.5) continue;
       const dt = new Date(sp.t);
       const hhmm = `${String(dt.getHours()).padStart(2, "0")}:${String(dt.getMinutes()).padStart(2, "0")}`;
       const tag = dt.toLocaleDateString("de-DE", { weekday: "short" });
@@ -4013,7 +4093,7 @@ class EegOptimizerPanel extends HTMLElement {
                 v: fmtDe(e.v, e.v >= 100 ? 0 : 1), u: e.ueber ? 1 : 0 };
         })
         .filter(Boolean);
-      hits += `<rect class="sched-hit" x="${spaltenLinks.toFixed(1)}" y="${padT}" width="${hitW.toFixed(1)}" height="${(socBottom - padT).toFixed(1)}" fill="transparent"`
+      hits += `<rect class="sched-hit" x="${hitL.toFixed(1)}" y="${padT}" width="${(hitR - hitL).toFixed(1)}" height="${(socBottom - padT).toFixed(1)}" fill="transparent"`
         + ` data-key="${sp.t}" data-cx="${x(sp.t).toFixed(1)}" data-socy="${socY == null ? "" : socY.toFixed(1)}"`
         + ` data-time="${tag} ${hhmm}"`
         + ` data-ppv="${kw(p ? p.PV : null)}" data-pcons="${kw(p ? p.consumption : null)}"`
@@ -4164,7 +4244,11 @@ class EegOptimizerPanel extends HTMLElement {
         <div style="display:flex;flex-wrap:wrap;gap:${schmal ? "8px" : "14px"};align-items:center;margin-bottom:8px;font-size:12px;color:var(--secondary-text-color)">
           ${d.duration_ms == null ? "" : `<span>Rechenzeit ${d.duration_ms} ms</span>`}
           ${schmal ? "" : `${wahlGruppen}${histHinweis}`}
-          <button class="btn-link btn-tap" data-action="refresh-schedule" style="margin-left:auto" ${this._scheduleBusy ? "disabled" : ""}>
+          ${zoom ? `<button class="btn-link btn-tap" data-action="sched-zoom-reset" style="margin-left:auto">
+            <ha-icon icon="mdi:magnify-minus-outline" style="--mdc-icon-size:16px;vertical-align:middle"></ha-icon>
+            Ganzer Plan
+          </button>` : ""}
+          <button class="btn-link btn-tap" data-action="refresh-schedule" style="${zoom ? "" : "margin-left:auto"}" ${this._scheduleBusy ? "disabled" : ""}>
             <ha-icon icon="mdi:refresh" style="--mdc-icon-size:16px;vertical-align:middle"></ha-icon>
             ${this._scheduleBusy ? "Rechne…" : "Neu rechnen"}
           </button>
@@ -4186,7 +4270,9 @@ class EegOptimizerPanel extends HTMLElement {
         <div class="sched-chart-card" style="position:relative">
           <div class="sched-scroll">
             <svg data-cw="sched" viewBox="0 0 ${W} ${H}" style="width:100%;height:auto">
+              ${zoom ? `<defs><clipPath id="sched-clip"><rect x="${padL}" y="0" width="${plotW}" height="${H}"/></clipPath></defs>` : ""}
               ${grid}${socTitelText(socTitel)}${socGrid}${xLabels}
+              <g${zoom ? ' clip-path="url(#sched-clip)"' : ""}>
               ${eegPfade.filter(p => p.mitFlaeche && p.area).map(p =>
                 `<path d="${p.area}" fill="${p.farbe}" fill-opacity="0.10"/>`).join("")}
               ${imBild("pv") ? `<path d="${pvArea}" fill="#fbc02d" fill-opacity="0.18"/>` : ""}
@@ -4203,7 +4289,9 @@ class EegOptimizerPanel extends HTMLElement {
               ${socIstPath ? `<path d="${socIstPath}" fill="none" stroke="#7cb342" stroke-width="1.2" stroke-opacity="0.55"/>` : ""}
               ${tempPath ? `<path d="${tempPath}" fill="none" stroke="#8e24aa" stroke-width="1.6" stroke-dasharray="6 3"/>` : ""}
               ${tempIstPath ? `<path d="${tempIstPath}" fill="none" stroke="#8e24aa" stroke-width="1.1" stroke-opacity="0.55"/>` : ""}
-              ${preisBand}${preisFeld}${preisImFeld ? "" : eegAxis}${jetztLinie}
+              ${preisBand}${preisLinie}
+              </g>
+              ${preisFeld}${preisImFeld ? "" : eegAxis}${jetztLinie}
               <line class="sched-cursor" x1="0" y1="${padT}" x2="0" y2="${socBottom.toFixed(1)}"
                     stroke="var(--primary-text-color,#212121)" stroke-opacity="0.45" stroke-width="1"
                     stroke-dasharray="3 3" style="visibility:hidden"/>
@@ -4211,7 +4299,7 @@ class EegOptimizerPanel extends HTMLElement {
               ${hits}
             </svg>
           </div>
-          <div class="sched-tooltip" style="position:absolute;display:none;pointer-events:none;background:var(--card-background-color,#fff);color:var(--primary-text-color);border:1px solid var(--divider-color);border-radius:8px;padding:8px 10px;font-size:12px;box-shadow:0 2px 8px rgba(0,0,0,0.18);transform:translate(-50%,-100%);white-space:nowrap;z-index:10"></div>
+          <div class="sched-tooltip" style="position:absolute;display:none;pointer-events:none;background:var(--card-background-color,#fff);color:var(--primary-text-color);border:1px solid var(--divider-color);border-radius:8px;padding:8px 10px;font-size:12px;box-shadow:0 2px 8px rgba(0,0,0,0.18);white-space:nowrap;z-index:10"></div>
         </div>
 
       </div>`;
@@ -4503,6 +4591,19 @@ class EegOptimizerPanel extends HTMLElement {
   _renderEinspeisungKarte() {
     const d = this._einspeisung;
     if (!d || d.verfuegbar === false) return "";
+    // Titel und Pfeil klappen, die Zeitraumwahl dazwischen nicht — sonst
+    // klappte jeder Tipp auf „Monat" die Karte zu.
+    const offen = this._einspeisungOpen;
+    const kopf = (wahlHtml) => `
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
+          <h3 data-action="toggle-einspeisung-karte" style="margin:0;flex:1;cursor:pointer;user-select:none">
+            <ha-icon icon="mdi:transmission-tower-export" style="--mdc-icon-size:20px;color:var(--primary-color,#03a9f4);vertical-align:middle"></ha-icon>
+            Einspeisung
+          </h3>
+          ${wahlHtml}
+          <ha-icon data-action="toggle-einspeisung-karte" icon="mdi:chevron-${offen ? "up" : "down"}" style="--mdc-icon-size:24px;color:var(--secondary-text-color);flex-shrink:0;cursor:pointer"></ha-icon>
+        </div>`;
+    if (!offen) return `<div class="card">${kopf("")}</div>`;
     const schmal = !!this._narrow;
     const zeitraum = this._einspeisungZeitraum;
     const k = d.kennzahlen || {};
@@ -4594,13 +4695,7 @@ class EegOptimizerPanel extends HTMLElement {
     const laedt = d.zeitraum !== zeitraum;
     return `
       <div class="card">
-        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
-          <h3 style="margin:0">
-            <ha-icon icon="mdi:transmission-tower-export" style="--mdc-icon-size:20px;color:var(--primary-color,#03a9f4);vertical-align:middle"></ha-icon>
-            Einspeisung
-          </h3>
-          ${wahl}
-        </div>
+        ${kopf(wahl)}
         <div style="opacity:${laedt ? 0.5 : 1};transition:opacity .2s">
           <div class="einsp-kacheln" style="grid-template-columns:repeat(${schmal ? 2 : 3},minmax(0,1fr))">${kachelnHtml}</div>
           ${this._einspeisungChart(d)}
@@ -8066,11 +8161,16 @@ class EegOptimizerPanel extends HTMLElement {
   _renderPrognosevergleichKarte() {
     if (!this._config?.pv_prognose_vergleich) return "";
     const v = this._vergleich;
+    const offen = this._vergleichOpen;
     const karte = (inhalt) => `
       <div class="card" style="margin-bottom:16px">
-        <h3 class="settings-karte-titel" style="margin:0 0 4px">Prognosevergleich</h3>
-        ${inhalt}
+        <div data-action="toggle-vergleich-karte" style="display:flex;justify-content:space-between;align-items:center;gap:8px;cursor:pointer;user-select:none;margin:0 0 ${offen ? 4 : 0}px">
+          <h3 class="settings-karte-titel" style="margin:0">Prognosevergleich</h3>
+          <ha-icon icon="mdi:chevron-${offen ? "up" : "down"}" style="--mdc-icon-size:24px;color:var(--secondary-text-color);flex-shrink:0"></ha-icon>
+        </div>
+        ${offen ? inhalt : ""}
       </div>`;
+    if (!offen) return karte("");
     if (!v) return karte(`<div class="help-text">Wird geladen…</div>`);
     const tage = v.tage || [];
     if (!tage.length) {
@@ -10946,6 +11046,149 @@ class EegOptimizerPanel extends HTMLElement {
     this._shadow.querySelectorAll(".sched-cursor-soc").forEach(el => { el.style.visibility = "hidden"; });
   }
 
+  // --- Zoom der Zeitachse im Optimierungsplan -------------------------
+  // Zwei Finger: der Abstand bestimmt den Ausschnitt, die Mitte zwischen
+  // ihnen bleibt am selben Zeitpunkt — Auseinanderziehen zoomt also dorthin,
+  // wo man hinzeigt, und Verschieben beider Finger schiebt mit. Gezoomt
+  // schiebt auch ein Finger, sobald er deutlich waagrecht zieht; ein Tipp
+  // zeigt weiter die Werte.
+
+  // Ausschnitt auf den Plan begrenzen; null, wenn er ohnehin alles zeigt.
+  _schedZoomKlemmen(z, t0, t1, minBreite) {
+    if (!z) return null;
+    const voll = t1 - t0;
+    const breite = Math.min(voll, Math.max(minBreite, z.bis - z.von));
+    if (breite >= voll - 1000) return null;
+    const von = Math.min(Math.max(z.von, t0), t1 - breite);
+    return { von, bis: von + breite };
+  }
+
+  // Der gerade gezeigte Ausschnitt. Aus dem Zustand, nicht aus der letzten
+  // Zeichnung — die hinkt während der Geste bis zu einem Bild hinterher.
+  _schedAusschnitt() {
+    const z = this._schedZoom, g = this._schedGeo;
+    return z ? { von: z.von, breite: z.bis - z.von }
+      : { von: g.t0, breite: g.t1 - g.t0 };
+  }
+
+  _schedZoomSetzen(von, breite) {
+    const g = this._schedGeo;
+    if (!g) return;
+    this._schedZoom = this._schedZoomKlemmen(
+      { von, bis: von + breite }, g.t0, g.t1, g.zoomMin);
+  }
+
+  // Während der Geste nur das Diagramm selbst neu zeichnen, einmal je Bild.
+  // Das svg-Element bleibt stehen (nur sein Inhalt wechselt), damit es den
+  // Finger behält.
+  _schedZoomZeichnen() {
+    if (this._schedZoomRaf) return;
+    this._schedZoomRaf = requestAnimationFrame(() => {
+      this._schedZoomRaf = null;
+      const alt = this._shadow.querySelector('svg[data-cw="sched"]');
+      if (!alt) return;
+      const tpl = document.createElement("template");
+      tpl.innerHTML = this._renderSchedule();
+      const neu = tpl.content.querySelector('svg[data-cw="sched"]');
+      if (neu) alt.innerHTML = neu.innerHTML;
+    });
+  }
+
+  // Bezugspunkt der Geste: aktueller Ausschnitt und Lage der Finger.
+  _schedGesteBasis(geste) {
+    const g = this._schedGeo;
+    const p = [...geste.finger.values()];
+    const r = geste.svg.getBoundingClientRect();
+    geste.einheit = g.W / (r.width || g.W);
+    geste.links = r.left;
+    ({ von: geste.von, breite: geste.breite } = this._schedAusschnitt());
+    if (p.length >= 2) {
+      geste.mitte = (p[0].x + p[1].x) / 2;
+      geste.abstand = Math.max(20, Math.abs(p[0].x - p[1].x));
+    } else if (p.length === 1) {
+      geste.startX = p[0].x;
+      geste.startY = p[0].y;
+    }
+  }
+
+  // true, wenn die Berührung zur Zoom-Geste gehört und der Werte-Zeiger
+  // sie nicht bekommen soll.
+  _schedGesteStart(e) {
+    const svg = e.target.closest?.('svg[data-cw="sched"]');
+    if (!svg || !this._schedGeo) return false;
+    let geste = this._schedGeste;
+    if (!geste || geste.svg !== svg) {
+      geste = this._schedGeste = {
+        svg, finger: new Map(), modus: "tipp", geaendert: false,
+        nachholen: false, zuletzt: Date.now(),
+      };
+    }
+    geste.finger.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    geste.zuletzt = Date.now();
+    // Den Finger am Diagramm festhalten, auch wenn sein Inhalt wechselt.
+    try { svg.setPointerCapture(e.pointerId); } catch (_) { /* egal */ }
+    if (geste.finger.size >= 2) {
+      geste.modus = "pinch";
+      this._schedScrub = false;
+      this._versteckeSchedTooltip();
+      this._schedGesteBasis(geste);
+      return true;
+    }
+    this._schedGesteBasis(geste);
+    return false;
+  }
+
+  _schedGesteBewegen(e) {
+    const geste = this._schedGeste;
+    if (!geste || !geste.finger.has(e.pointerId)) return false;
+    geste.finger.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    geste.zuletzt = Date.now();
+    const g = this._schedGeo;
+    const p = [...geste.finger.values()];
+    if (geste.modus === "pinch" && p.length >= 2) {
+      const mitte = (p[0].x + p[1].x) / 2;
+      const abstand = Math.max(20, Math.abs(p[0].x - p[1].x));
+      const anteil = (x) => ((x - geste.links) * geste.einheit - g.padL) / g.plotW;
+      const anker = geste.von + anteil(geste.mitte) * geste.breite;
+      const breite = geste.breite * (geste.abstand / abstand);
+      this._schedZoomSetzen(anker - anteil(mitte) * breite, breite);
+      geste.geaendert = true;
+      this._schedZoomZeichnen();
+      return true;
+    }
+    if (p.length !== 1) return geste.modus === "pinch";
+    const dx = p[0].x - geste.startX;
+    const dy = p[0].y - geste.startY;
+    if (geste.modus === "tipp" && this._schedZoom
+        && Math.abs(dx) > 8 && Math.abs(dx) > Math.abs(dy)) {
+      geste.modus = "schieben";
+      this._schedScrub = false;
+      this._versteckeSchedTooltip();
+    }
+    if (geste.modus !== "schieben") return geste.modus === "pinch";
+    this._schedZoomSetzen(
+      geste.von - (dx * geste.einheit / g.plotW) * geste.breite, geste.breite);
+    geste.geaendert = true;
+    this._schedZoomZeichnen();
+    return true;
+  }
+
+  _schedGesteEnde(e) {
+    const geste = this._schedGeste;
+    if (!geste || !e || !geste.finger.has(e.pointerId)) return;
+    geste.finger.delete(e.pointerId);
+    if (geste.finger.size > 0) {
+      // Vom Pinch bleibt ein Finger übrig: ab hier schiebt er, ohne Sprung.
+      geste.modus = "schieben";
+      this._schedGesteBasis(geste);
+      return;
+    }
+    this._schedGeste = null;
+    // Kopfzeile (Knopf „Ganzer Plan") und alles, was inzwischen liegen
+    // blieb, einmal sauber nachziehen.
+    if (geste.geaendert || geste.nachholen) this._render();
+  }
+
   /* ── Diagrammbreiten ──────────────────────────── */
 
   // Verfuegbare Zeichenbreite eines Diagramms in CSS-Pixeln. Die Diagramme
@@ -11005,6 +11248,13 @@ class EegOptimizerPanel extends HTMLElement {
   /* ── Main render ──────────────────────────────── */
 
   _render() {
+    // Mitten in einer Zoom-Geste nicht das ganze Panel neu aufbauen: das
+    // ersetzte Diagramm verlöre den Finger. Nachgeholt am Gestenende; eine
+    // hängengebliebene Geste (kein pointerup) blockiert höchstens 3 s.
+    if (this._schedGeste && Date.now() - this._schedGeste.zuletzt < 3000) {
+      this._schedGeste.nachholen = true;
+      return;
+    }
     try {
       this._renderInner();
       this._measureCharts();
