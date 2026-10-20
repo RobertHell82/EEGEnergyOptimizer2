@@ -81,6 +81,8 @@ Die Karte zeigt den Fahrplan als Diagramm: PV- und Verbrauchsprognose, die gepla
 
 Fährst du mit der Maus über das Diagramm oder tippst darauf, zeigt ein Fenster die Werte dieser Viertelstunde — geplant und, für die Vergangenheit, gemessen.
 
+**Zoomen.** Mit zwei Fingern auseinanderziehen zoomt in die Zeitachse, zusammenschieben wieder heraus; am PC geht das mit dem Trackpad oder mit Strg + Mausrad. Gezoomt schiebt ein Finger, der waagrecht wischt, den Ausschnitt nach links oder rechts (am PC waagrecht wischen oder Umschalt + Mausrad). **Ganzer Plan** über dem Diagramm zeigt wieder alles, ebenso das Umstellen von Plan oder Verlauf.
+
 ## Was deine PV bringt
 
 Die Karte zeigt die **Ersparnis durch PV** für heute, diesen Monat und dieses Jahr: nicht gekaufter Strom plus Einspeiseerlös, mit Heizstab auch die Wärme. Das ist eine **Messung** — jede Kilowattstunde ist gemessen, die Preise werden je Viertelstunde festgehalten, wie sie zu diesem Zeitpunkt galten. „Woraus setzt sich das zusammen?" zeigt die Posten des Tages. Wie viel der Einspeisung zum Satz der Energiegemeinschaft zählt, beruht auf deren Bedarfsprognose (PeakShare) bzw. im Quotenmodus auf der eingestellten Abnahmequote; endgültig steht es erst mit der EEG-Abrechnung fest.
