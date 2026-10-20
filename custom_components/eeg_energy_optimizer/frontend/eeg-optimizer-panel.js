@@ -167,7 +167,7 @@ const quoteLuecken = (d) => {
 // Huawei — derselbe Treiber-Schalter wie im Backend (supports_grid_charge).
 // Gemeinsam mit schedule.NETZLADEN_FREIGEGEBEN umlegen: in Releases aus,
 // in Betas an.
-const NETZLADEN_SICHTBAR = false;
+const NETZLADEN_SICHTBAR = true;
 const netzladenSichtbar = (d, prefix) =>
   NETZLADEN_SICHTBAR && !!prefix && !!d.expert_mode && d.inverter_type === "huawei_sun2000";
 

@@ -88,6 +88,30 @@ Zeiträume, Uhrzeiten und Rabatt stehen in der Verordnung und sind deshalb fest.
 
 Nur sichtbar, wenn im Tab **System** der Expertenmodus eingeschaltet ist. **Alterungskosten der Batterie (ct/kWh)** ist, was eine durchgesetzte Kilowattstunde die Batterie an Lebensdauer kostet. Höhere Werte machen die Optimierung zurückhaltender: Sie speichert nur, wenn sich der Umweg lohnt. Leer gilt 1 ct. Bei der Entladung in die Gemeinschaft ist der Wert die Schwelle — sie kommt erst zustande, wenn der Nachtsatz über der Einspeisevergütung plus Alterungskosten liegt.
 
+### Batterie aus dem Netz laden (Beta, Expertenmodus, nur Huawei)
+
+Nur in den **Einstellungen**, nur mit Expertenmodus und nur mit einem Huawei-Wechselrichter. Ohne Haken rechnet der Fahrplan genau wie vorher, und keines der Felder darunter ist Pflicht.
+
+Mit Haken darf der Fahrplan das **Ladeziel** auch mit Netzstrom erreichen, wenn die Sonne an einem trüben Tag nicht reicht. Er kauft aber nur in Viertelstunden, in denen der Netzstrom billiger ist als der Strom, den die Batterie danach ersetzt: der Bezugspreis der Nacht nach dem Ende der PV-Zeit, abzüglich Lade- und Entladeverlust, Alterungskosten und Mindestvorteil. Gekauft wird nur vor dem Ende der PV-Zeit. Ob die Nacht die Energie wirklich braucht, fragt er nicht: Was übrig bleibt, speist er später ein, wenn sich das lohnt. Der Preis dafür ist eine volle Batterie am Abend. Höher als der **maximale Ladestand** (Anlage & Batterie) lädt er nie, und nie schneller als die Batterieleistung.
+
+Billiger als die Nacht ist Netzstrom nur in drei Fällen, und mindestens einer muss eingerichtet sein:
+
+- **Spot-Bezug.** Unter **Bezugstarif deines Lieferanten** wählst du **Börsenpreis (Spot)**. Der Preis ist dann Börsenpreis plus **Aufschlag auf den Börsenpreis (ct/kWh, netto)** plus **Aufschlag in Prozent** vom Betrag, darauf die Mehrwertsteuer, plus die Netzgebühr. Gekauft wird nur zu veröffentlichten Börsenpreisen, nie zu geschätzten.
+- **Bezug aus der Gemeinschaft.** Je Gemeinschaft trägst du den **Bezugspreis aus der Gemeinschaft (ct/kWh)** inklusive Mehrwertsteuer ein und welche Art sie ist. Bei einer EEG **lokal** oder **regional**: Der Fahrplan rechnet das Netznutzungsentgelt um 57 % bzw. 28 % verringert dazu, dazu das volle Netzverlustentgelt; Elektrizitätsabgabe und Erneuerbaren-Förderbeitrag entfallen (§ 75 Abs. 5 EAG, § 2 Abs. 1 Z 4 ElAbgG). Bei einer **Bürgerenergiegemeinschaft** gilt die volle Netzgebühr, billiger kann dort nur der Energiepreis sein. SNAP und WiNAP gelten für Gemeinschaftsstrom nicht. Zugeteilt wird wie bei der Einspeisung: Aus einer Gemeinschaft kommt höchstens dein **Anteil** am Bezug, und nur so viel, wie sie laut PeakShare in der Viertelstunde übrig hat; der Rest kostet den Preis deines Lieferanten. Lässt du den Bezugspreis leer, zählt die Gemeinschaft für das Netzladen nicht. Im Quotenmodus gibt es keinen Gemeinschaftsbezug, weil kein Überschuss bekannt ist.
+- **SNAP/WiNAP** mit einem eigenen Arbeitspreis im Fenster.
+
+Spot- und Gemeinschaftsbezug brauchen einen **Netzbereich**, sonst fehlt die Netzgebühr und der Netzstrom sähe zu billig aus.
+
+| Feld | Bedeutung |
+|---|---|
+| **Höchster Netzbezug beim Laden aus dem Netz (kW)** | Gilt am Zähler, Haus und Batterie zusammen. Plan und Steuerung rechnen mit Hausverbrauch und PV (die Steuerung alle 30 s mit den Messwerten) und lassen die Batterie nur so schnell laden, dass der Bezug darunter bleibt. Das Haus wird nie begrenzt. Leer = keine Grenze, die Batterie lädt mit ihrer vollen Leistung. Für die Leistungsgebühr ab 2027 lohnt eine Grenze: Der Fahrplan bewertet die Bezugsspitze sonst nicht |
+| **Mindestvorteil (ct/kWh)** | Um so viel muss der Netzstrom billiger sein als die Nacht. Vorgabe 2 ct |
+
+Während der Netzladung lädt der Wechselrichter mit der geplanten Leistung bis zum geplanten Ladestand, der Statussensor zeigt „Netzladung x kW bis y %“, im Diagramm ist sie violett gestrichelt. Der Heizstab bleibt dabei aus.
+
+> [!WARNING]
+> **Beta.** Die Zwangsladung ist an einem SUN2000 geprüft, sie braucht die Einstellung „Laden aus dem Netz“ nicht. Der Betrieb über den Fahrplan ist noch im Feldtest.
+
 ## Nachtsatz und Nachtfenster
 
 Es gibt zwei Nachtfenster, weil ein Gemeinschaftsvertrag andere Zeiten haben kann als dein Einspeisevertrag:
