@@ -10,6 +10,18 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
+## [2.1.47] - 2026-10-20
+
+### Hinzugefügt
+
+- **Der Optimierungsplan lässt sich zoomen.** Mit zwei Fingern auseinanderziehen zoomt in die Zeitachse, um den Punkt zwischen den Fingern; am PC geht das mit Trackpad-Pinch oder Strg + Mausrad über dem Diagramm. Ist gezoomt, schiebt ein waagrecht wischender Finger den Ausschnitt (am PC waagrecht wischen oder Umschalt + Rad), senkrecht scrollt die Seite wie gewohnt. Der kleinste Ausschnitt sind zwei Stunden, die Zeitmarken stehen dann bis zur vollen Stunde dicht. „Ganzer Plan“ über dem Diagramm zeigt wieder alles, ebenso das Umstellen von Plan oder Verlauf. Beitrag von andi-arbeit-agent (#5).
+- **Die Karten „Einspeisung“ und „Prognosevergleich“ lassen sich zuklappen** wie der Optimierungsgewinn; der Zustand bleibt gespeichert.
+
+### Geändert
+
+- **Die Werteanzeige im Optimierungsplan verdeckt den Zeitpunkt nicht mehr.** Sie stand genau über der Stelle, die man lesen wollte, auf Fingerhöhe. Jetzt sitzt sie oben im Diagramm neben der Cursorlinie, auf der Seite mit mehr Platz.
+- **„Batterie aus dem Netz laden“ bleibt den Betas vorbehalten**, im Release ausgeblendet und ohne Wirkung.
+
 ## [2.1.47-beta.1] - 2026-10-19
 
 ### Geändert
