@@ -3460,15 +3460,19 @@ class EegOptimizerPanel extends HTMLElement {
     const r = hit.getBoundingClientRect();
     const wr = wrapper.getBoundingClientRect();
     const tw = tt.offsetWidth || 0;
-    const th = tt.offsetHeight || 0;
-    // Waagrecht am Slot, aber innerhalb der Karte gehalten.
-    const cx = r.left - wr.left + r.width / 2;
-    const minX = tw / 2 + 4;
-    const maxX = Math.max(minX, wr.width - tw / 2 - 4);
-    tt.style.left = `${Math.min(Math.max(cx, minX), maxX)}px`;
-    // Senkrecht am Zeiger; oben kein Platz -> unter den Zeiger klappen.
-    const cy = (ev && ev.clientY != null ? ev.clientY : r.top) - wr.top;
-    tt.style.top = `${cy - th - 12 < 0 ? cy + th + 16 : cy - 12}px`;
+    // Neben die Zeigerlinie statt mittig darüber, auf der Seite mit mehr
+    // Platz, und oben an den Feldrand statt auf Fingerhöhe: Linie, Punkt
+    // und die Kurven daneben bleiben sichtbar, der Finger verdeckt nichts.
+    // Mittig über dem Zeitpunkt deckte das Fenster genau die Stelle zu, die
+    // man gerade lesen wollte.
+    const sr = svg ? svg.getBoundingClientRect() : r;
+    const massstab = svg?.viewBox?.baseVal?.width ? sr.width / svg.viewBox.baseVal.width : 1;
+    const linieX = d.cx ? sr.left - wr.left + Number(d.cx) * massstab
+      : r.left - wr.left + r.width / 2;
+    const abstand = 12;
+    const links = linieX < wr.width / 2 ? linieX + abstand : linieX - abstand - tw;
+    tt.style.left = `${Math.min(Math.max(links, 4), Math.max(4, wr.width - tw - 4))}px`;
+    tt.style.top = `${r.top - wr.top}px`;
   }
 
   _renderSchedule() {
@@ -4295,7 +4299,7 @@ class EegOptimizerPanel extends HTMLElement {
               ${hits}
             </svg>
           </div>
-          <div class="sched-tooltip" style="position:absolute;display:none;pointer-events:none;background:var(--card-background-color,#fff);color:var(--primary-text-color);border:1px solid var(--divider-color);border-radius:8px;padding:8px 10px;font-size:12px;box-shadow:0 2px 8px rgba(0,0,0,0.18);transform:translate(-50%,-100%);white-space:nowrap;z-index:10"></div>
+          <div class="sched-tooltip" style="position:absolute;display:none;pointer-events:none;background:var(--card-background-color,#fff);color:var(--primary-text-color);border:1px solid var(--divider-color);border-radius:8px;padding:8px 10px;font-size:12px;box-shadow:0 2px 8px rgba(0,0,0,0.18);white-space:nowrap;z-index:10"></div>
         </div>
 
       </div>`;
