@@ -279,7 +279,7 @@ CONF_SCHEDULE_NETZLADEN = "schedule_netzladen"
 # Panel: in Releases aus, in Betas an. Immer beide gemeinsam umlegen — nur
 # ausgeblendet, aber wirksam, ließe sich ein in der Beta gesetzter Haken
 # nicht mehr abschalten.
-NETZLADEN_FREIGEGEBEN = True
+NETZLADEN_FREIGEGEBEN = False
 # Höchste Netzbezugsleistung, die in die Batterie gehen darf (kW, AC). 0 oder
 # leer = die Batterieleistung. Eigene Grenze, weil ab 2027 die Bezugsspitze
 # des Monats Geld kostet (leistungsspitze.py) — das LP bewertet sie nicht.
