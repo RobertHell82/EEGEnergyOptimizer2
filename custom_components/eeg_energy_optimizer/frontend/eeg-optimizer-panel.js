@@ -990,8 +990,16 @@ class EegOptimizerPanel extends HTMLElement {
     // Am PC: Trackpad-Pinch kommt als Rad mit Strg (ebenso Strg + Mausrad)
     // und zoomt; gezoomt schiebt waagrechtes Wischen bzw. Umschalt + Rad den
     // Ausschnitt. Ein normales Mausrad blättert weiter die Seite.
-    this._shadow.addEventListener("wheel", (e) => {
-      const svg = e.target.closest?.('svg[data-cw="sched"]');
+    //
+    // Der Lauscher hängt am Element selbst, nicht am Shadow-Root: Chrome
+    // zählt einen Rad-Lauscher am Shadow-Root nicht als blockierend und
+    // liefert das Ereignis dann als nicht abbrechbar — preventDefault()
+    // verpuffte, und mit dem Diagramm zoomte die ganze Seite mit.
+    this.addEventListener("wheel", (e) => {
+      const karte = e.composedPath()[0]?.closest?.(".sched-chart-card");
+      if (!karte) return;
+      if (e.ctrlKey) e.preventDefault();
+      const svg = karte.querySelector('svg[data-cw="sched"]');
       const g = this._schedGeo;
       if (!svg || !g) return;
       const quer = Math.abs(e.deltaX) > Math.abs(e.deltaY);
@@ -1003,7 +1011,9 @@ class EegOptimizerPanel extends HTMLElement {
       let { von, breite } = this._schedAusschnitt();
       if (e.ctrlKey) {
         const anker = von + anteil * breite;
-        breite *= Math.exp(e.deltaY * 0.01);
+        // Firefox meldet Zeilen statt Pixel; eine Zeile ~ 16 px.
+        const dy = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY;
+        breite *= Math.exp(Math.max(-50, Math.min(50, dy)) * 0.01);
         von = anker - anteil * breite;
       } else {
         von += ((quer ? e.deltaX : e.deltaY) * einheit / g.plotW) * breite;
@@ -1013,6 +1023,111 @@ class EegOptimizerPanel extends HTMLElement {
       clearTimeout(this._schedRadTimer);
       this._schedRadTimer = setTimeout(() => this._render(), 250);
     }, { passive: false });
+
+    // Safari am Mac schickt den Trackpad-Pinch nicht als Strg + Rad, sondern
+    // als eigene Gesten-Ereignisse — ohne Abfangen zoomt dort die Seite.
+    // iOS schickt dieselben Ereignisse beim Zwei-Finger-Pinch zusätzlich zu
+    // den Zeiger-Ereignissen; den Pinch zoomt dort schon _schedGeste, ein
+    // zweiter Zoomer daneben ließe den Ausschnitt springen.
+    const gesteSafari = (e) => {
+      const karte = e.composedPath()[0]?.closest?.(".sched-chart-card");
+      if (!karte) return;
+      e.preventDefault();
+      if (this._schedGeste) { this._schedSafari = null; return; }
+      const svg = karte.querySelector('svg[data-cw="sched"]');
+      const g = this._schedGeo;
+      if (!svg || !g) return;
+      if (e.type === "gesturestart") {
+        const r = svg.getBoundingClientRect();
+        const einheit = g.W / (r.width || g.W);
+        const anteil = ((e.clientX - r.left) * einheit - g.padL) / g.plotW;
+        this._schedSafari = { ...this._schedAusschnitt(), anteil };
+        return;
+      }
+      const b = this._schedSafari;
+      if (!b) return;
+      if (e.type === "gestureend") {
+        this._schedSafari = null;
+        this._render();
+        return;
+      }
+      const anker = b.von + b.anteil * b.breite;
+      const breite = b.breite / (e.scale || 1);
+      this._schedZoomSetzen(anker - b.anteil * breite, breite);
+      this._schedZoomZeichnen();
+    };
+    for (const typ of ["gesturestart", "gesturechange", "gestureend"]) {
+      this.addEventListener(typ, gesteSafari, { passive: false });
+    }
+
+    // Maus: mit gedrückter linker Taste einen Bereich aufziehen, Loslassen
+    // zoomt genau dorthin. Doppelklick zeigt wieder den ganzen Plan.
+    this._shadow.addEventListener("pointerdown", (e) => {
+      if (e.pointerType !== "mouse" || e.button !== 0) return;
+      // Eine Auswahl, deren Loslassen nie ankam, darf nicht beim nächsten
+      // Klick irgendwo im Panel zoomen.
+      this._schedAuswahl = null;
+      const svg = e.target.closest?.('svg[data-cw="sched"]');
+      const g = this._schedGeo;
+      if (!svg || !g) return;
+      e.preventDefault();   // sonst markiert der Browser Text
+      const r = svg.getBoundingClientRect();
+      const einheit = g.W / (r.width || g.W);
+      const links = r.left + g.padL / einheit;
+      const rechts = r.left + (g.padL + g.plotW) / einheit;
+      if (e.clientX < links || e.clientX > rechts) return;
+      try { svg.setPointerCapture(e.pointerId); } catch (_) { /* egal */ }
+      this._schedAuswahl = {
+        id: e.pointerId, svg, start: e.clientX, x: e.clientX, links, rechts,
+        zuletzt: Date.now(), nachholen: false,
+      };
+    }, { passive: false });
+
+    this._shadow.addEventListener("pointermove", (e) => {
+      const a = this._schedAuswahl;
+      if (!a || e.pointerId !== a.id) return;
+      a.zuletzt = Date.now();
+      a.x = Math.min(a.rechts, Math.max(a.links, e.clientX));
+      if (Math.abs(a.x - a.start) < 4) return;
+      const karte = a.svg.closest(".sched-chart-card");
+      const feld = karte?.querySelector(".sched-auswahl");
+      if (!feld) return;
+      this._versteckeSchedTooltip();
+      const kr = karte.getBoundingClientRect();
+      const sr = a.svg.getBoundingClientRect();
+      feld.style.display = "block";
+      feld.style.left = `${Math.min(a.start, a.x) - kr.left}px`;
+      feld.style.width = `${Math.abs(a.x - a.start)}px`;
+      feld.style.top = `${sr.top - kr.top}px`;
+      feld.style.height = `${sr.height}px`;
+    });
+
+    const auswahlEnde = (e) => {
+      const a = this._schedAuswahl;
+      if (!a || e.pointerId !== a.id) return;
+      this._schedAuswahl = null;
+      const feld = a.svg.closest(".sched-chart-card")?.querySelector(".sched-auswahl");
+      if (feld) feld.style.display = "none";
+      const g = this._schedGeo;
+      if (e.type !== "pointerup" || Math.abs(a.x - a.start) < 8 || !g) {
+        if (a.nachholen) this._render();
+        return;
+      }
+      const { von, breite } = this._schedAusschnitt();
+      const zeit = (x) => von + ((x - a.links) / (a.rechts - a.links)) * breite;
+      const t1 = zeit(Math.min(a.start, a.x)), t2 = zeit(Math.max(a.start, a.x));
+      this._schedZoomSetzen(t1, t2 - t1);
+      this._render();
+    };
+    this._shadow.addEventListener("pointerup", auswahlEnde);
+    this._shadow.addEventListener("pointercancel", auswahlEnde);
+    this._shadow.addEventListener("lostpointercapture", auswahlEnde);
+
+    this._shadow.addEventListener("dblclick", (e) => {
+      if (!e.target.closest?.('svg[data-cw="sched"]') || !this._schedZoom) return;
+      this._schedZoom = null;
+      this._render();
+    });
 
     // Beim Blaettern die Werteanzeige abraeumen: sonst bleibt sie an einer
     // Stelle stehen, die nicht mehr zum Diagramm darunter passt.
@@ -4299,6 +4414,7 @@ class EegOptimizerPanel extends HTMLElement {
               ${hits}
             </svg>
           </div>
+          <div class="sched-auswahl" style="position:absolute;display:none;pointer-events:none;background:rgba(3,169,244,0.15);border-left:1px solid var(--primary-color,#03a9f4);border-right:1px solid var(--primary-color,#03a9f4)"></div>
           <div class="sched-tooltip" style="position:absolute;display:none;pointer-events:none;background:var(--card-background-color,#fff);color:var(--primary-text-color);border:1px solid var(--divider-color);border-radius:8px;padding:8px 10px;font-size:12px;box-shadow:0 2px 8px rgba(0,0,0,0.18);white-space:nowrap;z-index:10"></div>
         </div>
 
@@ -11255,6 +11371,12 @@ class EegOptimizerPanel extends HTMLElement {
       this._schedGeste.nachholen = true;
       return;
     }
+    // Ebenso beim Aufziehen eines Bereichs mit der Maus: das neue Diagramm
+    // hätte weder das Auswahlrechteck noch den Zeiger.
+    if (this._schedAuswahl && Date.now() - this._schedAuswahl.zuletzt < 3000) {
+      this._schedAuswahl.nachholen = true;
+      return;
+    }
     try {
       this._renderInner();
       this._measureCharts();
@@ -11827,6 +11949,7 @@ class EegOptimizerPanel extends HTMLElement {
            Wischen am Rand die Zurück-Geste der App auslöst. */
         .sched-scroll { overflow-x: auto; overscroll-behavior-x: contain; touch-action: pan-x pan-y; }
         .sched-chart-card svg { touch-action: pan-y; }
+        @media (pointer: fine) { .sched-chart-card svg { cursor: crosshair; } }
         /* Legende des Optimierungsplans: jeder Eintrag schaltet seine Kurve.
            Kein .btn-tap — dessen 44 px Mindesthöhe würden bei bis zu zwölf
            Einträgen drei Zeilen Leerraum über das Diagramm legen. Das
