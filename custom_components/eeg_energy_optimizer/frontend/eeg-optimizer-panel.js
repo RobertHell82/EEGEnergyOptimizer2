@@ -1026,10 +1026,14 @@ class EegOptimizerPanel extends HTMLElement {
 
     // Safari am Mac schickt den Trackpad-Pinch nicht als Strg + Rad, sondern
     // als eigene Gesten-Ereignisse — ohne Abfangen zoomt dort die Seite.
+    // iOS schickt dieselben Ereignisse beim Zwei-Finger-Pinch zusätzlich zu
+    // den Zeiger-Ereignissen; den Pinch zoomt dort schon _schedGeste, ein
+    // zweiter Zoomer daneben ließe den Ausschnitt springen.
     const gesteSafari = (e) => {
       const karte = e.composedPath()[0]?.closest?.(".sched-chart-card");
       if (!karte) return;
       e.preventDefault();
+      if (this._schedGeste) { this._schedSafari = null; return; }
       const svg = karte.querySelector('svg[data-cw="sched"]');
       const g = this._schedGeo;
       if (!svg || !g) return;
@@ -1060,6 +1064,9 @@ class EegOptimizerPanel extends HTMLElement {
     // zoomt genau dorthin. Doppelklick zeigt wieder den ganzen Plan.
     this._shadow.addEventListener("pointerdown", (e) => {
       if (e.pointerType !== "mouse" || e.button !== 0) return;
+      // Eine Auswahl, deren Loslassen nie ankam, darf nicht beim nächsten
+      // Klick irgendwo im Panel zoomen.
+      this._schedAuswahl = null;
       const svg = e.target.closest?.('svg[data-cw="sched"]');
       const g = this._schedGeo;
       if (!svg || !g) return;
@@ -1070,12 +1077,16 @@ class EegOptimizerPanel extends HTMLElement {
       const rechts = r.left + (g.padL + g.plotW) / einheit;
       if (e.clientX < links || e.clientX > rechts) return;
       try { svg.setPointerCapture(e.pointerId); } catch (_) { /* egal */ }
-      this._schedAuswahl = { id: e.pointerId, svg, start: e.clientX, x: e.clientX, links, rechts };
+      this._schedAuswahl = {
+        id: e.pointerId, svg, start: e.clientX, x: e.clientX, links, rechts,
+        zuletzt: Date.now(), nachholen: false,
+      };
     }, { passive: false });
 
     this._shadow.addEventListener("pointermove", (e) => {
       const a = this._schedAuswahl;
       if (!a || e.pointerId !== a.id) return;
+      a.zuletzt = Date.now();
       a.x = Math.min(a.rechts, Math.max(a.links, e.clientX));
       if (Math.abs(a.x - a.start) < 4) return;
       const karte = a.svg.closest(".sched-chart-card");
@@ -1097,9 +1108,11 @@ class EegOptimizerPanel extends HTMLElement {
       this._schedAuswahl = null;
       const feld = a.svg.closest(".sched-chart-card")?.querySelector(".sched-auswahl");
       if (feld) feld.style.display = "none";
-      if (e.type === "pointercancel" || Math.abs(a.x - a.start) < 8) return;
       const g = this._schedGeo;
-      if (!g) return;
+      if (e.type !== "pointerup" || Math.abs(a.x - a.start) < 8 || !g) {
+        if (a.nachholen) this._render();
+        return;
+      }
       const { von, breite } = this._schedAusschnitt();
       const zeit = (x) => von + ((x - a.links) / (a.rechts - a.links)) * breite;
       const t1 = zeit(Math.min(a.start, a.x)), t2 = zeit(Math.max(a.start, a.x));
@@ -1108,6 +1121,7 @@ class EegOptimizerPanel extends HTMLElement {
     };
     this._shadow.addEventListener("pointerup", auswahlEnde);
     this._shadow.addEventListener("pointercancel", auswahlEnde);
+    this._shadow.addEventListener("lostpointercapture", auswahlEnde);
 
     this._shadow.addEventListener("dblclick", (e) => {
       if (!e.target.closest?.('svg[data-cw="sched"]') || !this._schedZoom) return;
@@ -11355,6 +11369,12 @@ class EegOptimizerPanel extends HTMLElement {
     // hängengebliebene Geste (kein pointerup) blockiert höchstens 3 s.
     if (this._schedGeste && Date.now() - this._schedGeste.zuletzt < 3000) {
       this._schedGeste.nachholen = true;
+      return;
+    }
+    // Ebenso beim Aufziehen eines Bereichs mit der Maus: das neue Diagramm
+    // hätte weder das Auswahlrechteck noch den Zeiger.
+    if (this._schedAuswahl && Date.now() - this._schedAuswahl.zuletzt < 3000) {
+      this._schedAuswahl.nachholen = true;
       return;
     }
     try {
