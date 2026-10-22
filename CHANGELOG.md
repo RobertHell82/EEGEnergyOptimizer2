@@ -10,6 +10,20 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
+## [2.1.48] - 2026-10-22
+
+### Behoben
+
+- **Strg + Mausrad zoomt nur noch das Diagramm.** Am Laptop zoomte mit dem Optimierungsplan die ganze Webseite mit. Chrome lieferte das Rad-Ereignis als nicht abbrechbar, weil der Lauscher am Shadow-Root hing; jetzt hängt er am Panel selbst. In Headless-Chromium waren vorher 12 von 12 Strg-Rad-Ereignissen nicht abbrechbar, jetzt keines. Firefox meldet das Rad in Zeilen statt in Pixeln, das wird umgerechnet, damit ein Rastschritt dort nicht viel zu weit zoomt.
+
+### Hinzugefügt
+
+- **Bereich mit der Maus aufziehen.** Mit gedrückter linker Maustaste einen Zeitraum im Optimierungsplan markieren, Loslassen zoomt genau darauf. Ein einfacher Klick ändert nichts, ein Doppelklick zeigt wieder den ganzen Plan. Safari am Mac schickt den Trackpad-Pinch als eigene Gesten-Ereignisse; auch die zoomen jetzt das Diagramm statt der Seite. Auf iPhone und iPad bleibt es beim Zwei-Finger-Zoom aus 2.1.47, ohne dass die Gesten-Ereignisse ein zweites Mal zoomen. Beitrag von andi-arbeit-agent (#6).
+
+### Geändert
+
+- **„Batterie aus dem Netz laden“ bleibt den Betas vorbehalten**, im Release ausgeblendet und ohne Wirkung.
+
 ## [2.1.48-beta.1] - 2026-10-20
 
 ### Geändert
