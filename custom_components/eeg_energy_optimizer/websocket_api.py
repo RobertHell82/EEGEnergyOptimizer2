@@ -466,6 +466,7 @@ def async_register_websocket_commands(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_get_netzentgelte)
     websocket_api.async_register_command(hass, ws_get_bilanz)
     websocket_api.async_register_command(hass, ws_get_einspeisung)
+    websocket_api.async_register_command(hass, ws_get_bezug)
     websocket_api.async_register_command(hass, ws_get_override)
     websocket_api.async_register_command(hass, ws_set_override)
     websocket_api.async_register_command(hass, ws_clear_override)
@@ -2209,10 +2210,15 @@ async def ws_get_bilanz(
     })
 
 
+_ZEITRAUM_DATUM = vol.Match(r"^\d{4}(-\d{2}(-\d{2})?)?$")
+
+
 @websocket_api.websocket_command(
     {
         vol.Required("type"): "eeg_optimizer/get_einspeisung",
         vol.Optional("zeitraum", default="heute"): vol.In(["heute", "monat", "jahr", "gesamt"]),
+        # Welcher Tag, Monat oder Jahr: YYYY-MM-DD, YYYY-MM oder YYYY.
+        vol.Optional("datum"): _ZEITRAUM_DATUM,
     }
 )
 @websocket_api.async_response
@@ -2242,9 +2248,46 @@ async def ws_get_einspeisung(
 
     inputs = getattr(data.get("schedule"), "last_inputs", None)
     try:
-        ergebnis = bilanz.einspeisung(msg["zeitraum"], dt_util.now(), inputs)
+        ergebnis = bilanz.einspeisung(
+            msg["zeitraum"], dt_util.now(), inputs, msg.get("datum")
+        )
     except Exception:  # noqa: BLE001 - Anzeige darf nie den Zugriff kippen
         _LOGGER.exception("Einspeisung: Werte nicht berechenbar")
+        connection.send_result(msg["id"], {"verfuegbar": False})
+        return
+    connection.send_result(msg["id"], {"verfuegbar": True, **ergebnis})
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "eeg_optimizer/get_bezug",
+        vol.Optional("zeitraum", default="heute"): vol.In(["heute", "monat", "jahr", "gesamt"]),
+        vol.Optional("datum"): _ZEITRAUM_DATUM,
+    }
+)
+@websocket_api.async_response
+async def ws_get_bezug(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict,
+) -> None:
+    """Was aus dem Netz kam und was es gekostet hat — für die Bezugs-Karte."""
+    entry, data = _get_entry_data(hass, connection, msg)
+    if entry is None:
+        return
+
+    bilanz = data.get("bilanz")
+    if bilanz is None:
+        connection.send_result(msg["id"], {"verfuegbar": False})
+        return
+
+    from homeassistant.util import dt as dt_util
+
+    inputs = getattr(data.get("schedule"), "last_inputs", None)
+    try:
+        ergebnis = bilanz.bezug(msg["zeitraum"], dt_util.now(), inputs, msg.get("datum"))
+    except Exception:  # noqa: BLE001 - Anzeige darf nie den Zugriff kippen
+        _LOGGER.exception("Bezug: Werte nicht berechenbar")
         connection.send_result(msg["id"], {"verfuegbar": False})
         return
     connection.send_result(msg["id"], {"verfuegbar": True, **ergebnis})
