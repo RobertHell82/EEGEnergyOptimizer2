@@ -130,3 +130,26 @@ def test_tag_von_vor_der_einfuehrung_hat_nur_die_summe():
 
     assert ergebnis["kennzahlen"]["bezug_kwh"] == pytest.approx(6.0)
     assert ergebnis["reihe"] == []
+
+
+def test_ausgeschaltet_werden_keine_viertelstunden_gespeichert():
+    b = _bilanz({"bilanz_viertelstunden": False})
+    gestern = _tag_mit({8: _slot(bezug=0.5, kwp=0.30, s=900.0)}, datum="2026-08-26")
+    b._archiviere(gestern, _inputs())
+    b._heute = {"datum": TAG, "slots": {}}
+
+    ergebnis = b.bezug("heute", JETZT, _inputs(), datum="2026-08-26")
+
+    assert b._viertelstunden == {}
+    assert b._vs_dirty is False
+    # Die Tagessumme kommt trotzdem ins Archiv.
+    assert ergebnis["kennzahlen"]["bezug_kwh"] == pytest.approx(0.5)
+    assert ergebnis["reihe"] == []
+
+
+def test_schalter_wirkt_ohne_neustart():
+    b = _bilanz({"bilanz_viertelstunden": False})
+    b.update_config({"bilanz_viertelstunden": True})
+    b._archiviere(_tag_mit({8: _slot(bezug=0.5, kwp=0.30, s=900.0)}, datum="2026-08-26"), _inputs())
+
+    assert "2026-08-26" in b._viertelstunden

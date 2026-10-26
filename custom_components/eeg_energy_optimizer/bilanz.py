@@ -75,7 +75,13 @@ from dataclasses import replace
 from datetime import date, datetime, timedelta
 from typing import Any
 
-from .const import DOMAIN, MODE_EIN, PUFFER_WH_PRO_LITER_KELVIN_EFFEKTIV
+from .const import (
+    CONF_BILANZ_VIERTELSTUNDEN,
+    DEFAULT_BILANZ_VIERTELSTUNDEN,
+    DOMAIN,
+    MODE_EIN,
+    PUFFER_WH_PRO_LITER_KELVIN_EFFEKTIV,
+)
 
 try:  # pragma: no cover - im Test nicht vorhanden
     from homeassistant.helpers.storage import Store
@@ -390,6 +396,15 @@ class EnergieBilanz:
             del self._viertelstunden[tag]
             self._vs_dirty = True
 
+    @property
+    def viertelstunden_speichern(self) -> bool:
+        """Schalter in den Einstellungen: Viertelstunden vergangener Tage ablegen?"""
+        return bool(self._config.get(CONF_BILANZ_VIERTELSTUNDEN, DEFAULT_BILANZ_VIERTELSTUNDEN))
+
+    def update_config(self, config: dict) -> None:
+        """Neue Einstellungen ohne Neustart übernehmen (Hot-Reload)."""
+        self._config = config
+
     async def async_flush(self) -> None:
         """Schreiben, wenn sich etwas geändert hat."""
         if self._vs_dirty and self._vs_store is not None:
@@ -694,13 +709,14 @@ class EnergieBilanz:
             return
         ergebnis = self.bewerte_tag(tag, inputs)
         self._tage[datum] = ergebnis
-        try:
-            self._viertelstunden[datum] = _packe_viertelstunden(
-                self._viertelstunden_von(tag, inputs)
-            )
-            self._vs_dirty = True
-        except Exception:  # noqa: BLE001 - das Chart ist kein Grund, den Abschluss zu kippen
-            _LOGGER.debug("Bilanz: Viertelstunden nicht archivierbar", exc_info=True)
+        if self.viertelstunden_speichern:
+            try:
+                self._viertelstunden[datum] = _packe_viertelstunden(
+                    self._viertelstunden_von(tag, inputs)
+                )
+                self._vs_dirty = True
+            except Exception:  # noqa: BLE001 - das Chart ist kein Grund, den Abschluss zu kippen
+                _LOGGER.debug("Bilanz: Viertelstunden nicht archivierbar", exc_info=True)
         monat = datum[:7]
         summe = self._monate.setdefault(monat, {})
         for feld, wert in ergebnis.items():
