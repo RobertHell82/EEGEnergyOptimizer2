@@ -912,6 +912,11 @@ absent for every other source.
 ## Development Notes
 
 - Tests in `tests/` directory, run with `pytest` (asyncio_mode=auto)
+- Panel tests in `tests/js/*.test.mjs` (Node's built-in runner, `node --test tests/js/<file>`):
+  `panel_harness.mjs` loads the real panel file into a `vm` context with DOM stubs
+  and a fake HA connection whose replies the test releases one by one;
+  `tests/test_panel_js.py` runs them under pytest (skipped without Node).
+  `EEG_PANEL_DATEI=<path>` runs them against another version of the panel
 - `pyproject.toml` configures pytest
 - All UI strings in German (`strings.json`, `translations/de.json`), English fallback (`translations/en.json`)
 - HA imports are guarded with try/except for test environment compatibility (stubs provided)
