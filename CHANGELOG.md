@@ -10,6 +10,24 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 > Fahrplan-Optimierung — liegt im vorherigen, nicht öffentlichen Repository
 > `EEGEnergyOptimizer-chamo`.
 
+## [2.1.49] - 2026-10-26
+
+### Behoben
+
+- **Das Aktivitätsprotokoll zeigt neue Einträge nur noch einmal.** Ein Mitglied sah jeden neuen Eintrag zwei- bis dreimal, etwa dreimal „Laden begrenzt auf 3.1 kW“ um 09:15; nach „Aktualisieren“ waren die Duplikate weg. Ursache waren mehrere parallele Live-Abos: Solange Home Assistant die Anmeldung noch nicht bestätigt hatte, startete jede Zustandsänderung eine weitere. Jetzt hängt nur das jeweils neueste Abo Einträge an. Bei einem Verbindungswechsel wird das alte abgemeldet statt vergessen, und eine Anmeldung, die nach 15 Sekunden noch hängt, wird ersetzt. Einträge, die eintreffen, während die Liste gerade lädt, gehen nicht mehr verloren. 30 neue Panel-Tests laufen gegen die echte Panel-Datei; gegen den alten Stand schlagen 20 davon fehl, darunter das gemeldete Fehlerbild. Beitrag von andi-arbeit-agent (#7), überarbeitet.
+
+### Hinzugefügt
+
+- **Neue Karte „Bezug“:** was aus dem Netz kam und was es gekostet hat. Die Kosten sind Netzbezug mal Bezugspreis der jeweiligen Viertelstunde, brutto, ohne Grundgebühr und Leistungspreis. Viertelstunden ohne erfassten Preis (etwa kurz nach einem Neustart, bevor ein Fahrplan steht) zählen nicht als 0 €. Die Karte nennt diese Menge, und der Preis je kWh gilt für den Rest. Dazu die höchste Viertelstunde des Zeitraums. Beitrag von andi-arbeit-agent (#8), überarbeitet.
+- **„Einspeisung“ und „Bezug“ lassen sich durchblättern**, Tag für Tag, Monat für Monat, Jahr für Jahr. Ein vergangener Tag zeigt die Viertelstunden aus einem neuen Archiv. Es wird beim Tageswechsel geschrieben, braucht rund 4 kB je Tag und nach einem Jahr knapp 2 MB. Abschaltbar unter System → „Verlauf vergangener Tage“; Tage von vor dieser Version zeigen nur die Summe.
+- **Tageswerte im Energiefluss:** Produktion, Netzbezug und Einspeisung seit 04:00 stehen oben links im Bild. Sie kommen aus demselben Messzeitpunkt wie die Leistungen daneben.
+- **Dashboard-Karten einzeln ausblenden** unter System → „Dashboard“. Das gilt je Gerät und sofort, ohne Speichern und ohne Neuladen der Integration; der Status bleibt immer sichtbar.
+
+### Geändert
+
+- **Die Punkte im Energiefluss laufen halb so schnell.** Ab rund 4 kW lief vorher alles am Anschlag und war bei 11 kW nur noch Flimmern.
+- **„Batterie aus dem Netz laden“ bleibt den Betas vorbehalten**, im Release ausgeblendet und ohne Wirkung.
+
 ## [2.1.49-beta.1] - 2026-10-22
 
 ### Geändert
