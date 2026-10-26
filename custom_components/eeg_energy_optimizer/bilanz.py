@@ -75,7 +75,13 @@ from dataclasses import replace
 from datetime import date, datetime, timedelta
 from typing import Any
 
-from .const import DOMAIN, MODE_EIN, PUFFER_WH_PRO_LITER_KELVIN_EFFEKTIV
+from .const import (
+    CONF_BILANZ_VIERTELSTUNDEN,
+    DEFAULT_BILANZ_VIERTELSTUNDEN,
+    DOMAIN,
+    MODE_EIN,
+    PUFFER_WH_PRO_LITER_KELVIN_EFFEKTIV,
+)
 
 try:  # pragma: no cover - im Test nicht vorhanden
     from homeassistant.helpers.storage import Store
@@ -234,6 +240,107 @@ def ohne_pv(slot: dict[str, Any]) -> bool:
     return pv_kw < BATTERIE_EXPORT_PV_SCHWELLE_KW
 
 
+# Felder einer archivierten Viertelstunde, gespeichert als Spalten — eine
+# Liste je Feld statt eines Objekts je Slot hält die Datei klein.
+_VS_SPALTEN = {
+    "i": "i", "e": "export", "b": "batterie", "g": "eeg", "d": "bedarf",
+    "z": "bezug", "k": "kosten",
+}
+
+
+# Gespeicherte Nachkommastellen: kWh auf die Wattstunde, Kosten auf den
+# Hundertstel-Cent. Mehr trägt keine Anzeige, und jede Stelle kostet über
+# 400 Tage × 96 Viertelstunden rund 40 kB.
+_VS_STELLEN = {"export": 3, "batterie": 3, "eeg": 3, "bezug": 3, "kosten": 4}
+
+
+def _packe_viertelstunden(reihe: list[dict[str, Any]]) -> dict[str, list]:
+    def wert(r: dict[str, Any], lang: str) -> Any:
+        v = r.get(lang)
+        stellen = _VS_STELLEN.get(lang)
+        return round(v, stellen) if stellen is not None and isinstance(v, (int, float)) else v
+
+    return {kurz: [wert(r, lang) for r in reihe] for kurz, lang in _VS_SPALTEN.items()}
+
+
+def _entpacke_viertelstunden(gepackt: Any, datum: str) -> list[dict[str, Any]]:
+    """Gespeicherte Spalten zurück in eine Liste je Viertelstunde.
+
+    Eine fehlende oder zu kurze Spalte (ein Feld, das erst eine spätere
+    Version schreibt) liefert None statt einer Ausnahme; ein unlesbarer
+    Index fällt weg. Die Anzeige eines alten Tages soll nie die ganze
+    Karte kippen.
+    """
+    if not isinstance(gepackt, dict) or not isinstance(gepackt.get("i"), list):
+        return []
+    try:
+        start = bilanztag_start(datum)
+    except (TypeError, ValueError):
+        return []
+    spalten = {
+        lang: spalte if isinstance(spalte := gepackt.get(kurz), list) else []
+        for kurz, lang in _VS_SPALTEN.items()
+    }
+    reihe = []
+    for pos, index in enumerate(gepackt["i"]):
+        try:
+            versatz = int(index) * SLOT_SEKUNDEN
+        except (TypeError, ValueError):
+            continue
+        r = {lang: spalte[pos] if pos < len(spalte) else None for lang, spalte in spalten.items()}
+        r["i"] = int(index)
+        r["t"] = (start + timedelta(seconds=versatz)).isoformat(timespec="seconds")
+        reihe.append(r)
+    return reihe
+
+
+def _bezug_spitze(
+    paare: list[tuple[int, dict[str, Any]]], datum: str | None
+) -> tuple[float | None, str | None]:
+    """Höchste Viertelstunde Netzbezug (kW) und ihr Beginn (Ortszeit, ISO).
+
+    Dasselbe Raster wie der Netzbetreiber: Bezugsenergie der Viertelstunde
+    geteilt durch 0,25 h, Einspeisung verrechnet sich nicht.
+    """
+    spitze_kw: float | None = None
+    spitze_index: int | None = None
+    for index, slot in paare:
+        kw = max(float(slot.get("bezug") or 0.0), 0.0) / (SLOT_SEKUNDEN / 3600.0)
+        if spitze_kw is None or kw > spitze_kw:
+            spitze_kw, spitze_index = kw, index
+    spitze_zeit = None
+    if spitze_index is not None and datum:
+        try:
+            spitze_zeit = (
+                bilanztag_start(str(datum)) + timedelta(seconds=spitze_index * SLOT_SEKUNDEN)
+            ).isoformat(timespec="minutes")
+        except (TypeError, ValueError):
+            spitze_zeit = None
+    return spitze_kw, spitze_zeit
+
+
+def _bezug_kosten(slots: list[dict[str, Any]]) -> tuple[float, float | None, float]:
+    """(Netzbezug kWh, Kosten €, davon bepreiste kWh) einer Slot-Reihe.
+
+    Die Kosten sind Netzbezug mal eingefrorenem Bezugspreis des Slots
+    (``kwp``). Ein Slot ohne Preis (noch kein Fahrplan, etwa nach einem
+    Neustart) hat keine Kosten — er zählt auch nicht als 0 €. Deshalb geht
+    die bepreiste Menge mit: Der Preis je kWh teilt durch sie, nicht durch
+    den ganzen Bezug. Hatte der Tag Bezug, aber keinen einzigen Preis,
+    sind die Kosten None statt 0.
+    """
+    bezug = bepreist = kosten = 0.0
+    for slot in slots:
+        menge = max(float(slot.get("bezug") or 0.0), 0.0)
+        bezug += menge
+        if slot.get("kwp") is not None:
+            bepreist += menge
+            kosten += menge * float(slot["kwp"])
+    if bepreist <= 0 and bezug > 0:
+        return bezug, None, 0.0
+    return bezug, kosten, bepreist
+
+
 class EnergieBilanz:
     """Zeichnet die Energiereihe auf und bewertet sie in Geld."""
 
@@ -244,6 +351,17 @@ class EnergieBilanz:
 
         store_key = f"{DOMAIN}_{entry_id}_bilanz"
         self._store: Any = Store(hass, 1, store_key) if Store is not None else None
+        # Die Viertelstunden der abgeschlossenen Tage, damit die Karten auch
+        # einen vergangenen Tag je Viertelstunde zeigen können. Eigene Datei:
+        # Sie wächst in 400 Tagen auf knapp 2 MB (rund 4 kB je Tag, siehe
+        # test_archiv_nach_400_tagen_bleibt_unter_zwei_megabyte) und ändert
+        # sich nur beim Tageswechsel — im Haupt-Store würde sie bei jedem
+        # Takt mitgeschrieben.
+        self._vs_store: Any = (
+            Store(hass, 1, f"{store_key}_viertelstunden") if Store is not None else None
+        )
+        self._viertelstunden: dict[str, dict[str, list]] = {}
+        self._vs_dirty = False
 
         self._heute: dict[str, Any] = _leerer_tag("")
         # Abgelaufene Tage, die noch auf ihre Bewertung warten (siehe
@@ -278,6 +396,13 @@ class EnergieBilanz:
         self._offen = stored.get("offen") or []
         self._tage = stored.get("tage") or {}
         self._monate = stored.get("monate") or {}
+        if self._vs_store is not None:
+            try:
+                vs = await self._vs_store.async_load()
+            except Exception:  # noqa: BLE001
+                vs = None
+            if isinstance(vs, dict) and isinstance(vs.get("tage"), dict):
+                self._viertelstunden = vs["tage"]
         self._migriere_auf_bilanztag()
         self._verdichte_alte_tage()
 
@@ -343,9 +468,27 @@ class EnergieBilanz:
         for tag in alt:
             del self._tage[tag]
             self._dirty = True
+        for tag in [t for t in self._viertelstunden if t < grenze]:
+            del self._viertelstunden[tag]
+            self._vs_dirty = True
+
+    @property
+    def viertelstunden_speichern(self) -> bool:
+        """Schalter in den Einstellungen: Viertelstunden vergangener Tage ablegen?"""
+        return bool(self._config.get(CONF_BILANZ_VIERTELSTUNDEN, DEFAULT_BILANZ_VIERTELSTUNDEN))
+
+    def update_config(self, config: dict) -> None:
+        """Neue Einstellungen ohne Neustart übernehmen (Hot-Reload)."""
+        self._config = config
 
     async def async_flush(self) -> None:
         """Schreiben, wenn sich etwas geändert hat."""
+        if self._vs_dirty and self._vs_store is not None:
+            self._vs_dirty = False
+            try:
+                await self._vs_store.async_save({"version": 1, "tage": self._viertelstunden})
+            except Exception as err:  # noqa: BLE001
+                _LOGGER.warning("Bilanz-Viertelstunden nicht speicherbar: %s", err)
         if not self._dirty or self._store is None:
             return
         self._dirty = False
@@ -642,6 +785,14 @@ class EnergieBilanz:
             return
         ergebnis = self.bewerte_tag(tag, inputs)
         self._tage[datum] = ergebnis
+        if self.viertelstunden_speichern:
+            try:
+                self._viertelstunden[datum] = _packe_viertelstunden(
+                    self._viertelstunden_von(tag, inputs)
+                )
+                self._vs_dirty = True
+            except Exception:  # noqa: BLE001 - das Chart ist kein Grund, den Abschluss zu kippen
+                _LOGGER.debug("Bilanz: Viertelstunden nicht archivierbar", exc_info=True)
         monat = datum[:7]
         summe = self._monate.setdefault(monat, {})
         for feld, wert in ergebnis.items():
@@ -680,6 +831,12 @@ class EnergieBilanz:
             "eigen_kwh": 0.0,
             "export_kwh": 0.0,
             "bezug_kwh": 0.0,
+            # Netzbezug mal eingefrorenem Bezugspreis des Slots, und die
+            # Menge, für die es einen Preis gab (siehe ``_bezug_kosten``).
+            # Grund- und Zählpunktpauschalen stecken nicht im Bezugspreis.
+            # Ein Tag ohne Aufzeichnung behauptet keine Kosten: None.
+            "bezug_kosten": None,
+            "bezug_bepreist_kwh": None,
             "pv_kwh": 0.0,
             "eeg_kwh": 0.0,
             "heizstab_kwh": 0.0,
@@ -780,21 +937,8 @@ class EnergieBilanz:
         # steckt nicht in ``heizstab_pv_kwh`` und bleibt draußen.
         waerme = heizstab_pv_kwh * waermewert
 
-        spitze_kw: float | None = None
-        spitze_index: int | None = None
-        for index, slot in paare:
-            kw = max(float(slot.get("bezug") or 0.0), 0.0) / (SLOT_SEKUNDEN / 3600.0)
-            if spitze_kw is None or kw > spitze_kw:
-                spitze_kw, spitze_index = kw, index
-        spitze_zeit = None
-        if spitze_index is not None and tag.get("datum"):
-            try:
-                spitze_zeit = (
-                    bilanztag_start(str(tag["datum"]))
-                    + timedelta(seconds=spitze_index * SLOT_SEKUNDEN)
-                ).isoformat(timespec="minutes")
-            except (TypeError, ValueError):
-                spitze_zeit = None
+        spitze_kw, spitze_zeit = _bezug_spitze(paare, tag.get("datum"))
+        _, bezug_kosten, bezug_bepreist = _bezug_kosten(slots)
 
         ergebnis = dict(leer)
         ergebnis.update({
@@ -804,6 +948,8 @@ class EnergieBilanz:
             "pv_kwh": round(pv_kwh, 3),
             "export_kwh": round(export_kwh, 3),
             "bezug_kwh": round(bezug_kwh, 3),
+            "bezug_kosten": None if bezug_kosten is None else round(bezug_kosten, 4),
+            "bezug_bepreist_kwh": round(bezug_bepreist, 3),
             "heizstab_kwh": round(heizstab_kwh, 3),
             "haus_kwh": round(haus_kwh, 3),
             "batterie_export_kwh": round(batterie_export_kwh, 3),
@@ -1105,8 +1251,44 @@ class EnergieBilanz:
             return any(k.startswith(jahr) for k in self._monate)
         return bool(self._monate)
 
+    def _zeitraum_tage(
+        self, zeitraum: str, now_local: datetime, inputs: Any, datum: str | None,
+        heute: Any = None,
+    ) -> tuple[dict[str, dict[str, Any]], str, str | None]:
+        """Die Tage eines Zeitraums samt laufendem Tag: (Tage, heute, Auswahl).
+
+        ``datum`` wählt, WELCHER Tag, Monat oder Jahr — ``YYYY-MM-DD``,
+        ``YYYY-MM`` oder ``YYYY`` passend zum Zeitraum. Fehlt es oder passt
+        es nicht, gilt der laufende. Der laufende Tag kommt nur dazu, wenn
+        er im gewählten Zeitraum liegt; bewertet wird er nur dann — mit
+        ``heute()`` (der vollen Bewertung samt Referenzlauf) oder, wer weniger
+        braucht, mit der übergebenen Funktion.
+        """
+        heute_datum = self.datum_heute or bilanz_datum(now_local)
+        laenge = {"heute": 10, "monat": 7, "jahr": 4}.get(zeitraum)
+        auswahl = None
+        if laenge is not None:
+            auswahl = datum if datum and len(datum) == laenge else heute_datum[:laenge]
+        if zeitraum == "heute":
+            tage: dict[str, dict[str, Any]] = {}
+            if auswahl in self._tage:
+                tage[auswahl] = self._tage[auswahl]
+        elif zeitraum == "gesamt":
+            tage = self._gesamt_eintraege()
+        else:
+            tage = {d: e for d, e in self._tage.items() if d.startswith(auswahl)}
+        if auswahl is None or heute_datum.startswith(auswahl):
+            tage[heute_datum] = heute() if heute is not None else self.heute(inputs)
+        return tage, heute_datum, auswahl
+
+    def _zeitraum_rahmen(self, heute_datum: str) -> dict[str, Any]:
+        """Ältester und neuester Tag mit Aufzeichnung — die Grenzen fürs Blättern."""
+        aeltester = min([*self._tage, *(f"{m}-01" for m in self._monate), heute_datum])
+        return {"aeltester": aeltester, "neuester": heute_datum}
+
     def einspeisung(
-        self, zeitraum: str, now_local: datetime, inputs: Any = None
+        self, zeitraum: str, now_local: datetime, inputs: Any = None,
+        datum: str | None = None,
     ) -> dict[str, Any]:
         """Was ins Netz ging — für die Einspeise-Karte.
 
@@ -1121,17 +1303,7 @@ class EnergieBilanz:
         Der Vergleich mit dem Standardbetrieb läuft NUR über Tage mit
         Referenz, auf beiden Seiten; ``vergleich.tage`` sagt, über wie viele.
         """
-        heute = self.heute(inputs)
-        monat_key, jahr_key = self.zeitraum_schluessel(now_local)
-        datum = self.datum_heute or bilanz_datum(now_local)
-        if zeitraum == "heute":
-            tage: dict[str, dict[str, Any]] = {}
-        elif zeitraum == "gesamt":
-            tage = self._gesamt_eintraege()
-        else:
-            praefix = monat_key if zeitraum == "monat" else jahr_key
-            tage = {d: e for d, e in self._tage.items() if d.startswith(praefix)}
-        tage[datum] = heute
+        tage, heute_datum, auswahl = self._zeitraum_tage(zeitraum, now_local, inputs, datum)
         eintraege = [tage[d] for d in sorted(tage)]
 
         def summe(liste: list[dict[str, Any]], feld: str) -> float:
@@ -1183,7 +1355,9 @@ class EnergieBilanz:
         tarife = list(getattr(inputs, "eeg_tarife", None) or []) if inputs is not None else []
         return {
             "zeitraum": zeitraum,
-            "bilanztag": datum,
+            "bilanztag": heute_datum,
+            "auswahl": auswahl,
+            **self._zeitraum_rahmen(heute_datum),
             # Nur echte Tage — ein Monatsposten aus der Zeit vor dem
             # Tagesarchiv ist kein Tag.
             "tage": sum(1 for e in eintraege if not e.get("_monatssumme")),
@@ -1193,8 +1367,139 @@ class EnergieBilanz:
             "erster_tag": min(tage) if tage else None,
             "gemeinschaft": bool(tarife),
             "quotenmodus": any(t.get("quote_tag") is not None for t in tarife),
-            "reihe": self._einspeise_reihe(zeitraum, tage, inputs),
+            "reihe": self._einspeise_reihe(zeitraum, tage, inputs, auswahl, heute_datum),
         }
+
+    def bezug(
+        self, zeitraum: str, now_local: datetime, inputs: Any = None,
+        datum: str | None = None,
+    ) -> dict[str, Any]:
+        """Was aus dem Netz kam und was es gekostet hat — für die Bezugs-Karte.
+
+        Dieselben Zeiträume wie ``einspeisung``. Die Kosten sind Netzbezug mal
+        eingefrorenem Bezugspreis je Viertelstunde (``bezug_kosten``); Tage
+        von vor der Einführung kennen das Feld nicht — ``kosten_seit`` sagt,
+        ab wann es Kosten gibt. Der Preis je kWh teilt nur durch die Menge,
+        für die es einen Preis gab; was ohne Preis bezogen wurde, steht in
+        ``ohne_preis_kwh`` und fehlt in den Kosten.
+
+        Der laufende Tag wird nur für den Bezug ausgewertet — die volle
+        Tagesbewertung mit Referenzlauf und Gemeinschaftsaufteilung braucht
+        diese Karte nicht.
+        """
+        tage, heute_datum, auswahl = self._zeitraum_tage(
+            zeitraum, now_local, inputs, datum, heute=lambda: self._bezug_tag(self._heute)
+        )
+        eintraege = [tage[d] for d in sorted(tage)]
+        bezug = sum(float(e.get("bezug_kwh") or 0.0) for e in eintraege)
+        mit_kosten = [e for e in eintraege if e.get("bezug_kosten") is not None]
+        kosten = sum(float(e["bezug_kosten"]) for e in mit_kosten)
+        bepreist = sum(float(e.get("bezug_bepreist_kwh") or 0.0) for e in mit_kosten)
+        spitze_kw = spitze_zeit = None
+        for e in eintraege:
+            kw = e.get("bezug_spitze_kw")
+            if kw is not None and (spitze_kw is None or kw > spitze_kw):
+                spitze_kw, spitze_zeit = kw, e.get("bezug_spitze_zeit")
+        kosten_tage = sorted(
+            d for d, e in tage.items() if e.get("bezug_kosten") is not None
+        )
+        return {
+            "zeitraum": zeitraum,
+            "bilanztag": heute_datum,
+            "auswahl": auswahl,
+            **self._zeitraum_rahmen(heute_datum),
+            "tage": sum(1 for e in eintraege if not e.get("_monatssumme")),
+            "kennzahlen": {
+                "bezug_kwh": round(bezug, 2),
+                "kosten": round(kosten, 2) if mit_kosten else None,
+                "kosten_je_kwh": round(kosten / bepreist, 4) if bepreist > 0 else None,
+                "ohne_preis_kwh": round(max(bezug - bepreist, 0.0), 2),
+                "spitze_kw": spitze_kw,
+                "spitze_zeit": spitze_zeit,
+            },
+            "kosten_seit": kosten_tage[0] if kosten_tage else None,
+            "erster_tag": min(tage) if tage else None,
+            "reihe": self._bezug_reihe(zeitraum, tage, auswahl, heute_datum),
+        }
+
+    def _bezug_tag(self, tag: dict[str, Any]) -> dict[str, Any]:
+        """Die Bezugs-Felder von ``bewerte_tag`` — ohne den Rest der Bewertung."""
+        paare = self._sortierte_paare(tag)
+        bezug, kosten, bepreist = _bezug_kosten([slot for _, slot in paare])
+        spitze_kw, spitze_zeit = _bezug_spitze(paare, tag.get("datum"))
+        if not paare:
+            kosten = bepreist = None
+        return {
+            "bezug_kwh": round(bezug, 3),
+            "bezug_kosten": None if kosten is None else round(kosten, 4),
+            "bezug_bepreist_kwh": None if bepreist is None else round(bepreist, 3),
+            "bezug_spitze_kw": None if spitze_kw is None else round(spitze_kw, 3),
+            "bezug_spitze_zeit": spitze_zeit,
+        }
+
+    def tageswerte(self) -> dict[str, float] | None:
+        """PV, Netzbezug und Einspeisung seit Beginn des Bilanztags (kWh).
+
+        Für die Statuskarte: Der Hausverbrauch-Sensor liest sie im selben
+        Zug wie die Leistungen. Nur Summen über die laufende Reihe — keine
+        Bewertung. None, solange noch kein Bilanztag läuft.
+        """
+        if not self.datum_heute:
+            return None
+        return {
+            "pv_kwh": self._heute_summe("pv"),
+            "bezug_kwh": self._heute_summe("bezug"),
+            "export_kwh": self._heute_summe("export"),
+        }
+
+    def _bezug_reihe(
+        self, zeitraum: str, tage: dict[str, dict[str, Any]],
+        auswahl: str | None, heute_datum: str,
+    ) -> list[dict[str, Any]]:
+        """Balken der Bezugs-Karte — dieselbe Einteilung wie ``_einspeise_reihe``."""
+        if zeitraum == "heute":
+            # Ohne inputs: Die Gemeinschaftsaufteilung je Slot braucht der
+            # Bezug nicht.
+            return [
+                {"t": r["t"], "bezug": r["bezug"], "kosten": r["kosten"]}
+                for r in self._tages_viertelstunden(auswahl, heute_datum, None)
+            ]
+
+        def posten(e: dict[str, Any]) -> tuple[float, float | None]:
+            kosten = e.get("bezug_kosten")
+            return float(e.get("bezug_kwh") or 0.0), None if kosten is None else float(kosten)
+
+        def addiere(ziel: dict[str, Any], e: dict[str, Any]) -> None:
+            menge, kosten = posten(e)
+            ziel["bezug"] += menge
+            if kosten is not None:
+                ziel["kosten"] = (ziel["kosten"] or 0.0) + kosten
+
+        if zeitraum == "monat":
+            reihe = []
+            for d, e in sorted(tage.items()):
+                menge, kosten = posten(e)
+                reihe.append({"datum": d, "bezug": menge, "kosten": kosten})
+        else:
+            schluessel = 4 if zeitraum == "gesamt" else 7
+            feld = "jahr" if zeitraum == "gesamt" else "monat"
+            gruppen: dict[str, dict[str, Any]] = {}
+            for d, e in sorted(tage.items()):
+                g = gruppen.setdefault(d[:schluessel], {feld: d[:schluessel], "bezug": 0.0, "kosten": None})
+                addiere(g, e)
+            if zeitraum == "gesamt" and gruppen:
+                erstes, letztes = int(min(gruppen)), int(max(gruppen))
+                reihe = [
+                    gruppen.get(str(j)) or {"jahr": str(j), "bezug": 0.0, "kosten": None}
+                    for j in range(erstes, letztes + 1)
+                ]
+            else:
+                reihe = list(gruppen.values())
+        for r in reihe:
+            r["bezug"] = round(r["bezug"], 3 if zeitraum == "monat" else 2)
+            if r["kosten"] is not None:
+                r["kosten"] = round(r["kosten"], 3 if zeitraum == "monat" else 2)
+        return reihe
 
     def _gesamt_eintraege(self) -> dict[str, dict[str, Any]]:
         """Alle Tage des Archivs, davor die Monatssummen.
@@ -1217,7 +1522,8 @@ class EnergieBilanz:
         return eintraege
 
     def _einspeise_reihe(
-        self, zeitraum: str, tage: dict[str, dict[str, Any]], inputs: Any
+        self, zeitraum: str, tage: dict[str, dict[str, Any]], inputs: Any,
+        auswahl: str | None = None, heute_datum: str = "",
     ) -> list[dict[str, Any]]:
         """Balken für das Chart: Viertelstunden, Tage, Monate oder Jahre.
 
@@ -1227,7 +1533,10 @@ class EnergieBilanz:
         stellt die Jahre nebeneinander.
         """
         if zeitraum == "heute":
-            return self._einspeise_viertelstunden(inputs)
+            return [
+                {k: r[k] for k in ("t", "export", "batterie", "eeg", "bedarf")}
+                for r in self._tages_viertelstunden(auswahl, heute_datum, inputs)
+            ]
         if zeitraum == "monat":
             return [
                 {
@@ -1273,19 +1582,30 @@ class EnergieBilanz:
                 m["batterie"] = round(m["batterie"], 2)
         return reihe
 
-    def _einspeise_viertelstunden(self, inputs: Any) -> list[dict[str, Any]]:
-        """Der laufende Bilanztag je Viertelstunde.
+    def _tages_viertelstunden(
+        self, datum: str | None, heute_datum: str, inputs: Any
+    ) -> list[dict[str, Any]]:
+        """Die Viertelstunden eines Bilanztags: der laufende aus der Reihe,
+        ein abgeschlossener aus dem Archiv (leer, wenn er von vor dessen
+        Einführung stammt)."""
+        if not datum or datum == heute_datum:
+            return self._viertelstunden_von(self._heute, inputs)
+        return _entpacke_viertelstunden(self._viertelstunden.get(datum), datum)
+
+    def _viertelstunden_von(self, tag: dict[str, Any], inputs: Any) -> list[dict[str, Any]]:
+        """Ein Bilanztag je Viertelstunde.
 
         ``eeg`` kommt aus derselben Zuteilung wie der Tageserlös
         (``eeg_aufnahme_je_slot``); ``bedarf`` sagt, ob mindestens eine
         Gemeinschaft in diesem Slot Bedarf hatte (None: keine Saldodaten,
-        etwa im Quotenmodus).
+        etwa im Quotenmodus). ``kosten`` ist der Netzbezug zum eingefrorenen
+        Bezugspreis (None ohne Preis).
         """
-        paare = self._sortierte_paare(self._heute)
+        paare = self._sortierte_paare(tag)
         if not paare:
             return []
         slots = [slot for _, slot in paare]
-        ist_slots = self._als_slots(paare, self._heute.get("datum") or "")
+        ist_slots = self._als_slots(paare, tag.get("datum") or "")
         aufnahme: list[float | None] = [None] * len(slots)
         if inputs is not None:
             try:
@@ -1297,15 +1617,20 @@ class EnergieBilanz:
             except Exception:  # noqa: BLE001 - Anzeige darf nie den Takt kippen
                 _LOGGER.debug("Bilanz: EEG-Aufteilung je Slot fehlgeschlagen", exc_info=True)
         reihe = []
-        for ist, roh, eeg in zip(ist_slots, slots, aufnahme):
+        for (index, roh), ist, eeg in zip(paare, ist_slots, aufnahme):
             export = max(float(roh.get("export") or 0.0), 0.0)
+            bezug = max(float(roh.get("bezug") or 0.0), 0.0)
             salden = roh.get("eeg") or {}
+            kwp = roh.get("kwp")
             reihe.append({
+                "i": index,
                 "t": ist["t"],
                 "export": round(export, 4),
                 "batterie": round(export, 4) if ohne_pv(roh) else 0.0,
                 "eeg": None if eeg is None else round(eeg, 4),
                 "bedarf": any(float(v) > 0 for v in salden.values()) if salden else None,
+                "bezug": round(bezug, 4),
+                "kosten": None if kwp is None else round(bezug * float(kwp), 5),
             })
         return reihe
 

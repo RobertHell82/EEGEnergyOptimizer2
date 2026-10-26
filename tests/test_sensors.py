@@ -460,3 +460,49 @@ async def test_negative_bilanz_wird_ausgewiesen_statt_stumm_geklemmt():
     a = sensor.extra_state_attributes
     assert a["bilanz_unvollstaendig"] is True
     assert a["bilanz_rest_kw"] == pytest.approx(-2.63, abs=0.01)
+
+
+# Tageswerte im selben Attributsatz (Review #8, Punkt 4): die Statuskarte
+# zeigt sie neben den Leistungen und darf dafür keine zweite Quelle lesen.
+
+
+async def test_hausverbrauch_traegt_die_tageswerte_der_bilanz():
+    hass = _hass_mit_leistungen(3.0, 0.0, 2.7)
+    bilanz = MagicMock()
+    bilanz.tageswerte = MagicMock(
+        return_value={"pv_kwh": 12.5, "bezug_kwh": 3.25, "export_kwh": 6.0}
+    )
+    hass.data[DOMAIN]["entry1"]["bilanz"] = bilanz
+    sensor = _hausverbrauch_sensor(hass, _BASIS)
+    await sensor.async_update()
+
+    a = sensor.extra_state_attributes
+    assert a["tag_pv_kwh"] == 12.5
+    assert a["tag_bezug_kwh"] == 3.25
+    assert a["tag_export_kwh"] == 6.0
+    assert a["pv_leistung_kw"] == 3.0
+
+
+async def test_hausverbrauch_ohne_bilanz_ohne_tageswerte():
+    hass = _hass_mit_leistungen(3.0, 0.0, 2.7)
+    sensor = _hausverbrauch_sensor(hass, _BASIS)
+    await sensor.async_update()
+
+    assert "tag_pv_kwh" not in sensor.extra_state_attributes
+
+
+async def test_hausverbrauch_ohne_bilanztag_ohne_tageswerte():
+    hass = _hass_mit_leistungen(3.0, 0.0, 2.7)
+    bilanz = MagicMock()
+    bilanz.tageswerte = MagicMock(return_value=None)
+    hass.data[DOMAIN]["entry1"]["bilanz"] = bilanz
+    sensor = _hausverbrauch_sensor(hass, _BASIS)
+    await sensor.async_update()
+
+    assert "tag_pv_kwh" not in sensor.extra_state_attributes
+
+
+def test_tageswerte_landen_nicht_im_recorder():
+    from custom_components.eeg_energy_optimizer.sensor import HausverbrauchSensor
+
+    assert {"tag_pv_kwh", "tag_bezug_kwh", "tag_export_kwh"} <= HausverbrauchSensor._unrecorded_attributes

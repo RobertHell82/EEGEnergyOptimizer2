@@ -78,6 +78,7 @@ OFFEN = {
     "eeg_optimizer/get_peakshare_data",
     "eeg_optimizer/get_bilanz",
     "eeg_optimizer/get_einspeisung",
+    "eeg_optimizer/get_bezug",
     "eeg_optimizer/get_override",
     "eeg_optimizer/set_override",
     "eeg_optimizer/clear_override",

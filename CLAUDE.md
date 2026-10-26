@@ -121,7 +121,7 @@ schedule_executor.py: ScheduleExecutor (execution, 30 s)
 | `config_flow.py` | Single-click config flow (full setup happens in panel) |
 | `peakshare.py` | PeakShareProvider — fetches + caches community demand forecasts (half-hourly refresh; hourly values, `opt()` resamples to 15 min itself) |
 | `telemetry.py`, `telemetry_buffer.py` | Opt-in reporting — profile, failures, half-hourly snapshots (`/v1/snapshot`: SOC, PV/house/grid/battery kW, mode, executor state, plan min-SOC) and a daily outcome (`/v1/outcome`, `tagesbilanz.py`), ring buffer with backoff. README and the panel's privacy details list all six (incl. the balance day and the forecast day); keep them in sync when a payload changes. Snapshots are taken on the half-hour grid but **offset by `TELEMETRY_SNAPSHOT_OFFSET_MIN`**: `_collect_snapshot()` runs in the same guard cycle *after* the executor wrote, and the plain grid hit exactly the cycle that writes on a slot change (slots turn at :00/:15/:30/:45) — Huawei briefly drops the battery when `forcible_discharge_soc` is rewritten, so the power columns systematically recorded the gap we cause ourselves. Weismann, 21.09.2026: the grid meter read ~0 W at the grid start in 9 of 10 half-hours while the window averaged 271–661 W. `soc_pct` is unaffected; for power questions use the plant's own history, not the snapshots. The snapshot queue is sent hourly and lives in a `Store` (`…_telemetry_snapshots`), so a restart no longer drops the pending ones. `schedule_solver` and `inverter_write` stay silent for `TELEMETRY_START_SCHONFRIST_S` (5 min) after setup — neither reported nor counted; the source integration is not ready yet, and every update used to report "Batterie-Ladestand oder -Kapazität unbekannt" (Huawei) or a failed start release (SolaX) |
-| `websocket_api.py` | 36 WebSocket commands for panel (config, schedule, control state, PeakShare, OeMAG, spot price, aWATTar SUNNY, grid tariffs, daily balance, probes, telemetry, activity log) |
+| `websocket_api.py` | 37 WebSocket commands for panel (config, schedule, control state, PeakShare, OeMAG, spot price, aWATTar SUNNY, grid tariffs, daily balance, probes, telemetry, activity log) |
 | `inverter/base.py` | Abstract inverter interface (InverterBase ABC) |
 | `inverter/huawei.py` | Huawei SUN2000 implementation via HA services — Single + Master/Slave (multi-device) |
 | `inverter/_distribution.py` | Shared proportional discharge distribution (Huawei multi-battery) |
@@ -241,7 +241,7 @@ three intents. `Fahrplan-Status` shows what actually happened:
 - **API**: Paginated WebSocket endpoint (`get_activity_log` with `offset`/`limit`)
 - **Frontend**: Loads 100 entries initially, "Mehr laden" fetches 100 more per click, live events via subscription
 
-### WebSocket API (36 commands)
+### WebSocket API (37 commands)
 
 Home Assistant hands a `websocket_command` to **every logged-in user** —
 `ActiveConnection.async_handle` checks no permissions. Anything that writes
@@ -281,6 +281,7 @@ of every single command and fails on a new, unclassified one.
 | `eeg_optimizer/get_netzentgelte` | Grid usage tariff per grid area (net + gross, AP/SNAP/WiNAP) with regulation, effective date, age, last error (`refresh` forces a fetch) |
 | `eeg_optimizer/get_bilanz` | Money balance for the "Was deine PV bringt" card — PV saving and optimiser share for today / month / year plus the day's breakdown (incl. `vorteil_begruendung` when the share is negative) |
 | `eeg_optimizer/get_einspeisung` | Feed-in card (`zeitraum` = `heute`/`monat`/`jahr`/`gesamt`): exported, from the battery (quarter-hours with PV < 50 W), absorbed by the community, revenue per kWh, self-sufficiency, self-consumption; comparison with standard operation over the days that have a reference only; chart series (quarter-hours / days / months) |
+| `eeg_optimizer/get_bezug` | Grid-import card, same periods and `datum` paging as `get_einspeisung` (`YYYY-MM-DD` / `YYYY-MM` / `YYYY`): import, cost (import × frozen purchase price per quarter-hour, gross, no fixed fees), cost per kWh over **priced** kWh only, `ohne_preis_kwh` (import without a frozen price — before the feature or with no plan yet — not counted as 0 €), highest quarter-hour. Evaluates today light (`_bezug_tag`), not via `bewerte_tag` |
 | `eeg_optimizer/get_override` | Active pause or `{aktiv: false}` |
 | `eeg_optimizer/set_override` | Start a pause — `stunden` and/or `bis_soc_pct` (at least one); replaces a running one, takes effect immediately, answers with the state *after* the immediate guard run |
 | `eeg_optimizer/clear_override` | End the running override |
@@ -709,7 +710,11 @@ the event loop is long enough for HA to flag a blocking call.
   the Hausverbrauch value from its state. `bilanz_unvollstaendig` marks the
   case where the formula went negative and was clamped to 0 — that 0 is a
   limit, not a measurement. Any new value on that card belongs in the same
-  attribute set.
+  attribute set — the energy-flow tile's day totals too: `tag_pv_kwh` /
+  `tag_bezug_kwh` / `tag_export_kwh` come from `EnergieBilanz.tageswerte()`
+  (plain sums over the running balance day, no valuation), unrecorded
+  attributes; the first PR draft read them from `get_bilanz`, up to a minute
+  older than the power values beside them.
 - **Consumption Profile**: Hourly averages from recorder in two groups — `wt` (Mon–Fri unless a holiday) and `we` (Sat, Sun, every holiday) — over a rolling window (default 4 weeks), trimmed mean. Two groups instead of seven weekdays give ~20 instead of 4 support values per weekday hour (`coordinator.py` docstring).
 - **The Hausverbrauch backfill must compute exactly what the live sensor
   computes, and it fills gaps only.** It runs on every start and rebuilds
@@ -892,6 +897,23 @@ Bar details work by tap: the click handler maps the x position to the bar
 (`svg[data-einsp-n]`), because a quarter-hour is 3 px wide on a phone and
 `<title>` never shows on touch; for the same reason the "aus der Batterie"
 definition is a visible note, not only a tooltip.
+The **Bezug** card (below Einspeisung, `_renderBezugKarte` / `_bezugChart`)
+is its counterpart for grid import, with cost — import × the quarter-hour's
+frozen purchase price, which is a measurement, unlike the balance card's
+model values. Both cards page through days, months and years
+(`_chartDatumSetzen`, `datum` in the request) and share one loader
+(`_ensureKarte` / `_loadKarte`: only while the card is shown **and** open;
+the request's `zeitraum` is kept, since `{verfuegbar: false}` carries none and
+an answer without it would be re-requested on every render) and one bar
+skeleton (`_balkenRahmen` / `_balkenAchsen` / `_balkenSvg`) — a card only
+draws its own bars. A past day shows quarter-hours from the archive
+`…_bilanz_viertelstunden` (own `Store`, written once per day change, columns
+instead of objects, Wh precision, ≈ 4 kB per day → < 2 MB at 400 days;
+switch `bilanz_viertelstunden`, default on, hot-reloaded); days from before
+it show the sum only. Dashboard cards can be hidden one by one (System →
+Dashboard) — a **per-device** preference in localStorage (`ansicht_<id>`),
+not a config key: a config save reloads the integration, needs admin rights
+and would hide the card for everyone. The status card cannot be hidden.
 The status card ends with the capacity-charge line
 (`_renderSpitzeZeile`, below `_renderAutoZeile`): only "Bezugsspitze <Monat>"
 and the value — details (time, running quarter-hour, last quarter, previous

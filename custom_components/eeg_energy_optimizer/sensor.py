@@ -566,9 +566,13 @@ class HausverbrauchSensor(SensorEntity):
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_icon = "mdi:home-lightning-bolt"
     _attr_suggested_display_precision = 2
+    # Die Tageswerte ändern sich mit jedem Lauf und stehen in der Bilanz —
+    # im Recorder wären sie nur Ballast.
+    _unrecorded_attributes = frozenset({"tag_pv_kwh", "tag_bezug_kwh", "tag_export_kwh"})
 
     def __init__(self, hass: Any, entry: Any, config: dict) -> None:
         self.hass = hass
+        self._entry_id = entry.entry_id
         self._pv_sensor_id = config.get(CONF_PV_POWER_SENSOR, "")
         self._pv_sensor_2_id = config.get(CONF_PV_POWER_SENSOR_2, "")
         self._battery_power_sensor_id = config.get(CONF_BATTERY_POWER_SENSOR, "")
@@ -662,6 +666,15 @@ class HausverbrauchSensor(SensorEntity):
             pv2_val = _read_power_kw(self.hass, self._pv_sensor_2_id)
             if pv2_val is not None:
                 attrs["pv_leistung_2_kw"] = round(pv2_val, 3)
+        # Tageswerte (Bilanztag ab 04:00) fürs Energiefluss-Bild — im selben
+        # Zug gelesen wie die Leistungen, damit die Statuskarte bei einem
+        # Zeitpunkt bleibt. Fehlt die Bilanz, fehlen sie, statt 0 zu zeigen.
+        bilanz = self.hass.data.get(DOMAIN, {}).get(self._entry_id, {}).get("bilanz")
+        tag = bilanz.tageswerte() if bilanz is not None else None
+        if tag is not None:
+            attrs["tag_pv_kwh"] = tag["pv_kwh"]
+            attrs["tag_bezug_kwh"] = tag["bezug_kwh"]
+            attrs["tag_export_kwh"] = tag["export_kwh"]
         self._attr_extra_state_attributes = attrs
 
 
