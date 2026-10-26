@@ -1938,6 +1938,44 @@ class EegOptimizerPanel extends HTMLElement {
       </div>`;
   }
 
+  // Karten des Dashboards, die sich in den Einstellungen ausblenden lassen.
+  // Gespeichert wird je Karte ein Schlüssel `ansicht_<id>`; fehlt er, ist
+  // die Karte sichtbar. Die Statuskarte bleibt immer — sie trägt die
+  // Steuerung.
+  static get ANSICHT_KARTEN() {
+    return [
+      ["plan", "Optimierungsplan"],
+      ["bilanz", "Was deine PV bringt"],
+      ["einspeisung", "Einspeisung"],
+      ["bezug", "Bezug"],
+      ["gewinn", "Optimierungsgewinn"],
+      ["prognosevergleich", "Prognosevergleich"],
+      ["prognose", "Energieprognose (7 Tage)"],
+      ["profil", "Verbrauchsprofil"],
+      ["aktivitaet", "Aktivitätsprotokoll"],
+    ];
+  }
+
+  _zeigt(id) {
+    return this._config?.[`ansicht_${id}`] !== false;
+  }
+
+  _ansichtKarte(d) {
+    const zeilen = this.constructor.ANSICHT_KARTEN.map(([id, name]) => {
+      const an = d[`ansicht_${id}`] !== false;
+      return `
+        <label class="log-checkbox" data-action="toggle-settings-feature" data-feature="ansicht_${id}" data-on="${an ? "1" : "0"}" style="color:var(--primary-text-color)">
+          <input type="checkbox" ${an ? "checked" : ""} style="pointer-events:none;margin:0;width:18px;height:18px"> ${name}
+        </label>`;
+    }).join("");
+    return `
+      <div class="card" style="margin-bottom:16px">
+        <h3 class="settings-karte-titel" style="margin:0 0 4px">Dashboard</h3>
+        <div class="help-text" style="margin-bottom:8px">Welche Karten das Dashboard zeigt. Ausgeblendet heißt nur nicht angezeigt — gerechnet, gesteuert und gespeichert wird weiter wie bisher. Der Status oben ist immer zu sehen.</div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));column-gap:12px">${zeilen}</div>
+      </div>`;
+  }
+
   _viertelstundenKarte(d) {
     // Die Vorgabe steht in DEFAULTS; ältere Einrichtungen kennen den
     // Schlüssel noch nicht und gelten damit als eingeschaltet.
@@ -9363,6 +9401,7 @@ class EegOptimizerPanel extends HTMLElement {
           <div class="help-text">Wie weit zurück der Verbrauch gemittelt wird. Gemittelt wird über zwei Gruppen — Werktage (Mo–Fr) und Wochenende samt Feiertagen —, nicht über einzelne Wochentage: Vier Wochen ergeben so rund 20 Vergleichswerte je Werktagsstunde, und ein einzelner Ausreißer wie eine E-Auto-Ladung fällt kaum mehr auf. Der höchste Wert je Stunde wird zusätzlich verworfen.</div>
         </div>
       </div>` : ""}
+      ${this._ansichtKarte(d)}
       ${this._sensorUebersichtKarte(d)}
       ${this._renderTelemetrySection()}
       ${isExpert ? this._bilanzKarte() : ""}
@@ -11440,6 +11479,7 @@ class EegOptimizerPanel extends HTMLElement {
 
 
         <!-- Optimierungsplan (der einzige Aktor) -->
+        ${!this._zeigt("plan") ? "" : `
         <div class="card">
           <div data-action="toggle-schedule" style="display:flex;justify-content:space-between;align-items:center;cursor:pointer;user-select:none">
             <h3 style="margin:0">
@@ -11449,24 +11489,24 @@ class EegOptimizerPanel extends HTMLElement {
             <ha-icon icon="mdi:chevron-${this._scheduleOpen ? "up" : "down"}" style="--mdc-icon-size:24px;color:var(--secondary-text-color)"></ha-icon>
           </div>
           ${this._scheduleOpen ? this._renderSchedule() : ""}
-        </div>
+        </div>`}
 
         <!-- Was die PV gebracht hat: Rückblick auf Gemessenes -->
-        ${this._renderBilanzKarte()}
+        ${this._zeigt("bilanz") ? this._renderBilanzKarte() : ""}
 
         <!-- Einspeisung: was ins Netz ging, woher, und wer es genommen hat -->
-        ${this._renderEinspeisungKarte()}
+        ${this._zeigt("einspeisung") ? this._renderEinspeisungKarte() : ""}
 
         <!-- Bezug: was aus dem Netz kam und was es gekostet hat -->
-        ${this._renderBezugKarte()}
+        ${this._zeigt("bezug") ? this._renderBezugKarte() : ""}
 
         <!-- Optimierungsgewinn: was die Optimierung gegenüber Standardbetrieb bringt -->
-        ${this._renderGewinnKarte()}
-        ${this._renderPrognosevergleichKarte()}
+        ${this._zeigt("gewinn") ? this._renderGewinnKarte() : ""}
+        ${this._zeigt("prognosevergleich") ? this._renderPrognosevergleichKarte() : ""}
 
 
         <!-- Charts (or loading hint if no consumption data yet) -->
-        ${(profilState?.attributes?.stats_count || 0) === 0 ? `
+        ${!this._zeigt("prognose") && !this._zeigt("profil") ? "" : (profilState?.attributes?.stats_count || 0) === 0 ? `
         <div class="card" style="text-align:center;padding:32px">
           <ha-icon icon="mdi:chart-line" style="--mdc-icon-size:48px;color:var(--secondary-text-color);opacity:0.5"></ha-icon>
           <h3 style="margin:16px 0 8px;color:var(--secondary-text-color)">Verbrauchsdaten werden berechnet...</h3>
@@ -11476,6 +11516,7 @@ class EegOptimizerPanel extends HTMLElement {
         </div>
         ` : `
         <!-- 7-Day Forecast Chart -->
+        ${!this._zeigt("prognose") ? "" : `
         <div class="card chart-card">
           <div data-action="toggle-forecast" style="display:flex;justify-content:space-between;align-items:center;gap:8px;cursor:pointer;user-select:none">
           <h3 class="status-card-title" style="margin:0;flex:1;min-width:0">
@@ -11496,9 +11537,10 @@ class EegOptimizerPanel extends HTMLElement {
           ${_solcastDay37Missing ? `<p style="margin:8px 0 0;padding:10px 12px;background:var(--warning-color,#ff9800)22;border-left:3px solid var(--warning-color,#ff9800);border-radius:4px;font-size:0.85em;color:var(--primary-text-color)">
             <ha-icon icon="mdi:alert-outline" style="--mdc-icon-size:16px;vertical-align:middle;margin-right:4px;color:var(--warning-color,#ff9800)"></ha-icon>
             Bitte die Sensoren f\u00fcr die Tage 3\u20137 in der Solcast Integration aktivieren, um die fehlenden Prognosedaten anzeigen zu lassen.</p>` : ""}`}
-        </div>
+        </div>`}
 
         <!-- Hourly Profile Chart (collapsible) -->
+        ${!this._zeigt("profil") ? "" : `
         <div class="card">
           <div data-action="toggle-profil" style="display:flex;justify-content:space-between;align-items:center;cursor:pointer;user-select:none">
             <h3 style="margin:0">
@@ -11524,11 +11566,12 @@ class EegOptimizerPanel extends HTMLElement {
               : this._renderLineChart(weekdayDatasets, hervorgehoben);
             return toggleBar + chart;
           })() : ""}
-        </div>
+        </div>`}
 
         `}
 
         <!-- Activity Timeline (collapsible) -->
+        ${!this._zeigt("aktivitaet") ? "" : `
         <div class="card">
           <div data-action="toggle-activity-log" style="display:flex;justify-content:space-between;align-items:center;cursor:pointer;user-select:none">
             <h3 style="margin:0">
@@ -11554,7 +11597,7 @@ class EegOptimizerPanel extends HTMLElement {
           </div>
           ${this._renderActivityTimeline()}
           ` : ""}
-        </div>
+        </div>`}
 
         <div style="text-align:center;margin-top:32px;padding:16px 0 8px;font-size:11px;color:var(--secondary-text-color,#999);line-height:1.6">
           <div style="font-size:13px;margin-bottom:12px">${anleitungLink("dashboard", "Dashboard & Bedienung")}</div>
