@@ -1510,7 +1510,7 @@ class EegOptimizerPanel extends HTMLElement {
     if (ziel === this[`_${art}Datum`]) return;
     this[`_${art}Datum`] = ziel;
     this[`_${art}Auswahl`] = null;
-    if (art === "bezug") this._loadBezug(); else this._loadEinspeisung();
+    this._loadKarte(art);
     this._render();
   }
 
@@ -1529,7 +1529,7 @@ class EegOptimizerPanel extends HTMLElement {
       const laenge = ZEITRAUM_LAENGE[wert];
       this[`_${art}Datum`] = datum && laenge && datum.length > laenge ? datum.slice(0, laenge) : null;
       this._savePref(`${art}_zeitraum`, wert);
-      if (art === "bezug") this._loadBezug(); else this._loadEinspeisung();
+      this._loadKarte(art);
       this._render();
       return;
     }
@@ -1645,67 +1645,42 @@ class EegOptimizerPanel extends HTMLElement {
   }
 
   // Wie _ensureBilanz: ein Render stößt das Nachladen an, höchstens einmal
-  // pro Minute. Ein Wechsel des Zeitraums lädt sofort (_chartBereichSetzen).
-  _ensureEinspeisung() {
-    if (this._einspeisungBusy || !this._hass) return;
-    const alter = Date.now() - this._einspeisungGeholt;
-    if (this._einspeisung !== null && alter < 60000
-        && this._einspeisung.zeitraum === this._einspeisungZeitraum
-        && this._einspeisung.angefragt === this._einspeisungDatum) return;
-    this._loadEinspeisung();
+  // pro Minute — und nur, solange die Karte zu sehen und aufgeklappt ist;
+  // jede Abfrage bewertet im Backend den laufenden Tag. Ein Wechsel des
+  // Zeitraums lädt sofort (_chartBereichSetzen). art: "einspeisung" | "bezug".
+  _ensureKarte(art) {
+    if (this[`_${art}Busy`] || !this._hass) return;
+    if (!this._zeigt(art) || !this[`_${art}Open`]) return;
+    const d = this[`_${art}`];
+    const alter = Date.now() - this[`_${art}Geholt`];
+    if (d !== null && alter < 60000
+        && d.zeitraum === this[`_${art}Zeitraum`]
+        && d.angefragt === this[`_${art}Datum`]) return;
+    this._loadKarte(art);
   }
 
-  async _loadEinspeisung() {
+  async _loadKarte(art) {
     if (!this._hass) return;
-    const zeitraum = this._einspeisungZeitraum;
-    const datum = this._einspeisungDatum;
-    this._einspeisungBusy = true;
+    const zeitraum = this[`_${art}Zeitraum`];
+    const datum = this[`_${art}Datum`];
+    this[`_${art}Busy`] = true;
     try {
       const r = await this._hass.callWS({
-        type: "eeg_optimizer/get_einspeisung", zeitraum, ...(datum ? { datum } : {}),
+        type: `eeg_optimizer/get_${art}`, zeitraum, ...(datum ? { datum } : {}),
       });
       // Hat der Nutzer inzwischen weitergeschaltet, gilt die neuere Anfrage.
-      if (zeitraum === this._einspeisungZeitraum && datum === this._einspeisungDatum) {
-        this._einspeisung = { ...r, angefragt: datum };
+      // zeitraum aus der Anfrage, nicht aus der Antwort: {verfuegbar: false}
+      // trägt keinen, und _ensureKarte hielte die Antwort sonst für veraltet
+      // und fragte bei jedem Render neu.
+      if (zeitraum === this[`_${art}Zeitraum`] && datum === this[`_${art}Datum`]) {
+        this[`_${art}`] = { ...r, zeitraum, angefragt: datum };
       }
     } catch (e) {
-      console.warn("Einspeisung nicht abrufbar:", e);
-      this._einspeisung = { verfuegbar: false, zeitraum, angefragt: datum };
+      console.warn(`${art} nicht abrufbar:`, e);
+      this[`_${art}`] = { verfuegbar: false, zeitraum, angefragt: datum };
     } finally {
-      this._einspeisungBusy = false;
-      this._einspeisungGeholt = Date.now();
-      this._render();
-    }
-  }
-
-  // Wie _ensureEinspeisung, für die Bezugs-Karte.
-  _ensureBezug() {
-    if (this._bezugBusy || !this._hass) return;
-    const alter = Date.now() - this._bezugGeholt;
-    if (this._bezug !== null && alter < 60000
-        && this._bezug.zeitraum === this._bezugZeitraum
-        && this._bezug.angefragt === this._bezugDatum) return;
-    this._loadBezug();
-  }
-
-  async _loadBezug() {
-    if (!this._hass) return;
-    const zeitraum = this._bezugZeitraum;
-    const datum = this._bezugDatum;
-    this._bezugBusy = true;
-    try {
-      const r = await this._hass.callWS({
-        type: "eeg_optimizer/get_bezug", zeitraum, ...(datum ? { datum } : {}),
-      });
-      if (zeitraum === this._bezugZeitraum && datum === this._bezugDatum) {
-        this._bezug = { ...r, angefragt: datum };
-      }
-    } catch (e) {
-      console.warn("Bezug nicht abrufbar:", e);
-      this._bezug = { verfuegbar: false, zeitraum, angefragt: datum };
-    } finally {
-      this._bezugBusy = false;
-      this._bezugGeholt = Date.now();
+      this[`_${art}Busy`] = false;
+      this[`_${art}Geholt`] = Date.now();
       this._render();
     }
   }
@@ -1939,9 +1914,11 @@ class EegOptimizerPanel extends HTMLElement {
   }
 
   // Karten des Dashboards, die sich in den Einstellungen ausblenden lassen.
-  // Gespeichert wird je Karte ein Schlüssel `ansicht_<id>`; fehlt er, ist
-  // die Karte sichtbar. Die Statuskarte bleibt immer — sie trägt die
-  // Steuerung.
+  // Eine Anzeige-Vorliebe, keine Einstellung der Anlage: gemerkt je Gerät
+  // im localStorage (`ansicht_<id>` = "0"), nicht im Config-Entry — dort
+  // löste jedes Umschalten ein Neuladen der Integration samt Planlauf aus,
+  // verlangte Adminrechte und galt für alle Nutzer. Die Statuskarte bleibt
+  // immer — sie trägt die Steuerung.
   static get ANSICHT_KARTEN() {
     return [
       ["plan", "Optimierungsplan"],
@@ -1957,21 +1934,27 @@ class EegOptimizerPanel extends HTMLElement {
   }
 
   _zeigt(id) {
-    return this._config?.[`ansicht_${id}`] !== false;
+    return this._loadPref(`ansicht_${id}`, "1", ["0", "1"]) !== "0";
   }
 
-  _ansichtKarte(d) {
+  _ansichtUmschalten(id) {
+    if (!this.constructor.ANSICHT_KARTEN.some(([k]) => k === id)) return;
+    this._savePref(`ansicht_${id}`, this._zeigt(id) ? "0" : "1");
+    this._render();
+  }
+
+  _ansichtKarte() {
     const zeilen = this.constructor.ANSICHT_KARTEN.map(([id, name]) => {
-      const an = d[`ansicht_${id}`] !== false;
+      const an = this._zeigt(id);
       return `
-        <label class="log-checkbox" data-action="toggle-settings-feature" data-feature="ansicht_${id}" data-on="${an ? "1" : "0"}" style="color:var(--primary-text-color)">
+        <label class="log-checkbox" data-action="toggle-ansicht" data-karte="${id}" style="color:var(--primary-text-color)">
           <input type="checkbox" ${an ? "checked" : ""} style="pointer-events:none;margin:0;width:18px;height:18px"> ${name}
         </label>`;
     }).join("");
     return `
       <div class="card" style="margin-bottom:16px">
         <h3 class="settings-karte-titel" style="margin:0 0 4px">Dashboard</h3>
-        <div class="help-text" style="margin-bottom:8px">Welche Karten das Dashboard zeigt. Ausgeblendet heißt nur nicht angezeigt — gerechnet, gesteuert und gespeichert wird weiter wie bisher. Der Status oben ist immer zu sehen.</div>
+        <div class="help-text" style="margin-bottom:8px">Welche Karten das Dashboard zeigt — auf diesem Gerät, wirkt sofort und ohne Speichern. Ausgeblendet heißt nur nicht angezeigt: gerechnet, gesteuert und gespeichert wird weiter wie bisher. Der Status oben ist immer zu sehen.</div>
         <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));column-gap:12px">${zeilen}</div>
       </div>`;
   }
@@ -1989,7 +1972,7 @@ class EegOptimizerPanel extends HTMLElement {
           feature: "bilanz_viertelstunden",
           icon: "mdi:chart-timeline-variant",
           titel: "Viertelstunden speichern",
-          beschreibung: "Legt beim Tageswechsel Bezug, Einspeisung und Kosten je Viertelstunde ab. Damit zeigen die Karten „Bezug“ und „Einspeisung“ auch für einen vergangenen Tag den Verlauf, nicht nur die Summe. Aufbewahrt wird wie die Tagesbilanz, braucht einige hundert kB. Ausgeschaltet wird nichts mehr abgelegt; bereits gespeicherte Tage bleiben sichtbar.",
+          beschreibung: "Legt beim Tageswechsel Bezug, Einspeisung und Kosten je Viertelstunde ab. Damit zeigen die Karten „Bezug“ und „Einspeisung“ auch für einen vergangenen Tag den Verlauf, nicht nur die Summe. Aufbewahrt wird wie die Tagesbilanz (400 Tage), nach einem Jahr knapp 2 MB. Ausgeschaltet wird nichts mehr abgelegt; bereits gespeicherte Tage bleiben sichtbar.",
         })}
       </div>`;
   }
@@ -2534,6 +2517,9 @@ class EegOptimizerPanel extends HTMLElement {
         this._einspeisungOpen = !this._einspeisungOpen;
         this._savePref("einspeisung_open", this._einspeisungOpen ? "1" : "0");
         this._render();
+        break;
+      case "toggle-ansicht":
+        this._ansichtUmschalten(dataset?.karte);
         break;
       case "toggle-bezug-karte":
         this._bezugOpen = !this._bezugOpen;
@@ -4940,10 +4926,12 @@ class EegOptimizerPanel extends HTMLElement {
   // ob die Verschiebung in bessere Stunden wirkt.
   _renderEinspeisungKarte() {
     const d = this._einspeisung;
-    if (!d || d.verfuegbar === false) return "";
+    if (d?.verfuegbar === false) return "";
     // Titel und Pfeil klappen, die Zeitraumwahl dazwischen nicht — sonst
     // klappte jeder Tipp auf „Monat" die Karte zu.
     const offen = this._einspeisungOpen;
+    // Zugeklappt wird nichts geladen (_ensureKarte) — der Kopf steht trotzdem.
+    if (!d && offen) return "";
     const kopf = (wahlHtml) => `
         <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
           <h3 data-action="toggle-einspeisung-karte" style="margin:0;flex:1;cursor:pointer;user-select:none">
@@ -5047,26 +5035,19 @@ class EegOptimizerPanel extends HTMLElement {
   // ist ein „davon" quer zu dieser Aufteilung, kein dritter Stapel). Heute
   // je Viertelstunde mit dem Bedarf der Gemeinschaft als Hintergrund, Monat
   // je Tag, Jahr je Monat.
-  _einspeisungChart(d) {
-    const reihe = d.reihe || [];
-    if (!reihe.some(r => (r.export || 0) > 0)) {
-      const nurSumme = d.zeitraum === "heute" && (d.kennzahlen?.export_kwh || 0) > 0;
-      return `<p style="margin:14px 0 0;font-size:13px;color:var(--secondary-text-color);text-align:center">${nurSumme
-        ? VIERTELSTUNDEN_FEHLEN : "Noch keine Einspeisung in diesem Zeitraum."}</p>`;
-    }
+  // Gemeinsames Gerüst der Balkendiagramme von Einspeise- und Bezugskarte:
+  // Raster, Achsen, Antipp-Auswahl und Detailbox. Die Karten liefern nur
+  // ihre Balken. `max` ist der größte Balkenwert.
+  _balkenRahmen(d, art, max) {
     const schmal = !!this._narrow;
     const zeitraum = d.zeitraum;
-    const W = this._cw("einspeisung");
+    const W = this._cw(art);
     const H = schmal ? 190 : 220;
     const padL = schmal ? 30 : 40, padR = 8, padT = 10, padB = 22;
     const plotW = W - padL - padR, plotH = H - padT - padB;
-    const fs = schmal ? 10 : 11;
-    const mitEeg = d.gemeinschaft;
-
     // Heute: das volle Raster des Bilanztags (04:00–04:00), auch wenn erst
     // ein Teil gelaufen ist — sonst wüchse die Achse über den Tag.
-    const balken = reihe;
-    let n = reihe.length;
+    let n = (d.reihe || []).length;
     let index = (r, i) => i;
     if (zeitraum === "heute") {
       n = 96;
@@ -5083,83 +5064,132 @@ class EegOptimizerPanel extends HTMLElement {
     // Gesamt: das Backend liefert die Jahre lückenlos — der Index ist die
     // Position.
     const jeJahr = zeitraum === "gesamt";
-    const max = Math.max(...balken.map(r => r.export || 0), 0.001) * 1.1;
+    const oben = Math.max(max, 0.001) * 1.1;
     const slotW = plotW / n;
     // Höchstens 64 px: „Gesamt" hat im ersten Jahr genau einen Balken, der
     // sonst über die halbe Karte liefe.
     const bw = Math.min(64, Math.max(1, slotW * (zeitraum === "heute" ? 0.9 : 0.7)));
-    const y = (val) => padT + plotH - (val / max) * plotH;
+    const y = (val) => padT + plotH - (val / oben) * plotH;
+    return {
+      art, schmal, zeitraum, W, H, padL, padR, padT, plotH, n, index, jeJahr, oben, slotW, bw, y,
+      fs: schmal ? 10 : 11,
+      stellen: zeitraum === "heute" ? 2 : 1,
+      auswahl: this[`_${art}Auswahl`],
+      // Linke Kante des Balkens im Slot k
+      x: (k) => padL + k * slotW + (slotW - bw) / 2,
+      // Hinterlegung über die ganze Höhe des Slots k
+      band: (k, fill, deckkraft, minBreite = 0) =>
+        `<rect x="${(padL + k * slotW).toFixed(1)}" y="${padT}" width="${Math.max(slotW, minBreite).toFixed(2)}" height="${plotH}" fill="${fill}" fill-opacity="${deckkraft}"/>`,
+      // Balken von unten bis oben (Werte in kWh)
+      saeule: (k, unten, oben2, fill, extra = "") =>
+        `<rect x="${(padL + k * slotW + (slotW - bw) / 2).toFixed(1)}" y="${y(oben2).toFixed(1)}" width="${bw.toFixed(2)}" height="${(y(unten) - y(oben2)).toFixed(1)}" fill="${fill}"${extra}/>`,
+      // Erste Zeile der Details: Uhrzeit, Tag, Monat oder Jahr
+      name: (r) => zeitraum === "heute" ? new Date(r.t).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })
+        : zeitraum === "monat" ? new Date(r.datum).toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit" })
+        : jeJahr ? String(r.jahr)
+        : new Date(`${r.monat}-01T00:00:00`).toLocaleDateString("de-DE", { month: "long" }),
+    };
+  }
+
+  // Achsen: drei Stufen in kWh, darunter Uhrzeit, Tag, Monat oder Jahr.
+  _balkenAchsen(g, reihe) {
+    const { W, H, padL, padR, fs, slotW, n, y, oben, zeitraum, schmal } = g;
+    let achsen = "";
+    [0, 0.5, 1].forEach(f => {
+      const wert = (oben / 1.1) * f;
+      const yy = y(wert).toFixed(1);
+      achsen += `<line x1="${padL}" y1="${yy}" x2="${W - padR}" y2="${yy}" stroke="var(--divider-color,#e0e0e0)" stroke-width="0.7" stroke-dasharray="${f ? "3 3" : "0"}"/>`;
+      achsen += `<text x="${padL - 4}" y="${(Number(yy) + 3.5).toFixed(1)}" text-anchor="end" font-size="${fs}" fill="var(--secondary-text-color)">${fmtDe(wert, wert >= 10 ? 0 : 1)}</text>`;
+    });
+    const beschrift = (x, text) => {
+      achsen += `<text x="${x.toFixed(1)}" y="${H - 6}" text-anchor="middle" font-size="${fs}" fill="var(--secondary-text-color)">${text}</text>`;
+    };
+    const mitte = (k) => padL + k * slotW + slotW / 2;
+    if (zeitraum === "heute") {
+      // Die 04:00 am rechten Ende entfällt — sie stünde halb außerhalb.
+      for (let k = 0; k < 96; k += schmal ? 24 : 16) {
+        beschrift(padL + k * slotW, `${String((4 + k / 4) % 24).padStart(2, "0")}:00`);
+      }
+    } else if (zeitraum === "monat") {
+      const schritt = schmal ? 7 : 5;
+      for (let k = 0; k < n; k++) if (k === 0 || (k + 1) % schritt === 0) beschrift(mitte(k), String(k + 1));
+    } else if (zeitraum === "jahr") {
+      const namen = ["J", "F", "M", "A", "M", "J", "J", "A", "S", "O", "N", "D"];
+      const lang = ["Jan", "Feb", "Mär", "Apr", "Mai", "Jun", "Jul", "Aug", "Sep", "Okt", "Nov", "Dez"];
+      for (let k = 0; k < 12; k++) beschrift(mitte(k), schmal ? namen[k] : lang[k]);
+    } else {
+      reihe.forEach((r, k) => beschrift(mitte(k), String(r.jahr)));
+    }
+    return achsen;
+  }
+
+  // SVG samt Fußzeile und Detailbox des angetippten Balkens. Der Klick wird
+  // über data-einsp-* auf den Balken abgebildet (siehe Klick-Handler):
+  // `<title>` erreicht Touch nicht, und eine Viertelstunde ist 3 px breit.
+  _balkenSvg(g, { legende = "", defs = "", hinter = "", rects = "", details = {}, leer }) {
+    const { art, W, H, padL, slotW, n, schmal, zeitraum, jeJahr, auswahl } = g;
+    return `
+      <div style="margin-top:14px">
+        ${legende ? `<div style="margin-bottom:6px">${legende}</div>` : ""}
+        <svg data-cw="${art}" data-auswahl="${art}" data-einsp-n="${n}" data-einsp-w="${W}" data-einsp-l="${padL}" data-einsp-slot="${slotW}"
+             viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;cursor:pointer;-webkit-tap-highlight-color:transparent">
+          ${defs ? `<defs>${defs}</defs>` : ""}
+          ${hinter}${this._balkenAchsen(g, g.reihe)}${rects}
+        </svg>
+        <div style="display:flex;justify-content:space-between;gap:8px;font-size:11px;color:var(--secondary-text-color)">
+          <span>${schmal ? "Balken antippen für Details" : "Balken anklicken für Details"}</span>
+          <span style="white-space:nowrap">kWh je ${zeitraum === "heute" ? "Viertelstunde" : zeitraum === "monat" ? "Tag" : jeJahr ? "Jahr" : "Monat"}</span>
+        </div>
+        ${auswahl != null ? `
+        <div style="margin-top:6px;padding:8px 10px;border-radius:8px;background:var(--secondary-background-color,#f5f5f5);font-size:13px;line-height:1.5">
+          ${details[auswahl]
+            ? `<strong>${this._escapeHtml(details[auswahl][0])}</strong><br>${details[auswahl].slice(1).map(t => this._escapeHtml(t)).join("<br>")}`
+            : leer}
+        </div>` : ""}
+      </div>`;
+  }
+
+  _einspeisungChart(d) {
+    const reihe = d.reihe || [];
+    if (!reihe.some(r => (r.export || 0) > 0)) {
+      const nurSumme = d.zeitraum === "heute" && (d.kennzahlen?.export_kwh || 0) > 0;
+      return `<p style="margin:14px 0 0;font-size:13px;color:var(--secondary-text-color);text-align:center">${nurSumme
+        ? VIERTELSTUNDEN_FEHLEN : "Noch keine Einspeisung in diesem Zeitraum."}</p>`;
+    }
+    const g = this._balkenRahmen(d, "einspeisung", Math.max(...reihe.map(r => r.export || 0)));
+    g.reihe = reihe;
+    const { zeitraum, n, index, stellen } = g;
+    const mitEeg = d.gemeinschaft;
 
     const farbeEeg = "#43a047", farbeRest = "#90a4ae", farbeAlle = "#1e88e5";
-    const auswahl = this._einspeisungAuswahl;
     const details = {};
     let hinter = "", rects = "";
-    balken.forEach((r, i) => {
+    reihe.forEach((r, i) => {
       const k = index(r, i);
       if (k < 0 || k >= n) return;
-      const x = padL + k * slotW + (slotW - bw) / 2;
-      if (zeitraum === "heute" && r.bedarf) {
-        hinter += `<rect x="${(padL + k * slotW).toFixed(1)}" y="${padT}" width="${slotW.toFixed(2)}" height="${plotH}" fill="${farbeEeg}" fill-opacity="0.08"/>`;
-      }
+      if (zeitraum === "heute" && r.bedarf) hinter += g.band(k, farbeEeg, 0.08);
       const exp = r.export || 0;
       if (exp <= 0) return;
       const eeg = mitEeg ? Math.min(exp, r.eeg || 0) : 0;
       const bat = Math.min(exp, r.batterie || 0);
       const titel = [
-        zeitraum === "heute" ? new Date(r.t).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })
-          : zeitraum === "monat" ? new Date(r.datum).toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit" })
-          : jeJahr ? String(r.jahr)
-          : new Date(`${r.monat}-01T00:00:00`).toLocaleDateString("de-DE", { month: "long" }),
-        `${fmtDe(exp, zeitraum === "heute" ? 2 : 1)} kWh eingespeist`,
-        mitEeg ? `davon ${fmtDe(eeg, zeitraum === "heute" ? 2 : 1)} kWh ${d.quotenmodus ? "an die Gemeinschaft" : "bei Gemeinschaftsbedarf"}` : "",
-        r.batterie != null ? `davon ${fmtDe(bat, zeitraum === "heute" ? 2 : 1)} kWh aus der Batterie` : "",
+        g.name(r),
+        `${fmtDe(exp, stellen)} kWh eingespeist`,
+        mitEeg ? `davon ${fmtDe(eeg, stellen)} kWh ${d.quotenmodus ? "an die Gemeinschaft" : "bei Gemeinschaftsbedarf"}` : "",
+        r.batterie != null ? `davon ${fmtDe(bat, stellen)} kWh aus der Batterie` : "",
       ].filter(Boolean);
       details[k] = titel;
-      if (k === auswahl) {
-        hinter += `<rect x="${(padL + k * slotW).toFixed(1)}" y="${padT}" width="${Math.max(slotW, 3).toFixed(2)}" height="${plotH}" fill="var(--primary-color,#03a9f4)" fill-opacity="0.15"/>`;
-      }
+      if (k === g.auswahl) hinter += g.band(k, "var(--primary-color,#03a9f4)", 0.15, 3);
       rects += `<g><title>${this._escapeHtml(titel.join("\n"))}</title>`;
       if (mitEeg) {
-        if (eeg > 0) rects += `<rect x="${x.toFixed(1)}" y="${y(eeg).toFixed(1)}" width="${bw.toFixed(2)}" height="${(y(0) - y(eeg)).toFixed(1)}" fill="${farbeEeg}"/>`;
-        if (exp > eeg) rects += `<rect x="${x.toFixed(1)}" y="${y(exp).toFixed(1)}" width="${bw.toFixed(2)}" height="${(y(eeg) - y(exp)).toFixed(1)}" fill="${farbeRest}"/>`;
+        if (eeg > 0) rects += g.saeule(k, 0, eeg, farbeEeg);
+        if (exp > eeg) rects += g.saeule(k, eeg, exp, farbeRest);
       } else {
-        rects += `<rect x="${x.toFixed(1)}" y="${y(exp).toFixed(1)}" width="${bw.toFixed(2)}" height="${(y(0) - y(exp)).toFixed(1)}" fill="${farbeAlle}"/>`;
+        rects += g.saeule(k, 0, exp, farbeAlle);
       }
-      if (bat > 0) {
-        rects += `<rect x="${x.toFixed(1)}" y="${y(bat).toFixed(1)}" width="${bw.toFixed(2)}" height="${(y(0) - y(bat)).toFixed(1)}" fill="url(#einsp-schraffur)" stroke="#ef6c00" stroke-width="0.8"/>`;
-      }
+      if (bat > 0) rects += g.saeule(k, 0, bat, "url(#einsp-schraffur)", ` stroke="#ef6c00" stroke-width="0.8"`);
       rects += `</g>`;
     });
-
-    // Achsen: drei Stufen in kWh, darunter Uhrzeit, Tag oder Monat.
-    let achsen = "";
-    [0, 0.5, 1].forEach(f => {
-      const wert = (max / 1.1) * f;
-      const yy = y(wert).toFixed(1);
-      achsen += `<line x1="${padL}" y1="${yy}" x2="${W - padR}" y2="${yy}" stroke="var(--divider-color,#e0e0e0)" stroke-width="0.7" stroke-dasharray="${f ? "3 3" : "0"}"/>`;
-      achsen += `<text x="${padL - 4}" y="${(Number(yy) + 3.5).toFixed(1)}" text-anchor="end" font-size="${fs}" fill="var(--secondary-text-color)">${fmtDe(wert, wert >= 10 ? 0 : 1)}</text>`;
-    });
-    const beschrift = (k, text) => {
-      const x = padL + k * slotW + slotW / 2;
-      achsen += `<text x="${x.toFixed(1)}" y="${H - 6}" text-anchor="middle" font-size="${fs}" fill="var(--secondary-text-color)">${text}</text>`;
-    };
-    if (zeitraum === "heute") {
-      // Die 04:00 am rechten Ende entfällt — sie stünde halb außerhalb.
-      for (let k = 0; k < 96; k += schmal ? 24 : 16) {
-        const std = (4 + k / 4) % 24;
-        const x = padL + k * slotW;
-        achsen += `<text x="${x.toFixed(1)}" y="${H - 6}" text-anchor="middle" font-size="${fs}" fill="var(--secondary-text-color)">${String(std).padStart(2, "0")}:00</text>`;
-      }
-    } else if (zeitraum === "monat") {
-      const schritt = schmal ? 7 : 5;
-      for (let k = 0; k < n; k++) if (k === 0 || (k + 1) % schritt === 0) beschrift(k, String(k + 1));
-    } else if (zeitraum === "jahr") {
-      const namen = ["J", "F", "M", "A", "M", "J", "J", "A", "S", "O", "N", "D"];
-      const lang = ["Jan", "Feb", "Mär", "Apr", "Mai", "Jun", "Jul", "Aug", "Sep", "Okt", "Nov", "Dez"];
-      for (let k = 0; k < 12; k++) beschrift(k, schmal ? namen[k] : lang[k]);
-    } else {
-      reihe.forEach((r, k) => beschrift(k, String(r.jahr)));
-    }
 
     const legendeEintrag = (stil, text) =>
       `<span style="display:inline-flex;align-items:center;gap:5px;margin-right:14px;font-size:12px;color:var(--secondary-text-color);white-space:nowrap">
@@ -5174,30 +5204,13 @@ class EegOptimizerPanel extends HTMLElement {
         ? legendeEintrag(`background:${farbeEeg};opacity:.2`, "Bedarf der Gemeinschaft") : "",
     ].join("");
 
-    return `
-      <div style="margin-top:14px">
-        <div style="margin-bottom:6px">${legende}</div>
-        <svg data-cw="einspeisung" data-einsp-n="${n}" data-einsp-w="${W}" data-einsp-l="${padL}" data-einsp-slot="${slotW}"
-             viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;cursor:pointer;-webkit-tap-highlight-color:transparent">
-          <defs>
-            <pattern id="einsp-schraffur" width="4" height="4" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+    return this._balkenSvg(g, {
+      legende, hinter, rects, details, leer: "Keine Einspeisung.",
+      defs: `<pattern id="einsp-schraffur" width="4" height="4" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
               <rect width="4" height="4" fill="#ef6c00" fill-opacity="0.15"/>
               <line x1="0" y1="0" x2="0" y2="4" stroke="#ef6c00" stroke-width="1.6"/>
-            </pattern>
-          </defs>
-          ${hinter}${achsen}${rects}
-        </svg>
-        <div style="display:flex;justify-content:space-between;gap:8px;font-size:11px;color:var(--secondary-text-color)">
-          <span>${schmal ? "Balken antippen für Details" : "Balken anklicken für Details"}</span>
-          <span style="white-space:nowrap">kWh je ${zeitraum === "heute" ? "Viertelstunde" : zeitraum === "monat" ? "Tag" : jeJahr ? "Jahr" : "Monat"}</span>
-        </div>
-        ${auswahl != null ? `
-        <div style="margin-top:6px;padding:8px 10px;border-radius:8px;background:var(--secondary-background-color,#f5f5f5);font-size:13px;line-height:1.5">
-          ${details[auswahl]
-            ? `<strong>${this._escapeHtml(details[auswahl][0])}</strong><br>${details[auswahl].slice(1).map(t => this._escapeHtml(t)).join("<br>")}`
-            : "Keine Einspeisung."}
-        </div>` : ""}
-      </div>`;
+            </pattern>`,
+    });
   }
 
   // Karte „Bezug": was aus dem Netz kam und was es gekostet hat. Gebaut wie
@@ -5206,8 +5219,10 @@ class EegOptimizerPanel extends HTMLElement {
   // Leistungspreis, die hängen nicht an der Menge.
   _renderBezugKarte() {
     const d = this._bezug;
-    if (!d || d.verfuegbar === false) return "";
+    if (d?.verfuegbar === false) return "";
     const offen = this._bezugOpen;
+    // Zugeklappt wird nichts geladen (_ensureKarte) — der Kopf steht trotzdem.
+    if (!d && offen) return "";
     const kopf = (wahlHtml) => `
         <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
           <h3 data-action="toggle-bezug-karte" style="margin:0;flex:1;cursor:pointer;user-select:none">
@@ -5256,10 +5271,12 @@ class EegOptimizerPanel extends HTMLElement {
     const kachelnHtml = kacheln.join("");
 
     const hinweise = ["Kosten: Netzbezug mal Bezugspreis der Viertelstunde, brutto, ohne Grundgebühr und Leistungspreis."];
-    if (kostenTeil) {
-      hinweise.push(`Die Kosten werden erst seit ${datumKurz(d.kosten_seit)} erfasst; die Tage davor zählen nur zur Menge.`);
-    } else if (!d.kosten_seit && (k.bezug_kwh || 0) > 0) {
+    if (!d.kosten_seit && (k.bezug_kwh || 0) > 0) {
       hinweise.push("Für diesen Zeitraum gibt es noch keine Kosten — sie werden erst seit dieser Version mitgeschrieben.");
+    } else if ((k.ohne_preis_kwh || 0) >= 0.05) {
+      // Tage vor der Einführung und Viertelstunden ohne Fahrplan (etwa nach
+      // einem Neustart) haben keinen Preis — sie zählen nicht als 0 €.
+      hinweise.push(`${fmtDe(k.ohne_preis_kwh, 1)} kWh ohne erfassten Bezugspreis${kostenTeil ? ` (vor allem vor dem ${datumKurz(d.kosten_seit)})` : ""} sind in den Kosten nicht enthalten; der Preis je kWh gilt für den Rest.`);
     }
 
     const laedt = d.zeitraum !== zeitraum || d.angefragt !== this._bezugDatum;
@@ -5276,7 +5293,7 @@ class EegOptimizerPanel extends HTMLElement {
   }
 
   // Balken je Viertelstunde, Tag, Monat oder Jahr; die Kosten stehen im
-  // Detail unter dem Diagramm. Raster wie _einspeisungChart.
+  // Detail unter dem Diagramm. Gerüst aus _balkenRahmen wie die Einspeisung.
   _bezugChart(d) {
     const reihe = d.reihe || [];
     if (!reihe.some(r => (r.bezug || 0) > 0)) {
@@ -5284,37 +5301,9 @@ class EegOptimizerPanel extends HTMLElement {
       return `<p style="margin:14px 0 0;font-size:13px;color:var(--secondary-text-color);text-align:center">${nurSumme
         ? VIERTELSTUNDEN_FEHLEN : "Kein Netzbezug in diesem Zeitraum."}</p>`;
     }
-    const schmal = !!this._narrow;
-    const zeitraum = d.zeitraum;
-    const W = this._cw("bezug");
-    const H = schmal ? 190 : 220;
-    const padL = schmal ? 30 : 40, padR = 8, padT = 10, padB = 22;
-    const plotW = W - padL - padR, plotH = H - padT - padB;
-    const fs = schmal ? 10 : 11;
-
-    let n = reihe.length;
-    let index = (r, i) => i;
-    if (zeitraum === "heute") {
-      n = 96;
-      const start = new Date(`${d.auswahl || d.bilanztag}T04:00:00`).getTime();
-      index = (r) => Math.round((new Date(r.t).getTime() - start) / 900000);
-    } else if (zeitraum === "monat") {
-      const [j, m] = String(d.auswahl || d.bilanztag).split("-").map(Number);
-      n = new Date(j, m, 0).getDate();
-      index = (r) => Number(String(r.datum).slice(8, 10)) - 1;
-    } else if (zeitraum === "jahr") {
-      n = 12;
-      index = (r) => Number(String(r.monat).slice(5, 7)) - 1;
-    }
-    const jeJahr = zeitraum === "gesamt";
-    const max = Math.max(...reihe.map(r => r.bezug || 0), 0.001) * 1.1;
-    const slotW = plotW / n;
-    const bw = Math.min(64, Math.max(1, slotW * (zeitraum === "heute" ? 0.9 : 0.7)));
-    const y = (val) => padT + plotH - (val / max) * plotH;
-    const stellen = zeitraum === "heute" ? 2 : 1;
-
-    const farbe = "#e53935";
-    const auswahl = this._bezugAuswahl;
+    const g = this._balkenRahmen(d, "bezug", Math.max(...reihe.map(r => r.bezug || 0)));
+    g.reihe = reihe;
+    const { n, index, stellen } = g;
     const details = {};
     let hinter = "", rects = "";
     reihe.forEach((r, i) => {
@@ -5322,69 +5311,17 @@ class EegOptimizerPanel extends HTMLElement {
       if (k < 0 || k >= n) return;
       const menge = r.bezug || 0;
       if (menge <= 0) return;
-      const x = padL + k * slotW + (slotW - bw) / 2;
       const titel = [
-        zeitraum === "heute" ? new Date(r.t).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })
-          : zeitraum === "monat" ? new Date(r.datum).toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit" })
-          : jeJahr ? String(r.jahr)
-          : new Date(`${r.monat}-01T00:00:00`).toLocaleDateString("de-DE", { month: "long" }),
+        g.name(r),
         `${fmtDe(menge, stellen)} kWh bezogen`,
         r.kosten != null ? `${fmtDe(r.kosten, 2)} € Kosten` : "",
-        r.kosten != null && menge > 0 ? `${fmtDe((r.kosten / menge) * 100, 1)} ct je kWh` : "",
+        r.kosten != null ? `${fmtDe((r.kosten / menge) * 100, 1)} ct je kWh` : "",
       ].filter(Boolean);
       details[k] = titel;
-      if (k === auswahl) {
-        hinter += `<rect x="${(padL + k * slotW).toFixed(1)}" y="${padT}" width="${Math.max(slotW, 3).toFixed(2)}" height="${plotH}" fill="var(--primary-color,#03a9f4)" fill-opacity="0.15"/>`;
-      }
-      rects += `<g><title>${this._escapeHtml(titel.join("\n"))}</title>`
-        + `<rect x="${x.toFixed(1)}" y="${y(menge).toFixed(1)}" width="${bw.toFixed(2)}" height="${(y(0) - y(menge)).toFixed(1)}" fill="${farbe}"/></g>`;
+      if (k === g.auswahl) hinter += g.band(k, "var(--primary-color,#03a9f4)", 0.15, 3);
+      rects += `<g><title>${this._escapeHtml(titel.join("\n"))}</title>${g.saeule(k, 0, menge, "#e53935")}</g>`;
     });
-
-    let achsen = "";
-    [0, 0.5, 1].forEach(f => {
-      const wert = (max / 1.1) * f;
-      const yy = y(wert).toFixed(1);
-      achsen += `<line x1="${padL}" y1="${yy}" x2="${W - padR}" y2="${yy}" stroke="var(--divider-color,#e0e0e0)" stroke-width="0.7" stroke-dasharray="${f ? "3 3" : "0"}"/>`;
-      achsen += `<text x="${padL - 4}" y="${(Number(yy) + 3.5).toFixed(1)}" text-anchor="end" font-size="${fs}" fill="var(--secondary-text-color)">${fmtDe(wert, wert >= 10 ? 0 : 1)}</text>`;
-    });
-    const beschrift = (k, text) => {
-      const x = padL + k * slotW + slotW / 2;
-      achsen += `<text x="${x.toFixed(1)}" y="${H - 6}" text-anchor="middle" font-size="${fs}" fill="var(--secondary-text-color)">${text}</text>`;
-    };
-    if (zeitraum === "heute") {
-      for (let k = 0; k < 96; k += schmal ? 24 : 16) {
-        const std = (4 + k / 4) % 24;
-        const x = padL + k * slotW;
-        achsen += `<text x="${x.toFixed(1)}" y="${H - 6}" text-anchor="middle" font-size="${fs}" fill="var(--secondary-text-color)">${String(std).padStart(2, "0")}:00</text>`;
-      }
-    } else if (zeitraum === "monat") {
-      const schritt = schmal ? 7 : 5;
-      for (let k = 0; k < n; k++) if (k === 0 || (k + 1) % schritt === 0) beschrift(k, String(k + 1));
-    } else if (zeitraum === "jahr") {
-      const namen = ["J", "F", "M", "A", "M", "J", "J", "A", "S", "O", "N", "D"];
-      const lang = ["Jan", "Feb", "Mär", "Apr", "Mai", "Jun", "Jul", "Aug", "Sep", "Okt", "Nov", "Dez"];
-      for (let k = 0; k < 12; k++) beschrift(k, schmal ? namen[k] : lang[k]);
-    } else {
-      reihe.forEach((r, k) => beschrift(k, String(r.jahr)));
-    }
-
-    return `
-      <div style="margin-top:14px">
-        <svg data-cw="bezug" data-auswahl="bezug" data-einsp-n="${n}" data-einsp-w="${W}" data-einsp-l="${padL}" data-einsp-slot="${slotW}"
-             viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;cursor:pointer;-webkit-tap-highlight-color:transparent">
-          ${hinter}${achsen}${rects}
-        </svg>
-        <div style="display:flex;justify-content:space-between;gap:8px;font-size:11px;color:var(--secondary-text-color)">
-          <span>${schmal ? "Balken antippen für Details" : "Balken anklicken für Details"}</span>
-          <span style="white-space:nowrap">kWh je ${zeitraum === "heute" ? "Viertelstunde" : zeitraum === "monat" ? "Tag" : jeJahr ? "Jahr" : "Monat"}</span>
-        </div>
-        ${auswahl != null ? `
-        <div style="margin-top:6px;padding:8px 10px;border-radius:8px;background:var(--secondary-background-color,#f5f5f5);font-size:13px;line-height:1.5">
-          ${details[auswahl]
-            ? `<strong>${this._escapeHtml(details[auswahl][0])}</strong><br>${details[auswahl].slice(1).map(t => this._escapeHtml(t)).join("<br>")}`
-            : "Kein Bezug."}
-        </div>` : ""}
-      </div>`;
+    return this._balkenSvg(g, { hinter, rects, details, leer: "Kein Bezug." });
   }
 
   _renderGewinnKarte() {
@@ -9401,7 +9338,7 @@ class EegOptimizerPanel extends HTMLElement {
           <div class="help-text">Wie weit zurück der Verbrauch gemittelt wird. Gemittelt wird über zwei Gruppen — Werktage (Mo–Fr) und Wochenende samt Feiertagen —, nicht über einzelne Wochentage: Vier Wochen ergeben so rund 20 Vergleichswerte je Werktagsstunde, und ein einzelner Ausreißer wie eine E-Auto-Ladung fällt kaum mehr auf. Der höchste Wert je Stunde wird zusätzlich verworfen.</div>
         </div>
       </div>` : ""}
-      ${this._ansichtKarte(d)}
+      ${this._ansichtKarte()}
       ${this._sensorUebersichtKarte(d)}
       ${this._renderTelemetrySection()}
       ${isExpert ? this._bilanzKarte() : ""}
@@ -11178,8 +11115,8 @@ class EegOptimizerPanel extends HTMLElement {
 
     // Geldwerte nachziehen, wenn sie älter als eine Minute sind.
     this._ensureBilanz();
-    this._ensureEinspeisung();
-    this._ensureBezug();
+    this._ensureKarte("einspeisung");
+    this._ensureKarte("bezug");
     // Prognosevergleich nachziehen (nur mit eingeschaltetem Vergleich).
     this._ensurePrognosevergleich();
 
@@ -11459,8 +11396,9 @@ class EegOptimizerPanel extends HTMLElement {
             ? this._renderEnergyFlow(pvKw, batKw, gridKw, hausKw, socVal,
                 {pvEntity, batEntity, gridEntity, hausEntity, socEntity, heizEntity},
                 heizAktiv ? { kw: heizKw, tempC: heizTempC } : null, hausGeklemmt,
-                this._bilanz?.verfuegbar && this._bilanz.heute
-                  ? { pv: this._bilanz.heute.pv_kwh, bezug: this._bilanz.heute.bezug_kwh, export: this._bilanz.heute.export_kwh }
+                // Aus demselben Attributsatz wie die Leistungen (ein Zeitpunkt)
+                hausAttr.tag_pv_kwh != null
+                  ? { pv: hausAttr.tag_pv_kwh, bezug: hausAttr.tag_bezug_kwh, export: hausAttr.tag_export_kwh }
                   : null)
             : `<div class="header-grid">
                 <div class="hlv${pvEntity ? " hlv-clickable" : ""}" ${pvEntity ? `data-action="show-entity" data-entity="${pvEntity}"` : ""}><span class="hlv-label">PV</span><span class="hlv-val val-green">${fmtDe(pvKw, 2)} kW</span></div>
