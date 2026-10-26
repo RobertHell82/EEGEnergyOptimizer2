@@ -30,6 +30,10 @@ function knoten() {
 
 let _klasse = null;
 
+// localStorage des vm-Kontexts — Tests setzen oder prüfen Vorlieben darüber
+// (Schlüssel mit Präfix eeg_optimizer_panel_) und leeren ihn vorher.
+export const speicher = new Map();
+
 export function panelKlasse() {
   if (_klasse) return _klasse;
   const registry = new Map();
@@ -41,7 +45,6 @@ export function panelKlasse() {
     removeEventListener() {}
     dispatchEvent() { return true; }
   }
-  const speicher = new Map();
   const ctx = {
     HTMLElement,
     customElements: {
