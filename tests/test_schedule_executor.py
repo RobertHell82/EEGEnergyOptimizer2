@@ -2166,3 +2166,88 @@ async def test_heizstab_fehler_im_schritt_setzt_null(mock_hass, mock_inverter):
     assert hz.sollwert_kw == 0.0
     assert hz.grund == "Regelung fehlgeschlagen"
     treiber.async_set_power.assert_awaited_with(0)
+
+
+# ---------------------------------------------------------------------------
+# Laden frei, wenn die PV-Prognose unter dem Verbrauch liegt
+# ---------------------------------------------------------------------------
+
+
+def _pv(slot, pv):
+    return {**slot, "PV": pv}
+
+
+def _trueber_tag():
+    """Rest des Tages: 1,5 kWh PV gegen 2,4 kWh Verbrauch. Der Plan lädt im
+    ersten Slot unter dem Überschuss und speist im zweiten ein."""
+    return {"slots": [
+        _pv(_slot(0, battery_p=-0.5, grid_p=0.3, consumption=0.6), 1.4),
+        _pv(_slot(15, battery_p=0.0, grid_p=0.2, consumption=0.6), 0.1),
+        _pv(_slot(30, consumption=0.6), 0.0),
+        _pv(_slot(45, consumption=0.6), 0.0),
+    ]}
+
+
+def test_pv_unter_verbrauch_gibt_das_laden_frei():
+    tag = _trueber_tag()
+    action = plan_action(tag, NOW, laden_frei_unter_verbrauch=True)
+    assert action.kind == "release"
+    assert action.reason == sx.RELEASE_GRUND_PV_UNTER_VERBRAUCH
+    # Auch das Ladelimit 0 eines Einspeise-Slots entfällt
+    spaeter = plan_action(tag, NOW + timedelta(minutes=15), laden_frei_unter_verbrauch=True)
+    assert spaeter.kind == "release"
+    assert spaeter.reason == sx.RELEASE_GRUND_PV_UNTER_VERBRAUCH
+
+
+def test_pv_unter_verbrauch_ausgeschaltet_bleibt_das_ladelimit():
+    action = plan_action(_trueber_tag(), NOW)
+    assert action.kind == "charge_limit"
+    assert action.power_kw == 0.5
+
+
+def test_pv_ueber_verbrauch_bleibt_das_ladelimit():
+    tag = {"slots": [
+        _pv(_slot(0, battery_p=-0.5, grid_p=0.3, consumption=0.6), 1.4),
+        _pv(_slot(15, battery_p=0.0, grid_p=2.0, consumption=0.6), 2.6),
+    ]}
+    action = plan_action(tag, NOW, laden_frei_unter_verbrauch=True)
+    assert action.kind == "charge_limit"
+
+
+def test_pv_unter_verbrauch_zaehlt_nur_den_restlichen_tag():
+    """Morgen darf sonnig sein — es zählt nur der Kalendertag des Slots."""
+    tag = _trueber_tag()
+    morgen = NOW.replace(hour=0) + timedelta(days=1)
+    tag["slots"].append({
+        **_slot(0, consumption=0.6), "t": morgen.isoformat(), "PV": 9.0,
+    })
+    action = plan_action(tag, NOW, laden_frei_unter_verbrauch=True)
+    assert action.kind == "release"
+
+
+@pytest.mark.parametrize("aenderung,result_extra", [
+    ({"heizstab": 1.0}, {}),            # Wärme geplant
+    ({"discard": 0.5}, {}),             # Abregelung geplant
+    ({}, {"max_soc_pct": 90}),          # Ladedeckel unter 100 %
+    ({"PV": None}, {}),                 # Altplan ohne PV-Spalte
+])
+def test_pv_unter_verbrauch_ausnahmen(aenderung, result_extra):
+    tag = _trueber_tag()
+    tag["slots"][0] = {**tag["slots"][0], **aenderung}
+    action = plan_action({**tag, **result_extra}, NOW, laden_frei_unter_verbrauch=True)
+    assert action.kind == "charge_limit"
+
+
+async def test_executor_liest_den_schalter(mock_hass, mock_inverter):
+    ex = _make_executor(mock_hass, mock_inverter)
+    with _messwerte(haus=0.8):
+        await ex.async_guard_cycle({**_state(), **_trueber_tag()}, MODE_TEST, now=NOW)
+    assert ex.last_action.kind == "charge_limit"
+
+    ex.update_config({**CFG_BASE, "laden_frei_unter_verbrauch": True})
+    with _messwerte(haus=0.8):
+        await ex.async_guard_cycle(
+            {**_state(), **_trueber_tag()}, MODE_TEST, now=NOW + timedelta(seconds=30)
+        )
+    assert ex.last_action.kind == "release"
+    assert ex.last_action.reason == sx.RELEASE_GRUND_PV_UNTER_VERBRAUCH

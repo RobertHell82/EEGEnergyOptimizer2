@@ -38,10 +38,12 @@ from .const import (
     CONF_GRID_EXPORT_LIMIT_ENABLED,
     CONF_GRID_EXPORT_LIMIT_KW,
     CONF_INVERTER_AC_LIMIT_KW,
+    CONF_LADEN_FREI_UNTER_VERBRAUCH,
     CONF_PV_PEAK_KWP,
     DEFAULT_DISCHARGE_POWER_KW,
     DEFAULT_GRID_EXPORT_LIMIT_ENABLED,
     DEFAULT_GRID_EXPORT_LIMIT_KW,
+    DEFAULT_LADEN_FREI_UNTER_VERBRAUCH,
     EXECUTOR_CHARGE_DEADBAND_KW,
     EXECUTOR_DISCHARGE_DEADBAND_KW,
     EXECUTOR_TARGET_SOC_DEADBAND_PCT,
@@ -94,6 +96,9 @@ RELEASE_GRUND_ALLES_LADEN = "Normalbetrieb (Plan lädt den ganzen Überschuss)"
 # Freigabe, weil der Slot gar keinen PV-Überschuss erwartet
 # (``_ohne_ueberschuss``) — ein Ladelimit 0 schützte dort nichts.
 RELEASE_GRUND_KEIN_UEBERSCHUSS = "Normalbetrieb (kein PV-Überschuss)"
+# Freigabe, weil die PV-Prognose für den restlichen Tag unter dem Verbrauch
+# liegt (``_pv_unter_verbrauch``, Schalter CONF_LADEN_FREI_UNTER_VERBRAUCH).
+RELEASE_GRUND_PV_UNTER_VERBRAUCH = "Normalbetrieb (PV-Prognose unter Verbrauch)"
 # Geplante Einspeisung bis hierher gilt als LP-Rauschen, nicht als Absicht.
 _ALLES_LADEN_EXPORT_KW = 0.05
 # Unter dieser Entladeleistung lohnt keine erzwungene Entladung — die
@@ -195,11 +200,58 @@ def _ohne_ueberschuss(slot: dict, grid_p: float) -> bool:
         return False
 
 
-def plan_action(result: dict | None, now: datetime) -> PlanAction | None:
+def _pv_unter_verbrauch(result: dict | None, slot: dict) -> bool:
+    """Liegt die PV-Prognose ab dem laufenden Slot bis Tagesende unter dem Verbrauch?
+
+    Dann reicht die Sonne heute nicht einmal fürs Haus: Was über die Prognose
+    hinaus kommt (ein Sonnenfenster zwischen Wolken), soll ganz in die
+    Batterie, statt an einem Ladelimit vorbei ins Netz zu gehen — und der
+    Executor muss den Tag über nichts nachregeln. Summiert werden die Slots
+    desselben Kalendertags ab dem laufenden. Geplante Wärme oder Abregelung
+    im laufenden Slot und ein Ladedeckel unter 100 % brauchen das Ladelimit
+    weiter (siehe ``_laedt_alles``); fehlt die PV-Spalte, bleibt es ebenso.
+    """
+    try:
+        if float(slot.get("heizstab") or 0.0) > _EPS_KW:
+            return False
+        if float(slot.get("discard") or 0.0) > _EPS_KW:
+            return False
+        if float((result or {}).get("max_soc_pct") or 100.0) < 100.0:
+            return False
+        tag = datetime.fromisoformat(slot["t"]).date()
+    except (KeyError, TypeError, ValueError):
+        return False
+    pv_summe = 0.0
+    verbrauch_summe = 0.0
+    laufend = False
+    for s in (result or {}).get("slots") or []:
+        if s is slot:
+            laufend = True
+        if not laufend:
+            continue
+        try:
+            if datetime.fromisoformat(s["t"]).date() != tag:
+                break
+            pv = s.get("PV")
+            if pv is None:
+                return False
+            pv_summe += float(pv)
+            verbrauch_summe += float(s.get("consumption") or 0.0)
+        except (KeyError, TypeError, ValueError):
+            return False
+    return laufend and pv_summe <= verbrauch_summe
+
+
+def plan_action(
+    result: dict | None, now: datetime, laden_frei_unter_verbrauch: bool = False
+) -> PlanAction | None:
     """Übersetzt den laufenden Slot in eine Absicht. None = kein Slot.
 
     Vorzeichen wie im Fahrplan (chamo-Konvention): ``battery_p`` positiv =
     entladen, negativ = laden; ``grid_p`` positiv = Einspeisung.
+
+    ``laden_frei_unter_verbrauch``: Ladelimits entfallen, solange die
+    PV-Prognose für den restlichen Tag unter dem Verbrauch liegt.
     """
     slot = slot_for((result or {}).get("slots"), now)
     if slot is None:
@@ -242,6 +294,13 @@ def plan_action(result: dict | None, now: datetime) -> PlanAction | None:
                 slot_t=slot_t,
                 consumption_kw=consumption,
                 reason=RELEASE_GRUND_ALLES_LADEN,
+            )
+        if laden_frei_unter_verbrauch and _pv_unter_verbrauch(result, slot):
+            return PlanAction(
+                "release",
+                slot_t=slot_t,
+                consumption_kw=consumption,
+                reason=RELEASE_GRUND_PV_UNTER_VERBRAUCH,
             )
         # Slot plant Laden → Ladelimit auf die Planleistung. Guard 1 hebt es
         # bei stiller Abregelung an.
@@ -289,6 +348,15 @@ def plan_action(result: dict | None, now: datetime) -> PlanAction | None:
             slot_t=slot_t,
             consumption_kw=consumption,
             reason=RELEASE_GRUND_KEIN_UEBERSCHUSS,
+        )
+    if laden_frei_unter_verbrauch and _pv_unter_verbrauch(result, slot):
+        # Der Plan will Überschuss einspeisen, aber über den Tag reicht die
+        # PV nicht fürs Haus — dann lieber in die Batterie.
+        return PlanAction(
+            "release",
+            slot_t=slot_t,
+            consumption_kw=consumption,
+            reason=RELEASE_GRUND_PV_UNTER_VERBRAUCH,
         )
     # Batterie hat Platz: Freigeben wäre falsch — der Automatikmodus würde
     # PV-Überschuss in die Batterie laden, den der Plan einspeisen will
@@ -695,7 +763,15 @@ class ScheduleExecutor:
         if fresh:
             self._plan_seen_at = now
             self._failsafe_released = False
-            action = plan_action(schedule_state, now)
+            action = plan_action(
+                schedule_state,
+                now,
+                laden_frei_unter_verbrauch=bool(
+                    self._config.get(
+                        CONF_LADEN_FREI_UNTER_VERBRAUCH, DEFAULT_LADEN_FREI_UNTER_VERBRAUCH
+                    )
+                ),
+            )
         else:
             action = None
         if (

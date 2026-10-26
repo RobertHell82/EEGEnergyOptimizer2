@@ -183,6 +183,13 @@ CONF_GRID_EXPORT_LIMIT_KW = "grid_export_limit_kw"
 DEFAULT_GRID_EXPORT_LIMIT_ENABLED = False
 DEFAULT_GRID_EXPORT_LIMIT_KW = 4.0
 
+# Laden frei, wenn die PV-Prognose für den restlichen Tag unter dem
+# Verbrauchsprofil liegt: Dann geht ohnehin jede kWh ins Haus oder in die
+# Batterie, und ein Ladelimit verschenkte nur kurze Sonnenfenster über der
+# Prognose. Vorgabe aus — der Plan bleibt maßgeblich.
+CONF_LADEN_FREI_UNTER_VERBRAUCH = "laden_frei_unter_verbrauch"
+DEFAULT_LADEN_FREI_UNTER_VERBRAUCH = False
+
 # Guard 1 — Ladelimit anheben, wenn die Einspeisung am Limit klebt.
 GUARD_EXPORT_STICKY_BAND_KW = 0.1   # „klebt am Limit“-Band (±100 W)
 # Anhebeschritt: im 30-s-Takt 1 kW/min Aufholrate — klein genug, dass ein

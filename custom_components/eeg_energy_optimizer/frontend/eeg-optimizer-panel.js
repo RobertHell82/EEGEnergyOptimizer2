@@ -360,6 +360,7 @@ const WIZARD_DEFAULTS = {
   // Maximum-Ladestand: 100 heisst bis voll laden (kein eigener Schalter,
   // der Zustand steckt allein im Wert — Migration v27).
   schedule_max_soc_pct: 100,
+  laden_frei_unter_verbrauch: false,
   // Ladeziel am Abend: 100 wie DEFAULT_LADEZIEL_PCT im Backend, 0 heisst aus.
   schedule_ladeziel_pct: 100,
   // „Vormittags bevorzugt netzdienlich": aus, bis 11 Uhr, 5 ct Bonus
@@ -7813,8 +7814,23 @@ class EegOptimizerPanel extends HTMLElement {
       ${maxSocFeld}
       ${puffer}
       ${ladeziel}
+      ${this._ladenFreiFeld(d, prefix)}
       ${this._netzdienlichFeld(d, prefix)}
 `;
+  }
+
+  // Laden frei an trüben Tagen: nur in den Einstellungen, Vorgabe aus
+  // (schedule_executor.py: `_pv_unter_verbrauch`).
+  _ladenFreiFeld(d, prefix) {
+    if (!prefix) return "";
+    return this._featureCard({
+      on: !!d.laden_frei_unter_verbrauch,
+      action: "toggle-settings-feature",
+      feature: "laden_frei_unter_verbrauch",
+      icon: "mdi:weather-partly-cloudy",
+      titel: "An trüben Tagen ohne Ladelimit",
+      beschreibung: "Liegt die PV-Prognose für den restlichen Tag unter dem Verbrauch, begrenzt die Steuerung die Ladeleistung nicht: Jedes Sonnenfenster über der Prognose geht ganz in die Batterie, und den Tag über wird nicht nachgeregelt. Die Einspeisung, die der Fahrplan an solchen Tagen vorsieht, entfällt dafür. Geplante Entladung und Netzladen bleiben, ebenso das Ladelimit bei geplantem Heizstab oder einem Maximum-Ladestand unter 100 %.",
+    });
   }
 
   // „Vormittags bevorzugt netzdienlich": wie Puffer und Ladeziel nur in den
