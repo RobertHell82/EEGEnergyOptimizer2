@@ -5306,16 +5306,28 @@ class EegOptimizerPanel extends HTMLElement {
   }
 
   _subscribeActivityEvents() {
+    // Läuft schon eine Anmeldung, keine zweite starten: set hass feuert bei
+    // jeder Zustandsänderung, und bis subscribeEvents antwortet, ist
+    // _activityUnsub noch leer. Ohne diese Sperre hingen mehrere Abos
+    // parallel und jeder neue Eintrag erschien doppelt oder dreifach.
+    if (this._activitySubPending) return;
     // Clean up stale subscription first
     if (this._activityUnsub) {
       try { this._activityUnsub(); } catch (_) { /* already gone */ }
       this._activityUnsub = null;
     }
     if (!this._hass?.connection) return;
+    const gen = (this._activitySubGen || 0) + 1;
+    this._activitySubGen = gen;
+    this._activitySubPending = true;
     try {
       this._hass.connection.subscribeEvents((ev) => {
         try {
           if (ev.data) {
+            // Derselbe Eintrag zweimal (z.B. ein altes Abo, das noch nachläuft)
+            const top = this._activityLog[0];
+            if (top && top.timestamp === ev.data.timestamp
+                && top.zustand === ev.data.zustand) return;
             // Prepend new event (newest first)
             this._activityLog.unshift(ev.data);
             this._activityTotal += 1;
@@ -5325,13 +5337,21 @@ class EegOptimizerPanel extends HTMLElement {
           console.warn("EEG: error in activity event handler:", err);
         }
       }, "eeg_optimizer_activity").then(unsub => {
+        // Inzwischen abgemeldet oder neu verbunden: dieses Abo gleich wieder lösen
+        if (gen !== this._activitySubGen) {
+          try { unsub(); } catch (_) { /* already gone */ }
+          return;
+        }
+        this._activitySubPending = false;
         this._activityUnsub = unsub;
       }).catch((err) => {
         console.warn("EEG: activity subscription failed, will retry on next hass update:", err);
+        if (gen === this._activitySubGen) this._activitySubPending = false;
         this._activityUnsub = null;
       });
     } catch (err) {
       console.warn("EEG: could not subscribe to activity events:", err);
+      this._activitySubPending = false;
       this._activityUnsub = null;
     }
   }
@@ -5563,6 +5583,8 @@ class EegOptimizerPanel extends HTMLElement {
     if (oldHass && hass && oldHass.connection !== hass.connection) {
       console.info("EEG Energy Optimizer: connection changed (network switch?), reloading");
       this._activityUnsub = null; // old subscription is dead
+      this._activitySubGen = (this._activitySubGen || 0) + 1;
+      this._activitySubPending = false;
       this._loadConfigPending = false;
       this._loadConfigWithRetry();
       return;
@@ -12123,6 +12145,8 @@ class EegOptimizerPanel extends HTMLElement {
   disconnectedCallback() {
     window.__eegPanelConnected = false;
     this._disconnectedAt = Date.now();
+    this._activitySubGen = (this._activitySubGen || 0) + 1;
+    this._activitySubPending = false;
     if (this._activityUnsub) {
       try { this._activityUnsub(); } catch (_) { /* connection already gone */ }
       this._activityUnsub = null;
