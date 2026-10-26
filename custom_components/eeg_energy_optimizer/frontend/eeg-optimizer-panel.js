@@ -10639,7 +10639,9 @@ class EegOptimizerPanel extends HTMLElement {
       // Dauer je Bahn — sonst wirkten lange Bahnen bei gleicher Leistung
       // schneller. Ohne Filter: Weichzeichner auf bewegten Punkten
       // zeichnet jedes Bild neu, auf einem Wandtablet den ganzen Tag.
-      const tempo = Math.min(55 + 35 * f.value, 180);
+      // Halbes Tempo gegenüber früher: Ab rund 4 kW lief alles am Anschlag
+      // und war bei 11 kW nur noch Flimmern.
+      const tempo = Math.min(27.5 + 17.5 * f.value, 90);
       const dur = len / tempo;
       const start = bahn.match(/^M(\S+) (\S+)/);
       // Ein Punkt je rund 70 px, damit lange Bahnen nicht leer wirken und
