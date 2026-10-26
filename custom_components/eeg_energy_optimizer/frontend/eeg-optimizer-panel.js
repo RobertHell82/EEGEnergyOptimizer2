@@ -290,6 +290,8 @@ const WIZARD_DEFAULTS = {
   pv_verluste_pct: 14,
   // Prognosevergleich: die andere Quelle läuft mit, ohne zu steuern.
   pv_prognose_vergleich: false,
+  // Bilanz: Viertelstunden vergangener Tage für Bezugs- und Einspeise-Karte.
+  bilanz_viertelstunden: true,
   lookback_weeks: 4,
   enable_peakshare: true,
   peakshare_community: "BEG",
@@ -1933,6 +1935,24 @@ class EegOptimizerPanel extends HTMLElement {
         <div class="help-text">Stellt für den letzten abgeschlossenen Tag gegenüber, was der Fahrplan an PV-Ertrag und Verbrauch erwartet hatte und was gemessen wurde — mit zwei Prognose-Vorläufen, dem Plan vom Vorabend und dem von zwei Tagen vorher. Läuft sonst automatisch nachts um 00:15. Gerechnet wird aus der Datenbank und dem Fahrplan-Archiv, es entstehen keine neuen Aufzeichnungen.</div>
         <button class="btn-secondary" data-action="tagesbilanz-jetzt" style="margin-top:10px" ${this._bilanzBusy ? "disabled" : ""}>${this._bilanzBusy ? "Rechnet…" : "Jetzt rechnen"}</button>
         ${ergebnis}
+      </div>`;
+  }
+
+  _viertelstundenKarte(d) {
+    // Die Vorgabe steht in DEFAULTS; ältere Einrichtungen kennen den
+    // Schlüssel noch nicht und gelten damit als eingeschaltet.
+    const an = d.bilanz_viertelstunden !== false;
+    return `
+      <div class="card" style="margin-bottom:16px">
+        <h3 class="settings-karte-titel" style="margin:0 0 16px">Verlauf vergangener Tage</h3>
+        ${this._featureCard({
+          on: an,
+          action: "toggle-settings-feature",
+          feature: "bilanz_viertelstunden",
+          icon: "mdi:chart-timeline-variant",
+          titel: "Viertelstunden speichern",
+          beschreibung: "Legt beim Tageswechsel Bezug, Einspeisung und Kosten je Viertelstunde ab. Damit zeigen die Karten „Bezug“ und „Einspeisung“ auch für einen vergangenen Tag den Verlauf, nicht nur die Summe. Aufbewahrt wird wie die Tagesbilanz, braucht einige hundert kB. Ausgeschaltet wird nichts mehr abgelegt; bereits gespeicherte Tage bleiben sichtbar.",
+        })}
       </div>`;
   }
 
@@ -9346,6 +9366,7 @@ class EegOptimizerPanel extends HTMLElement {
       ${this._sensorUebersichtKarte(d)}
       ${this._renderTelemetrySection()}
       ${isExpert ? this._bilanzKarte() : ""}
+      ${this._viertelstundenKarte(d)}
       ${this._archivKarte()}
       <div class="card" style="margin-bottom:16px">
         <label style="display:flex;align-items:center;gap:12px;cursor:pointer">

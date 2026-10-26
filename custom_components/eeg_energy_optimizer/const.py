@@ -532,6 +532,12 @@ TELEMETRY_START_SCHONFRIST_KATEGORIEN = frozenset({"schedule_solver", "inverter_
 # Config-Entry-Flag, default False (08-03 ergänzt es via async_migrate_entry v12→v13).
 CONF_TELEMETRY_ENABLED = "telemetry_enabled"
 
+# Bilanz: die Viertelstunden abgeschlossener Tage mitspeichern, damit Bezugs-
+# und Einspeise-Karte auch einen vergangenen Tag je Viertelstunde zeigen.
+# Aus: es wird nichts mehr abgelegt, vergangene Tage zeigen nur die Summe.
+CONF_BILANZ_VIERTELSTUNDEN = "bilanz_viertelstunden"
+DEFAULT_BILANZ_VIERTELSTUNDEN = True
+
 # Buffer- und HTTP-Defaults
 TELEMETRY_BUFFER_MAX = 100        # D-06: Ringbuffer-Maximum
 TELEMETRY_HTTP_TIMEOUT = 10       # D-34: Per-Request-Timeout in Sekunden
