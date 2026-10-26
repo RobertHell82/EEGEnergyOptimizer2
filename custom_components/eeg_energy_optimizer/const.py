@@ -183,6 +183,13 @@ CONF_GRID_EXPORT_LIMIT_KW = "grid_export_limit_kw"
 DEFAULT_GRID_EXPORT_LIMIT_ENABLED = False
 DEFAULT_GRID_EXPORT_LIMIT_KW = 4.0
 
+# Laden frei, wenn die PV-Prognose für den restlichen Tag unter dem
+# Verbrauchsprofil liegt: Dann geht ohnehin jede kWh ins Haus oder in die
+# Batterie, und ein Ladelimit verschenkte nur kurze Sonnenfenster über der
+# Prognose. Vorgabe aus — der Plan bleibt maßgeblich.
+CONF_LADEN_FREI_UNTER_VERBRAUCH = "laden_frei_unter_verbrauch"
+DEFAULT_LADEN_FREI_UNTER_VERBRAUCH = False
+
 # Guard 1 — Ladelimit anheben, wenn die Einspeisung am Limit klebt.
 GUARD_EXPORT_STICKY_BAND_KW = 0.1   # „klebt am Limit“-Band (±100 W)
 # Anhebeschritt: im 30-s-Takt 1 kW/min Aufholrate — klein genug, dass ein
@@ -531,6 +538,12 @@ TELEMETRY_START_SCHONFRIST_KATEGORIEN = frozenset({"schedule_solver", "inverter_
 
 # Config-Entry-Flag, default False (08-03 ergänzt es via async_migrate_entry v12→v13).
 CONF_TELEMETRY_ENABLED = "telemetry_enabled"
+
+# Bilanz: die Viertelstunden abgeschlossener Tage mitspeichern, damit Bezugs-
+# und Einspeise-Karte auch einen vergangenen Tag je Viertelstunde zeigen.
+# Aus: es wird nichts mehr abgelegt, vergangene Tage zeigen nur die Summe.
+CONF_BILANZ_VIERTELSTUNDEN = "bilanz_viertelstunden"
+DEFAULT_BILANZ_VIERTELSTUNDEN = True
 
 # Buffer- und HTTP-Defaults
 TELEMETRY_BUFFER_MAX = 100        # D-06: Ringbuffer-Maximum

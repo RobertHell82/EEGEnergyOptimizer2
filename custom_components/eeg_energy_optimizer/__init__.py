@@ -2869,6 +2869,9 @@ async def _async_update_listener(
         (data.get("config") or {}).get(CONF_TELEMETRY_ENABLED, False)
     )
     data["config"] = config
+    bilanz = data.get("bilanz")
+    if bilanz is not None:
+        bilanz.update_config(config)
     if telemetrie_war_an and not config.get(CONF_TELEMETRY_ENABLED, False):
         # Deaktiviert: den Puffer sofort leeren, nicht erst beim nächsten
         # Sendeversuch. Die Sendepfade prüfen die Einwilligung ohnehin live
