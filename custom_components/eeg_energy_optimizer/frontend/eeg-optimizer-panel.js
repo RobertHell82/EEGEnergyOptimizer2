@@ -682,6 +682,25 @@ const bezugspreisText = (d, netze) => {
   return text;
 };
 
+// Antwortet subscribeEvents so lange nicht, gilt die Anmeldung als verloren
+// und der nächste hass-Wechsel startet eine neue.
+const AKTIVITAET_ABO_TIMEOUT_MS = 15000;
+
+// Ein Abo abmelden, ohne dass eine tote Verbindung einen Fehler wirft — das
+// unsub von home-assistant-js-websocket gibt ein Promise zurück, das dann
+// abgelehnt wird.
+const aboLoesen = (unsub) => {
+  try {
+    const r = unsub();
+    if (r && typeof r.catch === "function") r.catch(() => { /* already gone */ });
+  } catch (_) { /* already gone */ }
+};
+
+// Derselbe Protokolleintrag aus Server-Antwort und Live-Event. Der Zeitstempel
+// trägt Mikrosekunden; zustand und reason trennen die zwei Quellen im Backend
+// (Guard-Lauf und Spitzenkappung), falls sie doch einmal zusammenfallen.
+const aktivitaetSchluessel = (e) => `${e?.timestamp}|${e?.zustand}|${e?.reason}`;
+
 class EegOptimizerPanel extends HTMLElement {
   constructor() {
     super();
@@ -727,6 +746,12 @@ class EegOptimizerPanel extends HTMLElement {
     this._capacityModeUserSet = false;
     this._activityLog = [];
     this._activityUnsub = null;
+    // Abo-Verwaltung siehe _subscribeActivityEvents
+    this._activitySubGen = 0;
+    this._activitySubPending = false;
+    this._activitySubSeit = 0;
+    this._activityLadeNr = 0;
+    this._activityNachzuegler = null;
     this._activityTotal = 0;
     this._activityHasMore = false;
     this._activityLoadingMore = false;
@@ -3221,18 +3246,33 @@ class EegOptimizerPanel extends HTMLElement {
 
   async _loadActivityLog() {
     if (!this._hass) return;
+    // Nur die zuletzt gestartete Ladung zählt (_loadConfig und
+    // _waitForOptimizer laden kurz hintereinander). Live-Einträge, die
+    // während der Anfrage eintreffen, sammelt _aktivitaetEintragen in
+    // _activityNachzuegler — die Antwort ersetzt die Liste, sie wären sonst
+    // verloren, falls der Server sie erst nach dem Lesen angehängt hat.
+    const nr = (this._activityLadeNr || 0) + 1;
+    this._activityLadeNr = nr;
+    this._activityNachzuegler = [];
     try {
       const result = await this._hass.callWS({
         type: "eeg_optimizer/get_activity_log",
         offset: 0,
         limit: 100,
       });
-      this._activityLog = result?.entries || [];
-      this._activityTotal = result?.total || 0;
+      if (nr !== this._activityLadeNr) return;
+      const eintraege = result?.entries || [];
+      const bekannt = new Set(eintraege.map(aktivitaetSchluessel));
+      const fehlend = this._activityNachzuegler
+        .filter(e => !bekannt.has(aktivitaetSchluessel(e)));
+      this._activityLog = fehlend.concat(eintraege);
+      this._activityTotal = (result?.total || 0) + fehlend.length;
       this._activityHasMore = result?.has_more || false;
       this._render();
     } catch (e) {
       // Silently ignore — log may not be available yet
+    } finally {
+      if (nr === this._activityLadeNr) this._activityNachzuegler = null;
     }
   }
 
@@ -5305,35 +5345,67 @@ class EegOptimizerPanel extends HTMLElement {
     this._render();
   }
 
+  // Live-Abo des Aktivitätsprotokolls. Es darf immer nur EIN Abo Einträge
+  // anhängen — sonst erscheint jeder Eintrag doppelt oder dreifach (Daniel,
+  // 26.10.2026). Jede Anmeldung bekommt eine Generation; Callback, Bestätigung
+  // und Fehler einer älteren Generation bewirken nichts mehr, und ein Abo, das
+  // erst nach seiner Ablösung bestätigt wird, meldet sich selbst wieder ab.
+  // set hass ruft das bei jeder Zustandsänderung auf, solange _activityUnsub
+  // leer ist — die Sperre _activitySubPending hält das bis zur Antwort auf.
   _subscribeActivityEvents() {
-    // Clean up stale subscription first
-    if (this._activityUnsub) {
-      try { this._activityUnsub(); } catch (_) { /* already gone */ }
-      this._activityUnsub = null;
-    }
-    if (!this._hass?.connection) return;
+    // Abgehängtes Panel: connectedCallback lädt neu und meldet dann an
+    if (!this.isConnected) return;
+    if (this._activitySubPending
+        && Date.now() - this._activitySubSeit < AKTIVITAET_ABO_TIMEOUT_MS) return;
+    // Hängt eine Anmeldung zu lange (Socket weg, Antwort kommt nie), wird sie
+    // hier abgelöst — eine späte Bestätigung löst sie dann selbst wieder.
+    this._unsubscribeActivityEvents();
+    const conn = this._hass?.connection;
+    if (!conn) return;
+    const gen = this._activitySubGen;
+    this._activitySubPending = true;
+    this._activitySubSeit = Date.now();
     try {
-      this._hass.connection.subscribeEvents((ev) => {
+      conn.subscribeEvents((ev) => {
+        if (gen !== this._activitySubGen) return;
         try {
-          if (ev.data) {
-            // Prepend new event (newest first)
-            this._activityLog.unshift(ev.data);
-            this._activityTotal += 1;
-            this._render();
-          }
+          if (ev.data) this._aktivitaetEintragen(ev.data);
         } catch (err) {
           console.warn("EEG: error in activity event handler:", err);
         }
       }, "eeg_optimizer_activity").then(unsub => {
+        if (gen !== this._activitySubGen) {
+          aboLoesen(unsub);
+          return;
+        }
+        this._activitySubPending = false;
         this._activityUnsub = unsub;
       }).catch((err) => {
+        if (gen !== this._activitySubGen) return;
         console.warn("EEG: activity subscription failed, will retry on next hass update:", err);
-        this._activityUnsub = null;
+        this._activitySubPending = false;
       });
     } catch (err) {
       console.warn("EEG: could not subscribe to activity events:", err);
-      this._activityUnsub = null;
+      this._activitySubPending = false;
     }
+  }
+
+  // Beendet das laufende Abo und macht jede noch offene Anmeldung ungültig.
+  _unsubscribeActivityEvents() {
+    this._activitySubGen = (this._activitySubGen || 0) + 1;
+    this._activitySubPending = false;
+    const unsub = this._activityUnsub;
+    this._activityUnsub = null;
+    if (unsub) aboLoesen(unsub);
+  }
+
+  _aktivitaetEintragen(eintrag) {
+    // Prepend new event (newest first)
+    this._activityLog.unshift(eintrag);
+    this._activityTotal += 1;
+    if (this._activityNachzuegler) this._activityNachzuegler.push(eintrag);
+    this._render();
   }
 
   /* ── Async data loading ───────────────────────── */
@@ -5562,7 +5634,9 @@ class EegOptimizerPanel extends HTMLElement {
     // Detect connection object change (HA reconnect after network switch)
     if (oldHass && hass && oldHass.connection !== hass.connection) {
       console.info("EEG Energy Optimizer: connection changed (network switch?), reloading");
-      this._activityUnsub = null; // old subscription is dead
+      // Das alte Abo abmelden, nicht nur vergessen: Ist der alte Socket noch
+      // offen, liefert er sonst jeden Eintrag ein zweites Mal.
+      this._unsubscribeActivityEvents();
       this._loadConfigPending = false;
       this._loadConfigWithRetry();
       return;
@@ -12123,10 +12197,7 @@ class EegOptimizerPanel extends HTMLElement {
   disconnectedCallback() {
     window.__eegPanelConnected = false;
     this._disconnectedAt = Date.now();
-    if (this._activityUnsub) {
-      try { this._activityUnsub(); } catch (_) { /* connection already gone */ }
-      this._activityUnsub = null;
-    }
+    this._unsubscribeActivityEvents();
     if (this._onVisibilityChange) {
       document.removeEventListener("visibilitychange", this._onVisibilityChange);
     }
