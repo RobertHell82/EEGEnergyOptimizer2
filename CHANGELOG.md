@@ -12,6 +12,12 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+## [2.1.51-beta.1] - 2026-10-28
+
+### Geändert
+
+- **„Batterie aus dem Netz laden“ ist in der Beta wieder an.** Inhaltlich entspricht diese Beta dem Release 2.1.50 mit dem Fix für das unerreichbare Ladeziel. Dazu kommt die Option in den Einstellungen (Tab Tarife, Expertenmodus, nur Huawei), samt Beschreibung in der Tarife-Anleitung.
+
 ## [2.1.50] - 2026-10-28
 
 ### Behoben
