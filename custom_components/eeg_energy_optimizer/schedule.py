@@ -979,12 +979,16 @@ class HAConfig:
             werte = [float(v) for v in vorsichtig.values]
         else:
             werte = [float(v) for v in ueberschuss.values]
-        # Dieselben Lade-/Entladeverluste wie die Erreichbarkeitsschranke in
-        # opt_highs.py, gedeckelt durch die Batterieleistung.
-        wirkung = 1 - 2 * self.battery_resistance
+        # Dieselben gestuften Lade-/Entladeverluste wie die
+        # Erreichbarkeitsschranke in opt_highs.py, gedeckelt durch die
+        # Batterieleistung.
         grenze = float(self.battery_power_limit)
+        kapazitaet = float(self.battery_capacity)
         schritt = [
-            (min(w * wirkung, grenze) if w > 0 else -min(-w / wirkung, grenze)) * p2e
+            (
+                min(_ladeleistung_aus_dc(w, kapazitaet), grenze) if w > 0
+                else -min(_entladeleistung_fuer_dc(-w, kapazitaet), grenze)
+            ) * p2e
             for w in werte
         ]
         # Wie bor in opt() gilt jeder Wert für den Stand am ENDE des Slots
@@ -1049,13 +1053,15 @@ class HAConfig:
         # nie mehr, als die Batterie aus PV allein erreicht. Mit Netzladen
         # kann ein Ziel erreichbar sein, von dem aus der Plan nur auf halb,
         # nicht aber auf diesen tieferen Stand zurückkäme.
-        wirkung = 1 - 2 * self.battery_resistance
         stand = self.battery_capacity - self.battery_free
         for w in werte:
             if w > 0:
                 stand = min(
                     self.battery_capacity,
-                    stand + min(w * wirkung, float(self.battery_power_limit)) * p2e,
+                    stand + min(
+                        _ladeleistung_aus_dc(w, float(self.battery_capacity)),
+                        float(self.battery_power_limit),
+                    ) * p2e,
                 )
         ende_halb = min(self.battery_capacity / 2.0, stand)
 

@@ -73,7 +73,7 @@ def opt(c, start_time):
 
 	# Make sure, that the system remains solveable:
 	bat_content = c.battery_capacity - c.battery_free
-	# LOCAL CHANGE (see README.md): Only surplus can build up the reserve,
+	# LOCAL CHANGE (see README.md 2, 2a): Only surplus can build up the reserve,
 	# and only as much as fits. Summing the full production ignores that the
 	# house lives on the same energy and that a full battery spills the rest,
 	# so the cap admitted reserve levels that were reachable only by buying
@@ -92,10 +92,34 @@ def opt(c, start_time):
 	# battery really can only lowers the level, which makes the cap more
 	# conservative - it can never admit a demand that is out of reach.
 	surplus = parameters.dc_production - parameters.consumption / c.ac_efficiency
-	efficiency = 1 - 2 * c.battery_resistance
-	steps = (surplus.clip(lower=0) * efficiency + surplus.clip(upper=0) / efficiency) * p2e
+	# LOCAL CHANGE (see README.md 2c): the step uses the model's own losses
+	# below (free up to 0.1C, battery_resistance up to 0.2C, twice that
+	# above), not a flat 2 * battery_resistance. The flat rate put the cap
+	# below what the model reaches; the model exported the difference while
+	# the battery stayed short of its target (Linz 26.10.2026: 0.18 kW in
+	# every sunny slot, the executor then capped charging and sent every
+	# cloud gap's sun into the grid).
+	stufe = c.battery_capacity / 10
+	r = c.battery_resistance
+	def charge_from(s):
+		# battery power p with p + losses(p) = s
+		if s <= stufe:
+			return max(s, 0.0)
+		if s <= stufe * (2 + r):
+			return (s + r * stufe) / (1 + r)
+		return (s + 3 * r * stufe) / (1 + 2 * r)
+	def discharge_for(d):
+		# battery power p with p - losses(p) = d
+		if d <= stufe:
+			return max(d, 0.0)
+		if d <= stufe * (2 - r):
+			return (d - r * stufe) / (1 - r)
+		return (d - 3 * r * stufe) / (1 - 2 * r)
+	steps = pd.Series(
+		[(charge_from(s) if s > 0 else -discharge_for(-s)) * p2e for s in surplus.values],
+		index=surplus.index)
 	max_step = c.battery_power_limit * p2e
-	# LOCAL CHANGE (see README.md): an optional charge target. The config
+	# LOCAL CHANGE (see README.md 3): an optional charge target. The config
 	# returns a minimum content per slot (0 where it has no wish); it enters
 	# the reserve here, BEFORE the cap below, so it is held to what surplus
 	# can reach without buying - like every other part of the reserve.
@@ -128,7 +152,7 @@ def opt(c, start_time):
 		reachable_netz = []
 		for step, pv, lb in zip(steps.values, parameters.dc_production.values, dc_lb.values):
 			if lb < 0:
-				step = (pv - lb) * efficiency * p2e
+				step = charge_from(pv - lb) * p2e
 			level = min(c.battery_capacity, max(0.0, level + min(step, max_step)))
 			reachable_netz.append(level)
 		ziel = ziel.clip(upper=pd.Series(reachable_netz, index=parameters.index))
@@ -178,7 +202,7 @@ def opt(c, start_time):
 
 	dc_p = parameters.dc_production + battery_p_pos - battery_p_neg - discard_p - c.battery_resistance * battery_high1_p - 2 * c.battery_resistance * battery_high2_p
 
-	# --- LOCAL CHANGE: Heizstab als bewertete Senke (see README.md) -----
+	# --- LOCAL CHANGE: Heizstab als bewertete Senke (see README.md 1) ---
 	#
 	# Ohne ihn ist 'discard' wertlos: Das Modell regelt ab, wenn es muss,
 	# und der Heizstab bekommt den Rest geschenkt. Mit Wärmewert wird daraus
@@ -291,7 +315,7 @@ def opt(c, start_time):
 		ziel = ziel + heater_p.sum() * heizstab_waermewert * c.ac_efficiency * p2e
 	model.objective = Objective(ziel, direction='max')
 	status = model.optimize()
-	# LOCAL CHANGE (see README.md): Ohne optimale Lösung stehen in den
+	# LOCAL CHANGE (see README.md 6): Ohne optimale Lösung stehen in den
 	# Variablen keine Werte (primal = None), und die Tabelle unten scheiterte
 	# an "None - None" — eine Fehlermeldung, die nichts erklärt. Der Status
 	# sagt, woran es lag (infeasible, unbounded, …).

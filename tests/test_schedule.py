@@ -1963,6 +1963,34 @@ def _netzbezug_kwh(slots: list[dict], stunden: int = 24) -> float:
     return sum(max(-s["grid_p"], 0.0) for s in slots[:ende]) * 0.25
 
 
+def _schritt_gestuft(bilanz_kw: float, kapazitaet_kwh: float) -> float:
+    """Batterieleistung zu einem DC-Überschuss (+) oder -Fehlbetrag (−).
+
+    Haralds Verluste im LP: bis 0,1 C frei, bis 0,2 C ``battery_resistance``
+    der Leistung darüber, oberhalb das Doppelte (``dc_p`` in opt_highs.py).
+    Bewusst NICHT über die Umkehrfunktionen aus schedule.py oder
+    opt_highs.py, sondern per Bisektion über die Verlustfunktion selbst —
+    sonst prüfte der Test die Formel mit sich selbst (chamo/README.md § 2c).
+    """
+    r = sched.HAConfig.battery_resistance
+    stufe = kapazitaet_kwh / 10.0
+
+    def verluste(p):
+        return r * min(max(p - stufe, 0.0), stufe) + 2 * r * max(p - 2 * stufe, 0.0)
+
+    ziel = abs(bilanz_kw)
+    vorzeichen = 1.0 if bilanz_kw > 0 else -1.0
+    unten, oben = 0.0, 2.0 * ziel + 1.0
+    for _ in range(200):
+        mitte = (unten + oben) / 2
+        wert = mitte + vorzeichen * verluste(mitte)
+        if wert < ziel:
+            unten = mitte
+        else:
+            oben = mitte
+    return vorzeichen * (unten + oben) / 2
+
+
 def test_reserve_verlangt_nie_mehr_als_ohne_netzbezug_erreichbar():
     """Die Reserve darf nur aus Überschuss wachsen, nie aus dem Bestand.
 
@@ -1995,12 +2023,11 @@ def test_reserve_verlangt_nie_mehr_als_ohne_netzbezug_erreichbar():
     boden = inputs.battery_capacity_kwh * inputs.min_soc_pct / 100.0
     deckel = inputs.battery_capacity_kwh * inputs.max_soc_pct / 100.0
     kapazitaet = deckel - boden
-    verluste = 1 - 2 * sched.HAConfig.battery_resistance
     stand = kapazitaet - inputs.battery_free_kwh
 
     for slot in slots:
         bilanz = slot["PV"] - slot["consumption"] / sched.HAConfig.ac_efficiency
-        schritt = (max(bilanz, 0.0) * verluste + min(bilanz, 0.0) / verluste) * 0.25
+        schritt = _schritt_gestuft(bilanz, kapazitaet) * 0.25
         schritt = min(schritt, inputs.battery_power_limit_kw * 0.25)
         stand = min(kapazitaet, max(0.0, stand + schritt))
         gefordert = kapazitaet - slot["battery_ub"]
@@ -2240,14 +2267,13 @@ def test_reserve_verlangt_nie_mehr_als_die_ladeleistung_schafft():
     boden = inputs.battery_capacity_kwh * inputs.min_soc_pct / 100.0
     deckel = inputs.battery_capacity_kwh * inputs.max_soc_pct / 100.0
     kapazitaet = deckel - boden
-    verluste = 1 - 2 * sched.HAConfig.battery_resistance
     max_schritt = inputs.battery_power_limit_kw * 0.25
     stand = kapazitaet - inputs.battery_free_kwh
 
     # Stand am Ende des Slots — das begrenzt battery_ub (chamo/README.md § 2b).
     for slot in slots:
         bilanz = slot["PV"] - slot["consumption"] / sched.HAConfig.ac_efficiency
-        schritt = (max(bilanz, 0.0) * verluste + min(bilanz, 0.0) / verluste) * 0.25
+        schritt = _schritt_gestuft(bilanz, kapazitaet) * 0.25
         stand = min(kapazitaet, max(0.0, stand + min(schritt, max_schritt)))
         gefordert = kapazitaet - slot["battery_ub"]
         assert gefordert <= stand + 0.01, (

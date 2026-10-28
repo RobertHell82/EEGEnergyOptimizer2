@@ -16,7 +16,7 @@ dieses Repos unverändert und unter seiner Autorschaft vor — eingespielt per
 | Datei | Zustand |
 |-------|---------|
 | `config_dummy.py` | unverändert |
-| `opt_highs.py` | Haralds `opt-optlang.py`; zwei Änderungen, siehe unten |
+| `opt_highs.py` | Haralds `opt-optlang.py`; zwei technische Änderungen und sechs Abweichungen in `opt()` (`LOCAL CHANGE`), siehe unten |
 | `opt_test.py` | unverändert |
 | `timetableopt` | unverändert |
 
@@ -155,6 +155,45 @@ tatsächlich schafft (der Schritt ist weiter auf die Ladeleistung gedeckelt).
 Die beiden Eigenschaftstests aus Abschnitt 2/2a vergleichen jetzt mit dem
 Stand nach dem Schritt.
 
+### 2c. Die Schranke rechnet mit den Verlusten des Modells (28.10.2026)
+
+Der dritte Durchgang an derselben Schranke. Sie rechnete jeden Schritt mit
+pauschal `2 · battery_resistance` Verlust (8 %). Das Modell selbst verliert
+weniger: bis 0,1 C nichts, bis 0,2 C `battery_resistance` der Leistung
+darüber, oberhalb das Doppelte (`battery_high1_p` / `battery_high2_p` in
+`dc_p`). Die Schranke lag damit unter dem, was das Modell tatsächlich
+erreicht, und das Modell verkaufte die Differenz.
+
+Schädlich wird das, wenn die Schranke bindet, also beim unerreichbaren
+Ladeziel (Abschnitt 3). Anlage Linz, 26.10.2026, 15,8 kWh: ab 10 Uhr war das
+Ziel 100 % nicht mehr zu schaffen. Jeder Plan wollte trotzdem 0,18 kW je
+sonnigem Slot einspeisen, rund 0,3 kWh bis zum Termin. Der Executor setzte
+dafür ein Ladelimit auf die Planleistung, statt freizugeben, und bei
+wechselhafter Sonne ging jede Spitze darüber ins Netz: 1,9 kWh statt der
+geplanten 0,36. Die Batterie endete bei 81 %.
+
+Der Schritt nimmt jetzt die Umkehrung der Verlustfunktion: die
+Batterieleistung `p` mit `p + Verluste(p)` = Überschuss beim Laden und
+`p − Verluste(p)` = Fehlbetrag beim Entladen. Das ist genau der Weg, den das
+Modell gehen kann (Netz 0, jeder Überschuss in die Batterie), also nie mehr,
+als es erreicht. Die Klemmung auf die Batterieleistung aus 2a bleibt, ebenso
+die Netzlade-Erreichbarkeit aus Abschnitt 5, die dieselbe Funktion nutzt.
+
+Nachgerechnet über alle 875 Pläne aus dem Archiv der Anlage (20.–27.10.2026):
+54 Pläne mit unerreichbarem Ziel speisten vorher bis zum Termin ein
+(21,2 kWh), danach 8, und diese erreichen jetzt 100 %. Kein Plan wurde
+unlösbar, keiner kauft mehr zu, kein Termin liegt tiefer.
+
+`HAConfig.ladeziel` und `ladeziel_termine` rechnen mit denselben gestuften
+Verlusten (`_ladeleistung_aus_dc` / `_entladeleistung_fuer_dc` in
+`schedule.py`). Tests: `tests/test_erreichbarkeit_verluste.py`, geprüft gegen
+eine eigene Bisektion über die Verlustfunktion.
+
+Nebenbefund, nicht mit korrigiert: Liegt `battery_power_limit` unter 0,2 C
+des Modellfensters, ist die Obergrenze von `battery_high2_p` negativ, und das
+Modell baut nicht (Linz mit 2,5 kW statt 5: `lb=0 > ub=-0.34`). Das war
+schon vorher so und gilt für große Batterien an kleinen Wechselrichtern.
+
 ### 3. Ladeziel zum Ende der PV-Zeit (04.10.2026)
 
 Eine Vorgabe des Betreibers, kein Modellfehler: „Abends soll die Batterie
@@ -272,6 +311,13 @@ LP überschätzt nur, wie viel sich innerhalb eines erlaubten Slots lohnt.
 
 Tests: `tests/test_netzladen.py`.
 
+### 6. Solver-Status nach `optimize()`
+
+Keine Änderung an der Rechnung: Ist der Status nicht `optimal`, wirft `opt()`
+`RuntimeError` mit dem Status (`infeasible`, `unbounded`, …). Vorher standen
+in den Variablen keine Werte, und die Ergebnistabelle scheiterte an
+`None - None`, ohne zu sagen, woran es lag.
+
 ## Was von uns ist
 
 * `highs_adapter.py` — optlang-kompatible Minimalschicht auf HiGHS. Nötig, weil
@@ -291,8 +337,24 @@ git apply --directory=custom_components/eeg_energy_optimizer -p2 upstream.patch
 ```
 
 Danach die Änderungen oben erneut anwenden. Die beiden technischen sind
-in Sekunden erledigt; bei den inhaltlichen ist zu prüfen, ob Harald
-dieselbe Stelle angefasst hat — beim Heizstab die `discard_p`-Zerlegung, bei
-der Reserve und beim Ladeziel die Schranke unter „Make sure, that the system
-remains solveable". Die Reserve-Korrektur wäre idealerweise upstream
-aufgehoben; ist sie das, entfällt sie hier ersatzlos.
+in Sekunden erledigt; bei den sechs inhaltlichen ist zu prüfen, ob Harald
+dieselbe Stelle angefasst hat. Die zehn `LOCAL CHANGE`-Marker verteilen sich
+so:
+
+1. **Heizstab** (Abschnitt 1) — die `discard_p`-Zerlegung in `heater_p` +
+   `spill_p`, die beiden Nebenbedingungen und der Zielterm.
+2. **Reserve-Schranke** (2, 2a, 2b, 2c) — unter „Make sure, that the system
+   remains solveable": `steps` mit den gestuften Verlusten (`charge_from` /
+   `discharge_for`), die Klemmung auf `max_step` und der Füllstand am
+   Slot-Ende in `reachable`.
+3. **Ladeziel-Hook** (3) — `c.ladeziel(parameters, surplus)` hebt `bor` vor
+   der Kappung an.
+4. **Endstand** (4) — im `else` von `fullcharge_try`: halb voll, höchstens
+   was die PV allein erreicht.
+5. **Netzladen-Hook** (5) — `c.netzladen(parameters, surplus)`, die eigene
+   Erreichbarkeit `reachable_netz` für das Ladeziel und `dc_constr` mit der
+   Untergrenze je Slot.
+6. **Solver-Status** (6) — die Prüfung nach `model.optimize()`.
+
+Die Reserve-Korrektur wäre idealerweise upstream aufgehoben; ist sie das,
+entfällt sie hier ersatzlos.
