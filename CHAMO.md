@@ -1,5 +1,24 @@
 # Der Fahrplan (chamo)
 
+> **Historisches Dokument (Stand der Umstellung, August/September 2026).**
+> Der Text unten wird nicht mehr nachgeführt. Überholt sind unter anderem:
+>
+> - `opt_highs.py` ist **nicht** mehr bis auf die Import-Zeile unverändert —
+>   es trägt sechs inhaltliche Abweichungen (`LOCAL CHANGE`: Heizstab,
+>   Reserve-Schranke, Ladeziel-Hook, Endstand, Netzladen-Hook,
+>   Solver-Status).
+> - Es gibt keinen Modus „Test“ mehr, nur **Ein** und **Aus**.
+> - `schedule_enabled`, `schedule_time_res_min`, `schedule_interval_min` und
+>   `schedule_horizon_hours` gibt es nicht mehr; Raster (15 min) und Horizont
+>   (48 h) sind fest.
+> - Die Einstellungs- und Statusbeschreibungen entsprechen nicht mehr dem
+>   Panel.
+>
+> Aktuell gilt: [CLAUDE.md](CLAUDE.md) (Architektur), [docs/steuerung.md](docs/steuerung.md)
+> (Steuerung) und [chamo/README.md](custom_components/eeg_energy_optimizer/chamo/README.md)
+> (Herkunft und Abweichungen von Haralds Code). Weiter gültig ist der Abschnitt
+> **„Warum HiGHS statt optlang“** — auf ihn verweist `chamo/README.md`.
+
 Der EEG Energy Optimizer wird ausschließlich vom LP-Fahrplan-Optimierer aus
 [EngagePV/chamo](https://gitlab.com/EngagePV/chamo) von Harald Geyer gesteuert.
 Diese Seite beschreibt, wie er eingebunden ist.

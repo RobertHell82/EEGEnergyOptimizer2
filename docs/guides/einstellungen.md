@@ -10,7 +10,7 @@ Die Einstellungen öffnest du über das Zahnrad oben rechts im Dashboard. Sie si
 | **Anlage** | Karten **Anlage** (Einspeisegrenze) und **Batterie** (Mindest- und Maximum-Ladestand). Entspricht dem Assistentenschritt „Anlage & Batterie“ |
 | **Prognose** | Die steuernde Quelle der PV-Prognose mit ihren Sensoren, der Schalter **Prognosevergleich** und, wenn die eigene Berechnung steuert oder mitläuft, die Flächentabelle der Anlage. Entspricht dem Assistentenschritt „PV-Prognose“ |
 | **Verbraucher** | Karten **Heizstab** (Fronius Ohmpilot, siehe Anleitung „Heizstab“) und **Wallbox** (siehe Anleitung „Wallbox“). Der Tab erscheint **nur im Expertenmodus** und kommt im Assistenten nicht vor |
-| **System** | Übersicht über Anlage und Sensoren, EEG-Statistik, Fahrplan-Archiv und ganz unten der Schalter **Expertenmodus** |
+| **System** | Karte **Dashboard** (Karten ausblenden), Übersicht über Anlage und Sensoren, EEG-Statistik, **Verlauf vergangener Tage**, Fahrplan-Archiv und ganz unten der Schalter **Expertenmodus** |
 
 ## Expertenmodus
 
@@ -18,8 +18,8 @@ Der Schalter steht im Tab **System** ganz unten. Er blendet zusätzliche Optione
 
 Zusätzlich sichtbar werden:
 
-- **Tab Tarife:** *Alterungskosten der Batterie (ct/kWh)*
-- **Tab Anlage:** die Gerätedaten *AC-Grenzleistung des Wechselrichters*, *PV-Spitzenleistung* und *Batterie-Leistungsgrenze*, dazu *Sicherheitspuffer auf die Prognose (%)*
+- **Tab Tarife:** *Alterungskosten der Batterie (ct/kWh)*, bei Huawei *Batterie aus dem Netz laden* (Beta, siehe Anleitung „Tarife & Gemeinschaft“)
+- **Tab Anlage:** die Gerätedaten *AC-Grenzleistung des Wechselrichters*, *PV-Spitzenleistung* und *Batterie-Leistungsgrenze*, dazu *Sicherheitspuffer auf die Prognose (%)*, *Ladeziel am Abend (%)* und *Vormittags bevorzugt netzdienlich* (siehe Anleitung „Anlage & Batterie“)
 - **Tab Prognose:** bei Solcast die *Weiteren Prognose-Sensoren* (PV-Prognose heute gesamt, Tag 3 bis Tag 7)
 - **Tab Verbraucher** als Ganzes, mit Heizstab und Wallbox
 - **Tab System:** die Karten **Verbrauchsprofil** (Rückblick in Wochen) und **Tagesbilanz**
@@ -42,7 +42,7 @@ Es gibt eine Ausnahme: die Sensoren der PV-Prognose im Tab **Prognose**. Die ste
 Der Knopf **Speichern** unter den Tabs übernimmt die Änderungen aus **allen** Tabs auf einmal. Danach bist du wieder im Dashboard. Fehlt ein Pflichtwert oder passt etwas nicht zusammen, wird nichts gespeichert; über dem Knopf steht dann, was fehlt. Geprüft werden:
 
 - **Anlage:** AC-Grenzleistung, PV-Spitzenleistung, Batterie-Leistungsgrenze, Höhe der Einspeisegrenze (wenn eingeschaltet)
-- **Tarife:** Standardvergütung (bei „Fester Wert“), Arbeitspreis, Netzbereich (wenn Sommer-Nieder- oder Winter-Nieder-Arbeitspreis eingeschaltet ist), das Nachtfenster, sobald ein Nachtsatz eingetragen ist (Standardvergütung und je Gemeinschaft), die Anteile der Gemeinschaften (zusammen höchstens 100 %) und im Quotenmodus die Tages-Abnahmequote
+- **Tarife:** Standardvergütung (bei „Fester Wert“), Arbeitspreis, Netzbereich (wenn Sommer-Nieder- oder Winter-Nieder-Arbeitspreis eingeschaltet ist), das Nachtfenster, sobald ein Nachtsatz eingetragen ist (Standardvergütung und je Gemeinschaft), die Anteile der Gemeinschaften (zusammen höchstens 100 %), im Quotenmodus die Tages-Abnahmequote und mit eingeschaltetem *Batterie aus dem Netz laden* ein Bezugspreis, der billiger sein kann als die Nacht (Spot-Tarif, Bezugspreis einer Gemeinschaft oder zeitvariable Netzentgelte), bei Spot- oder Gemeinschaftsbezug außerdem der Netzbereich
 - **Prognose:** die Sensoren einer fremden Prognosequelle, gültige PV-Flächen
 - **Verbraucher:** Adresse, Leistung und Maximaltemperatur des Heizstabs, Adresse der Ambibox
 
@@ -57,6 +57,14 @@ Bei einigen Änderungen **lädt die Integration neu**, weil Treiber und Sensoren
 - alles, was du über **Einrichtung erneut durchlaufen** an Wechselrichter und Sensoren änderst
 
 ## Der Tab System im Einzelnen
+
+### Dashboard
+
+Hier wählst du, welche Karten das Dashboard zeigt. Die Wahl gilt nur für dieses Gerät und diesen Browser, wirkt sofort und braucht kein **Speichern** — sie ist keine Einstellung der Anlage. Ausgeblendet heißt nur nicht angezeigt: Gerechnet, gesteuert und aufgezeichnet wird weiter. Die Statuskarte lässt sich nicht ausblenden.
+
+### Verlauf vergangener Tage
+
+Der Schalter **Viertelstunden speichern** (Vorgabe ein) legt beim Tageswechsel Bezug, Einspeisung und Kosten je Viertelstunde ab. Damit zeigen die Karten **Einspeisung** und **Bezug** auch für einen vergangenen Tag den Verlauf, nicht nur die Summe. Aufbewahrt wird 400 Tage, rund 4 kB je Tag, nach einem Jahr knapp 2 MB. Ausgeschaltet wird nichts mehr abgelegt; bereits gespeicherte Tage bleiben sichtbar.
 
 ### EEG-Statistik
 

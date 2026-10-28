@@ -45,14 +45,14 @@ Mit dem **Prognosevergleich** läuft eine zweite Quelle mit, ohne zu steuern: Je
 
 Was die Felder im Einrichtungsassistenten und in den Einstellungen bedeuten:
 
-- **[Anlage & Batterie](guides/anlage_batterie.md)** — Gerätedaten, Batterie-Leistungsgrenze, Mindest- und Maximum-Ladestand, Sicherheitspuffer auf die Prognose
+- **[Anlage & Batterie](guides/anlage_batterie.md)** — Gerätedaten, Batterie-Leistungsgrenze, Mindest- und Maximum-Ladestand, Sicherheitspuffer auf die Prognose, Ladeziel am Abend, vormittags bevorzugt netzdienlich
 - **[Einspeisegrenze](guides/einspeisegrenze.md)** — wenn der Netzbetreiber die Einspeiseleistung begrenzt
-- **[Tarife & Gemeinschaft](guides/tarife.md)** — Standardvergütung, Arbeitspreis und Netzgebühr, Energiegemeinschaften mit PeakShare oder fester Abnahmequote
-- **[Einstellungen & Expertenmodus](guides/einstellungen.md)** — die Tabs, was nur im Expertenmodus erscheint, EEG-Statistik und Plan-Archiv
+- **[Tarife & Gemeinschaft](guides/tarife.md)** — Standardvergütung, Arbeitspreis und Netzgebühr, Energiegemeinschaften mit PeakShare oder fester Abnahmequote, Batterie aus dem Netz laden (Beta, nur Huawei)
+- **[Einstellungen & Expertenmodus](guides/einstellungen.md)** — die Tabs, was nur im Expertenmodus erscheint, EEG-Statistik, Verlauf vergangener Tage und Plan-Archiv
 
 ## 📊 Im Betrieb
 
-- **[Dashboard & Bedienung](guides/dashboard.md)** — Statuskarte, Modus und Pause, „Was deine PV bringt“, Einspeisung, Bezugsspitze, was bei Störungen zu tun ist
+- **[Dashboard & Bedienung](guides/dashboard.md)** — Statuskarte, Modus und Pause, „Was deine PV bringt“, Einspeisung, Bezug, Bezugsspitze, Karten ausblenden, was bei Störungen zu tun ist
 
 ## 🔥 Heizstab (optional)
 

@@ -22,9 +22,12 @@ Geräte nur mit dem Link auf ihre Anleitung und verweist für den Stand hierher.
 | **SMA Smart Energy** | direkt per Modbus TCP | **freigegeben** |
 | **SolaX Gen4+** | SolaX-Modbus-Integration | **freigegeben** |
 
-**Freigegeben** heißt: im Dauerbetrieb an echten Anlagen erprobt, alle
-Sicherheitsnetze am Gerät nachgewiesen. Das gilt für alle sechs. Was je Gerät
-zu beachten ist, steht unten.
+**Freigegeben** heißt: im Dauerbetrieb an echten Anlagen erprobt —
+Ladelimit, Entladung und Freigabe wirken am Gerät, die Sicherheitsnetze der
+Steuerung (Not-Aus, Failsafe, Freigabe bei Aus und beim Entladen der
+Integration) greifen. Das gilt für alle sechs. Die Rückfallzeit *im Gerät*
+(Watchdog nach einem Ausfall von Home Assistant) ist damit nicht bei jedem
+nachgewiesen: Was je Gerät noch offen ist oder fehlt, steht unten.
 
 _Ein neu hinzukommender Wechselrichter läuft zunächst als **Feldtest**, bis er
 diese Prüfungen bestanden hat (siehe `docs/DEVELOPMENT.md`)._
@@ -146,6 +149,14 @@ Guide: [sma.md](guides/sma.md)
 **Freigegeben.** Steuerung über die
 [SolaX Modbus](https://github.com/wills106/homeassistant-solax-modbus)
 Integration (RemoteControl Mode 1).
+
+**Rückfall:** Die Zwangsentladung ist ein Mode-1-Befehl mit 300 s Laufzeit
+(`remotecontrol_duration`), den die SolaX-Modbus-Integration 60 s lang selbst
+wiederholt (`remotecontrol_autorepeat_duration`); kommt kein neuer Befehl,
+endet er am Gerät nach Ablauf der Laufzeit. Das Ladelimit dagegen ist ein
+Ladestrom (`battery_charge_max_current`) ohne Rückfallzeit: Nach einem harten
+Absturz von Home Assistant bleibt es stehen, bis die Freigabe beim nächsten
+Start den gesicherten Vorwert zurückschreibt.
 
 **Entladeboden:** Der Wechselrichter stoppt die Entladung bei
 `selfuse_discharge_min_soc` — auch mitten in einer befohlenen Zwangsentladung,

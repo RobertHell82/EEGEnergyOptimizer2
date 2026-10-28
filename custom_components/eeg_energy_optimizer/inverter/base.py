@@ -11,7 +11,9 @@ class InverterBase(ABC):
     """Abstract base class for inverter battery control.
 
     All inverter implementations must inherit from this class and implement
-    the three write methods plus the is_available property.
+    the three write methods plus the is_available property. The schedule
+    control set below is optional; NECESSARY_SENSORS_NEW_INVERTER.md lists
+    what a steered driver needs.
     """
 
     def __init__(self, hass: Any, config: dict) -> None:
@@ -104,8 +106,8 @@ class InverterBase(ABC):
     # Optional: Fahrplan-Steuerschnittstelle (Schedule-Executor).
     # ------------------------------------------------------------------
     # Der ScheduleExecutor steuert nur Treiber, die diese Schnittstelle
-    # vollständig anbieten (derzeit Huawei). Alle anderen Treiber bleiben im
-    # Code und im UI, rechnen und zeigen an, steuern aber nicht — dafür
+    # vollständig anbieten (derzeit alle sechs). Ein Treiber ohne sie bleibt
+    # im Code und im UI, rechnet und zeigt an, steuert aber nicht — dafür
     # genügen die Defaults: supports_schedule_control=False und None-Rückgaben.
 
     @property

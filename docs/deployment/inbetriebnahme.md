@@ -171,10 +171,14 @@ steht und wie du die Steuerung pausierst, erklärt
 **[Dashboard & Bedienung](../guides/dashboard.md)**.
 
 > [!NOTE]
-> **Ohne Preisunterschied passiert nichts.** Feste Zeitfenster gibt es nicht,
-> und es gibt auch keine automatische Entladung am Abend oder in der Nacht.
-> Lohnt sich das Verschieben laut Preisen nicht, bleibt die Batterie, wo sie
-> ist — das ist kein Fehler, sondern das erwartete Verhalten.
+> **Eingespeist wird nur, wenn es sich laut Preisen lohnt.** Eine feste
+> Entladung am Abend oder in der Nacht gibt es nicht. Unabhängig von den
+> Preisen gilt nur das **Ladeziel**: Zum Ende der PV-Zeit soll die Batterie
+> (Vorgabe) voll sein, soweit die Sonne das ohne Netzbezug schafft. Das
+> einzige Zeitfenster ist die Option **Vormittags bevorzugt netzdienlich**,
+> ab Werk aus. Beides erklärt [Anlage & Batterie](../guides/anlage_batterie.md).
+> Lohnt sich das Verschieben laut Preisen nicht, bleibt die Batterie nach dem
+> Laden, wo sie ist — das ist kein Fehler, sondern das erwartete Verhalten.
 
 > [!NOTE]
 > **Einlaufzeit — mindestens eine Woche laufen lassen:** Der Optimizer lernt das
@@ -206,9 +210,12 @@ genauso, mit **„Starten“**.
 
 Nach der Einrichtung schickt dein Gerät **anonymisierte Diagnose- und
 Wirksamkeitsdaten** an die EEG: etwa alle 30 Minuten Ladestand und Leistungen,
-einmal täglich die Tagesbilanz mit den Mengen der Einspeise-Karte (eingespeist,
-davon aus der Batterie, davon an die Gemeinschaft — keine Geldbeträge), dazu Störungsmeldungen und die Eckdaten deiner
-Anlage (Wechselrichter-Typ, Batteriegröße, PV-Leistung). Keine Namen, keine
+einmal täglich den Bilanztag mit den Mengen der Einspeise-Karte (eingespeist,
+davon aus der Batterie, davon an die Gemeinschaft — keine Geldbeträge) und die
+Tagesbilanz (PV, Verbrauch und Einspeisung des Vortags gegen die Prognose des
+Fahrplans), mit Prognosevergleich oder eigener Prognose auch den Prognosetag
+(gemessene PV gegen die Morgenprognosen), dazu Störungsmeldungen und die
+Eckdaten deiner Anlage (Wechselrichter-Typ, Batteriegröße, PV-Leistung). Keine Namen, keine
 Adresse, keine Standortdaten. Damit sehen wir, ob die Steuerung wirkt, und finden
 Fehler schneller.
 

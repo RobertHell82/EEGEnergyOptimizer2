@@ -3,9 +3,12 @@
 Der EEG Energy Optimizer trennt **Rechnen** und **Steuern** strikt:
 
 * Der **Optimierer** rechnet **jede Minute** den erlösbesten Lade- und
-  Entladeplan über 48 Stunden — allein aus den Preisen je Viertelstunde, ohne
-  Zeitfenster und ohne benannte Zustände. Er schreibt **nie** an den
-  Wechselrichter. Gibt der Preisverlauf nichts her, plant er auch nichts.
+  Entladeplan über 48 Stunden — aus den Preisen je Viertelstunde, ohne
+  benannte Zustände. Zwei Vorgaben des Betreibers kommen dazu, die sich nicht
+  als Preis ausdrücken lassen: das **Ladeziel** am Ende der PV-Zeit und,
+  optional, **Vormittags bevorzugt netzdienlich** (siehe
+  [unten](#ladeziel-und-vormittags-netzdienlich)). Er schreibt **nie** an den
+  Wechselrichter.
 * Die **Steuerung** läuft **alle 30 Sekunden**, hält den zuletzt gerechneten
   Fahrplan gegen die Messwerte und ist die **einzige** Stelle, die den
   Wechselrichter anfasst.
@@ -15,7 +18,7 @@ flowchart LR
     IN["PV-Prognose<br/>Verbrauchsprofil<br/>Batteriezustand<br/>Tarife"] --> OPT
     OPT["🧮 Optimierer<br/><i>jede Minute</i>"] -- "Fahrplan<br/>48 h · 15-min-Slots" --> EXE
     MESS["📈 Messwerte<br/>Netz · Hauslast · PV"] --> EXE
-    EXE["⚙️ Steuerung<br/><i>alle 30 Sekunden</i>"] -- "Ladelimit<br/>Entladung<br/>Freigabe" --> WR["🔌 Wechselrichter"]
+    EXE["⚙️ Steuerung<br/><i>alle 30 Sekunden</i>"] -- "Ladelimit<br/>Entladung<br/>Netzladung<br/>Freigabe" --> WR["🔌 Wechselrichter"]
 ```
 
 Warum zwei Takte? Der Plan ändert sich langsam (die Welt der Prognosen), die
@@ -23,14 +26,39 @@ Realität schnell (eine Wolke, ein Wasserkocher). Die Steuerung gleicht beides
 aus: Sie setzt die **Absicht** des laufenden Slots um, korrigiert sie aber mit
 den **gemessenen** Werten.
 
+### Ladeziel und Vormittags netzdienlich
+
+**Ladeziel** (`schedule_ladeziel_pct`, Vorgabe 100 % seit 2.1.36, 0 = aus):
+Am Ende der PV-Zeit jedes Tages — im letzten Slot mit PV-Überschuss — soll die
+Batterie mindestens so voll sein, auch wenn es sich nach den Preisen nicht
+lohnt. Vor diesem Termin rechnet der Optimierer auf dem *vorsichtigen* Pfad
+(Solcast-p10, sonst 60 % der Erwartung): Eingespeist wird vorher nur, was auch
+ein schwacher Tag wieder nachlädt. Gedeckelt ist das Ziel auf das, was die PV
+**ohne Netzbezug** erreicht — an einem trüben Tag wird aus 100 % eben, was die
+Sonne hergibt. Diese Erreichbarkeit rechnet mit denselben gestuften
+Batterieverlusten wie das Modell (`chamo/README.md` § 2c); mit einem
+pauschalen Verlust lag sie darunter, und der Plan speiste die Differenz ein.
+
+**Vormittags bevorzugt netzdienlich** (`schedule_netzdienlich`, Vorgabe aus):
+Bis zur eingestellten Stunde bekommt die Einspeisung aus PV-Überschuss einen
+Bonus, und die Einspeisegrenze sinkt auf diesen Überschuss — die Batterie
+kann dort also nicht ins Netz entladen. Das gilt nur an Tagen mit echtem
+Überschuss: Auf dem vorsichtigen Pfad muss der Tag den freien Platz bis zum
+Ladeziel um mindestens 20 % übersteigen. Der Bonus steuert nur, in der
+Ertragsrechnung kommt er nicht vor.
+
+Beides für Anwender: [Anlage & Batterie](guides/anlage_batterie.md).
+
 ---
 
 ## Ein Steuerungslauf (alle 30 Sekunden)
 
 Jeder Lauf ist eine Prüfkette, an deren Ende **eine Absicht** steht: Laden
-begrenzen, Entladen oder Freigeben. Um sie umzusetzen, können mehrere
-Schreibvorgänge nötig sein — etwa beim Wechsel von einer Entladung auf ein
-Ladelimit erst das Stoppen der Entladung, dann das Limit. Die Absicht wird auch
+begrenzen, Entladen, aus dem Netz laden (Beta, nur Huawei) oder Freigeben. Um
+sie umzusetzen, können mehrere Schreibvorgänge nötig sein — etwa beim Wechsel
+von einer Entladung auf ein Ladelimit erst das Stoppen der Entladung, dann das
+Limit; ebenso stoppt jede andere Absicht eine laufende Netzladung zuerst
+(`_netzladung_beenden`). Die Absicht wird auch
 im Modus **Aus** bestimmt (fürs Dashboard) — geschrieben wird nur im Modus
 **Ein**.
 
@@ -41,7 +69,7 @@ flowchart TD
     SUP -- "ja" --> WECHSEL{"Moduswechsel<br/>Ein → Aus?"}
     WECHSEL -- "ja" --> REL["Wechselrichter einmalig freigeben"] --> FRISCH
     WECHSEL -- "nein" --> FRISCH{"Fahrplan frisch?<br/><i>(jünger als 15 min)</i>"}
-    FRISCH -- "ja" --> ABSICHT["Absicht des <b>laufenden Slots</b> bestimmen:<br/>Laden · Entladen · Freigabe · Blockieren"]
+    FRISCH -- "ja" --> ABSICHT["Absicht des <b>laufenden Slots</b> bestimmen:<br/>Ladelimit · Entladung · Netzladung · Freigabe"]
     FRISCH -- "nein" --> SLOT
     ABSICHT --> SLOT["Slotwechsel?<br/>→ Not-Aus-Sperre aufheben"]
     SLOT --> MODUS{"Modus = Ein<br/>und keine Pause?"}
@@ -58,25 +86,32 @@ flowchart TD
     AKTION -- "Freigabe" --> AF["✅ Automatikmodus<br/><i>(Eigenverbrauch)</i>"]
     AKTION -- "Ladelimit" --> AL["🔋 Ladelimit setzen<br/>+ <b>Ladelimit-Nachführung</b>"]
     AKTION -- "Entladung" --> AE["⚡ Entladung setzen<br/>+ <b>Entlade-Nachführung</b><br/>+ <b>Wirkungskontrolle</b>"]
+    AKTION -- "Netzladung" --> AN["🔌 Zwangsladung aus PV + Netz<br/>bis zum Ladestand am Slotende<br/><i>(Beta, nur Huawei)</i>"]
 
     style NA fill:#ffcdd2,color:#000
     style FS fill:#ffe0b2,color:#000
     style AF fill:#c8e6c9,color:#000
     style AL fill:#c8e6c9,color:#000
     style AE fill:#c8e6c9,color:#000
+    style AN fill:#c8e6c9,color:#000
 ```
 
 ### Vom Slot zur Absicht
 
 Der laufende Fahrplan-Slot wird treiberneutral in genau eine Absicht übersetzt:
 
+Die Zeilen werden von oben nach unten geprüft, die erste passende gilt.
+
 | Slot plant … | Absicht | Warum |
 |---|---|---|
-| **Laden** | Ladelimit = Planleistung | Die Batterie darf höchstens so schnell laden, wie der Plan vorsieht — der Rest der PV geht ins Netz. |
+| **Laden aus dem Netz** (Spalte `netzladung` ≥ 0,1 kW; Beta, nur Huawei) | Netzladung „Netzladung x kW bis y %“ | Der Slot lädt mehr, als die PV liefert. Der Automatikmodus nähme nur den Überschuss, es braucht einen Ladebefehl mit der ganzen geplanten Ladeleistung bis zum Ladestand am Slotende; den Rest holt das Gerät aus dem Netz. Mit Netzgrenze wird die Leistung an gemessener Hauslast und PV nachgeführt. Ein Treiber ohne Netzladen bekommt stattdessen das Ladelimit. |
+| **Laden**, dazu Einspeisung (> 0,05 kW), Wärme oder Abregelung — oder Maximum-Ladestand unter 100 % | Ladelimit = Planleistung | Die Batterie darf höchstens so schnell laden, wie der Plan vorsieht — der Rest der PV geht ins Netz bzw. in den Heizstab. Unter einem Ladedeckel lüde der Automatikmodus sonst darüber hinaus. |
+| **Laden**, keine Einspeisung (≤ 0,05 kW), keine Wärme, keine Abregelung, Maximum-Ladestand 100 % | Freigabe „Normalbetrieb (Plan lädt den ganzen Überschuss)“ | Der Plan will allen Überschuss in der Batterie — genau das tut der Automatikmodus. Ein Ladelimit auf die Planleistung schickte dagegen jedes kW über der Prognose ins Netz, und die Ladelimit-Nachführung hebt es nur an der Einspeisegrenze an, die ein Herbsttag nie erreicht (Winterthur, 09.10.2026). Denselben Mechanismus zeigte Linz am 26.10.2026: Der Plan sah dort eine kleine Einspeisung vor (Ursache war die Erreichbarkeitsschranke, `chamo/README.md` § 2c), also blieb es beim Ladelimit, und bei wechselhafter Sonne gingen 1,9 statt 0,36 kWh ins Netz. |
 | **Einspeisen aus der Batterie** | Erzwungene Entladung | Energie soll aktiv in die Energiegemeinschaft. |
 | **Entladen nur für den Hausverbrauch** | Freigabe | Das erledigt der Wechselrichter im Automatikmodus selbst — kein Eingriff nötig. |
-| **Nichts**, Batterie hat Platz | Ladelimit = 0 | Freigeben wäre falsch: Der Automatikmodus würde PV-Überschuss in die Batterie laden, den der Plan einspeisen will. An einem Sonnenmorgen sieht das dann von außen wie eine „Morgen-Einspeisung" aus — es ist aber keine Regel, sondern nur das Ergebnis der Preise dieses Tages. |
-| **Nichts**, Batterie voll (im letzten Prozent vor dem Maximum-Ladestand) | Freigabe | „Nicht laden" ist hier keine Absicht, sondern Platzmangel. Ein Ladelimit 0 bewirkt nichts und stünde nur im Weg, sobald wieder Platz entsteht. Kein Eingriff, der Standardwert bleibt. |
+| **Nichts**, Batterie voll (im letzten Prozent vor dem Maximum-Ladestand) | Freigabe „Normalbetrieb (Batterie voll)“ | „Nicht laden" ist hier keine Absicht, sondern Platzmangel. Ein Ladelimit 0 bewirkt nichts und stünde nur im Weg, sobald wieder Platz entsteht. Kein Eingriff, der Standardwert bleibt. |
+| **Nichts**, keine Einspeisung, Wärme oder Abregelung, und kein PV-Überschuss erwartet (PV ≤ Verbrauch) | Freigabe „Normalbetrieb (kein PV-Überschuss)“ | Ohne Überschuss hält ein Ladelimit 0 nichts für die Einspeisung frei, sperrt aber jedes Laden, das ein anderer Regler auslöst — etwa eine EMMA, die nachts aus dem Netz laden soll (Winterthur, Oktober 2026). |
+| **Nichts**, PV-Überschuss erwartet, Batterie hat Platz | Ladelimit = 0 | Freigeben wäre falsch: Der Automatikmodus würde PV-Überschuss in die Batterie laden, den der Plan einspeisen will. An einem Sonnenmorgen sieht das dann von außen wie eine „Morgen-Einspeisung" aus — es ist aber keine Regel, sondern nur das Ergebnis der Preise dieses Tages. |
 
 ---
 
@@ -87,8 +122,8 @@ beide arbeiten mit **Messwerten**, nicht mit Prognosen.
 
 ### Ladelimit-Nachführung
 
-Das Ladelimit wird **immer** geschrieben, sobald der Slot Laden (oder
-Blockieren) plant — mit oder ohne Einspeisegrenze. Die Nachführung ist die
+Das Ladelimit wird **immer** geschrieben, sobald die Absicht des Slots
+„Ladelimit“ ist (siehe Tabelle oben) — mit oder ohne Einspeisegrenze. Die Nachführung ist die
 **Korrektur obendrauf** und läuft nur, wenn eine Einspeisegrenze konfiguriert
 ist: Klebt die gemessene Einspeisung an der Grenze, regelt der Wechselrichter
 gerade still ab — dann darf die Batterie mehr aufnehmen als geplant, damit
@@ -116,7 +151,11 @@ noch eingespeist wird: Der Wechselrichter braucht einen Moment, bis er die PV
 nachgeführt hat, und ohne diese Pause verschwände — zusammen mit einem
 zurückregelnden Heizstab — mehr Last, als tatsächlich fehlt. Die Rücknahme halbiert den Abstand je Lauf, weil ihr Ziel bekannt
 ist — mit festen Schritten wäre der Slot oft vorbei, bevor sein Planwert
-wirkt. Ohne Einspeisegrenze (oder wenn der Netz-Messwert fehlt) wird
+wirkt. **Abkürzung:** Liegt schon die gemessene PV-Leistung unter Grenze −
+0,3 kW, kann auch Ladelimit 0 keine Abregelung mehr auslösen — dann wird der
+Planwert sofort geschrieben, statt in Schritten zurückzunehmen (sonst lief das
+Limit nach Sonnenuntergang in fünf Schreibvorgängen vom Maximum auf 0).
+Ohne Einspeisegrenze (oder wenn der Netz-Messwert fehlt) wird
 schlicht der Fahrplanwert geschrieben — fail-open.
 
 ### Entlade-Nachführung
@@ -177,11 +216,15 @@ wird nicht geprüft.
 
 „Freigabe" ist kein eigener Zustand im Wechselrichter, sondern die Rückkehr zu
 seinen Standardwerten: Ein gesetztes Ladelimit wird aufgehoben und eine
-laufende Zwangsentladung gestoppt. Wie das am Gerät aussieht, hängt vom Treiber
-ab — bei Huawei wird das Ladelimit auf das Maximum der Number-Entität gesetzt
-(bei einer 5-kW-Batterie also 5 kW), bei den Modbus-Treibern (Fronius, Kostal,
-SMA) geht die Batteriesteuerung zurück an die interne Automatik des
-Wechselrichters.
+laufende Zwangsentladung oder Netzladung gestoppt. Wie das am Gerät aussieht,
+hängt vom Treiber ab — bei Huawei wird das Ladelimit auf das Maximum der
+Number-Entität gesetzt (bei einer 5-kW-Batterie also 5 kW), bei den
+Modbus-Treibern (Fronius, Kostal, SMA) geht die Batteriesteuerung zurück an die
+interne Automatik des Wechselrichters. Bei SolaX wird Mode 1 beendet
+(„Disabled“), der Ladestrom auf den gesicherten Vorwert zurückgeschrieben
+(ohne gesicherten Wert: das Maximum der Entität) und ein abgesenkter
+Entladeboden wiederhergestellt. Bei Sigenergy geht der Modus zurück auf
+„Maximum Self Consumption“, danach wird Remote EMS ausgeschaltet.
 
 Deshalb gilt: **Wir greifen nur ein, wenn der Fahrplan einen konkreten Wert
 vorgibt.** Sonst stehen die Werte des Geräts.
@@ -195,7 +238,7 @@ Der Schalter oben im Dashboard (`select.eeg_energy_optimizer_optimizer`):
 
 | Modus | Rechnen | Schreiben |
 |---|---|---|
-| **Ein** | jede Minute | Ladelimit und Entladung werden gesetzt |
+| **Ein** | jede Minute | Ladelimit, Entladung und Netzladung (Beta, nur Huawei) werden gesetzt |
 | **Aus** | jede Minute | nichts — der Fahrplan wird nur angezeigt |
 
 **Aus** nimmt gesetzte Steuerwerte zurück: Der Wechselrichter wird freigegeben
@@ -216,8 +259,11 @@ jedem Lauf nach: Plant der laufende Slot Wärme, regelt sie auf „Einspeisung
 nur den Überschuss, der an der Einspeisegrenze sonst abgeregelt würde — ohne
 eingestellte Einspeisegrenze an der AC-Grenzleistung minus 0,5 kW. Diesen
 ungeplanten Überschuss teilt er sich mit der Batterie nach deren Ladestand:
-unter 20 % bekommt die Batterie alles, ab 50 % die Hälfte. Während einer
-Entladung und im Modus Aus bleibt er aus.
+Der Heizstab ist dabei auf einen Anteil seiner Maximalleistung gedeckelt —
+unter 20 % Ladestand 0 (die Batterie bekommt alles), bis 50 % linear steigend
+auf die Hälfte, darüber weiter bis zur vollen Leistung bei 100 %. Ist
+die Batterie gesättigt oder ihr Ladestand unbekannt, gibt es keine Teilung.
+Während einer Entladung, einer Netzladung und im Modus Aus bleibt er aus.
 
 Unter der **Mindesttemperatur** hat der Heizstab Vorrang vor der Einspeisung:
 Er nimmt allen PV-Überschuss, aber weder Netz- noch Batteriestrom. Nur wenn

@@ -1,6 +1,8 @@
 # Dashboard und Bedienung
 
-Nach der Einrichtung zeigt der Seitenleisten-Eintrag **EEG Energy Optimizer** das Dashboard. Von oben nach unten: die Statuskarte mit dem Schalter für den Modus, der Optimierungsplan, „Was deine PV bringt“, „Einspeisung“, der Optimierungsgewinn, mit eingeschaltetem Vergleich der Prognosevergleich, dann Energieprognose, Verbrauchsprofil und Aktivitätsprotokoll. Die meisten Karten lassen sich auf- und zuklappen; ein Tipp auf einen Messwert öffnet in der Regel den Verlauf des zugehörigen Sensors.
+Nach der Einrichtung zeigt der Seitenleisten-Eintrag **EEG Energy Optimizer** das Dashboard. Von oben nach unten: die Statuskarte mit dem Schalter für den Modus, der Optimierungsplan, „Was deine PV bringt“, „Einspeisung“, „Bezug“, der Optimierungsgewinn, mit eingeschaltetem Vergleich der Prognosevergleich, dann Energieprognose, Verbrauchsprofil und Aktivitätsprotokoll. Die meisten Karten lassen sich auf- und zuklappen; ein Tipp auf einen Messwert öffnet in der Regel den Verlauf des zugehörigen Sensors.
+
+Karten, die du nicht brauchst, blendest du unter Einstellungen → System → **Dashboard** aus. Das gilt nur für das Gerät und den Browser, in dem du es einstellst, wirkt sofort und braucht kein Speichern; gerechnet und gesteuert wird weiter. Die Statuskarte lässt sich nicht ausblenden.
 
 ## Modus Ein und Aus
 
@@ -50,7 +52,7 @@ data:
 
 **Werte.** PV, Batterie (mit „Ladung" oder „Entladung"), Ladestand (SOC), Netz (mit „Einspeisung" oder „Bezug") und Haus — mit Heizstab auch dessen Leistung und Wassertemperatur. Alle Leistungen stammen aus **einem** Zeitpunkt: Sie werden gemeinsam gelesen, damit sich die Bilanz in der Karte aufrechnen lässt. Ein Stern hinter „Haus" heißt, dass die Bilanz gerade nicht aufging und der Hausverbrauch auf 0 kW begrenzt wurde — diese Null ist eine Grenze, kein Messwert. Über die zwei Symbole neben dem Titel wechselst du zwischen Werte-Anzeige und Energieflussdiagramm.
 
-**Energieflussdiagramm.** PV oben, Netz links, Haus rechts, Batterie unten. Wandernde Punkte zeigen, wohin gerade Strom fließt, je mehr Leistung, desto schneller; wie viel über jede Leitung fließt, steht direkt unter dem Diagramm. Der Ring ums Haus zeigt, woher der Verbrauch kommt (gelb PV, orange Batterie, rot Netz), der Ring um die Batterie ihren Ladestand. Wer im System „Bewegung reduzieren" eingestellt hat, sieht statt der Punkte durchgezogene Linien.
+**Energieflussdiagramm.** PV oben, Netz links, Haus rechts, Batterie unten. Wandernde Punkte zeigen, wohin gerade Strom fließt, je mehr Leistung, desto schneller; wie viel über jede Leitung fließt, steht direkt unter dem Diagramm. Oben links stehen die Tageswerte Produktion, Netzbezug und Einspeisung in kWh, gezählt seit 04:00 (Beginn des Bilanztags). Der Ring ums Haus zeigt, woher der Verbrauch kommt (gelb PV, orange Batterie, rot Netz), der Ring um die Batterie ihren Ladestand. Wer im System „Bewegung reduzieren" eingestellt hat, sieht statt der Punkte durchgezogene Linien.
 
 **Zustand.** Darunter steht, was die Steuerung gerade tut. Das Zeichen davor sagt, ob es wirkt: ● = wird am Wechselrichter gesetzt, ○ = wird nur gerechnet, — = dieser Wechselrichter wird gar nicht gesteuert.
 
@@ -59,7 +61,8 @@ data:
 | **Laden begrenzt auf x kW** | Der Plan will den Überschuss im Netz statt in der Batterie und begrenzt die Ladeleistung. Klebt die gemessene Einspeisung an der Einspeisegrenze, wird das Limit schrittweise angehoben, damit nichts abgeregelt wird |
 | **Laden blockiert** | Das Ladelimit steht auf 0 kW |
 | **Einspeisung x kW bis y %** | Gezielte Entladung ins Netz. Die Zahl ist die geplante Einspeisung, der Ziel-Ladestand kommt aus dem Plan. Der Batterie-Sollwert in der Zeile darunter ist höher, weil er den Hausverbrauch mit abdeckt |
-| **Normalbetrieb** | Kein Eingriff, der Wechselrichter regelt selbst |
+| **Netzladung x kW bis y %** | Nur mit „Batterie aus dem Netz laden“ (Beta, Huawei): Der Wechselrichter lädt mit der geplanten Leistung bis zum geplanten Ladestand, PV zuerst, den Rest aus dem Netz |
+| **Normalbetrieb** | Kein Eingriff, der Wechselrichter regelt selbst. Der Grund steht in der Zeile darunter, etwa „Normalbetrieb (Plan lädt den ganzen Überschuss)“ — der Plan will alles in die Batterie, das macht die Automatik von selbst —, „Normalbetrieb (kein PV-Überschuss)“ — ohne Überschuss hielte ein Ladelimit nichts frei — oder „Normalbetrieb (Batterie voll)“ |
 | **Anzeige-Modus** | Modus Aus oder eine laufende Pause — es wird nur gerechnet |
 | **Nur Anzeige** | Der Wechselrichter wird nicht gesteuert, der Plan ist nur Anzeige |
 
@@ -100,7 +103,7 @@ _Ein **Bilanztag** läuft von 04:00 bis 04:00, damit ein Abend samt Nacht-Entlad
 
 ## Einspeisung
 
-Diese Karte zeigt in **Energie** statt in Geld, was ins Netz ging, woher es kam und wer es genommen hat. Oben wählst du den Zeitraum: **Heute**, **Monat**, **Jahr** oder **Gesamt** (alles seit Beginn der Aufzeichnung). Die Wahl wird gemerkt.
+Diese Karte zeigt in **Energie** statt in Geld, was ins Netz ging, woher es kam und wer es genommen hat. Oben wählst du den Zeitraum: **Tag**, **Monat**, **Jahr** oder **Gesamt** (alles seit Beginn der Aufzeichnung). Die Wahl wird gemerkt. Mit den Pfeilen ‹ › darunter blätterst du zu früheren Tagen, Monaten oder Jahren; ein Tipp auf den Namen springt zurück zum laufenden Zeitraum.
 
 | Kachel | Bedeutung |
 |---|---|
@@ -113,9 +116,22 @@ Diese Karte zeigt in **Energie** statt in Geld, was ins Netz ging, woher es kam 
 
 Wo es sinnvoll ist, steht klein darunter der **Standardbetrieb** zum Vergleich („ohne Optimierung …“) — dieselbe Simulation wie beim Optimierungsgewinn, aber über die gemessenen Werte. Liegt der Vergleich nicht für alle Tage des Zeitraums vor, steht dort „an N Tagen: … statt …“: Ist- und Vergleichswert gelten dann für dieselben Tage.
 
-Das **Diagramm** zeigt die Einspeisung als gestapelte Balken — grün die Einspeisung bei Gemeinschaftsbedarf, grau die übrige, der Batterie-Anteil orange schraffiert darüber. Heute je Viertelstunde, dahinter blassgrün die Viertelstunden, in denen die Gemeinschaft Bedarf hatte; im Monat je Tag, im Jahr je Monat, bei Gesamt je Jahr. Ein Tipp oder Klick auf einen Balken zeigt seine Werte darunter.
+Das **Diagramm** zeigt die Einspeisung als gestapelte Balken — grün die Einspeisung bei Gemeinschaftsbedarf, grau die übrige, der Batterie-Anteil orange schraffiert darüber. Beim Tag je Viertelstunde, dahinter blassgrün die Viertelstunden, in denen die Gemeinschaft Bedarf hatte; im Monat je Tag, im Jahr je Monat, bei Gesamt je Jahr. Vergangene Tage zeigen die Viertelstunden aus dem Archiv (Einstellungen → System → **Verlauf vergangener Tage**); von Tagen davor gibt es nur die Tagessumme. Ein Tipp oder Klick auf einen Balken zeigt seine Werte darunter.
 
 _Der Batterie-Anteil und der Vergleich mit dem Standardbetrieb werden erst seit Version 2.1.26 aufgezeichnet; ältere Tage zählen nur zur Einspeisung, die Karte sagt das dazu. Der Sensor **Entladung ins Netz** zählt dagegen nur die Energie, die während einer gesteuerten Entladung ins Netz ging — eine andere Frage, deshalb eine andere Zahl._
+
+## Bezug
+
+Das Gegenstück zur Einspeisung: was aus dem Netz kam und was es gekostet hat. Zeitraumwahl und Blättern funktionieren wie dort.
+
+| Kachel | Bedeutung |
+|---|---|
+| **bezogen** | Netzbezug im Zeitraum |
+| **Kosten** | Netzbezug mal Bezugspreis der jeweiligen Viertelstunde, brutto — der Preis wird festgehalten, wie er zu diesem Zeitpunkt galt. Grundgebühr und Leistungspreis sind nicht enthalten |
+| **Kosten je kWh** | Mittlerer Bezugspreis, gewichtet mit der bezogenen Menge |
+| **höchste Viertelstunde** | Höchste mittlere Bezugsleistung einer Viertelstunde im Zeitraum, mit Zeitpunkt |
+
+Das Diagramm zeigt den Bezug als Balken, beim Tag je Viertelstunde, sonst je Tag, Monat oder Jahr; ein Tipp auf einen Balken nennt Menge und Kosten. Viertelstunden ohne erfassten Bezugspreis (etwa vor dieser Funktion oder nach einem Neustart ohne Fahrplan) zählen nicht als 0 €: Die Karte nennt ihre Menge in einem Hinweis, und der Preis je kWh gilt nur für den Rest.
 
 ## Optimierungsgewinn
 

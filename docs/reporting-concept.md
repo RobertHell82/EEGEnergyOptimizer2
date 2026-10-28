@@ -1,12 +1,15 @@
 # Reporting — Anonyme EEG-Community-Statistik
 
-Konzept für zentrales Reporting aller EEG-Installationen — umgesetzt; was heute tatsächlich gesendet wird, steht in der README unter „EEG-Statistik“.
+Ursprüngliches Konzept für zentrales Reporting aller EEG-Installationen. Das
+Reporting selbst ist umgesetzt, aber nicht in der hier beschriebenen Form.
 
 > [!NOTE]
 > **Historisches Konzeptpapier.** Es beschreibt den ursprünglichen Entwurf
 > aus der Zeit der Zustands-Heuristik (1.x) und wird nicht mehr
-> nachgeführt. Was heute tatsächlich gesendet wird — Anlagenprofil,
-> Störungen, halbstündliche Momentaufnahmen und eine Tagesbilanz —, steht
+> nachgeführt. Was heute tatsächlich gesendet wird — Anlagenprofil
+> (`/v1/profile`), Störungen (`/v1/failure`), halbstündliche
+> Momentaufnahmen (`/v1/snapshot`), die Tagesbilanz (`/v1/outcome`), der
+> Bilanztag (`/v1/balance`) und der Prognosetag (`/v1/forecast`) —, steht
 > im Abschnitt „EEG-Statistik“ der [README](../README.md). Die Ereignistypen
 > unten (`morning_block`, `evening_discharge`) waren Zustände der 1.x-Reihe
 > und existieren nicht mehr.

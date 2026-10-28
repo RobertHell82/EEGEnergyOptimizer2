@@ -1,5 +1,23 @@
 # Umbauplan: Fahrplan als einziger Aktor
 
+> **Historisches Dokument — Arbeitsplan vom August 2026, nicht mehr
+> nachgeführt.** Vieles darin ist überholt:
+>
+> - Gesteuert werden heute **alle sechs Treiber** (Fronius, Huawei, Kostal,
+>   Sigenergy, SMA, SolaX), nicht nur Huawei.
+> - `chamo/` ist **nicht** mehr unangetastet: `opt_highs.py` trägt sechs
+>   `LOCAL CHANGE`-Abweichungen (Heizstab, Reserve-Schranke, Ladeziel-Hook,
+>   Endstand, Netzladen-Hook, Solver-Status).
+> - Den Modus „Test“ gibt es nicht mehr (nur Ein / Aus), ebenso wenig
+>   `schedule_enabled`.
+> - Zu den zwei Guards sind Guard 3 (Wirkungskontrolle), Schreibbremse,
+>   Netzladung und der Heizstab hinzugekommen.
+>
+> Aktuell gilt: [CLAUDE.md](CLAUDE.md) (Architektur), [docs/steuerung.md](docs/steuerung.md)
+> (Steuerung) und [chamo/README.md](custom_components/eeg_energy_optimizer/chamo/README.md)
+> (Abweichungen von Haralds Code). Dieses Dokument bleibt nur als
+> Begründungsarchiv stehen.
+
 > **Status: umgesetzt.** Alle 7 Schritte sind committet (b1909a6…953be6a),
 > veröffentlicht als **`1.5.1-chamo`** (statt der hier geplanten `1.6.0-chamo`,
 > Entscheidung vom 24.08.). Dieses Dokument bleibt als Arbeitsgrundlage und

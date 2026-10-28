@@ -111,8 +111,8 @@ schedule_executor.py: ScheduleExecutor (execution, 30 s)
 | `tagesbilanz.py` | Daily outcome for the telemetry (`/v1/outcome`): forecast vs. measurement of the finished day, with the plans of the evening before and two days before (built nightly 00:15 or via `tagesbilanz_jetzt`) |
 | `schedule_archive.py` | Rolling archive of computed plans (7 days, gzip, ~8 KB each) for after-the-fact debugging. Each entry: plan (`to_dict()`), filtered settings (allowlist incl. `heizstab_*`, blocklist host/port/token/…) and, since 2.1.24, `eingaben` — the `ScheduleInputs` fields the plan does not carry (p10 path `min_production_kw`, base tariff `feedin_price_series`, `eeg_tarife`/`eeg_bedarf`, heater budget/temperature), so a plan can be replayed exactly |
 | `schedule_archive_view.py` | HTTP view that packs archive + settings + measured history into a downloadable ZIP |
-| `chamo/` | Harald Geyer's LP optimizer (`opt_highs.py`, `timetableopt`) plus a HiGHS adapter. `opt_highs.py` carries six local additions, all marked `LOCAL CHANGE` and documented in `chamo/README.md`: the heater as a valued sink (`heater_p`, 2.1.1-dev2), the blackout reserve capped at what is reachable **without buying**, a solver-status check after `optimize()`, the Ladeziel hook (`c.ladeziel`, 2.1.35), the end state capped at what PV alone reaches (§ 4) and the grid-charging hook (`c.netzladen`, § 5) — everything else is upstream |
-| `sensor.py` | 26 sensors (+ up to 21 conditional): consumption profile, forecasts, power flows, plan values, grid discharge energy, register writes, Fahrplan-Status, money balance |
+| `chamo/` | Harald Geyer's LP optimizer (`opt_highs.py`, `timetableopt`) plus a HiGHS adapter. `config_dummy.py` (unchanged upstream) documents the config API `opt()` reads and is the base class of the test configs; `HAConfig` deliberately does not subclass it, `test_haconfig_bietet_das_api_von_config_dummy` pins the API instead. `opt_highs.py` carries six local additions, all marked `LOCAL CHANGE` and documented in `chamo/README.md`: the heater as a valued sink (`heater_p`, 2.1.1-dev2, § 1), the blackout reserve capped at what is reachable **without buying** (§ 2–2c; § 2c: each step uses the model's own tiered losses instead of a flat 8 %), a solver-status check after `optimize()` (§ 6), the Ladeziel hook (`c.ladeziel`, 2.1.35, § 3), the end state capped at what PV alone reaches (§ 4) and the grid-charging hook (`c.netzladen`, § 5) — everything else is upstream |
+| `sensor.py` | 26 sensors (+ up to 21 conditional): consumption profile, forecasts, power flows, plan values, grid discharge energy, Fahrplan-Status, money balance, quarter-hour import / month peak |
 | `bilanz.py` | Energy balance in money — records 96 quarter-hours per day (energy, SOC, **frozen** prices and community balances), evaluates them with `bewerte_geldfluesse`, and derives the optimiser advantage against a simulated standard operation over the measured series. The balance day runs 04:00–04:00 (night discharge stays in one day; old midnight-based records are migrated on load). Days where the battery behaved like the reference (power deviation ≤ max(1 kWh, 10 % of throughput)) report advantage 0 with `kein_eingriff`; the raw difference stays in `vorteil_roh`. Also backs the **Einspeisung** card (`einspeisung()`): per day `haus_kwh`, `batterie_export_kwh` (export in slots with PV below `BATTERIE_EXPORT_PV_SCHWELLE_KW`, `ohne_pv()` — *not* only controlled discharge, unlike `statistics.py`) and the same amounts of the reference run as `ref_*` (None without a reference). Month/year come from the 400-day archive, not `_monate`; `gesamt` adds the `_monate` sums for months *before* the oldest archived day (never overlapping, their `ref_*` dropped) and returns a gap-free series per year (months are what `jahr` shows); ratios are formed from sums at query time, and the comparison uses only days with `ref_*` on both sides. The per-slot community share comes from `schedule.eeg_aufnahme_je_slot`, which shares `_eeg_zuteilung` with `bewerte_geldfluesse` — one settlement rule |
 | `override.py` | Time-boxed user override — **Pause** (behave like mode Aus) with two end conditions: expiry time (`stunden`, 0.25–48 h) and/or target SOC (`bis_soc_pct`, 50–100 %; ends when the measured SOC reaches it, 48 h cap as safety net). Persisted via `Store` so a restart mid-pause does not resume control. Evaluated in the guard cycle in `__init__.py` (`async_tick(now, soc_pct)`); exposed as HA services `pause` / `aufheben` (`services.yaml`) |
 | `coordinator.py` | Loads hourly consumption averages from recorder (rolling, weekday split) |
@@ -398,15 +398,18 @@ the event loop is long enough for HA to flag a blocking call.
   executor actually drives; it was planned from the profile instead, in 14 of
   15 runs.
 - **`HAConfig` is the almost-only lever**: every intervention of ours is
-  expressed as a parameter `opt()` already understands — except where the
-  model itself was wrong, and that is exactly twice (heater, blackout
-  reserve; `chamo/README.md` — a third `LOCAL CHANGE`, the solver-status
-  check, changes no model). The one other exception is the **Ladeziel**
-  (`schedule_ladeziel_pct`, 2.1.35): an operator wish no parameter can
-  express, so `opt()` got a four-line hook — `c.ladeziel(parameters,
-  surplus)` raises `bor` before the reachability cap — while all logic
-  (which slot, when to drop it) lives in `HAConfig.ladeziel`. Reach for a
-  parameter first: a divergence costs on every upstream merge, forever.
+  expressed as a parameter `opt()` already understands — except for the six
+  `LOCAL CHANGE` topics in `opt_highs.py` (`chamo/README.md`). Three fix
+  places where the model itself was wrong: the heater (§ 1), the blackout
+  reserve cap (§ 2–2c) and the fixed end state, capped at what PV alone
+  reaches (§ 4). Two are hooks for operator wishes no parameter can
+  express — the **Ladeziel** (`schedule_ladeziel_pct`, 2.1.35, § 3:
+  `c.ladeziel(parameters, surplus)` raises `bor` before the reachability
+  cap) and grid charging (§ 5: `c.netzladen`, a per-slot lower bound of
+  `dc_p`) — with all logic (which slot, when to drop it) in
+  `HAConfig.ladeziel` / `HAConfig.netzladen`. The sixth, the solver-status
+  check (§ 6), changes no model. Reach for a parameter first: a divergence
+  costs on every upstream merge, forever.
 - **Ladeziel** (`schedule_ladeziel_pct`, settings only, expert mode; default
   100 since 2.1.36 — a missing key means 100, a saved 0 / cleared field = off): at the end of each day's PV time — the last slot with surplus,
   only if a non-surplus slot of the same day follows inside the horizon —
@@ -433,7 +436,18 @@ the event loop is long enough for HA to flag a blocking call.
   (`chamo/README.md` § 2b; the start level let a floor forbid discharge and
   force a purchase in that slot). The plan carries `ladeziel` (`ziel_pct`,
   `termine` with planned SOC) for the small marker in the SOC chart.
-  Tests: `tests/test_ladeziel.py`.
+  Every reachability step — the cap in `opt_highs.py`, `ladeziel`,
+  `ladeziel_termine` — uses the LP's **own tiered losses** (free up to 0.1 C,
+  4 % up to 0.2 C, 8 % above; `_ladeleistung_aus_dc` /
+  `_entladeleistung_fuer_dc`), never a flat 8 %: the flat rate put the cap
+  below what the LP reaches, and with an unreachable target the LP sold the
+  difference (0.18 kW per sunny slot) — enough to turn the executor's
+  release into a charge limit that sent every sun peak into the grid
+  (Linz 26.10.2026, `chamo/README.md` § 2c). The one remaining flat
+  `1 − 2·battery_resistance` is in `HAConfig.netzdienlich_tage`: a day-level
+  heuristic that decides whether the morning bonus applies, not a cap the LP
+  must meet.
+  Tests: `tests/test_ladeziel.py`, `tests/test_erreichbarkeit_verluste.py`.
 - **Batterie aus dem Netz laden** (`schedule_netzladen`, beta, settings
   only, expert mode, Huawei only — `InverterBase.supports_grid_charge`;
   decision 12.10.2026). Two switches, always flipped together: panel
@@ -878,9 +892,12 @@ parameter wizard steps (same field renderers, `settings_` prefix); **Verbraucher
 holds the *Heizstab* and *Wallbox* cards, expert mode only —
 `_heizstabFields` / `_wallboxFields`, settings only, not in the wizard (a
 remembered `heizstab` tab maps to it); **System**
-holds the expert-mode switch, a read-only sensor overview (with the
+holds, top to bottom: (expert) profile lookback, **Dashboard** (hide cards
+per device, `_ansichtKarte`), a read-only sensor overview (with the
 restart-wizard button — sensor mappings are wizard-only by design), telemetry
-opt-in, schedule archive, and (expert) balance card + profile lookback. In the
+opt-in, (expert) *Tagesbilanz* (`tagesbilanz_jetzt`), **Verlauf vergangener
+Tage** (switch `bilanz_viertelstunden`), schedule archive and the expert-mode
+switch. In the
 settings, device-datasheet values (AC limit, PV peak, battery power limit) are
 expert-only; in the wizard they are always visible. The settings use the full content width
 (`.settings-wrap`, 900 px like the dashboard; it was 600 px and broke the
@@ -949,7 +966,7 @@ absent for every other source.
   change costs on every merge with him. Two divergences change the model
   (heater, blackout reserve) — both marked `LOCAL CHANGE`, both explained in
   `chamo/README.md`, both reported upstream; a third `LOCAL CHANGE` only
-  checks the solver status, a fourth is the Ladeziel hook (logic in
+  checks the solver status (§ 6), a fourth is the Ladeziel hook (logic in
   `HAConfig.ladeziel`, `chamo/README.md` § 3), a fifth caps Harald's fixed
   end state (half full) at what PV alone can reach — without it a dark
   horizon with the battery below half had no solution (`chamo/README.md`
