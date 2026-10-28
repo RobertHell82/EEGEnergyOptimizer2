@@ -12,6 +12,8 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+## [2.1.50] - 2026-10-28
+
 ### Behoben
 
 - **Kein Verkauf mehr, wenn das Ladeziel nicht erreichbar ist.** An einem Tag, an dem die Sonne nicht für 100 % reichte, plante der Fahrplan trotzdem rund 0,2 kW Einspeisung in jedem sonnigen Slot. Die Steuerung begrenzte dafür das Laden auf die geplante Leistung, und bei wechselhaftem Wetter ging jede Sonnenspitze darüber ins Netz. Bei einem Mitglied waren das 1,9 kWh statt der geplanten 0,36, und die Batterie endete bei 81 % statt bei geschätzt rund 90 % (rund 1,5 kWh mehr bei 15,8 kWh). Ursache: Die Grenze „so voll, wie die Sonne es noch schafft“ rechnete beim Laden pauschal mit 8 % Verlust; das Rechenmodell verliert bei langsamem Laden weniger und verkaufte den Unterschied. Jetzt rechnen beide gleich. Plant ein Slot dann nur noch Laden (keine Einspeisung, keine Wärme, keine Abregelung, maximaler Ladestand 100 %), gibt die Steuerung den Wechselrichter frei, und er lädt alles, was da ist. Nachgerechnet über 875 archivierte Pläne der betroffenen Anlage: kein Plan wird unlösbar, keiner kauft mehr Strom zu.
@@ -19,6 +21,10 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 ### Dokumentation
 
 - Steuerungsbeschreibung, Karte „Bezug“, Dashboard-Funktionen und Entwickler-Doku (Release-Ablauf, Tests, Treiber-Schnittstelle, Abweichungen von Haralds Optimierer) auf den Stand des Codes gebracht.
+
+### Geändert
+
+- **„Batterie aus dem Netz laden“ bleibt den Betas vorbehalten**, im Release ausgeblendet und ohne Wirkung.
 
 ## [2.1.50-beta.1] - 2026-10-26
 
