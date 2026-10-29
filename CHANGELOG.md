@@ -12,6 +12,12 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+## [2.1.52-beta.1] - 2026-10-29
+
+### Geändert
+
+- **„Batterie aus dem Netz laden“ ist in der Beta wieder an.** Inhaltlich entspricht diese Beta dem Release 2.1.51 mit der Spitzenkappung über die Batterie. Dazu kommt die Option in den Einstellungen (Tab Tarife, Expertenmodus, nur Huawei), samt Beschreibung in der Tarife-Anleitung. Mit ihr darf der Plan die Abendreserve der Spitzenkappung auch mit günstigem Netzstrom auffüllen, wie jedes andere Ladeziel.
+
 ## [2.1.51] - 2026-10-29
 
 ### Hinzugefügt
