@@ -40,7 +40,7 @@ Die Reserve liegt immer **über dem Mindest-Ladestand** (Tab **Anlage**). Bei 10
 Der Fahrplan rechnet die Reserve mit ein. Er verkauft am Abend nicht mehr, was in der Nacht für Spitzen gebraucht wird. Tagsüber soll die Batterie am Ende der Sonnenstunden mindestens Mindest-Ladestand plus Abendreserve erreichen; ist das **Ladeziel** (Tab **Anlage**) höher, gilt das Ladeziel. Steht die Batterie unter der Reserve, etwa morgens nach einer Nacht mit Spitzen, rechnet der Plan vom tatsächlichen Ladestand aus und lädt sie wieder auf. Im Modus **Aus** und während einer **Pause** rechnet der Plan ohne Reserve.
 
 > [!NOTE]
-> Hast du das Ladeziel ausgeschaltet, erscheint tagsüber trotzdem eine Ladeziel-Marke im Ladestandsdiagramm: Das ist die Abendreserve. Mit **Batterie aus dem Netz laden** (Beta, Huawei) darf der Plan sie auch mit günstigem Netzstrom erreichen, wie jedes andere Ladeziel.
+> Hast du das Ladeziel ausgeschaltet, erscheint tagsüber trotzdem eine Ladeziel-Marke im Ladestandsdiagramm: Das ist die Abendreserve.
 
 ### Verbraucher abschalten
 

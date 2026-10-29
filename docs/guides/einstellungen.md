@@ -19,7 +19,7 @@ Der Schalter steht im Tab **System** ganz unten. Er blendet zusätzliche Optione
 
 Zusätzlich sichtbar werden:
 
-- **Tab Tarife:** *Alterungskosten der Batterie (ct/kWh)*, bei Huawei *Batterie aus dem Netz laden* (Beta, siehe Anleitung „Tarife & Gemeinschaft“)
+- **Tab Tarife:** *Alterungskosten der Batterie (ct/kWh)*
 - **Tab Anlage:** die Gerätedaten *AC-Grenzleistung des Wechselrichters*, *PV-Spitzenleistung* und *Batterie-Leistungsgrenze*, dazu *Sicherheitspuffer auf die Prognose (%)*, *Ladeziel am Abend (%)* und *Vormittags bevorzugt netzdienlich* (siehe Anleitung „Anlage & Batterie“)
 - **Tab Prognose:** bei Solcast die *Weiteren Prognose-Sensoren* (PV-Prognose heute gesamt, Tag 3 bis Tag 7)
 - **Tab Verbraucher** als Ganzes, mit Heizstab und Wallbox
@@ -43,7 +43,7 @@ Es gibt eine Ausnahme: die Sensoren der PV-Prognose im Tab **Prognose**. Die ste
 Der Knopf **Speichern** unter den Tabs übernimmt die Änderungen aus **allen** Tabs auf einmal. Danach bist du wieder im Dashboard. Fehlt ein Pflichtwert oder passt etwas nicht zusammen, wird nichts gespeichert; über dem Knopf steht dann, was fehlt. Geprüft werden:
 
 - **Anlage:** AC-Grenzleistung, PV-Spitzenleistung, Batterie-Leistungsgrenze, Höhe der Einspeisegrenze (wenn eingeschaltet)
-- **Tarife:** Standardvergütung (bei „Fester Wert“), Arbeitspreis, Netzbereich (wenn Sommer-Nieder- oder Winter-Nieder-Arbeitspreis eingeschaltet ist), das Nachtfenster, sobald ein Nachtsatz eingetragen ist (Standardvergütung und je Gemeinschaft), die Anteile der Gemeinschaften (zusammen höchstens 100 %), im Quotenmodus die Tages-Abnahmequote und mit eingeschaltetem *Batterie aus dem Netz laden* ein Bezugspreis, der billiger sein kann als die Nacht (Spot-Tarif, Bezugspreis einer Gemeinschaft oder zeitvariable Netzentgelte), bei Spot- oder Gemeinschaftsbezug außerdem der Netzbereich
+- **Tarife:** Standardvergütung (bei „Fester Wert“), Arbeitspreis, Netzbereich (wenn Sommer-Nieder- oder Winter-Nieder-Arbeitspreis eingeschaltet ist), das Nachtfenster, sobald ein Nachtsatz eingetragen ist (Standardvergütung und je Gemeinschaft), die Anteile der Gemeinschaften (zusammen höchstens 100 %) und im Quotenmodus die Tages-Abnahmequote
 - **Prognose:** die Sensoren einer fremden Prognosequelle, gültige PV-Flächen
 - **Verbraucher:** Adresse, Leistung und Maximaltemperatur des Heizstabs, Adresse der Ambibox
 - **Spitzenkappung** (wenn eingeschaltet): Grenzwert zwischen 2 und 20 kW, Mindest- und Maximalreserve zwischen 0 und 80 % (die Mindestreserve nicht über der maximalen), je Verbraucher Leistungssensor und Schalter, und ohne Batterie-Stufe mindestens ein Verbraucher
