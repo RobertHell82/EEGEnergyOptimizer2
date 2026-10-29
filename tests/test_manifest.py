@@ -34,6 +34,7 @@ class TestManifest:
             "solax_modbus",
             "fronius",
             "sigen",
+            "victron_gx",
         ):
             assert dep in after, f"{dep} missing from after_dependencies"
 

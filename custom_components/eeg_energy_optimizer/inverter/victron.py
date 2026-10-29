@@ -48,11 +48,23 @@ regeln. Das ist bewusst nicht gewählt. Zwei Netze darunter:
   kennt keinen Ziel-SOC für einen Netzsollwert.
 - Nach jedem Start gibt der Executor zuerst frei (``START_RELEASE``).
 
-**Eine Einschränkung der Integration.** Für ``MaxChargeCurrent`` liefert die
-Bibliothek keinen Wertebereich, Home Assistant setzt dann 0–100 A. Der Wert
-−1 („Ladestrom nicht begrenzen") ist darüber nicht schreibbar. Stand der
-Ladestrom vor unserem Eingriff auf −1, schreibt die Freigabe das Maximum der
-Entität zurück; der Assistent weist darauf hin.
+**Wertebereich des Ladestroms.** Ältere Stände der Integration liefern für
+``MaxChargeCurrent`` keinen Wertebereich, Home Assistant setzt dann 0–100 A
+und −1 („Ladestrom nicht begrenzen") ist nicht schreibbar. Stand der
+Ladestrom vor unserem Eingriff auf −1, schreibt die Freigabe dann das
+Maximum der Entität zurück — die Einstellung des Betreibers wäre still
+geändert. Der Assistent lässt diesen Fall deshalb nicht durch. Mit HA 2026.10
+reicht der Bereich von −1 bis 10000 A (Anlage gelesen am 29.10.2026), dann
+wird −1 unverändert zurückgeschrieben.
+
+**Gelesen an einer echten Anlage** (29.10.2026, drei Multiplus-II 48/5000
+dreiphasig, ESS „Optimiert mit BatteryLife", Phasenausgleich an, drei
+MPPT-Laderegler, Pytes-Batterie, Netzzähler ET340): Batterie entlädt
+7,26 kW → ``Dc/Battery/Power`` −7262 W, Netzzähler gesamt +115 W bei
+L1 +1486 / L2 −783 / L3 −589 W. Die Vorzeichen oben stimmen damit. Der
+Rückfall auf ``system_grid_power_l1`` für den Netzsensor ist deshalb
+gestrichen: Auf einer dreiphasigen Anlage hätte er 1,4 kW Bezug gemeldet,
+wo der Zähler fast null misst.
 
 **Am Gerät zu verifizieren (Feldtest):**
 
@@ -70,6 +82,7 @@ Konvention, daher ``grid_sign = -1`` in ``INVERTER_SIGN_CONVENTIONS``.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from typing import Any
@@ -91,12 +104,14 @@ VICTRON_DOMAIN = "victron_gx"
 # und den Übersetzungsschlüssel des Namens. Die Entity-IDs dagegen hängen am
 # Gerätenamen (Modell, Sprache, Umbenennung) — deshalb wird über die
 # unique_id in der Entity-Registry aufgelöst, nie über Namensmuster.
+# Venus OS kennt fünf Zeitfenster für „Geplantes Laden" (ESS).
+GEPLANTES_LADEN_FENSTER = 5
+
 VICTRON_METRIKEN: dict[str, tuple[str, str]] = {
     # Stellgrößen
     "netzsollwert": ("number", "system_ac_power_set_point"),
     "ladestrom": ("number", "system_ess_max_charge_current"),
     # Lesewerte für den Fahrplan
-    "max_wechselrichterleistung": ("number", "system_ess_max_inverter_power_limit"),
     "min_soc": ("number", "system_ess_min_soc_limit"),
     "aktive_soc_grenze": ("sensor", "system_control_active_soc_limit"),
     "batteriespannung": ("sensor", "system_dc_battery_voltage"),
@@ -107,21 +122,34 @@ VICTRON_METRIKEN: dict[str, tuple[str, str]] = {
     "dvcc": ("switch", "system_dvcc"),
     "dc_ueberschuss_einspeisen": ("switch", "system_settings_overvoltage_feedin"),
     "max_einspeiseleistung": ("number", "system_ess_max_feed_in_power"),
+    **{
+        f"geplantes_laden_{n}": ("switch", f"system_ess_schedule_charge_{n}_enabled")
+        for n in range(GEPLANTES_LADEN_FENSTER)
+    },
     "dc_pv_leistung": ("sensor", "system_dc_pv_power"),
 }
 
 # Ohne diese beiden kann der Treiber nichts stellen.
 VICTRON_PFLICHT: tuple[str, ...] = ("netzsollwert", "ladestrom")
 
+# Was der Treiber zum Stellen braucht — deaktiviert ist es so gut wie fehlend.
+VICTRON_NAMEN: dict[str, str] = {
+    "netzsollwert": "ESS-Netzsollwert",
+    "ladestrom": "DVCC-Ladestrom",
+    "batteriespannung": "Batteriespannung",
+}
+
 # Messwerte für die Sensor-Zuordnung im Assistenten (Konfig-Schlüssel →
-# short_id-Kandidaten, erster Treffer gewinnt). Netz: der Netzzähler liefert
-# die Summe aller Phasen; ``system_grid_power_l1`` nur als Rückfall für
-# einphasige Anlagen ohne eigenes Zählergerät.
+# short_id-Kandidaten, erster Treffer gewinnt). Netz: nur der Netzzähler,
+# er liefert die Summe aller Phasen. Kein Rückfall auf eine einzelne Phase
+# (``system_grid_power_l1``) — dreiphasig wäre das falsch (Modulkopf); ohne
+# Zähler wählt der Betreiber den Netzsensor selbst. Aus demselben Grund wird
+# PV an einem AC-Wechselrichter nicht erkannt: Das GX meldet sie je Phase
+# (``system_pv_on_output_power_l1`` …), eine Summe gibt es nicht.
 VICTRON_SENSOREN: dict[str, tuple[str, ...]] = {
     "battery_soc_sensor": ("system_dc_battery_soc",),
     "pv_power_sensor": ("system_dc_pv_power",),
-    "pv_power_sensor_2": ("system_pv_on_output_power_l1", "system_pv_on_grid_power_l1"),
-    "grid_power_sensor": ("grid_power", "system_grid_power_l1"),
+    "grid_power_sensor": ("grid_power",),
     "battery_power_sensor": ("system_dc_battery_power",),
 }
 
@@ -129,6 +157,10 @@ VICTRON_SENSOREN: dict[str, tuple[str, ...]] = {
 # die Enum-Kennung als Option, nicht den Anzeigetext).
 ESS_MODI_OK = ("optimized_battery_life", "optimized_no_battery_life")
 DESS_AUS = "off"
+
+
+class VictronFehler(Exception):
+    """Ein Grund, der als ``last_write_error`` taugt (kurz, ohne Zahlen)."""
 
 # Toleranzen, unterhalb derer ein Wert als „schon gesetzt" gilt. Beide
 # Stellgrößen sind gespeicherte Einstellungen — jeder Schreibvorgang landet
@@ -147,12 +179,13 @@ def _short_id_muster(short_id: str) -> re.Pattern:
     return re.compile(rf"_\d+_{re.escape(short_id)}$")
 
 
-def find_victron_entity(hass: Any, domain: str, short_id: str) -> str | None:
-    """Entity-ID zur Metrik aus der Entity-Registry, oder None.
+def _victron_eintrag(hass: Any, domain: str, short_id: str) -> Any:
+    """Registry-Eintrag zur Metrik, oder None.
 
-    Findet auch deaktivierte Entitäten. Bei mehreren Treffern (zwei
-    GX-Geräte, mehrere Netzzähler) gewinnt die niedrigste Geräte-ID —
-    bei Victron ist das Gerät 0 bzw. der erste Zähler.
+    Findet auch deaktivierte Entitäten (``disabled_by``) — die Prüfung im
+    Assistenten meldet sie. Bei mehreren Treffern (zwei GX-Geräte, mehrere
+    Netzzähler) gewinnt die niedrigste Geräte-ID — bei Victron ist das
+    Gerät 0 bzw. der erste Zähler.
     """
     try:
         from homeassistant.helpers import entity_registry as er
@@ -173,10 +206,16 @@ def find_victron_entity(hass: Any, domain: str, short_id: str) -> str | None:
         if m is None:
             continue
         geraet = int(m.group(0).split("_")[1])
-        treffer.append((geraet, eintrag.entity_id))
+        treffer.append((geraet, eintrag.entity_id, eintrag))
     if not treffer:
         return None
-    return min(treffer)[1]
+    return min(treffer, key=lambda t: (t[0], t[1]))[2]
+
+
+def find_victron_entity(hass: Any, domain: str, short_id: str) -> str | None:
+    """Entity-ID zur Metrik aus der Entity-Registry, oder None."""
+    eintrag = _victron_eintrag(hass, domain, short_id)
+    return eintrag.entity_id if eintrag is not None else None
 
 
 def victron_sensoren(hass: Any) -> dict[str, str]:
@@ -213,6 +252,18 @@ def _zahl(hass: Any, entity_id: str | None) -> float | None:
         return None
 
 
+def _attribut_zahl(hass: Any, entity_id: str | None, name: str) -> float | None:
+    if not entity_id:
+        return None
+    state = hass.states.get(entity_id)
+    if state is None:
+        return None
+    try:
+        return float(state.attributes.get(name))
+    except (TypeError, ValueError):
+        return None
+
+
 def victron_pruefung(hass: Any) -> dict[str, Any]:
     """Was am GX-Gerät stimmen muss, damit der Treiber wirkt.
 
@@ -223,16 +274,24 @@ def victron_pruefung(hass: Any) -> dict[str, Any]:
     haben, die der Betreiber kennen soll.
     """
     entities: dict[str, str] = {}
+    deaktiviert: list[str] = []
     for key, (domain, short_id) in VICTRON_METRIKEN.items():
-        entity_id = find_victron_entity(hass, domain, short_id)
-        if entity_id:
-            entities[key] = entity_id
+        eintrag = _victron_eintrag(hass, domain, short_id)
+        if eintrag is None:
+            continue
+        entities[key] = eintrag.entity_id
+        if key in VICTRON_NAMEN and getattr(eintrag, "disabled_by", None):
+            deaktiviert.append(VICTRON_NAMEN[key])
 
-    namen = {"netzsollwert": "ESS-Netzsollwert", "ladestrom": "DVCC-Ladestrom"}
-    fehlt = [namen[k] for k in VICTRON_PFLICHT if k not in entities]
+    fehlt = [VICTRON_NAMEN[k] for k in VICTRON_PFLICHT if k not in entities]
 
     probleme: list[str] = []
     hinweise: list[str] = []
+    if deaktiviert:
+        probleme.append(
+            "In Home Assistant deaktiviert: " + ", ".join(deaktiviert)
+            + " — bitte unter Geräte & Dienste → Victron GX aktivieren"
+        )
 
     ess = _zustand(hass, entities.get("ess_modus"))
     if ess is not None and ess not in ESS_MODI_OK:
@@ -258,11 +317,32 @@ def victron_pruefung(hass: Any) -> dict[str, Any]:
             "Ladelimit regelt die Laderegler ab, statt den Überschuss "
             "einzuspeisen"
         )
+    geplant = [
+        str(n + 1)
+        for n in range(GEPLANTES_LADEN_FENSTER)
+        if _zustand(hass, entities.get(f"geplantes_laden_{n}")) == "on"
+    ]
+    if geplant:
+        probleme.append(
+            "ESS „Geplantes Laden“ ist eingeschaltet (Zeitfenster "
+            + ", ".join(geplant)
+            + ") — es lädt zu festen Zeiten aus dem Netz und hält die "
+            "Batterie dort gegen jede Entladung; der Fahrplan weiß davon "
+            "nichts. Bitte am GX-Gerät unter ESS → Geplantes Laden ausschalten"
+        )
     ladestrom = _zahl(hass, entities.get("ladestrom"))
-    if ladestrom is not None and ladestrom < 0:
-        hinweise.append(
-            "DVCC-Ladestrom ist nicht begrenzt (−1). Nach einem Ladelimit "
-            "stellt die Freigabe das Maximum der Entität ein, nicht −1"
+    ladestrom_min = _attribut_zahl(hass, entities.get("ladestrom"), "min")
+    if (
+        ladestrom is not None
+        and ladestrom < 0
+        and ladestrom_min is not None
+        and ladestrom < ladestrom_min
+    ):
+        probleme.append(
+            "DVCC-Ladestrom steht auf −1 (nicht begrenzt), diese Version der "
+            "Integration kann −1 aber nicht zurückschreiben. Bitte am "
+            "GX-Gerät unter DVCC einen festen Höchststrom eintragen (z. B. den "
+            "Ladestrom des BMS) oder Home Assistant aktualisieren"
         )
     einspeisung = _zahl(hass, entities.get("max_einspeiseleistung"))
     if einspeisung is not None and 0 <= einspeisung < 100:
@@ -276,6 +356,10 @@ def victron_pruefung(hass: Any) -> dict[str, Any]:
         "probleme": probleme,
         "hinweise": hinweise,
     }
+
+
+def _grund(exc: Exception) -> str:
+    return str(exc) if isinstance(exc, VictronFehler) else type(exc).__name__
 
 
 class VictronStateStore:
@@ -330,58 +414,66 @@ class VictronInverter(InverterBase):
         # SOC-Beobachters — siehe _beobachte_ziel_soc().
         self._ziel_soc: float | None = None
         self._ziel_abmelden: Any = None
+        # Executor (30-s-Lauf) und SOC-Beobachter schreiben nebenläufig; ein
+        # Schreiben über MQTT dauert. Ohne Sperre könnte die Zielrücknahme
+        # zwischen Sichern und Schreiben eines Sollwerts fallen — der Wert
+        # käme danach an, unbeobachtet und ohne Vorwert.
+        self._sperre = asyncio.Lock()
+        # Zuletzt selbst geschriebener Wert je Stellgröße: Der Zustand der
+        # Entität kommt per MQTT verzögert zurück.
+        self._geschrieben: dict[str, float] = {}
 
     # ------------------------------------------------------------------
     # Entitäten
     # ------------------------------------------------------------------
     def _entity(self, key: str) -> str | None:
-        """Config (``victron_<key>``) → Registry. None, wenn nicht auffindbar.
+        """Entität zur Stellgröße aus der Registry, None, wenn nicht auffindbar.
 
-        Der konfigurierte Wert gilt nur, solange die Entität existiert —
-        nach einem Neuanlegen der Integration greift die Registry.
+        Bewusst ohne gespeicherte Entity-ID: Nach einem Neuanlegen der
+        Integration oder einer Umbenennung greift die Registry von selbst.
         """
-        configured = self._config.get(f"victron_{key}")
-        if configured and self._hass.states.get(configured) is not None:
-            return configured
         domain, short_id = VICTRON_METRIKEN[key]
-        return find_victron_entity(self._hass, domain, short_id) or configured or None
+        return find_victron_entity(self._hass, domain, short_id)
 
     def _lies(self, key: str) -> float | None:
         return _zahl(self._hass, self._entity(key))
 
     def _attribut(self, key: str, name: str) -> float | None:
-        entity_id = self._entity(key)
-        state = self._hass.states.get(entity_id) if entity_id else None
-        if state is None:
-            return None
-        try:
-            return float(state.attributes.get(name))
-        except (TypeError, ValueError):
-            return None
+        return _attribut_zahl(self._hass, self._entity(key), name)
 
     async def _schreibe(self, key: str, wert: float) -> None:
         entity_id = self._entity(key)
         if not entity_id:
-            raise RuntimeError(f"Victron-Entität „{key}“ nicht gefunden")
+            raise VictronFehler(f"Entität {key} nicht gefunden")
         await self._hass.services.async_call(
             "number", "set_value",
             {"entity_id": entity_id, "value": wert},
             blocking=True,
         )
+        self._geschrieben[key] = float(wert)
 
     async def _setze(self, key: str, wert: float, toleranz: float) -> None:
         """Wert schreiben, Vorwert beim ersten Eingriff sichern.
 
-        Steht der Wert schon im Gerät, wird nicht geschrieben (siehe
-        ``NETZSOLLWERT_TOLERANZ_W``). Ist der aktuelle Wert unlesbar, wird
-        kein Vorwert gesichert — eine geratene Zahl zurückzuschreiben wäre
-        schlimmer als keine.
+        Steht der Wert schon im Gerät — und haben wir nicht gerade etwas
+        anderes geschrieben, dessen Echo noch aussteht —, wird nicht
+        geschrieben (siehe ``NETZSOLLWERT_TOLERANZ_W``). Ist der aktuelle Wert
+        beim ersten Eingriff unlesbar, wird gar nicht geschrieben: ohne
+        Vorwert könnte die Freigabe nichts zurücknehmen, ein Netzsollwert
+        bliebe über jeden Neustart hinweg stehen.
         """
         await self._state_store.async_load()
         aktuell = self._lies(key)
-        if self._state_store.vorwert(key) is None and aktuell is not None:
+        if self._state_store.vorwert(key) is None:
+            if aktuell is None:
+                raise VictronFehler(f"Vorwert {key} unlesbar")
             await self._state_store.async_sichern(key, aktuell)
-        if aktuell is not None and abs(aktuell - wert) < toleranz:
+        zuletzt = self._geschrieben.get(key)
+        if (
+            aktuell is not None
+            and abs(aktuell - wert) < toleranz
+            and (zuletzt is None or abs(zuletzt - wert) < toleranz)
+        ):
             return
         await self._schreibe(key, wert)
 
@@ -404,7 +496,12 @@ class VictronInverter(InverterBase):
         if maximum is not None and ziel > maximum:
             ziel = maximum
         aktuell = self._lies(key)
-        if aktuell is None or abs(aktuell - ziel) >= toleranz:
+        zuletzt = self._geschrieben.get(key)
+        if (
+            aktuell is None
+            or abs(aktuell - ziel) >= toleranz
+            or (zuletzt is not None and abs(zuletzt - ziel) >= toleranz)
+        ):
             await self._schreibe(key, ziel)
         await self._state_store.async_loeschen(key)
 
@@ -431,8 +528,12 @@ class VictronInverter(InverterBase):
         regelt, bis der ESS-Mindest-SOC greift. Der Executor schreibt nur bei
         einer Änderung; zwischen zwei Befehlen hielte niemand an. Deshalb
         meldet sich der Treiber selbst am SOC-Sensor an und nimmt den
-        Sollwert zurück, sobald das Ziel erreicht ist.
+        Sollwert zurück, sobald das Ziel erreicht ist. Ohne Ziel aus dem
+        Plan gilt die Reserve des Geräts (ESS-Mindest-SOC / BatteryLife) —
+        ganz ohne Ziel liefe die Entladung unbeobachtet.
         """
+        if target_soc is None:
+            target_soc = self.get_backup_reserve_soc_pct()
         self._ziel_soc = target_soc
         if target_soc is None or self._ziel_abmelden is not None:
             return
@@ -446,7 +547,7 @@ class VictronInverter(InverterBase):
 
         def _soc_geaendert(_event: Any) -> None:
             if self._am_ziel():
-                self._hass.async_create_task(self._ziel_erreicht())
+                self._hass.async_create_task(self._ziel_erreicht_gesperrt())
 
         self._ziel_abmelden = async_track_state_change_event(
             self._hass, [soc_sensor], _soc_geaendert
@@ -460,6 +561,13 @@ class VictronInverter(InverterBase):
             except Exception:  # noqa: BLE001 — Abmelden darf nie werfen
                 pass
             self._ziel_abmelden = None
+
+    async def _ziel_erreicht_gesperrt(self) -> None:
+        """Aus dem SOC-Beobachter: unter der Sperre und erst nach erneuter
+        Prüfung — ein Befehl dazwischen kann ein neues Ziel gesetzt haben."""
+        async with self._sperre:
+            if self._am_ziel():
+                await self._ziel_erreicht()
 
     async def _ziel_erreicht(self) -> None:
         if self._ziel_soc is None:
@@ -486,14 +594,21 @@ class VictronInverter(InverterBase):
         """
         if self._nicht_endlich(power_kw):
             return False
-        spannung = self._batteriespannung()
-        if spannung is None:
-            # Keine Spannung, kein Strom: die Umrechnung zu raten hieße, bei
-            # einem 12- oder 24-V-System das Vier- oder Doppelte zu schreiben.
-            return self._fehler("Batteriespannung unbekannt")
+        async with self._sperre:
+            return await self._ladelimit(power_kw)
+
+    async def _ladelimit(self, power_kw: float) -> bool:
         try:
+            # Die Entladung zuerst zurücknehmen — auch wenn die Spannung
+            # gleich fehlt: ein stehender Netzsollwert ist der teurere Fehler.
             self._beobachtung_beenden()
             await self._zuruecksetzen("netzsollwert", NETZSOLLWERT_TOLERANZ_W)
+            spannung = self._batteriespannung()
+            if spannung is None:
+                # Keine Spannung, kein Strom: die Umrechnung zu raten hieße,
+                # bei einem 12- oder 24-V-System das Vier- oder Doppelte zu
+                # schreiben.
+                return self._fehler("Batteriespannung unbekannt")
             ampere = max(0.0, float(power_kw)) * 1000.0 / spannung
             maximum = self._attribut("ladestrom", "max")
             if maximum is not None:
@@ -502,7 +617,7 @@ class VictronInverter(InverterBase):
             return self._erfolg()
         except Exception as exc:  # noqa: BLE001
             _LOGGER.exception("Victron: Ladelimit konnte nicht gesetzt werden")
-            return self._fehler(type(exc).__name__)
+            return self._fehler(_grund(exc))
 
     async def async_set_discharge(
         self, power_kw: float, target_soc: float | None = None
@@ -516,6 +631,10 @@ class VictronInverter(InverterBase):
         """
         if self._nicht_endlich(power_kw, target_soc):
             return False
+        async with self._sperre:
+            return await self._entladung(power_kw, target_soc)
+
+    async def _entladung(self, power_kw: float, target_soc: float | None) -> bool:
         try:
             await self._zuruecksetzen("ladestrom", LADESTROM_TOLERANZ_A)
             self._beobachte_ziel_soc(target_soc)
@@ -530,7 +649,7 @@ class VictronInverter(InverterBase):
             return self._erfolg()
         except Exception as exc:  # noqa: BLE001
             _LOGGER.exception("Victron: Entladung konnte nicht gestartet werden")
-            return self._fehler(type(exc).__name__)
+            return self._fehler(_grund(exc))
 
     async def async_stop_forcible(self) -> bool:
         """Freigeben: Netzsollwert, dann Ladestrom auf die Vorwerte.
@@ -538,14 +657,15 @@ class VictronInverter(InverterBase):
         Der Sollwert zuerst — er ist der Eingriff, der Energie bewegt.
         Ohne gesicherten Vorwert gibt es nichts zurückzunehmen.
         """
-        self._beobachtung_beenden()
-        try:
-            await self._zuruecksetzen("netzsollwert", NETZSOLLWERT_TOLERANZ_W)
-            await self._zuruecksetzen("ladestrom", LADESTROM_TOLERANZ_A)
-            return self._erfolg()
-        except Exception as exc:  # noqa: BLE001
-            _LOGGER.exception("Victron: Freigabe fehlgeschlagen")
-            return self._fehler(type(exc).__name__)
+        async with self._sperre:
+            self._beobachtung_beenden()
+            try:
+                await self._zuruecksetzen("netzsollwert", NETZSOLLWERT_TOLERANZ_W)
+                await self._zuruecksetzen("ladestrom", LADESTROM_TOLERANZ_A)
+                return self._erfolg()
+            except Exception as exc:  # noqa: BLE001
+                _LOGGER.exception("Victron: Freigabe fehlgeschlagen")
+                return self._fehler(_grund(exc))
 
     @property
     def is_available(self) -> bool:
@@ -583,12 +703,10 @@ class VictronInverter(InverterBase):
         ]
         return min(grenzen) * spannung / 1000.0 if grenzen else None
 
-    def get_max_discharge_power_kw(self) -> float | None:
-        """ESS „Max. Wechselrichterleistung", wenn gesetzt (−1 = keine Grenze)."""
-        watt = self._lies("max_wechselrichterleistung")
-        if watt is None or watt <= 0:
-            return None
-        return watt / 1000.0
+    # get_max_discharge_power_kw bleibt beim Default (None): Die ESS-Grenze
+    # „Max. Wechselrichterleistung" gilt je nach Venus-OS-Stand je Phase —
+    # als Gesamtgrenze genommen, deckelte Guard 2 eine dreiphasige Anlage
+    # auf ein Drittel. Unbelegt; die Grenze setzt das Gerät ohnehin selbst.
 
     def get_backup_reserve_soc_pct(self) -> float | None:
         """Höhere aus ESS-Mindest-SOC und aktiver SOC-Grenze (BatteryLife)."""

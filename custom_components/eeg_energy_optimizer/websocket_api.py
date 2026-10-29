@@ -1048,6 +1048,19 @@ def _source_entry_host(entry) -> str | None:
     return host.rstrip("/") or None
 
 
+def _victron_erkennung(hass: HomeAssistant) -> dict | None:
+    """Erkennungsergebnis für Victron, None ohne geladene Integration."""
+    entries = hass.config_entries.async_entries(VICTRON_DOMAIN)
+    if not any(e.state.value == "loaded" for e in entries):
+        return None
+    return {
+        CONF_INVERTER_TYPE: INVERTER_TYPE_VICTRON,
+        "detected": True,
+        "sensors": victron_sensoren(hass),
+        "victron_pruefung": victron_pruefung(hass),
+    }
+
+
 def _first_loaded_entry_host(entries) -> str | None:
     """Host des ersten geladenen Config-Entries (Fallback: erster Entry)."""
     for entry in entries:
@@ -1060,6 +1073,10 @@ def _first_loaded_entry_host(entries) -> str | None:
 @websocket_api.websocket_command(
     {
         vol.Required("type"): "eeg_optimizer/detect_sensors",
+        # Der im Assistenten gewählte Typ. Bisher nur für Victron gelesen:
+        # dessen Erkennung steht sonst hinter Huawei/SolaX/Sigenergy und
+        # käme bei einer zweiten geladenen Integration nie zum Zug.
+        vol.Optional(CONF_INVERTER_TYPE): str,
     }
 )
 @websocket_api.async_response
@@ -1069,6 +1086,11 @@ async def ws_detect_sensors(
     msg: dict,
 ) -> None:
     """Auto-detect inverter sensors (Huawei or SolaX)."""
+    if msg.get(CONF_INVERTER_TYPE) == INVERTER_TYPE_VICTRON:
+        ergebnis = _victron_erkennung(hass)
+        if ergebnis is not None:
+            connection.send_result(msg["id"], ergebnis)
+            return
     # Check if Huawei Solar integration is loaded
     huawei_entries = hass.config_entries.async_entries("huawei_solar")
     huawei_loaded = any(e.state.value == "loaded" for e in huawei_entries)
@@ -1237,16 +1259,9 @@ async def ws_detect_sensors(
     # Metrik — die Entity-IDs hängen am Gerätenamen und an der Sprache.
     # Kapazität gibt es nur in Ah, sie wird im Assistenten von Hand
     # eingetragen. Das Panel zeigt, was am GX-Gerät noch nicht passt.
-    victron_entries = hass.config_entries.async_entries(VICTRON_DOMAIN)
-    if any(e.state.value == "loaded" for e in victron_entries):
-        pruefung = victron_pruefung(hass)
-        result = {
-            CONF_INVERTER_TYPE: INVERTER_TYPE_VICTRON,
-            "detected": True,
-            "sensors": victron_sensoren(hass),
-            "victron_pruefung": pruefung,
-        }
-        connection.send_result(msg["id"], result)
+    ergebnis = _victron_erkennung(hass)
+    if ergebnis is not None:
+        connection.send_result(msg["id"], ergebnis)
         return
 
     # Check if Fronius native integration is loaded

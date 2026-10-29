@@ -78,8 +78,9 @@ schedule_executor.py: ScheduleExecutor (execution, 30 s)
     SOC)`; any other intent stops it first (`_netzladung_beenden`), the
     heater is 0 meanwhile
   → writes only via InverterBase, only in mode "Ein", only for drivers with
-    supports_schedule_control=True (Fronius, Huawei, Kostal, Sigenergy, SMA, SolaX).
-    Guard 2 asks `discharge_is_grid_setpoint`: SMA takes a GRID setpoint
+    supports_schedule_control=True (Fronius, Huawei, Kostal, Sigenergy, SMA, SolaX,
+    Victron).
+    Guard 2 asks `discharge_is_grid_setpoint`: SMA and Victron take a GRID setpoint
     (inverter adds house load itself) → executor hands over the planned
     export; all others take battery power → plan export + house load − PV
   → _heizstab_schritt() after every run — the heater (heizstab/) is a second
@@ -139,6 +140,7 @@ schedule_executor.py: ScheduleExecutor (execution, 30 s)
 | `inverter/sma.py` | SMA Smart Energy / Sunny Boy Storage implementation via direct Modbus TCP (CmpBMS 6-parameter method, complete-block writes, watchdog keepalive task; `discharge_is_grid_setpoint=True`, charge limit read from the active block) |
 | `inverter/solax.py` | SolaX Gen4+ implementation via solax_modbus Mode 1 |
 | `inverter/sigenergy.py` | Sigenergy SigenStor via the HA integration `sigen` (Remote EMS: switch/select/number entities) |
+| `inverter/victron.py` | Victron ESS (Multiplus/Quattro + GX device) via the built-in HA integration `victron_gx` (MQTT, HA ≥ 2026.5). Charge limit = DVCC max charge current (A = kW ÷ battery voltage), discharge = ESS grid setpoint negative (`discharge_is_grid_setpoint=True`); both are stored GX settings, so the value before the first intervention is kept in a `Store` (`eeg_energy_optimizer.victron_state`) and written back on release. No device watchdog → the driver watches the SOC sensor itself and takes the setpoint back at the target SOC. Entities resolved via the entity registry by unique_id suffix (`_<device id>_<short_id>`), never by name. `victron_pruefung` feeds the wizard (blocks on ESS mode not „Optimiert“, Dynamic ESS on, scheduled charging on, DVCC off, feed-in limit 0 W). Grid sensor = grid meter total only — a single phase was 1.4 kW off on a three-phase plant (29.10.2026). Stage „Feldtest“ |
 | `inverter/__init__.py` | Factory function `create_inverter()` |
 | `select.py` | Mode select entity (Ein/Aus), restores state across restarts (a stored „Test“ from before 1.5.52 maps to Aus) |
 | `const.py` | All constants, defaults, mode enums, state names |
@@ -359,7 +361,8 @@ Implementations:
   ├── KostalInverter — via direct Modbus TCP (proprietary registers, port 1502, unit 71; cyclic keepalive feeds the inverter watchdog, timeout = failsafe fallback to internal automatic)
   ├── SMAInverter — via direct Modbus TCP (CmpBMS external battery management, port 502, unit 3; every command writes the complete 6-register block, 60s keepalive, 300s watchdog fallback; discharge = grid-exchange setpoint GridWSpt → house load auto-compensated, so the executor hands over the planned export (`discharge_is_grid_setpoint`))
   ├── SolaXInverter — via HA solax_modbus Mode 1
-  └── SigenergyInverter — via HA sigen integration (Remote EMS entities)
+  ├── SigenergyInverter — via HA sigen integration (Remote EMS entities)
+  └── VictronInverter — via HA victron_gx integration (MQTT; DVCC max charge current + ESS grid setpoint, `discharge_is_grid_setpoint=True`; previous values stored and restored; no device watchdog, target SOC watched by the driver)
 ```
 
 **Multi-Inverter / Multi-Battery (Master/Slave):** Huawei supports setups
@@ -392,6 +395,7 @@ read **and** control every battery:
 - **sma** (after_dependency) — SMA sensor data via WebConnect (directional pairs → synthetic combined sensors)
 - **solax_modbus** (after_dependency) — SolaX inverter control
 - **sigen** (after_dependency) — Sigenergy control (Remote EMS)
+- **victron_gx** (after_dependency, built into HA since 2026.5) — Victron measurements and control (MQTT)
 - **solcast_solar**, **forecast_solar** (after_dependency) — PV forecasts
 
 Python requirements (`manifest.json`): `pymodbus>=3.6.0` for the direct-Modbus
@@ -692,11 +696,12 @@ the event loop is long enough for HA to flag a blocking call.
   `tests/test_spitzenreserve.py`, `tests/test_spitzenreserve_plan.py`,
   `tests/test_spitzenkappung_executor.py`, `tests/test_entladedeckel_treiber.py`,
   `tests/test_spitzenkappung.py`.
-- **All six drivers are steered and selectable**: every driver returns
+- **All seven drivers are steered and selectable**: every driver returns
   `supports_schedule_control=True`, and `SCHEDULE_CONTROL_INVERTERS` in the
-  panel lists all six for the wizard (`NUR_HUAWEI_WAEHLBAR` is gone). All six are
-  „freigegeben“ (since 2.1.29 — the field test is done); „Feldtest“ remains
-  the entry stage for a new driver only, see `docs/DEVELOPMENT.md`. Status and open points per driver: `docs/wechselrichter-status.md`,
+  panel lists all seven for the wizard (`NUR_HUAWEI_WAEHLBAR` is gone). The
+  first six are „freigegeben“ (since 2.1.29 — the field test is done);
+  Victron (the seventh, October 2026) is in „Feldtest“, the entry stage for a
+  new driver, see `docs/DEVELOPMENT.md`. Status and open points per driver: `docs/wechselrichter-status.md`,
   the single source of truth for users (no other doc keeps its own list); the
   release path for a new driver lives in `docs/DEVELOPMENT.md`.
 - **Not-Aus** (`GUARD_EMERGENCY_IMPORT_KW` = 1 kW, `GUARD_EMERGENCY_IMPORT_RUNS`

@@ -19,7 +19,7 @@ Am besten in dieser Reihenfolge:
 
 ## 🔌 Wechselrichter anbinden
 
-Unterstützt werden **Fronius Gen24, Huawei SUN2000, Kostal Plenticore, Sigenergy SigenStor, SMA Smart Energy und SolaX Gen4+** — alle sechs werden vom Fahrplan gesteuert. Wie weit jedes Gerät erprobt ist, steht im **[Stand der Unterstützung](wechselrichter-status.md)**:
+Unterstützt werden **Fronius Gen24, Huawei SUN2000, Kostal Plenticore, Sigenergy SigenStor, SMA Smart Energy und SolaX Gen4+**, dazu **Victron ESS** im Feldtest — alle sieben werden vom Fahrplan gesteuert. Wie weit jedes Gerät erprobt ist, steht im **[Stand der Unterstützung](wechselrichter-status.md)**:
 
 | Wechselrichter | Anleitung |
 |---|---|
@@ -30,6 +30,7 @@ Unterstützt werden **Fronius Gen24, Huawei SUN2000, Kostal Plenticore, Sigenerg
 | **Sigenergy SigenStor** | [Sigenergy einrichten](guides/sigenergy.md) |
 | **SMA Smart Energy** | [SMA einrichten](guides/sma.md) |
 | **SolaX Gen4+** | [SolaX Modbus einrichten](guides/solax.md) |
+| **Victron ESS** (Feldtest) | [Victron vorbereiten](installation/victron.md) · [Victron einrichten](guides/victron.md) |
 
 ## ☀️ PV-Prognose einrichten
 

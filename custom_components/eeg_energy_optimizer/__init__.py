@@ -2824,7 +2824,7 @@ _RELOAD_CONFIG_KEYS = frozenset({
 # Präfixe decken Inverter-Anbindung (Modbus-Hosts/Ports, Geräte-IDs,
 # Steuer-Entities) und Forecast-Quellen ab, ohne jeden Key einzeln zu pflegen.
 _RELOAD_CONFIG_PREFIXES = (
-    "fronius_", "huawei_", "kostal_", "sigen_", "sma_", "solax_", "victron_",
+    "fronius_", "huawei_", "kostal_", "sigen_", "sma_", "solax_",
     "forecast_",
 )
 

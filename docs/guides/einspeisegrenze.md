@@ -10,7 +10,7 @@ Kennt der Fahrplan diese Grenze, rechnet er sie in jeden Lade- und Entladeplan e
 - Eine **PV-Prognose** (Solcast, Forecast.Solar oder die eigene Berechnung)
 - Die hier eingetragene Grenze muss dem Wert **im Wechselrichter** entsprechen
 
-Die Grenze fließt bei **allen Wechselrichtern** in die Fahrplan-Berechnung ein, und bei allen sechs unterstützten Geräten führt die Steuerung das Ladelimit nach.
+Die Grenze fließt bei **allen Wechselrichtern** in die Fahrplan-Berechnung ein, und bei allen sieben unterstützten Geräten führt die Steuerung das Ladelimit nach.
 
 ## So funktioniert es
 

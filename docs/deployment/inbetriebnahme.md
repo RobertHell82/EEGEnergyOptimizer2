@@ -97,7 +97,8 @@ Optimizers findet die Prognose-Sensoren von selbst.
 
 Damit der Optimizer deinen Speicher steuern kann, wird er mit deinem
 Wechselrichter verbunden. Unterstützt werden **Fronius Gen24, Huawei SUN2000,
-Kostal Plenticore, Sigenergy SigenStor, SMA Smart Energy und SolaX Gen4+**:
+Kostal Plenticore, Sigenergy SigenStor, SMA Smart Energy und SolaX Gen4+**,
+dazu **Victron ESS** im Feldtest:
 
 | Wechselrichter | Anleitung |
 |---|---|
@@ -107,6 +108,7 @@ Kostal Plenticore, Sigenergy SigenStor, SMA Smart Energy und SolaX Gen4+**:
 | **Sigenergy SigenStor** | [Sigenergy einrichten](../guides/sigenergy.md) |
 | **SMA Smart Energy** | [SMA einrichten](../guides/sma.md) |
 | **SolaX Gen4+** | [SolaX Modbus einrichten](../guides/solax.md) |
+| **Victron ESS** (Feldtest) | [Victron vorbereiten](../installation/victron.md) + [Victron einrichten](../guides/victron.md) |
 
 Wie weit jedes Gerät erprobt ist, steht im
 [Stand der Unterstützung](../wechselrichter-status.md).

@@ -12,6 +12,12 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+### Hinzugefügt
+
+- **Victron ESS als siebter Wechselrichter (Feldtest).** Multiplus oder Quattro mit GX-Gerät (Cerbo GX, Venus GX, Ekrano GX), ein- oder dreiphasig, über die in Home Assistant eingebaute Integration **Victron GX** (MQTT im Heimnetz, ab Home Assistant 2026.5). Messwerte und Steuerung laufen über dieselbe Integration, ohne HACS und ohne eigenes Modbus. Das Ladelimit setzt den DVCC-Ladestrom, die Einspeisung den ESS-Netzsollwert. Die Freigabe schreibt die Werte zurück, die vorher am GX-Gerät standen, auch nach einem Neustart. Den Ziel-Ladestand einer Entladung überwacht die Integration selbst, weil das GX-Gerät für den Netzsollwert keinen kennt.
+- **Der Einrichtungsassistent prüft die Einstellungen am GX-Gerät.** Er lässt erst weiter, wenn der ESS-Modus „Optimiert“ ist, Dynamic ESS und „Geplantes Laden“ aus sind, DVCC an ist und die Einspeisung nicht unter 100 W begrenzt ist. Die Messwerte erkennt er selbst, die Netzleistung immer vom Netzzähler: Eine einzelne Phase lag an einer dreiphasigen Anlage um 1,4 kW daneben.
+- **Anleitungen** „Victron einrichten“ (auch im Assistenten) und „Victron vorbereiten“, mit der Einrichtung der Integration je Sicherheitsprofil. „Ungültige Authentifizierung“ heißt: Das GX-Gerät lehnt das Passwort ab, der Benutzername spielt keine Rolle.
+
 ## [2.1.52-beta.1] - 2026-10-29
 
 ### Geändert

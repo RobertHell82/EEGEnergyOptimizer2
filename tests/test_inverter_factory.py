@@ -11,6 +11,7 @@ from custom_components.eeg_energy_optimizer.inverter.fronius import FroniusInver
 from custom_components.eeg_energy_optimizer.inverter.huawei import HuaweiInverter
 from custom_components.eeg_energy_optimizer.inverter.kostal import KostalInverter
 from custom_components.eeg_energy_optimizer.inverter.sigenergy import SigenergyInverter
+from custom_components.eeg_energy_optimizer.inverter.victron import VictronInverter
 from custom_components.eeg_energy_optimizer.inverter.sma import SMAInverter
 from custom_components.eeg_energy_optimizer.inverter.solax import SolaXInverter
 
@@ -74,6 +75,9 @@ class TestRegisteredInverterTypes:
 
     def test_sigenergy_registered(self):
         assert INVERTER_TYPES.get("sigenergy_sigenstor") is SigenergyInverter
+
+    def test_victron_registered(self):
+        assert INVERTER_TYPES.get("victron_ess") is VictronInverter
 
     def test_create_sigenergy_returns_instance(self, mock_hass):
         """Factory builds a SigenergyInverter from the canonical type id."""

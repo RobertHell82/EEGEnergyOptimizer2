@@ -64,7 +64,7 @@ im Modus **Aus** bestimmt (fürs Dashboard) — geschrieben wird nur im Modus
 
 ```mermaid
 flowchart TD
-    START(["⏱️ Alle 30 Sekunden"]) --> SUP{"Treiber steuerbar?<br/><i>(alle sechs unterstützten)</i>"}
+    START(["⏱️ Alle 30 Sekunden"]) --> SUP{"Treiber steuerbar?<br/><i>(alle sieben unterstützten)</i>"}
     SUP -- "nein" --> E1["Ende — Fahrplan nur Anzeige"]
     SUP -- "ja" --> WECHSEL{"Moduswechsel<br/>Ein → Aus?"}
     WECHSEL -- "ja" --> REL["Wechselrichter einmalig freigeben"] --> FRISCH
@@ -224,7 +224,9 @@ interne Automatik des Wechselrichters. Bei SolaX wird Mode 1 beendet
 („Disabled“), der Ladestrom auf den gesicherten Vorwert zurückgeschrieben
 (ohne gesicherten Wert: das Maximum der Entität) und ein abgesenkter
 Entladeboden wiederhergestellt. Bei Sigenergy geht der Modus zurück auf
-„Maximum Self Consumption“, danach wird Remote EMS ausgeschaltet.
+„Maximum Self Consumption“, danach wird Remote EMS ausgeschaltet. Bei Victron
+werden ESS-Netzsollwert und DVCC-Ladestrom auf die Werte zurückgeschrieben,
+die vor dem ersten Eingriff am GX-Gerät standen.
 
 Deshalb gilt: **Wir greifen nur ein, wenn der Fahrplan einen konkreten Wert
 vorgibt.** Sonst stehen die Werte des Geräts.

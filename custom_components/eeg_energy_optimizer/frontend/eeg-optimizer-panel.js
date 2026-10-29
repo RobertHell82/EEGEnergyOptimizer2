@@ -2968,11 +2968,15 @@ class EegOptimizerPanel extends HTMLElement {
           // falsche ESS-Einstellungen am GX-Gerät machen die Steuerung
           // wirkungslos. Beides lässt der Assistent nicht durch.
           const pr = (this._detectedSensors && this._detectedSensors.victron_pruefung) || null;
-          if (pr && (pr.fehlt || []).length) {
+          if (!pr) {
+            this._showValidationError("Victron: Die Einstellungen am GX-Gerät sind noch nicht geprüft. Bitte den Wechselrichter hier erneut anklicken.");
+            return false;
+          }
+          if ((pr.fehlt || []).length) {
             this._showValidationError("Victron: Diese Stellgrößen fehlen in Home Assistant: " + pr.fehlt.join(", ") + ". Ist ESS am GX-Gerät eingerichtet? Siehe Anleitung.");
             return false;
           }
-          if (pr && (pr.probleme || []).length) {
+          if ((pr.probleme || []).length) {
             this._showValidationError("Victron: " + pr.probleme.join(" · ") + ". Bitte am GX-Gerät ändern, dann den Wechselrichter hier erneut anklicken.");
             return false;
           }
@@ -5883,9 +5887,12 @@ class EegOptimizerPanel extends HTMLElement {
     this._wizardLoading = true;
     this._render();
     try {
-      this._detectedSensors = await this._hass.callWS({
-        type: "eeg_optimizer/detect_sensors",
-      });
+      const anfrage = { type: "eeg_optimizer/detect_sensors" };
+      // Victron steht in der Erkennung hinter Huawei/SolaX/Sigenergy — den
+      // gewählten Typ mitgeben, sonst fehlt bei einer zweiten geladenen
+      // Integration die Prüfung des GX-Geräts.
+      if (this._wizardData.inverter_type) anfrage.inverter_type = this._wizardData.inverter_type;
+      this._detectedSensors = await this._hass.callWS(anfrage);
       if (this._detectedSensors.detected && this._detectedSensors.sensors) {
         // Pre-fill detected sensors only if user hasn't already chosen values
         const sensors = this._detectedSensors.sensors;
@@ -6560,6 +6567,7 @@ class EegOptimizerPanel extends HTMLElement {
         <li>Sigenergy SigenStor</li>
         <li>SMA Smart Energy mit Batteriespeicher</li>
         <li>SolaX Gen4+ mit Triple Power Batteriespeicher</li>
+        <li>Victron Multiplus-II mit Cerbo GX (im Feldtest)</li>
       </ul>`;
   }
 
@@ -6800,7 +6808,7 @@ class EegOptimizerPanel extends HTMLElement {
           "pv_power_sensor_2",
           this._wizardData.pv_power_sensor_2,
           "Zweiter PV-Sensor (optional)",
-          "Nur bei einem PV-Wechselrichter am Wechselstrom (Victron: „PV on output power L1“ bzw. „PV on grid power L1“) — wird automatisch erkannt und zur PV-Leistung addiert. Bei reiner MPPT-Anlage leer lassen.",
+          "Nur bei einem PV-Wechselrichter am Wechselstrom: ein Sensor mit seiner GESAMTEN Leistung (alle Phasen), etwa aus seiner eigenen Integration — wird zur PV-Leistung addiert. Das GX-Gerät meldet AC-PV nur je Phase, deshalb keine automatische Erkennung. Bei reiner MPPT-Anlage leer lassen.",
           "sensor"
         ) : ""}
         ${kostalSelected && this._wizardData.expert_mode ? this._entityPickerHtml(

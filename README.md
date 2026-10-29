@@ -52,7 +52,7 @@ Pro Anlage wird einmalig eine zufällige **UUIDv4** + ein **API-Key** erzeugt un
 
 ## Unterstützte Wechselrichter
 
-Alle sechs werden vom Fahrplan **gesteuert** (Ladelimit und erzwungene Entladung), nicht nur ausgelesen:
+Alle sieben werden vom Fahrplan **gesteuert** (Ladelimit und erzwungene Entladung), nicht nur ausgelesen. Victron läuft noch als Feldtest:
 
 | Wechselrichter | Anbindung | Guide |
 |---|---|---|
@@ -62,6 +62,7 @@ Alle sechs werden vom Fahrplan **gesteuert** (Ladelimit und erzwungene Entladung
 | **Sigenergy SigenStor** | via [Sigenergy-Integration](https://github.com/TypQxQ/Sigenergy-Local-Modbus) | [Guide](docs/guides/sigenergy.md) |
 | **SMA Smart Energy** | direkt per Modbus TCP (externes Batteriemanagement) | [Guide](docs/guides/sma.md) |
 | **SolaX Gen4+** | via [solax_modbus](https://github.com/wills106/homeassistant-solax-modbus) | [Guide](docs/guides/solax.md) |
+| **Victron ESS** (Feldtest) | via eingebaute Integration [Victron GX](https://www.home-assistant.io/integrations/victron_gx/) (MQTT); Multiplus/Quattro mit GX-Gerät, ein- oder dreiphasig | [Guide](docs/guides/victron.md) |
 
 Wie weit jedes Gerät erprobt ist und was noch offen ist, steht in [docs/wechselrichter-status.md](docs/wechselrichter-status.md).
 
@@ -181,7 +182,7 @@ Viele Netzbetreiber begrenzen die maximale Einspeiseleistung (z. B. 4 kW). Kennt
 ## Voraussetzungen
 
 - Home Assistant 2025.1.0 oder neuer
-- Einer der oben genannten **Wechselrichter mit Batteriespeicher**. Jeder braucht die passende Integration in Home Assistant: Fronius, Kostal Plenticore und SMA Solar sind eingebaut und liefern die Messwerte, gesteuert wird bei diesen drei zusätzlich direkt per Modbus TCP (am Wechselrichter zu aktivieren). Huawei Solar, Sigenergy und SolaX Modbus kommen über HACS
+- Einer der oben genannten **Wechselrichter mit Batteriespeicher**. Jeder braucht die passende Integration in Home Assistant: Fronius, Kostal Plenticore und SMA Solar sind eingebaut und liefern die Messwerte, gesteuert wird bei diesen drei zusätzlich direkt per Modbus TCP (am Wechselrichter zu aktivieren). Huawei Solar, Sigenergy und SolaX Modbus kommen über HACS. Victron GX ist eingebaut (ab Home Assistant 2026.5) und übernimmt Messen und Steuern
 - Eine PV-Prognose: Solcast Solar, Forecast.Solar oder die eigene Berechnung der Integration (braucht nur den Standort in Home Assistant)
 
 ## Lizenz
