@@ -7,7 +7,7 @@
 <li><strong>Die Batterie.</strong> Solange sie genug hat, deckt sie Spitzen ohnehin. Wird sie knapp, hält sie eine <strong>Reserve</strong> zurück und gibt darin nur noch ab, was über deiner Grenze liegt. Den Grundverbrauch bezieht das Haus dann aus dem Netz.</li>
 <li><strong>Verbraucher abschalten.</strong> Reicht die Batterie nicht, etwa weil sie leer ist oder das Auto mehr zieht, als sie liefern kann, schaltet die Integration die Verbraucher, die du einträgst, der Reihe nach ab. Sobald wieder Platz ist, schaltet sie sie wieder ein.</li>
 </ol>
-<div class="guide-alert note"><p>Die erste Stufe gibt es mit <strong>Huawei</strong>, <strong>Fronius</strong>, <strong>SMA</strong> und <strong>SolaX</strong>. Mit den anderen Wechselrichtern kappt die Integration nur über das Abschalten von Verbrauchern.</p></div>
+<div class="guide-alert note"><p>Die erste Stufe gibt es derzeit mit <strong>Huawei</strong>, <strong>Fronius</strong>, <strong>SMA</strong> und <strong>SolaX</strong>. Mit den anderen Wechselrichtern kappt die Integration derzeit nur über das Abschalten von Verbrauchern.</p></div>
 
 <h3>Wie es funktioniert</h3>
 <h4>Die Grenze</h4>
@@ -33,7 +33,7 @@
 <div class="guide-alert note"><p>Hast du das Ladeziel ausgeschaltet, erscheint tagsüber trotzdem eine Ladeziel-Marke im Ladestandsdiagramm: Das ist die Abendreserve. Mit <strong>Batterie aus dem Netz laden</strong> (Beta, Huawei) darf der Plan sie auch mit günstigem Netzstrom erreichen, wie jedes andere Ladeziel.</p></div>
 
 <h4>Verbraucher abschalten</h4>
-<p>Die Verbraucher werden in der Reihenfolge der Liste abgeschaltet, aber nur, wenn die Batterie die Spitze nicht mehr decken kann und der Verbraucher gerade läuft (ab 0,2 kW). Ob die Batterie noch mehr könnte, weiß die Integration nur bei Huawei, Fronius, SMA und SolaX; bei den anderen Wechselrichtern rechnet sie ohne die Batterie und schaltet ab, sobald die Viertelstunde über die Grenze zu gehen droht. Nach jedem Abschalten wartet die Integration 60 Sekunden, denn ein Auto regelt langsam herunter und meldet seine Leistung oft verzögert.</p>
+<p>Die Verbraucher werden in der Reihenfolge der Liste abgeschaltet, aber nur, wenn die Batterie die Spitze nicht mehr decken kann und der Verbraucher gerade läuft (ab 0,2 kW). Ob die Batterie noch mehr könnte, weiß die Integration derzeit nur bei Huawei, Fronius, SMA und SolaX; bei den anderen Wechselrichtern rechnet sie ohne die Batterie und schaltet ab, sobald die Viertelstunde über die Grenze zu gehen droht. Nach jedem Abschalten wartet die Integration 60 Sekunden, denn ein Auto regelt langsam herunter und meldet seine Leistung oft verzögert.</p>
 <p>Wieder eingeschaltet wird ein Verbraucher frühestens nach 5 Minuten, und nur, wenn er neben dem übrigen Haus eine ganze Viertelstunde lang unter die Grenze passt. Die Batterie zählt dabei nicht mit: Sonst würde der Verbraucher die Reserve leeren. Ein 11-kW-Auto kommt bei einer Grenze von 5 kW also erst zurück, wenn die Spitze vorbei ist und der Monat eine höhere Spitze erlaubt.</p>
 <p>Damit das nicht hin- und herpendelt:</p>
 <ul>
@@ -63,11 +63,11 @@
 </tr>
 <tr>
 <td><strong>Mindestreserve (%)</strong></td>
-<td>Nur mit Huawei, Fronius, SMA oder SolaX. Hält die Batterie immer für Spitzen zurück, auch wenn die Statistik weniger verlangt. Vorgabe 0</td>
+<td>Derzeit nur mit Huawei, Fronius, SMA oder SolaX. Hält die Batterie immer für Spitzen zurück, auch wenn die Statistik weniger verlangt. Vorgabe 0</td>
 </tr>
 <tr>
 <td><strong>Maximalreserve (%)</strong></td>
-<td>Nur mit Huawei, Fronius, SMA oder SolaX. Mehr hält die Batterie nie zurück. Vorgabe 30, ein leeres Feld heißt ebenfalls 30, 0 schaltet die Reserve ab</td>
+<td>Derzeit nur mit Huawei, Fronius, SMA oder SolaX. Mehr hält die Batterie nie zurück. Vorgabe 30, ein leeres Feld heißt ebenfalls 30, 0 schaltet die Reserve ab</td>
 </tr>
 <tr>
 <td><strong>Verbraucher</strong></td>

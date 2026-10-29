@@ -6,7 +6,7 @@ Mit der neuen Tarifstruktur richtet sich ein Teil der Netzgebühr nach der **Bez
 2. **Verbraucher abschalten.** Reicht die Batterie nicht, etwa weil sie leer ist oder das Auto mehr zieht, als sie liefern kann, schaltet die Integration die Verbraucher, die du einträgst, der Reihe nach ab. Sobald wieder Platz ist, schaltet sie sie wieder ein.
 
 > [!NOTE]
-> Die erste Stufe gibt es mit **Huawei**, **Fronius**, **SMA** und **SolaX**. Mit den anderen Wechselrichtern kappt die Integration nur über das Abschalten von Verbrauchern.
+> Die erste Stufe gibt es derzeit mit **Huawei**, **Fronius**, **SMA** und **SolaX**. Mit den anderen Wechselrichtern kappt die Integration derzeit nur über das Abschalten von Verbrauchern.
 
 ## Wie es funktioniert
 
@@ -44,7 +44,7 @@ Der Fahrplan rechnet die Reserve mit ein. Er verkauft am Abend nicht mehr, was i
 
 ### Verbraucher abschalten
 
-Die Verbraucher werden in der Reihenfolge der Liste abgeschaltet, aber nur, wenn die Batterie die Spitze nicht mehr decken kann und der Verbraucher gerade läuft (ab 0,2 kW). Ob die Batterie noch mehr könnte, weiß die Integration nur bei Huawei, Fronius, SMA und SolaX; bei den anderen Wechselrichtern rechnet sie ohne die Batterie und schaltet ab, sobald die Viertelstunde über die Grenze zu gehen droht. Nach jedem Abschalten wartet die Integration 60 Sekunden, denn ein Auto regelt langsam herunter und meldet seine Leistung oft verzögert.
+Die Verbraucher werden in der Reihenfolge der Liste abgeschaltet, aber nur, wenn die Batterie die Spitze nicht mehr decken kann und der Verbraucher gerade läuft (ab 0,2 kW). Ob die Batterie noch mehr könnte, weiß die Integration derzeit nur bei Huawei, Fronius, SMA und SolaX; bei den anderen Wechselrichtern rechnet sie ohne die Batterie und schaltet ab, sobald die Viertelstunde über die Grenze zu gehen droht. Nach jedem Abschalten wartet die Integration 60 Sekunden, denn ein Auto regelt langsam herunter und meldet seine Leistung oft verzögert.
 
 Wieder eingeschaltet wird ein Verbraucher frühestens nach 5 Minuten, und nur, wenn er neben dem übrigen Haus eine ganze Viertelstunde lang unter die Grenze passt. Die Batterie zählt dabei nicht mit: Sonst würde der Verbraucher die Reserve leeren. Ein 11-kW-Auto kommt bei einer Grenze von 5 kW also erst zurück, wenn die Spitze vorbei ist und der Monat eine höhere Spitze erlaubt.
 
@@ -66,8 +66,8 @@ Die Spitzenkappung steht in den **Einstellungen** im Tab **Spitzenkappung**.
 |---|---|
 | **Bezugsspitzen kappen** | Schaltet die Funktion ein oder aus |
 | **Grenzwert (kW)** | 2 bis 20 kW, Vorgabe 5. Darunter wird nichts gekappt |
-| **Mindestreserve (%)** | Nur mit Huawei, Fronius, SMA oder SolaX. Hält die Batterie immer für Spitzen zurück, auch wenn die Statistik weniger verlangt. Vorgabe 0 |
-| **Maximalreserve (%)** | Nur mit Huawei, Fronius, SMA oder SolaX. Mehr hält die Batterie nie zurück. Vorgabe 30, ein leeres Feld heißt ebenfalls 30, 0 schaltet die Reserve ab |
+| **Mindestreserve (%)** | Derzeit nur mit Huawei, Fronius, SMA oder SolaX. Hält die Batterie immer für Spitzen zurück, auch wenn die Statistik weniger verlangt. Vorgabe 0 |
+| **Maximalreserve (%)** | Derzeit nur mit Huawei, Fronius, SMA oder SolaX. Mehr hält die Batterie nie zurück. Vorgabe 30, ein leeres Feld heißt ebenfalls 30, 0 schaltet die Reserve ab |
 | **Verbraucher** | Bis zu zehn, in der Reihenfolge, in der abgeschaltet wird. Je Verbraucher ein **Leistungssensor** (W oder kW), ein **Schalter** (`switch.` oder `input_boolean.`) und optional die **Nennleistung** in kW |
 
 Ohne Batterie-Stufe (andere Wechselrichter) braucht es mindestens einen Verbraucher, sonst täte die Funktion nichts.
