@@ -70,13 +70,13 @@ Die Zeilen darunter zeigen, was am Wechselrichter steht (Batterie-Sollwert, Ziel
 
 Kommt eine befohlene Entladung nicht an — die Batterie (bei SMA: die Einspeisung am Netzzähler) gibt über drei Minuten weniger als die Hälfte des Sollwerts ab und mehr als 0,3 kW zu wenig —, setzt der Optimizer den Befehl neu auf und meldet „Guard 3: Entladung wirkungslos (x statt y kW) — neu aufgesetzt". Das geschieht höchstens zweimal je Viertelstunde und nie, wenn die Batterie ihren Ziel-Ladestand erreicht hat.
 
-**Bezugsspitze.** Die Zeile „Bezugsspitze *Monat*" zeigt den höchsten Viertelstunden-Netzbezug des laufenden Monats (siehe unten). Das ⓘ daneben nennt den Zeitpunkt, die laufende und die letzte abgeschlossene Viertelstunde, die Vormonate und was die Spitze an Netzkosten bedeutet (siehe unten). Orange wird der Wert, wenn die Hochrechnung der laufenden Viertelstunde über der bisherigen Monatsspitze liegt — dann entsteht gerade eine neue.
+**Bezugsspitze.** Die Zeile „Bezugsspitze *Monat*" zeigt den höchsten Viertelstunden-Netzbezug des laufenden Monats (siehe unten). Das ⓘ daneben nennt den Zeitpunkt, die laufende und die letzte abgeschlossene Viertelstunde, die Vormonate und was die Spitze an Netzkosten bedeutet (siehe unten). Orange wird der Wert, wenn die Hochrechnung der laufenden Viertelstunde über der bisherigen Monatsspitze liegt — dann entsteht gerade eine neue. Mit eingeschalteter **Spitzenkappung** steht in der Zeile auch, wenn die Batterie gerade ihre Reserve hält („Batterie hält Reserve" oder „Batterie deckt nur Spitzen") und welche Verbraucher abgeschaltet sind; das ⓘ nennt dazu Reserve und Schwelle (siehe Anleitung „Spitzenkappung").
 
 **Zeitstempel.** Ganz unten stehen die letzten Läufe von Plan, Steuerung, Verbrauchsprofil und, mit PeakShare, dem Abruf der Bedarfsprognose. Rot mit ⚠ heißt: Dieser Teil läuft nicht im erwarteten Takt oder der Plan konnte nicht gerechnet werden; ein Tipp darauf nennt den Grund.
 
 ## Optimierungsplan
 
-Die Karte zeigt den Fahrplan als Diagramm: PV- und Verbrauchsprognose, die geplante Netzleistung, Laden und Entladen der Batterie als Balken, darunter den geplanten Ladestand mit dem Mindest-Ladestand als rote Linie. Je nach Einrichtung kommen der Einspeisepreis, der Bedarf der Energiegemeinschaften, die geplante Heizstab-Leistung und die voraussichtliche Puffertemperatur dazu. Jeder Eintrag der Legende blendet seine Kurve aus und wieder ein.
+Die Karte zeigt den Fahrplan als Diagramm: PV- und Verbrauchsprognose, die geplante Netzleistung, Laden und Entladen der Batterie als Balken, darunter den geplanten Ladestand mit dem Mindest-Ladestand als rote Linie und, mit Spitzenkappung, der Spitzenreserve als orange gestrichelte Linie darüber. Je nach Einrichtung kommen der Einspeisepreis, der Bedarf der Energiegemeinschaften, die geplante Heizstab-Leistung und die voraussichtliche Puffertemperatur dazu. Jeder Eintrag der Legende blendet seine Kurve aus und wieder ein.
 
 - **Plan** wählt den gezeigten Ausschnitt: 24, 36 oder 48 Stunden. Gerechnet wird immer über den vollen Horizont.
 - **Verlauf** legt die Messung dünn und blass daneben: aus, die letzten 12 Stunden oder ab gestern.
@@ -139,7 +139,7 @@ Diese Karte vergleicht den Plan mit einem simulierten **Standardbetrieb**: PV-Ü
 
 ## Bezugsspitze und Netzbezug je Viertelstunde
 
-Ab 2027 richtet sich der Leistungspreis des Netzentgelts nach dem höchsten Viertelstunden-Mittel des Netzbezugs im Monat. Der Optimizer misst diese Größe mit — er steuert nichts danach.
+Ab 2027 richtet sich der Leistungspreis des Netzentgelts nach dem höchsten Viertelstunden-Mittel des Netzbezugs im Monat. Der Optimizer misst diese Größe mit. Steuern lässt sie sich mit der **Spitzenkappung** (siehe Anleitung „Spitzenkappung").
 
 - **Netzbezug Viertelstunde** — mittlerer Bezug der zuletzt **abgeschlossenen** Viertelstunde (:00, :15, :30, :45). Einspeisung zählt nicht und verrechnet sich nicht mit dem Bezug derselben Viertelstunde. Der Wert ist mit dem Smart-Meter-Portal des Netzbetreibers vergleichbar; gemessen wird allerdings am Netzsensor des Wechselrichters, nicht am Zähler.
 - **Bezugsspitze Monat** — die höchste dieser Viertelstunden im laufenden Kalendermonat, mit Zeitpunkt und den Vormonaten. Die Mindestbemessung von 2 kW ist **nicht** eingerechnet: Sie ist eine Regel der Abrechnung, keine Messung.

@@ -941,6 +941,10 @@ _ZAHLENFELDER: dict[str, tuple[str, float, float]] = {
     "discharge_power_kw": ("Batterie-Leistungsgrenze", 0.0, 1000.0),
     # 0 = leer; unter 2 kW klemmt spitzenkappung.grenze_aus_config hoch.
     "spitzenkappung_grenze_kw": ("Grenzwert der Spitzenkappung", 0.0, 20.0),
+    # Prozent der Kapazität; spitzenreserve.reserve_grenzen_pct klemmt die
+    # Mindestreserve zusätzlich unter die maximale.
+    "spitzenkappung_reserve_min_pct": ("Mindestreserve der Spitzenkappung", 0.0, 80.0),
+    "spitzenkappung_reserve_max_pct": ("Maximalreserve der Spitzenkappung", 0.0, 80.0),
 }
 
 
@@ -972,6 +976,14 @@ def _pruefe_verbraucher(liste: Any) -> str | None:
                     f"Verbraucher {i}: {wert} ist kein "
                     + " / ".join(f"{d}." for d in domaenen)
                 )
+        nenn = eintrag.get("nennleistung_kw")
+        if nenn not in (None, ""):
+            try:
+                wert = float(nenn)
+            except (TypeError, ValueError):
+                return f"Verbraucher {i}: ungültige Nennleistung"
+            if isinstance(nenn, bool) or not math.isfinite(wert) or not 0 <= wert <= 50:
+                return f"Verbraucher {i}: Nennleistung außerhalb von 0 bis 50 kW"
     return None
 
 

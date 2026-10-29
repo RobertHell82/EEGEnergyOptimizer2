@@ -111,10 +111,10 @@ const VIERTELSTUNDEN_FEHLEN = "Für diesen Tag gibt es nur die Tagessumme — di
 
 const EINSP_BEDARF_HINWEIS = "„Bei Gemeinschaftsbedarf“ zählt die Einspeisung in Viertelstunden, in denen die Gemeinschaft laut PeakShare-Prognose unterversorgt war, höchstens ihren Restbedarf. Auch bei Überschuss nimmt sie anteilig etwas auf; wie viel, lässt sich ohne ihre Verbrauchs- und Erzeugungsdaten nicht sagen.";
 
-// Spitzenkappung vorerst ausgeblendet: kein Reiter in den Einstellungen.
-// Das Backend (spitzenkappung.py) bleibt, es schaltet nur bei
-// spitzenkappung_enabled — wieder einblenden heißt: true setzen.
-const SPITZENKAPPUNG_SICHTBAR = false;
+// Treiber, deren Batterie die Spitzenkappung über einen Entladedeckel
+// hält (InverterBase.supports_discharge_limit). Alle anderen kappen nur
+// über das Abschalten von Verbrauchern.
+const SPITZENKAPPUNG_BATTERIE_TREIBER = ["huawei_sun2000", "fronius_gen24", "sma_smart_energy"];
 
 // Nur der Startwert, bis _resolveEntityIds die Registry gelesen hat. Der
 // Statussensor steht in beiden Schreibweisen drin — Bestandsinstallationen
@@ -436,6 +436,7 @@ const DIALOG_CONTENT = {
   dashboard: { file: "dashboard.html" },
   wallbox: { file: "wallbox.html" },
   einstellungen: { file: "einstellungen.html" },
+  spitzenkappung: { file: "spitzenkappung.html" },
 };
 
 // Link auf einen Guide-Dialog — dieselbe Form wie die „Anleitung: …"-Links
@@ -492,6 +493,10 @@ const euroAus = (ct) => Math.round(Number(ct || 0) * 1000) / 100000;
 // Ein Zahlenfeld lesen. Cent-Felder tragen data-unit="ct" und werden hier
 // zurueckgerechnet — so kann kein einzelnes Feld die Umrechnung vergessen.
 const leseZahl = (el) => {
+  // data-leer="vorgabe": ein geleertes Feld bleibt leer und das Backend nimmt
+  // die Vorgabe. Sonst würde aus einer gelöschten Maximalreserve eine 0 —
+  // und 0 schaltet die Reserve ab.
+  if (el.dataset?.leer === "vorgabe" && String(el.value ?? "").trim() === "") return "";
   const roh = parseFloat(el.value) || 0;
   return el.dataset?.unit === "ct" ? euroAus(roh) : roh;
 };
@@ -3238,10 +3243,23 @@ class EegOptimizerPanel extends HTMLElement {
       const g = Number(d.spitzenkappung_grenze_kw);
       if (!(g >= 2 && g <= 20)) fehlt.push("Grenzwert der Spitzenkappung (2 bis 20 kW)");
       const liste = Array.isArray(d.spitzenkappung_verbraucher) ? d.spitzenkappung_verbraucher : [];
-      if (liste.length === 0) fehlt.push("mindestens ein Verbraucher für die Spitzenkappung");
+      // Ohne Batterie-Stufe (Treiber ohne Entladedeckel) kappt sie nur über
+      // Verbraucher — ohne einen täte sie gar nichts.
+      if (liste.length === 0 && !this._kappungMitBatterie(d)) {
+        fehlt.push("mindestens ein Verbraucher für die Spitzenkappung (dieser Wechselrichter kappt nicht über die Batterie)");
+      }
+      const rMin = this._optZahl(d.spitzenkappung_reserve_min_pct);
+      const rMax = this._optZahl(d.spitzenkappung_reserve_max_pct);
+      if (rMin != null && !(rMin >= 0 && rMin <= 80)) fehlt.push("Mindestreserve der Spitzenkappung (0 bis 80 %)");
+      if (rMax != null && !(rMax >= 0 && rMax <= 80)) fehlt.push("Maximalreserve der Spitzenkappung (0 bis 80 %)");
+      if (rMin != null && rMax != null && rMin > rMax) fehlt.push("Mindestreserve der Spitzenkappung über der Maximalreserve");
       liste.forEach((v, i) => {
         if (!String(v.leistung_entity || "").trim() || !String(v.schalter_entity || "").trim()) {
           fehlt.push(`Leistungssensor und Schalter für Verbraucher ${i + 1} (Spitzenkappung)`);
+        }
+        const nenn = this._optZahl(v.nennleistung_kw);
+        if (nenn != null && !(nenn >= 0 && nenn <= 50)) {
+          fehlt.push(`Nennleistung von Verbraucher ${i + 1} (0 bis 50 kW, Spitzenkappung)`);
         }
       });
     }
@@ -4325,7 +4343,10 @@ class EegOptimizerPanel extends HTMLElement {
       imBild("grid") ? `<path d="${histPath("grid", y)}" fill="none" stroke="#43a047" stroke-width="1.2" stroke-opacity="0.55"/>` : "",
       (imBild("bat_laden") || imBild("bat_entladen")) ? `<path d="${histPath("bat", y)}" fill="none" stroke="#1e88e5" stroke-width="1.2" stroke-opacity="0.55"/>` : "",
     ].join("");
-    const minSoc = Number(d.min_soc_pct ?? 0);
+    // Mit Spitzenkappung rechnet der Plan mit Mindest-Ladestand + Reserve;
+    // als rote Linie steht der eingestellte Mindestwert, die Reserve kommt
+    // darüber als eigene Kurve (sie fällt über die Nacht).
+    const minSoc = Number(d.min_soc_basis_pct ?? d.min_soc_pct ?? 0);
     // Kopfzeile des Ladestandsfeldes. Am Handy steht der Mindestwert hier mit
     // drin — als Beschriftung im Bild lag er quer ueber der Kurve.
     const socTitel = (hist ? "Ladestand (%) — Plan und Ist" : "Geplanter Ladestand (%)")
@@ -4343,6 +4364,35 @@ class EegOptimizerPanel extends HTMLElement {
       socGrid += `<line x1="${padL}" y1="${ys(minSoc).toFixed(1)}" x2="${W - padR}" y2="${ys(minSoc).toFixed(1)}" stroke="#e53935" stroke-width="1" stroke-dasharray="4 3" stroke-opacity="0.8"/>`;
       if (!schmal) {
         socGrid += `<text x="${(W - padR - 2).toFixed(1)}" y="${(ys(minSoc) - 4).toFixed(1)}" text-anchor="end" font-size="${fsKlein}" fill="#e53935">Mindest-Ladestand ${fmtDe(minSoc, 0)} %</text>`;
+      }
+    }
+    // Spitzenreserve (spitzenreserve.py): Mindest-Ladestand + Reserve je
+    // Viertelstunde, als Stufenlinie. Unter ihr deckt die Batterie nur noch,
+    // was über der Grenze der Spitzenkappung liegt.
+    const reserveKurve = Array.isArray(d.spitzenreserve?.kurve) ? d.spitzenreserve.kurve : [];
+    if (reserveKurve.length && reserveKurve.some(([, pct]) => Number(pct) > 0)) {
+      // Nur der sichtbare Ausschnitt: socGrid liegt außerhalb des Clip-Pfads,
+      // beim Zoomen liefe die Linie sonst über die Achsenbeschriftung.
+      const viertel = 15 * 60 * 1000;
+      const von = Math.max(slotT[0], vt0);
+      const bis = Math.min(slotT[slotT.length - 1] + viertel, vt0 + vspan);
+      let pfad = "";
+      let hoechstY = null;
+      reserveKurve.forEach(([iso, pct]) => {
+        const t = new Date(iso).getTime();
+        if (!Number.isFinite(t)) return;
+        const a = Math.max(t, von);
+        const e = Math.min(t + viertel, bis);
+        if (e <= a) return;
+        const yy = ys(Math.min(100, minSoc + Number(pct || 0)));
+        if (hoechstY == null || yy < hoechstY) hoechstY = yy;
+        pfad += `${pfad ? "L" : "M"}${x(a).toFixed(1)},${yy.toFixed(1)}L${x(e).toFixed(1)},${yy.toFixed(1)}`;
+      });
+      if (pfad) {
+        socGrid += `<path d="${pfad}" fill="none" stroke="#fb8c00" stroke-width="1.2" stroke-dasharray="2 2" stroke-opacity="0.9"/>`;
+        if (!schmal && hoechstY != null) {
+          socGrid += `<text x="${(padL + 4).toFixed(1)}" y="${(hoechstY - 4).toFixed(1)}" font-size="${fsKlein}" fill="#fb8c00">Spitzenreserve</text>`;
+        }
       }
     }
     // Maximaltemperatur des Puffers als Obergrenze der Temperaturkurve —
@@ -8957,11 +9007,48 @@ class EegOptimizerPanel extends HTMLElement {
     liste[idx][el.dataset.key] = String(el.value || "").trim();
   }
 
+  _optZahl(v) {
+    // Leeres Feld = nicht gesetzt (Vorgabe greift), sonst die Zahl.
+    if (v === undefined || v === null || String(v).trim() === "") return null;
+    const n = Number(v);
+    return Number.isFinite(n) ? n : NaN;
+  }
+
+  _kappungMitBatterie(d) {
+    return SPITZENKAPPUNG_BATTERIE_TREIBER.includes(d?.inverter_type || this._config?.inverter_type);
+  }
+
+  _kappungBatterieZustand(b) {
+    // Was die Batterie-Stufe gerade tut — aus Plan und Executor (sensor.py
+    // _kappung_batterie). Leer, solange noch kein Lauf da ist.
+    if (!b) return "";
+    const pct = (v) => fmtDe(Number(v), 0);
+    const teile = [];
+    if (b.statistik === false) {
+      teile.push(`Die Statistik reicht noch nicht (${b.tage ?? 0} von 7 vergleichbaren Tagen) — bis dahin gilt die Mindestreserve.`);
+    }
+    if (b.reserve_pct != null && b.schwelle_pct != null) {
+      teile.push(`Reserve jetzt <strong>${pct(b.reserve_pct)} %</strong> — unter <strong>${pct(b.schwelle_pct)} %</strong> Ladestand deckt die Batterie nur noch, was über der Grenze liegt.`);
+    } else if (b.plan_pct != null) {
+      teile.push(`Der Fahrplan hält <strong>${pct(b.plan_wirksam_pct ?? b.plan_pct)} %</strong> für Spitzen zurück.`);
+    }
+    if (b.aktiv && b.deckel_kw != null) {
+      teile.push(b.deckel_kw > 0
+        ? `Gerade aktiv: Die Batterie gibt höchstens <strong>${fmtDe(Number(b.deckel_kw), 2)} kW</strong> ab.`
+        : "Gerade aktiv: Die Batterie hält ihre Reserve, die Grundlast kommt aus dem Netz.");
+    } else if (b.aktiv) {
+      teile.push("Gerade aktiv, aber der Entladedeckel ist noch nicht gesetzt — wird wiederholt.");
+    }
+    return teile.join(" ");
+  }
+
   _spitzenkappungFields(d, prefix) {
-    // Verbraucher abschalten, bevor die laufende Viertelstunde die
-    // Bezugsspitze hebt (spitzenkappung.py). Geschaltet wird switch.* und
+    // Zwei Stufen (spitzenreserve.py, spitzenkappung.py): Die Batterie hält
+    // eine Reserve und deckt darin nur, was über der Grenze liegt; reicht das
+    // nicht, werden Verbraucher abgeschaltet. Geschaltet wird switch.* und
     // input_boolean.*, die Leistung kommt aus einem Sensor.
     const esc = (v) => this._escapeHtml(v ?? "");
+    const mitBatterie = this._kappungMitBatterie(d);
     const liste = Array.isArray(d.spitzenkappung_verbraucher) ? d.spitzenkappung_verbraucher : [];
     const states = this._hass?.states || {};
     const schalter = Object.keys(states)
@@ -8974,11 +9061,13 @@ class EegOptimizerPanel extends HTMLElement {
     // Was gerade abgeschaltet ist — aus den Attributen der Bezugsspitze.
     const kappung = this._readState(this._entityIds?.bezugsspitze_monat)?.attributes?.kappung;
     const ab = kappung?.abgeschaltet || [];
+    const batterieText = this._kappungBatterieZustand(kappung?.batterie);
     const zustand = !kappung ? "" : `
       <div class="help-text" style="margin-bottom:12px">
         ${kappung.schwelle_kw != null
-          ? `Geschaltet wird ab einer Hochrechnung von <strong>${fmtDe(Number(kappung.schwelle_kw), 2)} kW</strong>. `
+          ? `Gekappt wird über <strong>${fmtDe(Number(kappung.schwelle_kw), 2)} kW</strong> im Viertelstundenmittel. `
           : "Gerade nicht aktiv — die Optimierung ist aus oder pausiert. "}
+        ${batterieText ? `${batterieText} ` : ""}
         ${ab.length ? `Abgeschaltet: ${ab.map(x => `<strong>${esc(x.name || x.entity)}</strong>`).join(", ")}.` : "Abgeschaltet ist nichts."}
         ${kappung.fehler ? `<br><span style="color:var(--error-color,#db4437)">Letzter Schaltfehler: ${esc(kappung.fehler)}</span>` : ""}
       </div>`;
@@ -8997,6 +9086,10 @@ class EegOptimizerPanel extends HTMLElement {
           <label>Schalter *</label>
           <input type="text" list="eeg-kappung-schalter" data-verbraucher="${i}" data-key="schalter_entity" value="${esc(v.schalter_entity)}" placeholder="switch.tesla_charge">
         </div>
+        <div class="field-group" style="flex:1;min-width:110px;margin:0">
+          <label>Nennleistung (kW)</label>
+          <input type="number" data-verbraucher="${i}" data-key="nennleistung_kw" value="${esc(v.nennleistung_kw)}" min="0" max="50" step="0.1" placeholder="optional">
+        </div>
         <div style="display:flex;gap:4px">
           <button class="btn-secondary" data-action="verbraucher-hoch" data-index="${i}" title="Früher abschalten" ${i === 0 ? "disabled" : ""} style="padding:8px 10px">
             <ha-icon icon="mdi:arrow-up" style="--mdc-icon-size:18px"></ha-icon>
@@ -9013,17 +9106,32 @@ class EegOptimizerPanel extends HTMLElement {
       feature: "spitzenkappung_enabled",
       icon: "mdi:transmission-tower-import",
       titel: "Bezugsspitzen kappen",
-      beschreibung: "Ab 2027 kostet der höchste Viertelstunden-Bezug des Monats extra. Droht die laufende Viertelstunde über den Grenzwert und über die bisherige Monatsspitze zu steigen, schaltet die Integration die Verbraucher unten der Reihe nach ab — und wieder ein, sobald sie eine volle Viertelstunde lang Platz hätten. Gemessen wird am Netz, also nach der Batterie: Was sie deckt, zählt gar nicht erst. Ist die Optimierung aus oder pausiert, wird alles wieder eingeschaltet.",
+      beschreibung: mitBatterie
+        ? "Ab 2027 kostet der höchste Viertelstunden-Bezug des Monats extra. Solange die Batterie genug hat, deckt sie Spitzen ohnehin. Wird sie knapp, hält sie eine Reserve zurück: Darin gibt sie nur noch ab, was über dem Grenzwert liegt, die Grundlast kommt aus dem Netz. Wie groß die Reserve ist, rechnet die Integration aus dem Verbrauch der letzten vier Wochen. Reicht die Batterie nicht, schaltet sie die Verbraucher unten der Reihe nach ab. Ist die Optimierung aus oder pausiert, greift nichts davon."
+        : "Ab 2027 kostet der höchste Viertelstunden-Bezug des Monats extra. Droht die laufende Viertelstunde über den Grenzwert und über die bisherige Monatsspitze zu steigen, schaltet die Integration die Verbraucher unten der Reihe nach ab — und wieder ein, sobald sie eine volle Viertelstunde lang Platz hätten. Gemessen wird am Netz, also nach der Batterie: Was sie deckt, zählt gar nicht erst. Über die Batterie kappt dieser Wechselrichter nicht (nur Huawei, Fronius und SMA). Ist die Optimierung aus oder pausiert, wird alles wieder eingeschaltet.",
       params: `
         ${zustand}
         <div class="field-group">
           <label>Grenzwert (kW) *</label>
           <input type="number" data-field="${prefix}spitzenkappung_grenze_kw" value="${d.spitzenkappung_grenze_kw ?? 5}" min="2" max="20" step="0.1">
-          <div class="help-text">Bis hierher darf eine Viertelstunde im Mittel gehen. Liegt die Monatsspitze schon höher, gilt sie — bis dorthin kostet es nichts mehr. Unter 2 kW geht es nicht: So viel wird ohnehin mindestens verrechnet. Ein Verbraucher kommt nur zurück, wenn er neben dem übrigen Haus unter die Schwelle passt — ein 11-kW-Auto unter 5 kW also nie.</div>
+          <div class="help-text">Bis hierher darf eine Viertelstunde im Mittel gehen — darunter wird nichts gekappt. Wer ohnehin regelmäßig so viel braucht (etwa ein Auto, das mit 5 kW lädt), trägt diesen Wert ein. Liegt die Monatsspitze schon höher, gilt sie — bis dorthin kostet es nichts mehr. Unter 2 kW geht es nicht: So viel wird ohnehin mindestens verrechnet.</div>
         </div>
+        ${mitBatterie ? `
+        <div style="display:flex;gap:12px;flex-wrap:wrap">
+          <div class="field-group" style="flex:1;min-width:160px">
+            <label>Mindestreserve (%)</label>
+            <input type="number" data-field="${prefix}spitzenkappung_reserve_min_pct" data-leer="vorgabe" value="${d.spitzenkappung_reserve_min_pct ?? 0}" min="0" max="80" step="1">
+            <div class="help-text">Hält die Batterie immer für Spitzen zurück, auch wenn die Statistik weniger sagt. 0 = nur, was die Statistik verlangt.</div>
+          </div>
+          <div class="field-group" style="flex:1;min-width:160px">
+            <label>Maximalreserve (%)</label>
+            <input type="number" data-field="${prefix}spitzenkappung_reserve_max_pct" data-leer="vorgabe" value="${d.spitzenkappung_reserve_max_pct ?? 30}" min="0" max="80" step="1">
+            <div class="help-text">Mehr hält sie nie zurück, egal was die Statistik sagt. 0 schaltet die Reserve ab, leer heißt 30. Beide Werte liegen über dem Mindest-Ladestand.</div>
+          </div>
+        </div>` : ""}
         <datalist id="eeg-kappung-leistung">${leistung.map(e => `<option value="${esc(e)}"></option>`).join("")}</datalist>
         <datalist id="eeg-kappung-schalter">${schalter.map(e => `<option value="${esc(e)}"></option>`).join("")}</datalist>
-        <div class="help-text" style="margin-bottom:4px">Verbraucher in der Reihenfolge, in der abgeschaltet wird. Der Leistungssensor zeigt, ob der Verbraucher gerade läuft und wie viel das Abschalten bringt — geschaltet wird nur, was läuft. Was jemand von Hand wieder einschaltet, bleibt an, bis die nächste Spitze droht.</div>
+        <div class="help-text" style="margin-bottom:4px">Verbraucher in der Reihenfolge, in der abgeschaltet wird${mitBatterie ? " — erst, wenn die Batterie die Spitze nicht mehr deckt" : ""}. Der Leistungssensor zeigt, ob der Verbraucher gerade läuft und wie viel das Abschalten bringt — geschaltet wird nur, was läuft. Wieder eingeschaltet wird er, wenn er neben dem übrigen Haus unter die Grenze passt; die Nennleistung (optional) sagt, wie viel er dann zieht, falls der Sensor beim Abschalten weniger zeigte. Muss er kurz danach wieder aus, bleibt er jedes Mal doppelt so lange aus (bis 60 min). Was jemand von Hand wieder einschaltet, bleibt an, bis die nächste Spitze droht.</div>
         ${zeilen}
         <div style="padding-top:10px;border-top:1px solid var(--divider-color,#e0e0e0)">
           <button class="btn-secondary" data-action="add-verbraucher" ${liste.length >= 10 ? "disabled" : ""}>
@@ -9349,7 +9457,7 @@ class EegOptimizerPanel extends HTMLElement {
     const d = this._settingsData;
     const isExpert = d.expert_mode;
 
-    // Fünf Tabs (Verbraucher nur im Expertenmodus): „Tarife", „Anlage" und
+    // Sechs Tabs (Verbraucher nur im Expertenmodus): „Tarife", „Anlage" und
     // „Prognose" entsprechen den Parameter-Schritten des Wizards (gleiche
     // Feld-Renderer), „System" trägt
     // alles Übrige. Aus Vorversionen gemerkte Tab-Namen werden auf die neuen
@@ -9367,8 +9475,7 @@ class EegOptimizerPanel extends HTMLElement {
     let activeTab = TAB_ALIAS[this._settingsTab] || this._settingsTab || "tarife";
     // Den Expertenmodus abzuschalten, während man im Verbraucher-Tab steht,
     // ließe sonst einen Inhalt ohne Reiter stehen.
-    if ((activeTab === "verbraucher" || activeTab === "spitzenkappung") && !isExpert) activeTab = "tarife";
-    if (activeTab === "spitzenkappung" && !SPITZENKAPPUNG_SICHTBAR) activeTab = "tarife";
+    if (activeTab === "verbraucher" && !isExpert) activeTab = "tarife";
 
     const tabBar = `
       <div class="settings-tabs" role="tablist">
@@ -9388,12 +9495,11 @@ class EegOptimizerPanel extends HTMLElement {
         <button class="settings-tab ${activeTab === "verbraucher" ? "active" : ""}" data-action="set-settings-tab" data-tab="verbraucher" role="tab">
           <ha-icon icon="mdi:power-plug-outline" style="--mdc-icon-size:18px"></ha-icon>
           <span>Verbraucher</span>
-        </button>
-        ${SPITZENKAPPUNG_SICHTBAR ? `
+        </button>` : ""}
         <button class="settings-tab ${activeTab === "spitzenkappung" ? "active" : ""}" data-action="set-settings-tab" data-tab="spitzenkappung" role="tab">
           <ha-icon icon="mdi:transmission-tower-import" style="--mdc-icon-size:18px"></ha-icon>
           <span>Spitzenkappung</span>
-        </button>` : ""}` : ""}
+        </button>
         <button class="settings-tab ${activeTab === "system" ? "active" : ""}" data-action="set-settings-tab" data-tab="system" role="tab">
           <ha-icon icon="mdi:tune" style="--mdc-icon-size:18px"></ha-icon>
           <span>System</span>
@@ -9449,10 +9555,11 @@ class EegOptimizerPanel extends HTMLElement {
         ${this._wallboxFields(d, "settings_")}
       </div>`;
 
-    // --- Tab: Spitzenkappung (Beta, nur Expertenmodus) ---
+    // --- Tab: Spitzenkappung ---
     const spitzenkappungTab = `
       <div class="card" style="margin-bottom:16px">
-        <h3 class="settings-karte-titel" style="margin:0 0 16px">Spitzenkappung${BETA_BADGE}</h3>
+        <h3 class="settings-karte-titel" style="margin:0 0 4px">Spitzenkappung</h3>
+        <div class="help-text" style="margin-bottom:12px">${anleitungLink("spitzenkappung", "Spitzenkappung")}</div>
         ${this._spitzenkappungFields(d, "settings_")}
       </div>`;
 
@@ -10246,15 +10353,23 @@ class EegOptimizerPanel extends HTMLElement {
     }
     details.push(`<p style="color:var(--secondary-text-color)">Ab 2027 richtet sich der Leistungspreis des Netzentgelts nach diesem Wert: dem höchsten Viertelstunden-Mittel des Netzbezugs im Monat.</p>`);
 
-    // Spitzenkappung (Beta): was sie gerade abgeschaltet hat, steht in der
-    // Zeile selbst — wer das Auto nicht laden sieht, soll den Grund finden.
+    // Spitzenkappung: was sie gerade abgeschaltet hat, steht in der Zeile
+    // selbst — wer das Auto nicht laden sieht, soll den Grund finden. Hält
+    // die Batterie gerade ihre Reserve, steht das ebenfalls dort, sonst
+    // wundert sich jemand über Netzbezug bei halbvoller Batterie.
     const kappung = a.kappung;
     const gekappt = (kappung?.abgeschaltet || []).map(x => this._escapeHtml(x.name || x.entity));
+    const kb = kappung?.batterie;
     if (kappung) {
-      details.push(`<p>Spitzenkappung${kappung.schwelle_kw != null ? ` schaltet ab ${fmtDe(Number(kappung.schwelle_kw), 2)}&nbsp;kW Hochrechnung` : " ist gerade nicht aktiv (Optimierung aus oder pausiert)"}${gekappt.length ? ` — abgeschaltet: ${gekappt.join(", ")}` : ""}.</p>`);
+      details.push(`<p>Spitzenkappung${kappung.schwelle_kw != null ? ` kappt über ${fmtDe(Number(kappung.schwelle_kw), 2)}&nbsp;kW im Viertelstundenmittel` : " ist gerade nicht aktiv (Optimierung aus oder pausiert)"}${gekappt.length ? ` — abgeschaltet: ${gekappt.join(", ")}` : ""}.</p>`);
+      const batterieText = this._kappungBatterieZustand(kb);
+      if (batterieText) details.push(`<p>${batterieText}</p>`);
     }
-    const gekapptText = gekappt.length
-      ? `<span style="color:var(--warning-color,#ff9800);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0">· ${gekappt.join(", ")} aus</span>`
+    const teile = [];
+    if (kb?.aktiv && kb.deckel_kw != null) teile.push(kb.deckel_kw > 0 ? `Batterie deckt nur Spitzen` : `Batterie hält Reserve`);
+    if (gekappt.length) teile.push(`${gekappt.join(", ")} aus`);
+    const gekapptText = teile.length
+      ? `<span style="color:var(--warning-color,#ff9800);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0">· ${teile.join(" · ")}</span>`
       : "";
 
     const entity = this._entityIds?.bezugsspitze_monat;

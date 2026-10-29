@@ -25,6 +25,10 @@
 <td>Die steuernde Quelle der PV-Prognose mit ihren Sensoren, der Schalter <strong>Prognosevergleich</strong> und, wenn die eigene Berechnung steuert oder mitläuft, die Flächentabelle der Anlage. Entspricht dem Assistentenschritt „PV-Prognose“</td>
 </tr>
 <tr>
+<td><strong>Spitzenkappung</strong></td>
+<td>Bezugsspitzen kappen: Grenzwert, Mindest- und Maximalreserve der Batterie (Huawei, Fronius, SMA) und die Verbraucher, die abgeschaltet werden dürfen (siehe Anleitung „Spitzenkappung“)</td>
+</tr>
+<tr>
 <td><strong>Verbraucher</strong></td>
 <td>Karten <strong>Heizstab</strong> (Fronius Ohmpilot, siehe Anleitung „Heizstab“) und <strong>Wallbox</strong> (siehe Anleitung „Wallbox“). Der Tab erscheint <strong>nur im Expertenmodus</strong> und kommt im Assistenten nicht vor</td>
 </tr>
@@ -59,6 +63,7 @@
 <li><strong>Tarife:</strong> Standardvergütung (bei „Fester Wert“), Arbeitspreis, Netzbereich (wenn Sommer-Nieder- oder Winter-Nieder-Arbeitspreis eingeschaltet ist), das Nachtfenster, sobald ein Nachtsatz eingetragen ist (Standardvergütung und je Gemeinschaft), die Anteile der Gemeinschaften (zusammen höchstens 100 %), im Quotenmodus die Tages-Abnahmequote und mit eingeschaltetem <em>Batterie aus dem Netz laden</em> ein Bezugspreis, der billiger sein kann als die Nacht (Spot-Tarif, Bezugspreis einer Gemeinschaft oder zeitvariable Netzentgelte), bei Spot- oder Gemeinschaftsbezug außerdem der Netzbereich</li>
 <li><strong>Prognose:</strong> die Sensoren einer fremden Prognosequelle, gültige PV-Flächen</li>
 <li><strong>Verbraucher:</strong> Adresse, Leistung und Maximaltemperatur des Heizstabs, Adresse der Ambibox</li>
+<li><strong>Spitzenkappung</strong> (wenn eingeschaltet): Grenzwert zwischen 2 und 20 kW, Mindest- und Maximalreserve zwischen 0 und 80 % (die Mindestreserve nicht über der maximalen), je Verbraucher Leistungssensor und Schalter, und ohne Batterie-Stufe mindestens ein Verbraucher</li>
 </ul>
 <p>Die meisten Änderungen wirken <strong>sofort</strong>: Der Fahrplan wird gleich neu gerechnet, die Steuerung behält ihren Zustand. Einen geänderten Rückblick des Verbrauchsprofils rechnet die Integration im Hintergrund neu.</p>
 <p>Bei einigen Änderungen <strong>lädt die Integration neu</strong>, weil Treiber und Sensoren mit der neuen Anbindung neu entstehen müssen. Das dauert einige Sekunden:</p>

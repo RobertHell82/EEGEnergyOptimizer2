@@ -184,6 +184,28 @@ class InverterBase(ABC):
         """
         return self._fehler("Netzladen nicht unterstützt")
 
+    @property
+    def supports_discharge_limit(self) -> bool:
+        """Kann der Treiber die Entladeleistung im Automatikbetrieb deckeln?
+
+        Grundlage der Spitzenkappung mit der Batterie (schedule_executor.py):
+        Unterhalb der Spitzenreserve deckt die Batterie nur noch den Teil des
+        Verbrauchs über der Grenze, den Rest das Netz. Default False — dann
+        schaltet die Spitzenkappung nur Verbraucher ab.
+        """
+        return False
+
+    async def async_set_discharge_limit(self, power_kw: float | None) -> bool:
+        """Entladeleistung im Automatikbetrieb auf ``power_kw`` deckeln.
+
+        0 = die Batterie gibt nichts ab (hält ihre Reserve), ``None`` = Deckel
+        aufheben. Das Laden bleibt davon unberührt, ebenso ein gesetztes
+        Ladelimit — beide gelten nebeneinander. Eine erzwungene Entladung
+        oder Netzladung setzt der Executor erst, NACHDEM er den Deckel
+        aufgehoben hat; ``async_stop_forcible()`` hebt ihn ebenfalls auf.
+        """
+        return self._fehler("Entladedeckel nicht unterstützt")
+
     async def async_get_control_values(self) -> list[dict]:
         """Stellgrößen, die NICHT an einer HA-Entität hängen.
 

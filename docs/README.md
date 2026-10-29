@@ -54,6 +54,10 @@ Was die Felder im Einrichtungsassistenten und in den Einstellungen bedeuten:
 
 - **[Dashboard & Bedienung](guides/dashboard.md)** — Statuskarte, Modus und Pause, „Was deine PV bringt“, Einspeisung, Bezug, Bezugsspitze, Karten ausblenden, was bei Störungen zu tun ist
 
+## ⚡ Spitzenkappung (optional)
+
+- **[Spitzenkappung](guides/spitzenkappung.md)** — die Bezugsspitze des Monats niedrig halten: die Batterie hält eine aus dem Verbrauch berechnete Reserve für Spitzen (Huawei, Fronius, SMA), reicht sie nicht, werden Verbraucher abgeschaltet
+
 ## 🔥 Heizstab (optional)
 
 Wer einen Warmwasserpuffer hat, kann PV-Strom als Wärme speichern — der Fahrplan wägt ab, ob eine Kilowattstunde als Wärme oder als Einspeisung mehr bringt:

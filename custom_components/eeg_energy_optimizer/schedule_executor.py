@@ -16,6 +16,14 @@ Entscheiden und Setzen sind strikt getrennt:
 Gesteuert wird nur ein Treiber mit ``supports_schedule_control=True``
 (derzeit alle sechs). Ein Treiber ohne das Flag rechnet und zeigt nur an.
 
+Spitzenkappung (spitzenreserve.py): Nach jedem Lauf, der den
+Automatikbetrieb oder ein Ladelimit hinterlässt, prüft
+``_spitzenkappung_schritt``, ob der Ladestand in der Spitzenreserve liegt.
+Dort deckelt er die Entladeleistung auf den Teil des Verbrauchs über der
+Grenze — 0 heißt, die Batterie hält die Reserve, und das Haus bezieht seine
+Grundlast aus dem Netz. Vor einer erzwungenen Entladung oder Netzladung wird
+der Deckel aufgehoben, jede Freigabe hebt ihn ebenfalls auf.
+
 Heizstab (heizstab/): eine zweite Senke neben der Batterie. Nach jedem
 Guard-Lauf bestimmt ``_heizstab_schritt`` den Sollwert des Heizstabs aus der
 gemessenen Einspeisung — klebt sie an der Einspeisegrenze, nimmt der
@@ -30,7 +38,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from .const import (
@@ -79,7 +87,14 @@ from .power_readings import (
     compute_house_load_kw,
     compute_pv_now_kw,
 )
-from .schedule import DEFAULT_AC_LIMIT_KW, _now_local, netzladen_netzgrenze_kw, slot_for
+from .schedule import (
+    DEFAULT_AC_LIMIT_KW,
+    _now_local,
+    netzladen_netzgrenze_kw,
+    slot_for,
+    spitzenkappung_batterie_aktiv,
+)
+from .spitzenreserve import entladedeckel_kw, reserve_zu
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -344,6 +359,19 @@ class ScheduleExecutor:
         # sich ``_written_target_soc`` mit der Entladung — es läuft nur eins).
         self._written_grid_charge_kw: float | None = None
 
+        # Spitzenkappung: zuletzt geschriebener Entladedeckel (None = keiner
+        # von uns). ``_entladedeckel_offen`` heißt „ob einer steht, ist
+        # unbekannt" — nach dem Start mit eingeschalteter Funktion: Ein
+        # Huawei behält die Number-Entität über einen Absturz hinweg, und die
+        # erste Freigabe muss sie dann zurücksetzen.
+        self._written_entladedeckel_kw: float | None = None
+        self._entladedeckel_offen = spitzenkappung_batterie_aktiv(config, inverter)
+        self._kappung_aktiv = False
+        self._deckel_fehlversuche = 0
+        self._deckel_warten = 0
+        # Für Status und Panel: was die Spitzenkappung in diesem Lauf sah.
+        self.spitzenkappung: dict[str, Any] | None = None
+
         # Fahrplan-Frische (Failsafe).
         self._plan_seen_at: datetime | None = None
         self._failsafe_released = False
@@ -440,6 +468,8 @@ class ScheduleExecutor:
             or self._release_pending
             or self._start_release_pending
             or self._display_release_pending
+            or self._written_entladedeckel_kw is not None
+            or self._entladedeckel_offen
         )
 
     def update_config(self, config: dict) -> None:
@@ -597,6 +627,18 @@ class ScheduleExecutor:
         if not self._supported:
             return True
         ok = await self._inverter.async_stop_forcible()
+        # Fronius und SMA vergessen den Deckel beim Stopp, Huawei nicht (die
+        # Number-Entität bleibt). Also danach eigens aufheben. Scheitert das,
+        # bleibt ``_entladedeckel_offen`` stehen — Aus, Freigabe und der
+        # nächste Schritt versuchen es gebremst erneut. Die Freigabe selbst
+        # gilt trotzdem: Ein Stopp, der durchging, wird nicht wiederholt.
+        self._deckel_nach_stopp(ok)
+        # Ungebremst: Die Freigabe ist auch der Weg beim Entladen der
+        # Integration — eine Wartezeit aus einem früheren Fehlschlag darf
+        # einen Huawei-Deckel dort nicht über das Entladen retten.
+        await self._entladedeckel_aufheben(bremse=False)
+        self._kappung_aktiv = False
+        self.spitzenkappung = None
         self._written_charge_limit_kw = None
         self._written_discharge_kw = None
         self._written_grid_charge_kw = None
@@ -762,6 +804,17 @@ class ScheduleExecutor:
                         "Executor: Modus 'Aus' — Steuerwerte zurückgenommen, "
                         "der Wechselrichter läuft im Automatikmodus"
                     )
+            elif (
+                self._written_entladedeckel_kw is not None or self._entladedeckel_offen
+            ) and (
+                (now - self._created_at).total_seconds() >= STARTUP_GRACE_SECONDS
+                and getattr(self._inverter, "is_available", False)
+            ):
+                # Nur der Deckel der Spitzenkappung steht noch aus: ihn
+                # aufheben (gebremst), nicht jedes Mal den ganzen Stopp
+                # wiederholen. Erst nach der Startphase — vorher sind die
+                # Huawei-Entitäten womöglich noch nicht geladen.
+                await self._entladedeckel_aufheben()
             # Nachgeholte Freigabe nach einem Neustart: ein Limit aus der
             # Vorsession darf nicht stehenbleiben, nur weil wir gerade nicht
             # steuern — es käme sonst nie zurück. Erst nach der Startphase,
@@ -981,6 +1034,16 @@ class ScheduleExecutor:
             self.last_status = "Not-Aus aktiv — Entladung bis zum Slotwechsel gesperrt"
             return
 
+        if action.kind in ("grid_charge", "discharge"):
+            # Eine erzwungene Entladung oder Netzladung liefe gegen den
+            # Deckel (Huawei: Number-Entität „Maximale Entladeleistung").
+            # Scheitert das Aufheben, wird trotzdem befohlen: Bei Fronius und
+            # SMA ersetzt der Befehl den Deckel ohnehin, bei Huawei bleibt die
+            # Entladung schlimmstenfalls wirkungslos (Guard 3 meldet es) —
+            # sie zu sperren, solange eine Entität klemmt, wäre schlimmer.
+            self._kappung_aktiv = False
+            self.spitzenkappung = None
+            await self._entladedeckel_aufheben()
         if action.kind == "release":
             await self._apply_release(action.reason or "Normalbetrieb")
         elif action.kind == "charge_limit":
@@ -989,6 +1052,13 @@ class ScheduleExecutor:
             await self._apply_grid_charge(action)
         else:
             await self._apply_discharge(action)
+        if action.kind in ("release", "charge_limit") and self._active_kind in (
+            "release", "charge_limit"
+        ):
+            # Nur, wenn die Absicht auch angekommen ist: Scheiterte etwa der
+            # Stopp einer Entladung, läuft sie noch, und ein Deckel
+            # daneben würde vom späteren Stopp still mitgenommen.
+            await self._spitzenkappung_schritt(schedule_state, now)
 
     def status(self) -> dict[str, Any]:
         """Zustand für Panel, Statussensor und WebSocket."""
@@ -1025,7 +1095,236 @@ class ScheduleExecutor:
             "wirkung_neuversuche": self._wirkung_neuversuche,
             "wirkung_wirkungslos": self._wirkung_wirkungslos,
             "heizstab": None if self._heizstab is None else self._heizstab.status(),
+            "written_entladedeckel_kw": self._written_entladedeckel_kw,
+            "spitzenkappung": self.spitzenkappung,
         }
+
+    # ------------------------------------------------------------------
+    # Spitzenkappung — Entladedeckel in der Reserve
+    # ------------------------------------------------------------------
+    def _deckel_nach_stopp(self, gestoppt: bool) -> None:
+        """Nach einem Stopp ist ein geschriebener Deckel ein unbekannter.
+
+        Fronius und SMA vergessen ihn beim Stopp, Huawei behält ihn. Der
+        Executor weiß also nicht mehr, was steht — ``_entladedeckel_offen``
+        heißt: beim nächsten Schritt neu schreiben oder aufheben. Ohne das
+        hielte er „0 ist geschrieben" fest, während Fronius längst wieder
+        frei entlädt, und schriebe ihn im Totband nie neu.
+        """
+        if gestoppt and self._written_entladedeckel_kw is not None:
+            self._written_entladedeckel_kw = None
+            self._entladedeckel_offen = True
+
+    def _deckel_bremse(self, ok: bool) -> None:
+        """Schreibbremse des Deckels: gleiche Verdopplung wie beim Ladelimit."""
+        if ok:
+            self._deckel_fehlversuche = 0
+            self._deckel_warten = 0
+            return
+        self._deckel_fehlversuche += 1
+        self._deckel_warten = min(
+            2 ** (self._deckel_fehlversuche - 1), EXECUTOR_WRITE_RETRY_MAX_RUNS
+        )
+        self.write_failures += 1
+        self.last_write_ok = False
+        self._notify_failure("entladedeckel")
+
+    async def _entladedeckel_aufheben(self, bremse: bool = True) -> bool:
+        """Einen Deckel von uns (oder einen unbekannten) aufheben, gebremst."""
+        if self._written_entladedeckel_kw is None and not self._entladedeckel_offen:
+            return True
+        if not getattr(self._inverter, "supports_discharge_limit", False):
+            self._written_entladedeckel_kw = None
+            self._entladedeckel_offen = False
+            return True
+        if bremse and self._deckel_warten > 0:
+            self._deckel_warten -= 1
+            return False
+        ok = await self._inverter.async_set_discharge_limit(None)
+        self._deckel_bremse(ok)
+        if ok:
+            self._written_entladedeckel_kw = None
+            self._entladedeckel_offen = False
+        else:
+            # Was jetzt am Gerät steht, weiß niemand — freigeben bleibt das Ziel.
+            self._entladedeckel_offen = True
+            _LOGGER.warning("Executor: Entladedeckel der Spitzenkappung nicht aufgehoben")
+        return ok
+
+    def _grenze_jetzt_kw(self) -> tuple[float, dict[str, Any] | None]:
+        """Grenze ``max(Einstellung, Monatsspitze)`` und die laufende Viertelstunde.
+
+        Live und nicht aus dem Plan: Die Monatsspitze kann seit dem letzten
+        Planlauf gestiegen sein, und eine Viertelstunde bis zur schon
+        bezahlten Spitze kostet nichts mehr.
+        """
+        from .const import DOMAIN
+        from .spitzenkappung import grenze_aus_config
+
+        grenze = grenze_aus_config(self._config)
+        spitze = None
+        laufend = None
+        try:
+            ls = (self._hass.data.get(DOMAIN, {}).get(self._entry_id) or {}).get(
+                "leistungsspitze"
+            )
+            if ls is not None:
+                spitze = (ls.spitze or {}).get("kw")
+                laufend = ls.laufend(datetime.now(timezone.utc))
+        except Exception:  # noqa: BLE001 — eine Messung darf den Lauf nie kippen
+            _LOGGER.debug("Executor: Leistungsspitze nicht lesbar", exc_info=True)
+        if isinstance(spitze, (int, float)):
+            grenze = max(grenze, float(spitze))
+        return grenze, laufend
+
+    def _entlade_max_kw(self) -> float | None:
+        try:
+            cap = self._inverter.get_max_discharge_power_kw()
+        except Exception:  # noqa: BLE001
+            cap = None
+        if not cap:
+            cap = float(
+                self._config.get(CONF_DISCHARGE_POWER_KW, DEFAULT_DISCHARGE_POWER_KW)
+                or 0.0
+            ) or None
+        return cap
+
+    async def _spitzenkappung_schritt(
+        self, schedule_state: dict | None, now: datetime
+    ) -> None:
+        """Entladedeckel setzen, nachführen oder aufheben (siehe Moduldoku)."""
+        if not spitzenkappung_batterie_aktiv(self._config, self._inverter):
+            self._kappung_aktiv = False
+            self.spitzenkappung = None
+            await self._entladedeckel_aufheben()
+            return
+        info = (schedule_state or {}).get("spitzenreserve")
+        basis = (schedule_state or {}).get("min_soc_basis_pct")
+        if not isinstance(info, dict) or not isinstance(basis, (int, float)):
+            # Ein Plan ohne Reserve (gerechnet, bevor die Funktion an war).
+            self._kappung_aktiv = False
+            self.spitzenkappung = None
+            await self._entladedeckel_aufheben()
+            return
+        reserve = reserve_zu(info.get("kurve"), now)
+        if reserve is None:
+            reserve = float(info.get("min_pct") or 0.0)
+        # Dieselbe Obergrenze wie der Boden im Plan (max_min_soc_pct): Sonst
+        # erwartete der Plan Entladung in einem Band, das hier gesperrt ist.
+        from .schedule import max_min_soc_pct
+
+        reserve = min(reserve, max(0.0, max_min_soc_pct(self._config) - float(basis)))
+        grenze, laufend = self._grenze_jetzt_kw()
+        soc = self._batterie_soc_pct()
+        export = compute_grid_export_kw(self._hass, self._config)
+        batt = compute_battery_now_kw(self._hass, self._config)
+        # Haus + Heizstab − PV, ohne Batterie: Netzbezug plus Entladung.
+        bedarf = None if export is None or batt is None else -export - batt
+        aktiv, deckel, grund = entladedeckel_kw(
+            soc_pct=soc,
+            basis_pct=float(basis),
+            reserve_pct=reserve,
+            war_aktiv=self._kappung_aktiv,
+            grenze_kw=grenze,
+            laufend=laufend,
+            bedarf_kw=bedarf,
+            entlade_max_kw=self._entlade_max_kw(),
+            bisher_kw=self._written_entladedeckel_kw,
+        )
+        self._kappung_aktiv = aktiv
+        self.spitzenkappung = {
+            "aktiv": aktiv,
+            "grenze_kw": round(grenze, 2),
+            "reserve_pct": round(reserve, 1),
+            "schwelle_pct": round(float(basis) + reserve, 1),
+            "basis_pct": float(basis),
+            "deckel_kw": self._written_entladedeckel_kw,
+            "grund": grund,
+        }
+        if not aktiv:
+            await self._entladedeckel_aufheben()
+            self.spitzenkappung["deckel_kw"] = self._written_entladedeckel_kw
+            return
+        if deckel is None:
+            # Messung fehlt: Der Deckel bleibt, wie er ist.
+            self.last_status = f"{self.last_status} · Spitzenkappung: {grund}"
+            return
+        geschrieben = self._written_entladedeckel_kw
+        gleich = (
+            geschrieben is not None
+            and abs(deckel - geschrieben) <= EXECUTOR_DISCHARGE_DEADBAND_KW
+            # 0 heißt halten — ein Rest von 0,1 kW ist kein Halten.
+            and (deckel > 0) == (geschrieben > 0)
+        )
+        if gleich and not self._entladedeckel_offen:
+            self.last_status = f"{self.last_status} · Spitzenkappung: {grund}"
+            return
+        if self._deckel_warten > 0:
+            self._deckel_warten -= 1
+            self.last_status = (
+                f"{self.last_status} · Spitzenkappung: Entladedeckel "
+                f"{deckel:.2f} kW nicht gesetzt — nächster Versuch in "
+                f"{self._deckel_warten + 1} Läufen"
+            )
+            return
+        ok = await self._inverter.async_set_discharge_limit(deckel)
+        # Eigene Bremse statt _write_quittieren: Ein Erfolg des Ladelimits im
+        # selben Lauf soll die Bremse des Deckels nicht lösen.
+        self._deckel_bremse(ok)
+        if ok:
+            self._written_entladedeckel_kw = deckel
+            self._entladedeckel_offen = False
+            self.spitzenkappung["deckel_kw"] = deckel
+            self.last_status = f"{self.last_status} · Spitzenkappung: {grund}"
+            return
+        # Teilweise geschrieben (Huawei mit zwei Geräten) oder verspätet
+        # angekommen: Der Stand am Gerät ist unbekannt — Aus und Freigabe
+        # heben ihn dann sicher auf.
+        self._written_entladedeckel_kw = None
+        self._entladedeckel_offen = True
+        self.last_status = (
+            f"{self.last_status} · Spitzenkappung: Schreibfehler, "
+            f"Entladedeckel {deckel:.2f} kW nicht gesetzt"
+        )
+        _LOGGER.warning("Executor: Entladedeckel %.2f kW nicht gesetzt", deckel)
+
+    def batterie_luft_kw(self) -> float:
+        """Wie viel mehr die Batterie gerade für das Haus abgeben könnte.
+
+        Für das Abschalten von Verbrauchern (spitzenkappung.py): Solange die
+        Batterie eine Spitze noch decken kann, wird nichts abgeschaltet — der
+        Deckel folgt im nächsten Lauf (≤ 30 s), und die Viertelstunde zählt
+        im Mittel. Ladeleistung zählt mit, denn eine Spitze nimmt zuerst dem
+        Laden etwas weg. Am Mindest-Ladestand bleibt nur sie.
+
+        Nur, wo diese Zusage stimmt: ein Treiber mit Entladedeckel, die
+        Funktion an und ein Lauf, der die Batterie im Automatikbetrieb ließ
+        (``self.spitzenkappung`` gesetzt). Ohne Deckel weiß niemand, warum
+        die Batterie trotz Netzbezug nicht mehr gibt (eigener Boden des
+        Geräts, AC-Grenze) — dann zählt sie nicht. Während einer Netzladung
+        oder Zwangsentladung ebenso nicht. Gedeckelt an der AC-Grenze: Ein
+        Hybrid-Wechselrichter, der schon PV am Limit abgibt, kann die
+        Batterie nicht zusätzlich durchreichen.
+        """
+        if self._stillgelegt or self.spitzenkappung is None:
+            return 0.0
+        if not spitzenkappung_batterie_aktiv(self._config, self._inverter):
+            return 0.0
+        batt = compute_battery_now_kw(self._hass, self._config)
+        if batt is None:
+            return 0.0
+        laden = max(batt, 0.0)
+        soc = self._batterie_soc_pct()
+        basis = self.spitzenkappung.get("basis_pct")
+        if soc is None or basis is None or soc <= float(basis) + 0.5:
+            return laden
+        luft = max(0.0, (self._entlade_max_kw() or 0.0) + batt)
+        ac = float(self._config.get(CONF_INVERTER_AC_LIMIT_KW) or 0.0)
+        pv = compute_pv_now_kw(self._hass, self._config)
+        if ac > 0 and pv is not None:
+            # AC-Abgabe jetzt: PV minus Laden plus Entladen.
+            luft = min(luft, max(0.0, ac - (pv - batt)))
+        return luft
 
     # ------------------------------------------------------------------
     # Heizstab — zweite Senke neben der Batterie
@@ -1299,7 +1598,9 @@ class ScheduleExecutor:
             if not await self._netzladung_beenden("Ladelimit"):
                 return
         if self._active_kind == "discharge":
-            if not await self._inverter.async_stop_forcible():
+            gestoppt = await self._inverter.async_stop_forcible()
+            self._deckel_nach_stopp(gestoppt)
+            if not gestoppt:
                 # Ergebnis nicht ignorieren: sonst wird gleich ein Ladelimit
                 # geschrieben und ``_active_kind`` auf "charge_limit" gesetzt,
                 # während die Zwangsentladung weiterläuft — ein Ladelimit
@@ -1364,6 +1665,7 @@ class ScheduleExecutor:
         nächste Lauf versucht es erneut.
         """
         if await self._inverter.async_stop_forcible():
+            self._deckel_nach_stopp(True)
             self._written_grid_charge_kw = None
             self._written_target_soc = None
             return True
@@ -1408,7 +1710,9 @@ class ScheduleExecutor:
             )
             return
         if self._active_kind == "discharge":
-            if not await self._inverter.async_stop_forcible():
+            gestoppt = await self._inverter.async_stop_forcible()
+            self._deckel_nach_stopp(gestoppt)
+            if not gestoppt:
                 self.write_failures += 1
                 self.last_write_ok = False
                 self._notify_failure("release")

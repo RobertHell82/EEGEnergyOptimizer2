@@ -174,11 +174,22 @@ def _block_normal() -> CmpBmsBlock:
     )
 
 
-def _block_charge_limit(watts: int) -> CmpBmsBlock:
+def _block_charge_limit(
+    watts: int, dsch_max_w: int = DEFAULT_POWER_LIMIT_W
+) -> CmpBmsBlock:
     """Charging limited to `watts` (0 = blocked); discharge for the house
-    stays available (evcc 'HoldCharge' semantics — same as Kostal 1038=0)."""
+    stays available (evcc 'HoldCharge' semantics — same as Kostal 1038=0),
+    up to `dsch_max_w` — the Spitzenkappung's discharge cap, if one is set."""
     return CmpBmsBlock(
-        OPMOD_DEFAULT, 0, watts, 0, DEFAULT_POWER_LIMIT_W, 0
+        OPMOD_DEFAULT, 0, watts, 0, dsch_max_w, 0
+    )
+
+
+def _block_entladedeckel(dsch_max_w: int) -> CmpBmsBlock:
+    """Only the discharge cap (Spitzenkappung): charging free, discharge for
+    the house up to `dsch_max_w` (0 = the battery holds its reserve)."""
+    return CmpBmsBlock(
+        OPMOD_DEFAULT, 0, DEFAULT_POWER_LIMIT_W, 0, dsch_max_w, 0
     )
 
 
@@ -210,6 +221,12 @@ class SMAInverter(InverterBase):
         self._slave_id: int = SMA_UNIT_ID
         # Active CmpBMS block the keepalive rewrites (None = inactive)
         self._active: CmpBmsBlock | None = None
+        # Entladedeckel der Spitzenkappung in W (None = keiner). Steckt in
+        # BatDschMaxW jedes Blocks außer dem der Zwangseinspeisung.
+        self._entladedeckel_w: int | None = None
+        # Ladelimit des laufenden Blocks in W (None = keins) — damit ein
+        # Deckel das Ladelimit im selben Block mitschreiben kann.
+        self._ladelimit_w: int | None = None
         self._keepalive_task: asyncio.Task | None = None
         # Serializes Modbus operations between the 30-second optimizer
         # cycle, manual WebSocket commands, and the keepalive task (the
@@ -407,12 +424,13 @@ class SMAInverter(InverterBase):
             return False
         async with self._lock:
             watts = int(max(power_kw, 0.0) * 1000.0)
-            block = _block_charge_limit(watts)
+            block = _block_charge_limit(watts, self._dsch_max_w())
             if not await self._ensure_connected():
                 return False
             if not await self._write_block(block):
                 return False
             self._active = block
+            self._ladelimit_w = watts
             self._start_keepalive()
             _LOGGER.info(
                 "SMA: charge limit set (%.2f kW) — keepalive active", power_kw
@@ -440,6 +458,9 @@ class SMAInverter(InverterBase):
                 return False
             if not await self._write_block(block):
                 return False
+            # BatDschMaxW gehört jetzt der Einspeisung — kein Deckel mehr.
+            self._entladedeckel_w = None
+            self._ladelimit_w = None
             self._active = block
             self._start_keepalive()
             _LOGGER.info(
@@ -459,6 +480,8 @@ class SMAInverter(InverterBase):
             # Clear the active block FIRST so a failed write below cannot
             # race with a concurrent keepalive rewrite of the old block.
             self._active = None
+            self._entladedeckel_w = None
+            self._ladelimit_w = None
             self._cancel_keepalive()
             if not await self._ensure_connected():
                 return False
@@ -480,6 +503,61 @@ class SMAInverter(InverterBase):
     def supports_schedule_control(self) -> bool:
         """Der Fahrplan-Executor darf den SMA stellen."""
         return True
+
+    def _dsch_max_w(self) -> int:
+        return DEFAULT_POWER_LIMIT_W if self._entladedeckel_w is None else self._entladedeckel_w
+
+    @property
+    def supports_discharge_limit(self) -> bool:
+        """Über BatDschMaxW im CmpBMS-Block."""
+        return True
+
+    async def async_set_discharge_limit(self, power_kw: float | None) -> bool:
+        """Entladedeckel setzen oder aufheben — als vollständiger Block.
+
+        Ein laufendes Ladelimit bleibt im selben Block stehen. Während einer
+        Zwangseinspeisung wird der Wert nur gemerkt (der Executor hebt den
+        Deckel vor jeder Entladung auf). Ohne anderen Modus ist der Deckel
+        ein eigener Block mit Keepalive; aufgehoben geht es zurück in den
+        Automatikbetrieb. Fällt Home Assistant aus, gibt der Watchdog
+        (300 s) die Batterie frei.
+        """
+        if power_kw is not None and self._nicht_endlich(power_kw):
+            return False
+        async with self._lock:
+            vorher = self._entladedeckel_w
+            self._entladedeckel_w = (
+                None if power_kw is None else int(max(power_kw, 0.0) * 1000.0)
+            )
+            aktiv = self._active
+            if aktiv is not None and aktiv.grid_w_spt > 0:
+                return True
+            if aktiv is not None and self._ladelimit_w is not None:
+                block = _block_charge_limit(self._ladelimit_w, self._dsch_max_w())
+            elif self._entladedeckel_w is not None:
+                block = _block_entladedeckel(self._entladedeckel_w)
+            else:
+                block = None
+            if not await self._ensure_connected():
+                self._entladedeckel_w = vorher
+                return self._fehler("Modbus nicht verbunden")
+            if block is None:
+                self._active = None
+                self._cancel_keepalive()
+                if not await self._write_block(_block_normal()):
+                    self._entladedeckel_w = vorher
+                    return False
+                return True
+            if not await self._write_block(block):
+                self._entladedeckel_w = vorher
+                return False
+            self._active = block
+            self._start_keepalive()
+            _LOGGER.info(
+                "SMA: Entladedeckel %s — keepalive active",
+                "aufgehoben" if power_kw is None else f"{power_kw:.2f} kW",
+            )
+            return True
 
     @property
     def discharge_is_grid_setpoint(self) -> bool:

@@ -835,6 +835,16 @@ def fahrplan_kurzstatus(status: dict) -> str:
         soc = status.get("written_target_soc")
         soc_text = f" bis {soc:.0f} %" if soc is not None else ""
         return f"Netzladung {power:.2f} kW{soc_text}"
+    kappung = status.get("spitzenkappung") or {}
+    deckel = status.get("written_entladedeckel_kw")
+    if kappung.get("aktiv") and deckel is not None:
+        # Ohne kW-Zahl: Der Deckel wird alle 30 s nachgeführt, und jede neue
+        # Kurzform ist ein Eintrag im Aktivitätsprotokoll.
+        return (
+            "Spitzenkappung: Batterie deckt Spitzen"
+            if deckel > 0
+            else "Spitzenkappung: Batterie hält Reserve"
+        )
     return "Normalbetrieb"
 
 
@@ -892,6 +902,10 @@ class FahrplanStatusSensor(SensorEntity):
             "pause_bis": status.get("pause_bis"),
             "pause_soc_pct": status.get("pause_soc_pct"),
             "override": status.get("override"),
+            # Spitzenkappung: Entladedeckel (None = keiner) und die Schwelle,
+            # unter der die Batterie ihre Reserve hält.
+            "entladedeckel_kw": status.get("written_entladedeckel_kw"),
+            "spitzenkappung": status.get("spitzenkappung"),
         }
         heizstab = status.get("heizstab")
         if heizstab:
@@ -1261,16 +1275,56 @@ class BezugsspitzeMonatSensor(SensorEntity):
         from .leistungsspitze import netzkosten_monat
 
         attrs["netzkosten_monat"] = netzkosten_monat(spitze["kw"] if spitze else None)
-        # Spitzenkappung (Beta): was gerade abgeschaltet ist und ab welcher
-        # Hochrechnung geschaltet wird. Nur, solange sie eingeschaltet ist.
-        kappung = (
-            (self.hass.data.get(DOMAIN, {}).get(self._entry_id) or {}).get("spitzenkappung")
+        # Spitzenkappung: was gerade abgeschaltet ist und ab welcher
+        # Hochrechnung geschaltet wird, dazu die Batterie-Stufe (Reserve,
+        # Schwelle, Entladedeckel). Nur, solange sie eingeschaltet ist.
+        data = (
+            (self.hass.data.get(DOMAIN, {}).get(self._entry_id) or {})
             if self.hass is not None
-            else None
+            else {}
         )
+        kappung = data.get("spitzenkappung")
         if kappung is not None and kappung.aktiv:
-            attrs["kappung"] = kappung.status()
+            status = kappung.status()
+            status["batterie"] = _kappung_batterie(data)
+            attrs["kappung"] = status
         self._attr_extra_state_attributes = attrs
+
+
+def _kappung_batterie(data: dict) -> dict[str, Any] | None:
+    """Batterie-Stufe der Spitzenkappung für Statuskarte und Einstellungen.
+
+    Aus dem Plan die Reserve, mit der er rechnet (und ob die Statistik schon
+    reicht), aus dem Executor, was in diesem Lauf gilt. None, wenn der
+    Treiber keinen Entladedeckel kann — dann schaltet sie nur Verbraucher.
+    """
+    inverter = data.get("inverter")
+    if inverter is None or not getattr(inverter, "supports_discharge_limit", False):
+        return None
+    runner = data.get("schedule")
+    plan = (getattr(runner, "result", None) or {}).get("spitzenreserve") if runner else None
+    executor = data.get("executor")
+    lauf = getattr(executor, "spitzenkappung", None) if executor is not None else None
+    ergebnis: dict[str, Any] = {"unterstuetzt": True}
+    if isinstance(plan, dict):
+        ergebnis.update({
+            "plan_pct": plan.get("plan_pct"),
+            "plan_wirksam_pct": plan.get("plan_wirksam_pct"),
+            "min_pct": plan.get("min_pct"),
+            "max_pct": plan.get("max_pct"),
+            "tage": plan.get("tage"),
+            "statistik": plan.get("statistik"),
+            "entlade_kw": plan.get("entlade_kw"),
+        })
+    if isinstance(lauf, dict):
+        ergebnis.update({
+            "aktiv": lauf.get("aktiv"),
+            "reserve_pct": lauf.get("reserve_pct"),
+            "schwelle_pct": lauf.get("schwelle_pct"),
+            "deckel_kw": lauf.get("deckel_kw"),
+            "grund": lauf.get("grund"),
+        })
+    return ergebnis
 
 
 # ---------------------------------------------------------------------------

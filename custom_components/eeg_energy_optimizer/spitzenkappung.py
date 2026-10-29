@@ -33,6 +33,17 @@ Regeln, die nicht aus dem Code allein hervorgehen:
 - Modus Aus, eine Pause oder die Funktion abgeschaltet: alles, was wir
   abgeschaltet haben, wird wieder eingeschaltet. „Optimierung aus" heißt
   hier wie beim Heizstab: kein Eingriff.
+- Zuerst die Batterie: Solange sie mehr abgeben könnte, als sie gerade tut
+  (``batterie_luft_kw``, vom Executor), wird nichts abgeschaltet. Der
+  Entladedeckel der Spitzenkappung (spitzenreserve.py) folgt alle 30 s; ein
+  Abschalten in dieser Zeit wäre unnötig.
+- Gegen Pendeln: Gemerkt wird beim Abschalten die HÖCHSTE Leistung der
+  letzten ``SPITZE_FENSTER_S`` (ein Auto, das gerade hochregelt, zeigt erst
+  2 kW und zieht später 11 kW) — oder die eingetragene Nennleistung, wenn
+  sie größer ist. Muss ein Verbraucher binnen ``PENDEL_FENSTER_S`` nach dem
+  Wiedereinschalten erneut aus, verdoppelt sich seine Mindest-Aus-Zeit
+  (5 → 10 → 20 → 40 → 60 min); nach ``PENDEL_RUHE_S`` ohne erneutes
+  Abschalten gilt wieder die kurze.
 
 Die Entscheidung (``entscheide``) ist eine reine Funktion und ohne Home
 Assistant testbar; die Klasse verdrahtet sie mit Zeitgeber, Zuständen,
@@ -71,7 +82,17 @@ MAX_VERBRAUCHER = 10
 AKTIV_KW = 0.2
 BERUHIGUNG_S = 60.0
 MIN_AUS_S = 300.0
+MAX_AUS_S = 3600.0
 HYSTERESE_KW = 0.3
+# Über dieses Fenster wird die höchste Leistung eines Verbrauchers gemerkt.
+SPITZE_FENSTER_S = 300.0
+# Erneut abgeschaltet binnen dieser Zeit nach dem Wiedereinschalten: Pendeln.
+PENDEL_FENSTER_S = 900.0
+# So lange ohne erneutes Abschalten, und die Mindest-Aus-Zeit ist wieder kurz.
+PENDEL_RUHE_S = 3600.0
+NENNLEISTUNG_MAX_KW = 50.0
+# Höher steigt die Pendelstufe nicht — ab hier gilt ohnehin MAX_AUS_S.
+PENDEL_STUFE_MAX = 4
 # Ein gescheiterter Schaltbefehl wird nicht in jedem Takt wiederholt.
 FEHLER_PAUSE_S = 60.0
 DIENST_TIMEOUT_S = 15.0
@@ -90,6 +111,10 @@ class Verbraucher:
     name: str
     leistung_entity: str
     schalter_entity: str
+    # Optional: Leistung, die der Verbraucher eingeschaltet höchstens zieht
+    # (z. B. 11 kW Wallbox) — für das Wiedereinschalten, wenn die Messung
+    # beim Abschalten weniger zeigte.
+    nennleistung_kw: float | None = None
 
 
 @dataclass(frozen=True)
@@ -125,8 +150,38 @@ def verbraucher_aus_config(config: dict) -> list[Verbraucher]:
             continue
         gesehen.add(schalter)
         name = str(eintrag.get("name") or "").strip() or f"Verbraucher {i + 1}"
-        liste.append(Verbraucher(name, leistung, schalter))
+        liste.append(Verbraucher(name, leistung, schalter, _nennleistung(eintrag)))
     return liste
+
+
+def _nennleistung(eintrag: dict) -> float | None:
+    """Nennleistung in kW aus dem Eintrag; leer, 0 oder unlesbar = keine."""
+    try:
+        wert = float(eintrag.get("nennleistung_kw") or 0.0)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(wert) or wert <= 0:
+        return None
+    return min(wert, NENNLEISTUNG_MAX_KW)
+
+
+def mindest_aus_s(stufe: int) -> float:
+    """Mindest-Aus-Zeit nach ``stufe``-fachem Pendeln (verdoppelt, gedeckelt)."""
+    return min(MIN_AUS_S * (2 ** min(max(0, stufe), PENDEL_STUFE_MAX)), MAX_AUS_S)
+
+
+def pendel_stufe(
+    jetzt: datetime, stufe: int, wieder_ein: datetime | None
+) -> int:
+    """Stufe beim erneuten Abschalten: höher bei Pendeln, 0 nach langer Ruhe."""
+    if wieder_ein is None:
+        return 0
+    seit = (jetzt - wieder_ein).total_seconds()
+    if seit < PENDEL_FENSTER_S:
+        return min(stufe + 1, PENDEL_STUFE_MAX)
+    if seit >= PENDEL_RUHE_S:
+        return 0
+    return stufe
 
 
 def grenze_aus_config(config: dict) -> float:
@@ -155,6 +210,7 @@ def entscheide(
     zustaende: dict[str, VerbraucherZustand],
     abgeschaltet: dict[str, dict[str, Any]],
     letztes_abschalten: datetime | None,
+    batterie_luft_kw: float = 0.0,
 ) -> list[Aktion]:
     """Die Schaltbefehle dieses Takts.
 
@@ -162,6 +218,11 @@ def entscheide(
     ``bezug_kw`` und ``rest_s``). Ohne frische Messung wird nichts geschaltet
     — weder ab noch wieder ein: Blind einzuschalten könnte genau die Spitze
     erzeugen, die die Wache verhindern soll.
+
+    ``batterie_luft_kw``: was die Batterie für den Rest der Viertelstunde
+    noch zusätzlich abgeben könnte. Es zählt beim Abschalten mit, beim
+    Wiedereinschalten nicht — wer wieder an ist, soll auch ohne die Batterie
+    unter die Schwelle passen, sonst leerte er die Reserve.
     """
     if not laufend:
         return []
@@ -180,6 +241,7 @@ def entscheide(
         if v.schalter_entity in abgeschaltet and v.schalter_entity in zustaende
     )
     erwartet = hochrechnung - noch_im_abklingen * anteil
+    erwartet -= max(0.0, batterie_luft_kw) * anteil
 
     if erwartet > schwelle:
         if (
@@ -217,7 +279,11 @@ def entscheide(
         if info is None:
             continue
         seit = info.get("seit")
-        if isinstance(seit, datetime) and (jetzt - seit).total_seconds() < MIN_AUS_S:
+        try:
+            min_aus = float(info.get("min_aus_s") or MIN_AUS_S)
+        except (TypeError, ValueError):
+            min_aus = MIN_AUS_S
+        if isinstance(seit, datetime) and (jetzt - seit).total_seconds() < min_aus:
             continue
         leistung = float(info.get("leistung_kw") or 0.0)
         voll = bezug + leistung <= schwelle - HYSTERESE_KW
@@ -248,12 +314,15 @@ class Spitzenkappung:
         leistungsspitze: Any,
         steuern_erlaubt: Callable[[], bool],
         protokoll: Callable[[str, str], None] | None = None,
+        batterie_luft: Callable[[], float] | None = None,
     ) -> None:
         self._hass = hass
         self._config_quelle = config_quelle
         self._spitze = leistungsspitze
         self._steuern_erlaubt = steuern_erlaubt
         self._protokoll = protokoll
+        # Was die Batterie zusätzlich decken könnte (Executor); None = 0.
+        self._batterie_luft = batterie_luft
         self._store: Any = (
             Store(hass, 1, f"{DOMAIN}_{entry_id}_spitzenkappung")
             if Store is not None and hass is not None
@@ -265,6 +334,11 @@ class Spitzenkappung:
         self._fehler_bis: dict[str, datetime] = {}
         self._letzter_fehler: str | None = None
         self._schwelle: float | None = None
+        # Gemessene Leistung je Verbraucher über SPITZE_FENSTER_S:
+        # Schalter → [(Zeit, kW), …]
+        self._leistung_verlauf: dict[str, list[tuple[datetime, float]]] = {}
+        # Pendelschutz je Verbraucher: {"stufe", "wieder_ein"}
+        self._pendel: dict[str, dict[str, Any]] = {}
         self._lock = asyncio.Lock()
         self._stillgelegt = False
         self._listeners: list[Callable[[], None]] = []
@@ -286,6 +360,7 @@ class Spitzenkappung:
                     "entity": entity,
                     "seit": info["seit"].isoformat() if isinstance(info.get("seit"), datetime) else None,
                     "leistung_kw": info.get("leistung_kw"),
+                    "min_aus_s": info.get("min_aus_s", MIN_AUS_S),
                 }
                 for entity, info in self._abgeschaltet.items()
             ],
@@ -321,10 +396,34 @@ class Spitzenkappung:
                     "seit": info["seit"].isoformat() if isinstance(info.get("seit"), datetime) else None,
                 }
                 for entity, info in self._abgeschaltet.items()
-            }
+            },
+            # Pendelschutz: Ein Neustart soll ein pendelndes Gerät nicht
+            # wieder bei 5 Minuten beginnen lassen.
+            "pendel": {
+                entity: {
+                    "stufe": int(info.get("stufe") or 0),
+                    "wieder_ein": info["wieder_ein"].isoformat()
+                    if isinstance(info.get("wieder_ein"), datetime) else None,
+                }
+                for entity, info in self._pendel.items()
+            },
         }
 
     def aus_dict(self, daten: dict[str, Any]) -> None:
+        pendel = daten.get("pendel") or {}
+        if isinstance(pendel, dict):
+            for entity, info in pendel.items():
+                if not isinstance(info, dict):
+                    continue
+                try:
+                    wieder_ein = datetime.fromisoformat(info.get("wieder_ein"))
+                except (TypeError, ValueError):
+                    wieder_ein = None
+                try:
+                    stufe = max(0, min(int(info.get("stufe") or 0), PENDEL_STUFE_MAX))
+                except (TypeError, ValueError):
+                    stufe = 0
+                self._pendel[entity] = {"stufe": stufe, "wieder_ein": wieder_ein}
         roh = daten.get("abgeschaltet") or {}
         if not isinstance(roh, dict):
             return
@@ -335,10 +434,15 @@ class Spitzenkappung:
                 seit = datetime.fromisoformat(info.get("seit"))
             except (TypeError, ValueError):
                 seit = _jetzt_utc()
+            try:
+                min_aus = float(info.get("min_aus_s") or MIN_AUS_S)
+            except (TypeError, ValueError):
+                min_aus = MIN_AUS_S
             self._abgeschaltet[entity] = {
                 "seit": seit,
                 "leistung_kw": float(info.get("leistung_kw") or 0.0),
                 "name": info.get("name"),
+                "min_aus_s": min_aus,
             }
 
     async def async_load(self) -> None:
@@ -439,6 +543,7 @@ class Spitzenkappung:
                 self._geaendert()
 
         zustaende = {v.schalter_entity: self._zustand(v) for v in verbraucher}
+        self._leistung_merken(jetzt, zustaende)
 
         # Von Hand wieder eingeschaltet: nicht mehr unser Eingriff. Erst nach
         # der Beruhigungszeit — Fahrzeug-Integrationen melden den neuen
@@ -469,8 +574,10 @@ class Spitzenkappung:
             zustaende=zustaende,
             abgeschaltet=self._abgeschaltet,
             letztes_abschalten=self._letztes_abschalten,
+            batterie_luft_kw=self._luft_kw(),
         )
         namen = {v.schalter_entity: v.name for v in verbraucher}
+        nenn = {v.schalter_entity: v.nennleistung_kw for v in verbraucher}
         for a in aktionen:
             gesperrt = self._fehler_bis.get(a.schalter_entity)
             if gesperrt is not None and jetzt < gesperrt:
@@ -483,17 +590,60 @@ class Spitzenkappung:
             name = namen.get(a.schalter_entity, a.schalter_entity)
             if a.einschalten:
                 self._abgeschaltet.pop(a.schalter_entity, None)
+                pendel = self._pendel.setdefault(a.schalter_entity, {"stufe": 0})
+                pendel["wieder_ein"] = jetzt
                 self._log(f"Spitzenkappung: {name} ein", a.grund)
             else:
                 z = zustaende[a.schalter_entity]
+                leistung = max(
+                    z.leistung_kw or 0.0,
+                    self._spitze_der_letzten_minuten(a.schalter_entity, jetzt),
+                    nenn.get(a.schalter_entity) or 0.0,
+                )
+                pendel = self._pendel.setdefault(a.schalter_entity, {"stufe": 0})
+                pendel["stufe"] = pendel_stufe(
+                    jetzt, int(pendel.get("stufe") or 0), pendel.get("wieder_ein")
+                )
+                min_aus = mindest_aus_s(pendel["stufe"])
                 self._abgeschaltet[a.schalter_entity] = {
                     "seit": jetzt,
-                    "leistung_kw": round(z.leistung_kw or 0.0, 3),
+                    "leistung_kw": round(leistung, 3),
                     "name": name,
+                    "min_aus_s": min_aus,
                 }
                 self._letztes_abschalten = jetzt
-                self._log(f"Spitzenkappung: {name} aus", a.grund)
+                grund = a.grund
+                if pendel["stufe"] > 0:
+                    grund += f" — erneut binnen kurzem, bleibt mindestens {min_aus / 60:.0f} min aus"
+                self._log(f"Spitzenkappung: {name} aus", grund)
             self._geaendert()
+
+    def _luft_kw(self) -> float:
+        if self._batterie_luft is None:
+            return 0.0
+        try:
+            wert = float(self._batterie_luft() or 0.0)
+        except Exception:  # noqa: BLE001 — im Zweifel ohne Batterie rechnen
+            _LOGGER.debug("Spitzenkappung: Batteriereserve nicht lesbar", exc_info=True)
+            return 0.0
+        return wert if math.isfinite(wert) and wert > 0 else 0.0
+
+    def _leistung_merken(
+        self, jetzt: datetime, zustaende: dict[str, VerbraucherZustand]
+    ) -> None:
+        grenze = jetzt - timedelta(seconds=SPITZE_FENSTER_S)
+        for entity, z in zustaende.items():
+            liste = [p for p in self._leistung_verlauf.get(entity, []) if p[0] >= grenze]
+            if z.leistung_kw is not None and math.isfinite(z.leistung_kw):
+                liste.append((jetzt, z.leistung_kw))
+            self._leistung_verlauf[entity] = liste
+        for entity in [e for e in self._leistung_verlauf if e not in zustaende]:
+            del self._leistung_verlauf[entity]
+
+    def _spitze_der_letzten_minuten(self, entity: str, jetzt: datetime) -> float:
+        grenze = jetzt - timedelta(seconds=SPITZE_FENSTER_S)
+        werte = [kw for t, kw in self._leistung_verlauf.get(entity, []) if t >= grenze]
+        return max(werte) if werte else 0.0
 
     # ------------------------------------------------------------------
     # Anbindung an Home Assistant

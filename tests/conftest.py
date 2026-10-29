@@ -42,6 +42,9 @@ def mock_inverter():
     # MagicMock-Attribut wäre wahr und der Aufruf nicht awaitbar.
     inv.supports_grid_charge = False
     inv.async_set_grid_charge = AsyncMock(return_value=True)
+    # Entladedeckel der Spitzenkappung: Default wie die Base-Klasse — aus.
+    inv.supports_discharge_limit = False
+    inv.async_set_discharge_limit = AsyncMock(return_value=True)
     # Grund des letzten Schreibfehlers (InverterBase). Als echtes None, nicht
     # als MagicMock-Attribut: Der Executor reicht den Wert an die Telemetrie
     # weiter, ein Mock-Objekt landete dort als Kennung.

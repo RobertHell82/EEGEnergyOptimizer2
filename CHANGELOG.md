@@ -12,6 +12,24 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+## [2.1.52-beta.1] - 2026-10-29
+
+### Geändert
+
+- **„Batterie aus dem Netz laden“ ist in der Beta wieder an.** Inhaltlich entspricht diese Beta dem Release 2.1.51 mit der Spitzenkappung über die Batterie. Dazu kommt die Option in den Einstellungen (Tab Tarife, Expertenmodus, nur Huawei), samt Beschreibung in der Tarife-Anleitung. Mit ihr darf der Plan die Abendreserve der Spitzenkappung auch mit günstigem Netzstrom auffüllen, wie jedes andere Ladeziel.
+
+## [2.1.51] - 2026-10-29
+
+### Hinzugefügt
+
+- **Spitzenkappung mit der Batterie** (Huawei, Fronius, SMA). Ab 2027 kostet die höchste Viertelstunde Netzbezug im Monat extra. Wird die Batterie knapp, hält sie jetzt eine Reserve für Spitzen zurück. Darin gibt sie nur noch ab, was über dem eingestellten Grenzwert liegt, den Grundverbrauch bezieht das Haus aus dem Netz. Wie groß die Reserve ist, rechnet die Integration aus dem Verbrauch der letzten vier Wochen. Gezählt wird, was über der Grenze lag, so viel, wie 9 von 10 Tagen nicht überschritten haben, und nur bis zur nächsten Sonne, sodass die Reserve über die Nacht fällt. Einstellbar sind Mindest- und Maximalreserve (Vorgabe 0 und 30 %). Der Fahrplan rechnet die Reserve mit ein und verkauft sie am Abend nicht mehr; Haralds Optimierungsmodell bleibt dabei unverändert. Anzeige in der Statuskarte (Zeile „Bezugsspitze“), als Linie im Ladestandsdiagramm und im Fahrplan-Status.
+- **Spitzenkappung ist keine Beta mehr.** Der Tab „Spitzenkappung“ steht in den Einstellungen für alle, mit eigener Anleitung. Verbraucher abzuschalten bleibt die zweite Stufe und geht weiterhin mit jedem Wechselrichter; abgeschaltet wird erst, wenn die Batterie die Spitze nicht mehr deckt.
+
+### Geändert
+
+- **Spitzenkappung pendelt nicht mehr.** Beim Abschalten merkt sich die Integration die höchste Leistung der letzten fünf Minuten oder die neu eintragbare Nennleistung des Verbrauchers. Muss ein Verbraucher kurz nach dem Wiedereinschalten erneut aus, bleibt er jedes Mal doppelt so lange aus (5 bis 60 Minuten).
+- **„Batterie aus dem Netz laden“ bleibt den Betas vorbehalten**, im Release ausgeblendet und ohne Wirkung.
+
 ## [2.1.51-beta.1] - 2026-10-28
 
 ### Geändert
