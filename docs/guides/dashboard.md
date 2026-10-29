@@ -61,6 +61,7 @@ data:
 | **Laden begrenzt auf x kW** | Der Plan will den Überschuss im Netz statt in der Batterie und begrenzt die Ladeleistung. Klebt die gemessene Einspeisung an der Einspeisegrenze, wird das Limit schrittweise angehoben, damit nichts abgeregelt wird |
 | **Laden blockiert** | Das Ladelimit steht auf 0 kW |
 | **Einspeisung x kW bis y %** | Gezielte Entladung ins Netz. Die Zahl ist die geplante Einspeisung, der Ziel-Ladestand kommt aus dem Plan. Der Batterie-Sollwert in der Zeile darunter ist höher, weil er den Hausverbrauch mit abdeckt |
+| **Netzladung x kW bis y %** | Nur mit „Batterie aus dem Netz laden“ (Beta, Huawei): Der Wechselrichter lädt mit der geplanten Leistung bis zum geplanten Ladestand, PV zuerst, den Rest aus dem Netz |
 | **Normalbetrieb** | Kein Eingriff, der Wechselrichter regelt selbst. Der Grund steht in der Zeile darunter, etwa „Normalbetrieb (Plan lädt den ganzen Überschuss)“ — der Plan will alles in die Batterie, das macht die Automatik von selbst —, „Normalbetrieb (kein PV-Überschuss)“ — ohne Überschuss hielte ein Ladelimit nichts frei — oder „Normalbetrieb (Batterie voll)“ |
 | **Anzeige-Modus** | Modus Aus oder eine laufende Pause — es wird nur gerechnet |
 | **Nur Anzeige** | Der Wechselrichter wird nicht gesteuert, der Plan ist nur Anzeige |
