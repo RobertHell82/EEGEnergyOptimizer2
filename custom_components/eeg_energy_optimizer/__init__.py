@@ -1653,10 +1653,22 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     leistungsspitze.async_start(entry)
     hass.data[DOMAIN][entry.entry_id]["leistungsspitze"] = leistungsspitze
 
-    # Spitzenkappung (Beta): schaltet konfigurierte Verbraucher ab, bevor
-    # die laufende Viertelstunde die Bezugsspitze hebt — Einzelheiten in
-    # spitzenkappung.py. Läuft immer mit und tut nichts, solange sie in der
-    # Konfiguration aus ist; so braucht das Einschalten keinen Reload.
+    # Spitzenreserve: Nettolast-Verlauf (Haus − PV) je Viertelstunde, aus dem
+    # der Fahrplan die Reserve der Spitzenkappung rechnet (spitzenreserve.py).
+    # Läuft immer mit — so steht die Statistik schon bereit, wenn jemand die
+    # Funktion einschaltet.
+    from .spitzenreserve import Spitzenreserve
+
+    spitzenreserve = Spitzenreserve(hass, entry.entry_id)
+    await spitzenreserve.async_load()
+    spitzenreserve.async_start(entry)
+    hass.data[DOMAIN][entry.entry_id]["spitzenreserve"] = spitzenreserve
+
+    # Spitzenkappung, zweite Stufe: schaltet konfigurierte Verbraucher ab,
+    # wenn die Batterie die Spitze nicht mehr deckt — Einzelheiten in
+    # spitzenkappung.py. Die erste Stufe (Batterie) sitzt im Executor. Läuft
+    # immer mit und tut nichts, solange sie in der Konfiguration aus ist; so
+    # braucht das Einschalten keinen Reload.
     from .spitzenkappung import Spitzenkappung
 
     def _spitzenkappung_darf() -> bool:
@@ -1680,6 +1692,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         if eintragen is not None:
             eintragen(zustand, grund)
 
+    def _spitzenkappung_batterie_luft() -> float:
+        """Was die Batterie zusätzlich decken könnte — der Executor weiß es."""
+        executor = (hass.data[DOMAIN].get(entry.entry_id) or {}).get("executor")
+        if executor is None:
+            return 0.0
+        return executor.batterie_luft_kw()
+
     spitzenkappung = Spitzenkappung(
         hass,
         entry.entry_id,
@@ -1687,6 +1706,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         leistungsspitze,
         _spitzenkappung_darf,
         _spitzenkappung_protokoll,
+        _spitzenkappung_batterie_luft,
     )
     await spitzenkappung.async_load()
     spitzenkappung.async_start(entry)

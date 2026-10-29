@@ -838,6 +838,106 @@ class HuaweiInverter(InverterBase):
             self._fehler(stopp_fehler)
         return self._erfolg() if all_ok else False
 
+    # ------------------------------------------------------------------
+    # Entladedeckel (Spitzenkappung)
+    # ------------------------------------------------------------------
+    @property
+    def supports_discharge_limit(self) -> bool:
+        """Über die Number-Entität „Maximale Entladeleistung" je Gerät."""
+        return True
+
+    def _discharge_entity(self, device_id: str) -> str | None:
+        """Entladeleistungs-Number dieses Geräts (oder seines Wechselrichters)."""
+        eid = self._device_or_parent_entity_by_suffix(
+            device_id, "number", MAX_DISCHARGE_POWER_SUFFIXES
+        )
+        if eid is None and len(self._device_ids) <= 1:
+            # Legacy-Einzelgerät ohne Registry-Zuordnung, wie beim Ladelimit.
+            for state in self._hass.states.async_all("number"):
+                if any(
+                    state.entity_id.endswith(f"_{suffix}")
+                    for suffix in MAX_DISCHARGE_POWER_SUFFIXES
+                ):
+                    return state.entity_id
+        return eid
+
+    async def async_set_discharge_limit(self, power_kw: float | None) -> bool:
+        """Maximale Entladeleistung je Gerät setzen; ``None`` = Hardware-Maximum.
+
+        Bei mehreren Batterien wird der Systemwert wie die Entladung nach
+        nutzbarer Energie verteilt. Hängen zwei Batterien an DERSELBEN
+        Entität (ein Wechselrichter, zwei Pakete), bekommt sie die Summe ihrer
+        Anteile einmal — zweimal geschrieben gälte nur der letzte Anteil.
+        """
+        if power_kw is not None and self._nicht_endlich(power_kw):
+            return False
+        ziele: dict[str, float] = {}
+        if power_kw is not None:
+            total = max(0.0, float(power_kw))
+            verteilung = (
+                self._compute_discharge_distribution(total)
+                if len(self._device_ids) > 1 and total > 0
+                else None
+            )
+            if verteilung is None:
+                per = total / len(self._device_ids)
+                verteilung = {did: per for did in self._device_ids}
+        alle_ok = True
+        geschrieben: dict[str, float] = {}
+        maxima: dict[str, float | None] = {}
+        for did in self._device_ids:
+            eid = self._discharge_entity(did)
+            if eid is None:
+                alle_ok = False
+                self._fehler("Entladeleistungs-Entität nicht auflösbar")
+                continue
+            state = self._hass.states.get(eid)
+            if state is None or state.state in ("unavailable", "unknown"):
+                # Gerät gerade nicht erreichbar: nicht schreiben (es scheiterte
+                # ohnehin), die anderen schon — aber als Fehlschlag melden.
+                # Huawei behält den Wert: Ein Gerät, das gerade weg ist,
+                # stünde sonst nach seiner Rückkehr still mit dem alten
+                # Deckel da, während der Executor „aufgehoben" glaubt. Der
+                # Executor merkt sich den Stand als unbekannt und versucht es
+                # gebremst erneut.
+                alle_ok = False
+                self._fehler("Entladeleistungs-Entität nicht verfügbar")
+                continue
+            try:
+                maxima[eid] = float(state.attributes.get("max"))
+            except (TypeError, ValueError):
+                maxima[eid] = None
+            if power_kw is None:
+                if maxima[eid] is None:
+                    alle_ok = False
+                    self._fehler("Entladeleistung: Maximum unbekannt")
+                    continue
+                ziele[eid] = maxima[eid]
+                continue
+            geschrieben[eid] = geschrieben.get(eid, 0.0) + verteilung.get(did, 0.0) * 1000.0
+        if power_kw is not None:
+            # Zwei Batterien an einer Entität: die Summe, aber nie über deren
+            # Maximum — get_max_discharge_power_kw zählt sie doppelt.
+            ziele = {
+                eid: min(watt, maxima[eid]) if maxima.get(eid) is not None else watt
+                for eid, watt in geschrieben.items()
+            }
+        for eid, watt in ziele.items():
+            try:
+                await self._hass.services.async_call(
+                    "number",
+                    "set_value",
+                    {"entity_id": eid, "value": int(round(watt))},
+                    blocking=True,
+                )
+            except Exception as exc:
+                _LOGGER.exception("Huawei: Entladedeckel auf %s fehlgeschlagen", eid)
+                alle_ok = False
+                self._fehler(f"number.set_value: {type(exc).__name__}")
+        if not ziele:
+            return False
+        return self._erfolg() if alle_ok else False
+
     @property
     def is_available(self) -> bool:
         """Whether the Huawei Solar integration is loaded and available."""

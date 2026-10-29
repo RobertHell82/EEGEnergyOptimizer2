@@ -496,8 +496,16 @@ class ScheduleInputs:
     night_end_hour: int
     consumption_price: float
     battery_cost: float
-    # Untergrenze in Prozent; 0 = der Fahrplan darf bis leer planen
+    # Untergrenze in Prozent; 0 = der Fahrplan darf bis leer planen. Mit
+    # Spitzenkappung einschließlich der Spitzenreserve (spitzenreserve.py).
     min_soc_pct: float = 0.0
+    # Mindest-Ladestand OHNE Spitzenreserve — die Schwelle, ab der der
+    # Executor die Reserve hält, ist dieser Wert plus die Reservekurve.
+    # None = keine Spitzenreserve, dann gilt ``min_soc_pct``.
+    min_soc_basis_pct: float | None = None
+    # Spitzenreserve für Anzeige und Executor: Grenze, Kurve je Viertel-
+    # stunde, Plan-Anteil, Mindest-/Maximalreserve, genutzte Tage. None = aus.
+    spitzenreserve: dict | None = None
     # Obergrenze in Prozent; 100 = der Fahrplan darf bis voll planen
     max_soc_pct: float = 100.0
     # Ladeziel zum Ende der PV-Zeit in Prozent; 0 = aus (siehe HAConfig.ladeziel)
@@ -1653,6 +1661,122 @@ def bezugsreihe_netzladen(
     return reihe, fest
 
 
+MIN_TAGE_SPITZENRESERVE = 7  # = spitzenreserve.MIN_TAGE (ohne Importzyklus hier)
+
+
+def spitzenkappung_batterie_aktiv(config: dict, inverter: Any) -> bool:
+    """Hält die Batterie eine Spitzenreserve? Funktion an UND Treiber kann es.
+
+    Ein Treiber ohne Entladedeckel (``supports_discharge_limit``) bekommt
+    keine Reserve in den Plan: Der Plan hielte sie zurück, aber nichts am
+    Gerät — der Automatikbetrieb verbrauchte sie nachts für die Grundlast.
+    Für ihn schaltet die Spitzenkappung nur Verbraucher ab.
+    """
+    if not config.get("spitzenkappung_enabled"):
+        return False
+    if inverter is None:
+        return False
+    return bool(getattr(inverter, "supports_schedule_control", False)) and bool(
+        getattr(inverter, "supports_discharge_limit", False)
+    )
+
+
+def _spitzenreserve_fuer_plan(
+    data: dict,
+    config: dict,
+    inverter: Any,
+    start: datetime,
+    horizon_h: int,
+    stamps: list[datetime],
+    consumption: list[float],
+    production: list[float],
+    capacity_kwh: float,
+) -> dict[str, Any] | None:
+    """Reservekurve je Viertelstunde und der Wert für den Plan (spitzenreserve.py).
+
+    Grenze ist ``max(eingestellte Grenze, Monatsspitze)`` — unter der schon
+    erreichten Spitze kostet keine Viertelstunde mehr. Gedeckelt wird je
+    Viertelstunde bei der Entladeleistung: Was darüber liegt, kann die
+    Batterie nicht kappen, also braucht es dafür auch keine Reserve.
+    """
+    if not spitzenkappung_batterie_aktiv(config, inverter) or not _steuert_gerade(data):
+        return None
+    try:
+        from .spitzenkappung import grenze_aus_config
+        from .spitzenreserve import (
+            kurve_in_pct,
+            plan_reserve_pct,
+            reserve_grenzen_pct,
+            reservekurve,
+            ueberschuss_je_slot,
+        )
+
+        grenze = grenze_aus_config(config)
+        spitze = (getattr(data.get("leistungsspitze"), "spitze", None) or {}).get("kw")
+        if isinstance(spitze, (int, float)) and math.isfinite(spitze):
+            grenze = max(grenze, float(spitze))
+        entlade = None
+        getter = getattr(inverter, "get_max_discharge_power_kw", None)
+        if getter is not None:
+            try:
+                entlade = getter()
+            except Exception:  # noqa: BLE001
+                entlade = None
+        if not entlade:
+            entlade = float(
+                config.get(CONF_DISCHARGE_POWER_KW, DEFAULT_DISCHARGE_POWER_KW)
+                or DEFAULT_DISCHARGE_POWER_KW
+            )
+        viertel = _grid_timestamps(start, horizon_h, 15)
+        ueberschuss = ueberschuss_je_slot(viertel, stamps, production, consumption)
+        reserve = data.get("spitzenreserve")
+        verlauf = reserve.verlauf_nach_zeit() if reserve is not None else {}
+        kurve_kwh, tage = reservekurve(
+            verlauf, viertel, ueberschuss, grenze, float(entlade)
+        )
+        min_pct, max_pct = reserve_grenzen_pct(config)
+        kurve_pct = kurve_in_pct(kurve_kwh, capacity_kwh, min_pct, max_pct)
+        plan_pct = plan_reserve_pct(kurve_pct, ueberschuss, viertel) or 0.0
+    except Exception:  # noqa: BLE001 — ohne Reserve plant der Fahrplan wie bisher
+        _LOGGER.exception("Spitzenreserve nicht berechenbar — Plan ohne Reserve")
+        return None
+    return {
+        "grenze_kw": round(grenze, 2),
+        "entlade_kw": round(float(entlade), 2),
+        "kurve": [[t.isoformat(), p] for t, p in zip(viertel, kurve_pct)],
+        "plan_pct": round(plan_pct, 1),
+        # Liegt der erste Slot im Überschuss, ist plan_pct die Reserve, mit
+        # der der Abend beginnt — sie wird zum Ladeziel, nicht zum Boden.
+        "im_ueberschuss": bool(ueberschuss and ueberschuss[0]),
+        "min_pct": min_pct,
+        "max_pct": max_pct,
+        "tage": tage,
+        # Ohne genug vergleichbare Tage gilt nur die Mindestreserve.
+        "statistik": tage >= MIN_TAGE_SPITZENRESERVE,
+    }
+
+
+def _steuert_gerade(data: dict) -> bool:
+    """Modus Ein und keine Pause — nur dann hält der Executor die Reserve.
+
+    Im Modus Aus läuft die Batterie im Automatikbetrieb bis zu ihrem eigenen
+    Boden. Hielte der Plan dort die Reserve, rechneten Referenz und Bilanz
+    gegen einen Boden, den es nicht gibt, und „Ersparnis durch Optimierung"
+    stünde nicht mehr bei null.
+    """
+    select = data.get("select")
+    if select is None or getattr(select, "_attr_current_option", None) != "Ein":
+        return False
+    override = data.get("override")
+    if override is not None:
+        try:
+            if override.pause_bis(_now_local()) is not None:
+                return False
+        except Exception:  # noqa: BLE001 — im Zweifel keine Reserve
+            return False
+    return True
+
+
 def max_min_soc_pct(config: dict) -> float:
     """Wie hoch der Mindest-Ladestand an DIESER Anlage sein darf.
 
@@ -2632,6 +2756,41 @@ async def async_collect_inputs(
         except Exception:
             _LOGGER.debug("Backup-Ladestand des Geräts nicht lesbar", exc_info=True)
 
+    # Spitzenkappung: die Reserve, die die Batterie für Spitzen hält, hebt
+    # den Boden des Plans — als Parameter, Haralds Modell bleibt unberührt.
+    min_soc_basis = min_soc
+    spitzenreserve_info = _spitzenreserve_fuer_plan(
+        data, config, inverter, start, horizon, stamps, consumption, production,
+        float(capacity),
+    )
+    ladeziel = _ladeziel_pct(config)
+    if spitzenreserve_info is not None:
+        reserve_pct = float(spitzenreserve_info["plan_pct"])
+        # Nie über den aktuellen Ladestand: Läge der Boden darüber, sähe
+        # opt() die Batterie als „leer am Boden" und nur Platz bis zum
+        # Deckel — morgens, nach einer Nacht in der Reserve, hieße das
+        # Einspeisung statt Laden für genau die Energie, die die Reserve
+        # wieder auffüllen soll. Nachts hält der Boden so, was da ist, und
+        # die Batterie gibt nur für Spitzen ab (Executor).
+        if soc is not None:
+            reserve_pct = min(reserve_pct, max(0.0, float(soc) - min_soc))
+        min_soc = min(
+            min_soc + reserve_pct,
+            max(min_soc, max_min_soc_pct(config)),
+        )
+        spitzenreserve_info["plan_wirksam_pct"] = round(min_soc - min_soc_basis, 1)
+        if spitzenreserve_info.get("im_ueberschuss") and spitzenreserve_info["plan_pct"] > 0:
+            # Tagsüber soll die Batterie am Ende der PV-Zeit wenigstens die
+            # Abendreserve haben — als Ladeziel, das bekommt so die
+            # Garantien des Ladeziels (nie ein Zukauf, nie ohne Lösung).
+            abend = min(
+                _max_soc_pct(config),
+                min_soc_basis + float(spitzenreserve_info["plan_pct"]),
+            )
+            if abend > ladeziel:
+                ladeziel = abend
+                spitzenreserve_info["ladeziel_pct"] = round(abend, 1)
+
     # Preise. Der Bezugspreis lässt sich direkt setzen; ohne Angabe wird er
     # wie bei Harald aus Einspeisepreis plus grid_fee gebildet. Ein leeres
     # Panel-Zahlenfeld kommt als 0 an — beim Tagestarif fällt das auf den
@@ -2904,8 +3063,10 @@ async def async_collect_inputs(
             or DEFAULT_BATTERY_COST
         ),
         min_soc_pct=min_soc,
+        min_soc_basis_pct=min_soc_basis if spitzenreserve_info is not None else None,
+        spitzenreserve=spitzenreserve_info,
         max_soc_pct=_max_soc_pct(config),
-        ladeziel_pct=_ladeziel_pct(config),
+        ladeziel_pct=ladeziel,
         netzdienlich_bis_stunde=netzdienlich_bis,
         netzdienlich_bonus=netzdienlich_bonus,
         forecast_source=quelle,
@@ -3149,6 +3310,9 @@ def solve(inputs: ScheduleInputs) -> dict[str, Any]:
         "max_soc_pct": inputs.max_soc_pct,
         "forecast_source": inputs.forecast_source,
     }
+    if inputs.spitzenreserve is not None:
+        result["spitzenreserve"] = inputs.spitzenreserve
+        result["min_soc_basis_pct"] = inputs.min_soc_basis_pct
     ladeziel = _ladeziel_termine(config, table, slots, inputs)
     if ladeziel is not None:
         result["ladeziel"] = ladeziel

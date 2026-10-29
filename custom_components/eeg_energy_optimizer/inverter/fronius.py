@@ -327,7 +327,11 @@ class FroniusInverter(InverterBase):
         # Active forced mode the keepalive rewrites until stop:
         #   {"kind": "charge_limit", "power_kw": float}
         #   {"kind": "discharge", "power_kw": float, "target_soc": float|None}
+        #   {"kind": "entladedeckel"} — nur der Entladedeckel, ohne Ladelimit
         self._active_command: dict | None = None
+        # Entladedeckel der Spitzenkappung in kW (None = keiner). Gilt neben
+        # einem Ladelimit: dann StorCtl_Mod = 3 mit InWRte UND OutWRte.
+        self._entladedeckel_kw: float | None = None
         self._keepalive_task: asyncio.Task | None = None
         # Zuletzt im Ruhezustand gelesener MinRsvPct (Rohwert). Der Fahrplan
         # braucht ihn als Untergrenze; während einer Entladung steht dort
@@ -816,6 +820,8 @@ class FroniusInverter(InverterBase):
         """
         if command["kind"] == "charge_limit":
             return await self._write_charge_limit(command["power_kw"])
+        if command["kind"] == "entladedeckel":
+            return await self._write_entladedeckel()
         return await self._write_discharge(
             command["power_kw"], command.get("target_soc")
         )
@@ -888,8 +894,20 @@ class FroniusInverter(InverterBase):
             if not await self._write_register(_OFFSET_RVRTTMS, _RVRTTMS_SECONDS):
                 return False
 
+            # Entladedeckel der Spitzenkappung daneben: OutWRte und Bit 1.
+            # Beide Raten sind ≥ 0, das Fenster [−OutWRte, InWRte] ist also
+            # nie leer — die Reihenfolge der Einzelschritte ist hier egal.
+            modus = 1
+            if self._entladedeckel_kw is not None:
+                if not await self._write_register(
+                    _OFFSET_OUTWRTE,
+                    self._rate_register(self._deckel_prozent(wchamax)),
+                ):
+                    return False
+                modus = 3
+
             # StorCtl_Mod = 1 (Charge Limit active) — activates InWRte set above
-            if not await self._write_register(_OFFSET_STORCTL_MOD, 1):
+            if not await self._write_register(_OFFSET_STORCTL_MOD, modus):
                 return False
 
             _LOGGER.info(
@@ -902,6 +920,81 @@ class FroniusInverter(InverterBase):
             _LOGGER.exception("Fronius: failed to set charge limit")
             self._close_client()
             return False
+
+    # ------------------------------------------------------------------
+    # Entladedeckel (Spitzenkappung)
+    # ------------------------------------------------------------------
+    @property
+    def supports_discharge_limit(self) -> bool:
+        """Über OutWRte mit StorCtl_Mod Bit 1 (Fronius Modbus, Beispiel 4)."""
+        return True
+
+    def _deckel_prozent(self, wchamax: int) -> float:
+        kw = max(0.0, float(self._entladedeckel_kw or 0.0))
+        return min(kw * 1000.0 / wchamax, 1.0) * 100.0
+
+    async def _write_entladedeckel(self) -> bool:
+        """Nur den Entladedeckel: StorCtl_Mod = 2, OutWRte = Deckel.
+
+        InWRte zuerst auf 100 %: Steht dort noch das negative Fenster einer
+        Entladung, wäre das Fenster nach dem OutWRte-Schritt leer, und der
+        Gen24 lehnt genau diesen Einzelschritt ab (siehe _write_discharge).
+        """
+        try:
+            if not await self._ensure_model124():
+                return self._fehler("Model 124 nicht erreichbar")
+            wchamax = await self._read_wchamax()
+            if wchamax is None or wchamax == 0:
+                return self._fehler("WChaMax unbekannt oder null")
+            for offset, wert in (
+                (_OFFSET_INWRTE, self._rate_register(100.0)),
+                (_OFFSET_OUTWRTE, self._rate_register(self._deckel_prozent(wchamax))),
+                (_OFFSET_WINTMS, 0),
+                (_OFFSET_RVRTTMS, _RVRTTMS_SECONDS),
+                (_OFFSET_STORCTL_MOD, 2),
+            ):
+                if not await self._write_register(offset, wert):
+                    return False
+            _LOGGER.info(
+                "Fronius: Entladedeckel %.2f kW gesetzt (WChaMax=%d W)",
+                self._entladedeckel_kw or 0.0, wchamax,
+            )
+            return self._erfolg()
+        except Exception:
+            _LOGGER.exception("Fronius: Entladedeckel fehlgeschlagen")
+            self._close_client()
+            return self._fehler("Ausnahme beim Setzen des Entladedeckels")
+
+    async def async_set_discharge_limit(self, power_kw: float | None) -> bool:
+        """Entladedeckel setzen oder aufheben, ein Ladelimit bleibt stehen.
+
+        Läuft ein Ladelimit, wird es mit dem Deckel neu geschrieben
+        (StorCtl_Mod 3 ↔ 1). Läuft nichts, ist der Deckel ein eigener Modus
+        mit Keepalive — der Watchdog (RvrtTms) gibt die Batterie frei, falls
+        Home Assistant ausfällt. Während einer erzwungenen Entladung wird der
+        Wert nur gemerkt; der Executor hebt den Deckel vor jeder Entladung auf.
+        """
+        if power_kw is not None and self._nicht_endlich(power_kw):
+            return False
+        async with self._lock:
+            vorher = self._entladedeckel_kw
+            self._entladedeckel_kw = None if power_kw is None else max(0.0, float(power_kw))
+            kommando = self._active_command
+            if kommando is not None and kommando.get("kind") == "charge_limit":
+                ok = await self._write_charge_limit(kommando["power_kw"])
+            elif kommando is not None and kommando.get("kind") == "discharge":
+                ok = True
+            elif self._entladedeckel_kw is not None:
+                ok = await self._write_entladedeckel()
+                if ok:
+                    self._active_command = {"kind": "entladedeckel"}
+                    self._start_keepalive()
+            else:
+                # Aufheben ohne anderen Modus: zurück in den Automatikbetrieb.
+                ok = await self._stop_forcible_locked()
+            if not ok:
+                self._entladedeckel_kw = vorher
+            return ok
 
     async def async_set_discharge(
         self, power_kw: float, target_soc: float | None = None
@@ -927,6 +1020,8 @@ class FroniusInverter(InverterBase):
     ) -> bool:
         ok = await self._write_discharge(power_kw, target_soc)
         if ok:
+            # OutWRte gehört jetzt der Entladung — ein Deckel gilt nicht mehr.
+            self._entladedeckel_kw = None
             self._active_command = {
                 "kind": "discharge",
                 "power_kw": power_kw,
@@ -1116,6 +1211,7 @@ class FroniusInverter(InverterBase):
         # Drop the active command first: a keepalive rewrite racing this
         # stop would otherwise re-arm the mode we are about to clear.
         self._active_command = None
+        self._entladedeckel_kw = None
         self._cancel_keepalive()
         try:
             if not await self._ensure_model124():

@@ -38,7 +38,10 @@ schedule.py: ScheduleRunner (planning, 1 min)
   → HAConfig — the bridge to Harald's opt(); every intervention of ours
        lives in these parameters, never in the model:
         - min-SOC as *missing capacity* (opt() counts free room to full,
-          a smaller capacity cuts the bottom off) → hard floor
+          a smaller capacity cuts the bottom off) → hard floor; with the
+          Spitzenkappung raised by the peak reserve (`_spitzenreserve_fuer_plan`,
+          capped at `max_min_soc_pct`), the plain value stays in
+          `min_soc_basis_pct`
         - export limit only when enabled, else ac_limit − 0.5
         - feedin_price from eeg_price.py, capped below the purchase price
   → _solve()  [worker thread] — imports pandas, calls opt(), 15-min slots
@@ -62,6 +65,11 @@ schedule_executor.py: ScheduleExecutor (execution, 30 s)
                   at most twice per slot, never at the target SOC
         Failsafe — no fresh plan for 15 min → release the inverter
         Deadbands — 0.2 kW / 1 % SOC, so we don't write on LP noise
+        Spitzenkappung — in the peak reserve (SOC ≤ min SOC + reserve curve
+                  from the plan) a discharge cap: 0 = hold, else only what
+                  exceeds the quarter-hour import budget (spitzenreserve.py);
+                  lifted before every forced discharge / grid charge and by
+                  every release; only for supports_discharge_limit drivers
         Write brake — a failed write is not retried every run; the gap
                   doubles (1, 2, 4 … 10 runs) for the intent that failed
   → Netzladung (beta, Huawei only): a slot whose `netzladung` column (charge
@@ -104,7 +112,8 @@ schedule_executor.py: ScheduleExecutor (execution, 30 s)
 | `heizstab/controller.py` | Heater control — `HeizstabController` (`regeln()`: comfort → discharge → max temperature → plan (`plan_kw`) → surplus rule `naechster_sollwert`; temperature hysteresis, saturation, `puffer_budget_kwh` for the LP, 20-s watchdog write (plus an immediate rewrite when the device reads 0 W under a standing setpoint), 10-s read, 6-h time sync, detection of both foreign control and a device that does not follow), `create_heizstab()` factory |
 | `heizstab/ohmpilot_modbus.py` | Fronius Ohmpilot driver via direct Modbus TCP (setpoint 40599 int32 W big-endian, actual power 40800, temperature 40808 in 0.1 °C, unix time 40400; 50-s device watchdog). Taken over from HA_Optimierung_Gruenbach, registers verified on the device there |
 | `leistungsspitze.py` | Measures the basis of the 2027 capacity charge (SNE-G-V § 6): grid **import** energy per fixed quarter-hour (UTC-floored, :00/:15/:30/:45) ÷ 0.25 h, commercially rounded, and the month's maximum (local calendar month, 24 months of history, `Store`). Integrates `max(0, −grid)` — export never offsets import. Sample points = every state change of the grid sensor plus a 10-s sampling; a value counts only while the source's `last_reported` is younger than `HALTEN_MAX_S` (a hung Modbus link keeps its last state without going `unavailable`). A quarter with gaps is a lower bound, still counted, flagged `vollstaendig=False`. Measures only, steers nothing. `netzkosten_monat(kw)` turns a peak into € per month incl. 20 % VAT from E-Control's **guide values** (14.07.2026, not tariffs): final stage 33.82 €/kW·a up to 10 kW, 67.64 above (the highest known rates), start 2027 ≈ 19 €/kW·a (15–26 by grid area), billed at least 2 kW; exposed as attribute `netzkosten_monat` of *Bezugsspitze Monat* and shown in the status card's ⓘ. **TODO 2027: replace with the SNE-T-V rates per grid area.** Created in `async_setup_entry` **before** the platforms so the sensors can subscribe |
-| `spitzenkappung.py` | **Beta, currently hidden** (`SPITZENKAPPUNG_SICHTBAR = false` in the panel — no settings tab; the backend still runs when `spitzenkappung_enabled` is set), settings tab *Spitzenkappung* (expert mode only). Switches configured consumers off (`spitzenkappung_verbraucher`: name + power sensor + `switch.`/`input_boolean.`, in switch-off order, max 10) when the running quarter-hour's **projection** (`Leistungsspitze.laufend` → `hochrechnung_kw`, measured at the grid, i.e. after the battery) exceeds `max(spitzenkappung_grenze_kw` (2–20 kW)`, month peak)` — the quarter-hour mean, not the instantaneous value. Pure `entscheide()` + `Spitzenkappung` (10-s timer). Rules: only active consumers (≥ 0.2 kW), 60 s settling after each switch-off (car sensors report late), back on only after 5 min **and** if the consumer fits a full quarter-hour beside the current import (0.3 kW hysteresis), reverse order, one per tick; only what it switched off itself is switched back on, a manual switch-on releases it; mode Aus / pause / feature off / removed from the list → everything back on; a failed service call waits 60 s. State persisted (`…_spitzenkappung`), so a restart keeps it; unload (not HA stop) switches everything back on. Status as attribute `kappung` of *Bezugsspitze Monat* (unrecorded), shown in the status card's peak row; switching lands in the activity log (`data["activity_eintrag"]`). Steers nothing in the LP |
+| `spitzenkappung.py` | Second stage of the **Spitzenkappung** (out of beta, settings tab *Spitzenkappung* for everyone, guide `docs/guides/spitzenkappung.md`). Switches configured consumers off (`spitzenkappung_verbraucher`: name + power sensor + `switch.`/`input_boolean.` + optional `nennleistung_kw`, in switch-off order, max 10) when the running quarter-hour's **projection** (`Leistungsspitze.laufend` → `hochrechnung_kw`, measured at the grid, i.e. after the battery) **minus what the battery could still add** (`batterie_luft_kw`, from `ScheduleExecutor.batterie_luft_kw()`: max discharge + measured battery power, capped at `inverter_ac_limit_kw − (PV − battery)`, only above the min SOC and **only for cap drivers in a run that left the battery in automatic mode** — 0 for Kostal/SolaX/Sigenergy, during grid charge or forced discharge: without the cap nobody knows why the battery is not giving more) exceeds `max(spitzenkappung_grenze_kw` (2–20 kW)`, month peak)` — the battery goes first, its cap follows within 30 s. Pure `entscheide()` + `Spitzenkappung` (10-s timer). Rules: only active consumers (≥ 0.2 kW), 60 s settling after each switch-off (car sensors report late), back on only after the consumer's own minimum off time **and** if it fits a full quarter-hour beside the current import (0.3 kW hysteresis, battery NOT counted — it would empty the reserve), reverse order, one per tick; only what it switched off itself is switched back on, a manual switch-on releases it; mode Aus / pause / feature off / removed from the list → everything back on; a failed service call waits 60 s. **Anti-oscillation:** the remembered power is the max of the last `SPITZE_FENSTER_S` (5 min) or the `nennleistung_kw`, whichever is larger; switched off again within `PENDEL_FENSTER_S` (15 min) after a switch-on doubles the minimum off time (5 → 10 → 20 → 40 → 60 min, `min_aus_s` per consumer), `PENDEL_RUHE_S` (1 h) calm resets it; the level is capped at `PENDEL_STUFE_MAX` and persisted with the rest. State persisted (`…_spitzenkappung`), so a restart keeps it; unload (not HA stop) switches everything back on. Status as attribute `kappung` of *Bezugsspitze Monat* (unrecorded, incl. `batterie` from `sensor._kappung_batterie`), shown in the status card's peak row; switching lands in the activity log (`data["activity_eintrag"]`) |
+| `spitzenreserve.py` | First stage of the **Spitzenkappung**: the battery's peak reserve. Pure `reservekurve()`: for every 15-min slot of the horizon the energy above the limit from that slot until the next forecast PV surplus (`ueberschuss_je_slot`: PV > consumption), per quarter `min(max(0, Haus − PV − Grenze), Entladeleistung) · 0.25 h`, looked up at the same **wall-clock** time on each of the last `TAGE` = 28 days (backward sums, a surplus slot resets), `QUANTIL` = 0.9 (nearest rank — the night with the car, not the average night), ÷ 0.95 discharge efficiency. A day counts for a slot only if it covers **that slot's window** (until the next surplus) to ≥ 80 % — not the whole horizon: for yesterday the second half of a 48-h horizon is still future, and a gap exactly in tonight's window must not pass as "no peak"; slots with fewer than `MIN_TAGE` = 7 valid days are `None` (then the minimum reserve). Lookups go through `verlauf_nach_zeit` (naive datetimes, cached per fetch) — string keys cost ~10 ms a minute in the event loop. Known limit: with the `wh_hours` fallback the horizon can end before sunrise, the backward sum then starts at 0 there and the reserve is too small. `kurve_in_pct` clamps to `[spitzenkappung_reserve_min_pct` (default 0)`, spitzenkappung_reserve_max_pct` (default 30, max 80)`]`. `plan_reserve_pct`: the reserve the plan should hold — now, or in a surplus slot the **highest until midnight** (a short lunch window without surplus must not hide the evening). `schedule._spitzenreserve_fuer_plan` builds it only in mode Ein without pause (`_steuert_gerade`), `async_collect_inputs` caps it at **`soc − min_soc`** (a floor above the real SOC made `opt()` start "empty at the floor" and see too little room — every morning after a night in the reserve it planned export instead of refilling) and, in a surplus slot, raises the Ladeziel to `basis + evening reserve` (`spitzenreserve.ladeziel_pct`) so the day refills it with the Ladeziel's guarantees. History = 15-min means of **Haus − PV** (not grid import, which the battery already shaped) from the recorder's 5-min statistics of the own *Hausverbrauch*/*PV-Leistung* sensors (`units={"power": "kW"}`), fetched 2 min after start and hourly, kept 35 days in `Store` `…_spitzenreserve` (so day one already has ~10 days). Execution side, also pure: `erlaubter_netzbezug_kw` (quarter-hour budget `(Grenze − 0.3)·0.25 − bisher` over the rest; last minute → the limit) and `entladedeckel_kw` (threshold `basis + reserve`, 1-pt exit hysteresis, at the min SOC hold, a cap below `DECKEL_MIN_KW` = 0.2 kW is a hold — otherwise it flipped 0 ↔ 0.1 kW every run on noise — with hysteresis on the written state: from a hold only at ≥ 0.4 kW (`DECKEL_HYSTERESE_KW`), missing measurement → keep the cap). The executor caps `basis + reserve` at `max_min_soc_pct` like the plan floor |
 | `statistics.py` | Counter behind the *Entladung ins Netz* sensor — battery energy that reached the grid during a controlled discharge (store `…_feedin_stats`, format kept since 1.5.x). The panel card that showed it is gone (2.1.24) |
 | `bilanz_telemetrie.py` | Balance days of the Einspeisung card to the telemetry (`/v1/balance`, backend table `daily_balance`): `tag_payload` whitelists the fields — energy, mode share, two flags, `ref_*`, the day's import peak (`bezug_spitze_kw` / `_zeit` from `bewerte_tag`: highest quarter-hour import ÷ 0.25 h, same grid as the grid operator; not recoverable for days archived before 2.1.30), **never money**. `BilanzVersand` remembers the dates the backend has (bound to the installation id, so a forget resends the archive), sends the rest hourly and after boot in packets of 100 — the post-update backfill (≤ 400 days) and the daily new day are the same mechanism. The backend upserts per (installation, date) |
 | `prognose_telemetrie.py` | Forecast days of the Prognosevergleich to the telemetry (`/v1/forecast`, backend table `daily_forecast`): per finished day (`Prognosevergleich.abgeschlossene_tage` — complete, or two days old, so a half day is never marked as sent) measured PV, the morning forecasts of the foreign source and of the own one (calibrated and `eigen_roh`), as day sums with `statistik_tag`'s MAE and as 30-min series. `PrognoseVersand` reuses `bilanz_telemetrie.TageVersand` (sent-dates memo bound to the installation id, packets of 50, hourly + after boot), so an update backfills the whole archive (≤ 400 days). Backs the backend dashboard's *Prognose* page, which replaced *Forecast-Qualität* |
@@ -329,6 +338,17 @@ InverterBase (ABC)
   ├── get_max_discharge_power_kw() → float|None (upper bound for Guard 2)
   ├── get_backup_reserve_soc_pct() → float|None (raises the min-SOC floor)
   ├── supports_grid_charge → bool               (default False; Huawei True)
+  ├── supports_discharge_limit → bool           (default False; Huawei, Fronius,
+  │                                              SMA True)
+  ├── async_set_discharge_limit(kw | None)      (Spitzenkappung: cap the
+  │                                              discharge in automatic mode,
+  │                                              0 = hold, None = lift; coexists
+  │                                              with a charge limit — Fronius
+  │                                              StorCtl_Mod 3 / 2, SMA
+  │                                              BatDschMaxW, Huawei number
+  │                                              „Maximale Entladeleistung";
+  │                                              a forced discharge or stop
+  │                                              forgets it)
   ├── async_set_grid_charge(kw, target_soc)     (beta: force charge from PV +
   │                                              grid, Huawei forcible_charge_soc)
   └── get_control_entities() → list[dict]       (panel transparency view)
@@ -621,6 +641,57 @@ the event loop is long enough for HA to flag a blocking call.
   stayed at 30.8 % for every setting); do not retry it. Note that the target
   SOC handed to the inverter comes from the plan; there is no independent
   interlock, the protection lives in the plan alone.
+- **Spitzenkappung (peak shaving, ElWG capacity charge from 2027)** —
+  two stages, battery first (`spitzenreserve.py` + executor), then
+  consumers (`spitzenkappung.py`). Decisions that are not obvious from the
+  code (29.10.2026): (1) the reserve enters the plan as a **raised min SOC**
+  (`HAConfig` missing capacity), *not* via the Ladeziel hook — that hook
+  caps every floor at what is reachable *without buying*, and a peak
+  reserve exists precisely to make the house buy its base load at night;
+  `chamo/` stays untouched. `opt()` takes one scalar, so the plan uses the
+  reserve of now (in a surplus slot: of the next window) and falls with
+  the curve as it is re-solved every minute; the executor follows the
+  exact curve (`reserve_zu`). The reference simulation and the end-state
+  credit see the same raised floor, so the optimiser advantage does not
+  blame the steering for a reserve the user chose. (2) The reserve is
+  **computed, not a fixed percentage** — a static reserve that stays unused
+  every night costs more than the capacity charge it saves; the 0.9
+  quantile covers the night with the car, the falling curve releases what
+  is no longer needed before sunrise. Cost is deliberately not weighed
+  (operator decision: switched on means it caps). (3) In the reserve the
+  battery stays in **automatic mode with a discharge cap**
+  (`async_set_discharge_limit`), not a tracked forced discharge: no export
+  when the load drops, and 0 is a real "hold". The cap follows a
+  **quarter-hour budget** (billing is the mean): a quiet start lets the
+  rest draw more. At the min SOC the battery holds even for peaks. (4) Only
+  Huawei, Fronius, SMA have the cap; other drivers get **no reserve in the
+  plan** (it would be held back in the plan but eaten by automatic mode) —
+  consumers only. (5) Huawei's number entity survives an HA crash, so with
+  the feature on the first release after start lifts it
+  (`_entladedeckel_offen` = "state on the device unknown"). The flag is
+  also set after a failed or partial cap write, and after any successful
+  direct `async_stop_forcible` while a cap was written
+  (`_deckel_nach_stopp`: Fronius/SMA forget the cap on stop, Huawei keeps
+  it — so the executor rewrites or lifts it instead of trusting "0 is
+  written"). Every `async_release` lifts it **unbraked** (it is also the unload path — a pending wait from an earlier failure must not save a Huawei cap past unload); in mode Aus with nothing but the cap outstanding only the (braked) lift runs, after the startup grace, not the whole stop every 30 s. A failed lift does **not**
+  fail the release and does **not** block a forced discharge (on Fronius
+  /SMA the command replaces the cap, on Huawei Guard 3 reports an
+  ineffective discharge) — it is retried behind the same doubling brake as
+  the cap write (`_deckel_bremse`). The step runs only when the action's
+  kind actually arrived (`_active_kind` release/charge_limit). Huawei
+  clamps each entity's target at its `max` attribute (two batteries on one
+  inverter: `get_max_discharge_power_kw` counts it twice); an unavailable
+  device is not written but makes the call return False — Huawei keeps the
+  value, so a device that was away would otherwise come back with a stale
+  cap while the executor believed it lifted. Fronius/SMA fall back via their watchdog. (5a) The
+  plan holds the reserve only in mode Ein without pause — otherwise
+  reference simulation and bilanz would compare against a floor the
+  automatic mode does not keep, and "Ersparnis durch Optimierung" would no
+  longer be ~0 in Aus. Telemetry `min_soc_dyn` is the raised floor. (6) The consumer stage counts the battery's headroom when
+  switching off (cap drivers only), never when switching back on. Tests:
+  `tests/test_spitzenreserve.py`, `tests/test_spitzenreserve_plan.py`,
+  `tests/test_spitzenkappung_executor.py`, `tests/test_entladedeckel_treiber.py`,
+  `tests/test_spitzenkappung.py`.
 - **All six drivers are steered and selectable**: every driver returns
   `supports_schedule_control=True`, and `SCHEDULE_CONTROL_INVERTERS` in the
   panel lists all six for the wizard (`NUR_HUAWEI_WAEHLBAR` is gone). All six are
@@ -887,9 +958,13 @@ sensors (assigned once), steps 4–6 are the parameters:
    Without it a fresh install stays on **Aus** (`select.py`) — the member guide
    promised steering that never happened
 
-Settings live in five tabs (Verbraucher only in expert mode): **Tarife**, **Anlage** and **Prognose** are exactly the
+Settings live in six tabs (Verbraucher only in expert mode): **Tarife**, **Anlage** and **Prognose** are exactly the
 parameter wizard steps (same field renderers, `settings_` prefix); **Verbraucher**
-holds the *Heizstab* and *Wallbox* cards, expert mode only —
+holds the *Heizstab* and *Wallbox* cards, expert mode only — **Spitzenkappung**
+(`_spitzenkappungFields`, for everyone: limit, minimum/maximum
+reserve only for `SPITZENKAPPUNG_BATTERIE_TREIBER`, consumer list with
+optional rated power; without a battery stage at least one consumer is
+mandatory) —
 `_heizstabFields` / `_wallboxFields`, settings only, not in the wizard (a
 remembered `heizstab` tab maps to it); **System**
 holds, top to bottom: (expert) profile lookback, **Dashboard** (hide cards

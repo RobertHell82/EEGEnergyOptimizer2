@@ -9,6 +9,7 @@ Die Einstellungen öffnest du über das Zahnrad oben rechts im Dashboard. Sie si
 | **Tarife** | Karten **Vergütung und Kosten** (Standardvergütung, Nachtsatz, Bezugspreis, Netzbereich) und **Energiegemeinschaft**. Entspricht dem Assistentenschritt „Tarife & Gemeinschaft“ |
 | **Anlage** | Karten **Anlage** (Einspeisegrenze) und **Batterie** (Mindest- und Maximum-Ladestand). Entspricht dem Assistentenschritt „Anlage & Batterie“ |
 | **Prognose** | Die steuernde Quelle der PV-Prognose mit ihren Sensoren, der Schalter **Prognosevergleich** und, wenn die eigene Berechnung steuert oder mitläuft, die Flächentabelle der Anlage. Entspricht dem Assistentenschritt „PV-Prognose“ |
+| **Spitzenkappung** | Bezugsspitzen kappen: Grenzwert, Mindest- und Maximalreserve der Batterie (Huawei, Fronius, SMA) und die Verbraucher, die abgeschaltet werden dürfen (siehe Anleitung „Spitzenkappung“) |
 | **Verbraucher** | Karten **Heizstab** (Fronius Ohmpilot, siehe Anleitung „Heizstab“) und **Wallbox** (siehe Anleitung „Wallbox“). Der Tab erscheint **nur im Expertenmodus** und kommt im Assistenten nicht vor |
 | **System** | Karte **Dashboard** (Karten ausblenden), Übersicht über Anlage und Sensoren, EEG-Statistik, **Verlauf vergangener Tage**, Fahrplan-Archiv und ganz unten der Schalter **Expertenmodus** |
 
@@ -45,6 +46,7 @@ Der Knopf **Speichern** unter den Tabs übernimmt die Änderungen aus **allen** 
 - **Tarife:** Standardvergütung (bei „Fester Wert“), Arbeitspreis, Netzbereich (wenn Sommer-Nieder- oder Winter-Nieder-Arbeitspreis eingeschaltet ist), das Nachtfenster, sobald ein Nachtsatz eingetragen ist (Standardvergütung und je Gemeinschaft), die Anteile der Gemeinschaften (zusammen höchstens 100 %), im Quotenmodus die Tages-Abnahmequote und mit eingeschaltetem *Batterie aus dem Netz laden* ein Bezugspreis, der billiger sein kann als die Nacht (Spot-Tarif, Bezugspreis einer Gemeinschaft oder zeitvariable Netzentgelte), bei Spot- oder Gemeinschaftsbezug außerdem der Netzbereich
 - **Prognose:** die Sensoren einer fremden Prognosequelle, gültige PV-Flächen
 - **Verbraucher:** Adresse, Leistung und Maximaltemperatur des Heizstabs, Adresse der Ambibox
+- **Spitzenkappung** (wenn eingeschaltet): Grenzwert zwischen 2 und 20 kW, Mindest- und Maximalreserve zwischen 0 und 80 % (die Mindestreserve nicht über der maximalen), je Verbraucher Leistungssensor und Schalter, und ohne Batterie-Stufe mindestens ein Verbraucher
 
 Die meisten Änderungen wirken **sofort**: Der Fahrplan wird gleich neu gerechnet, die Steuerung behält ihren Zustand. Einen geänderten Rückblick des Verbrauchsprofils rechnet die Integration im Hintergrund neu.
 
