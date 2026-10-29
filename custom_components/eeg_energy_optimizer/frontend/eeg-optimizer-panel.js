@@ -5659,6 +5659,19 @@ class EegOptimizerPanel extends HTMLElement {
     });
   }
 
+  // Gegen welchen Wert die Reserve rechnet: die eingestellte Grenze oder die
+  // schon höhere Monatsspitze (schwelle_kw = das Größere von beiden). Ohne
+  // Wert die allgemeine Fassung.
+  _reserveGegen(schwelleKw, grenzeKw) {
+    const s = Number(schwelleKw);
+    const g = Number(grenzeKw);
+    if (!Number.isFinite(s)) return "über der Schwelle (Grenze oder höhere Monatsspitze)";
+    const wert = `${fmtDe(s, 2)} kW`;
+    return Number.isFinite(g) && s > g + 0.005
+      ? `über der aktuellen Monatsspitze (${wert})`
+      : `über deiner Grenze (${wert})`;
+  }
+
   // Was die Spitzenkappung gerade tut: Batterie und Verbraucher getrennt,
   // jede Stufe in einer Zeile. Ohne Funktion ein Hinweis zum Einschalten.
   _spitzeKappungBlock(d) {
@@ -5696,16 +5709,19 @@ class EegOptimizerPanel extends HTMLElement {
         ? `<div title="${titel}" style="position:absolute;top:-3px;bottom:-3px;left:${Math.max(0, Math.min(100, pct)).toFixed(1)}%;width:2px;background:${farbe}"></div>`
         : "";
       const aktiv = !!b.aktiv;
+      // Schwelle in % = Mindest-Ladestand + Reserve; bei Reserve 0 nur der
+      // Mindest-Ladestand unter zweitem Namen — dann nicht anzeigen.
+      const mitReserve = Number.isFinite(schwelleP) && Number.isFinite(basis) && schwelleP > basis + 0.5;
       const balken = Number.isFinite(soc) ? `
         <div style="position:relative;height:10px;border-radius:5px;background:var(--divider-color,#e0e0e0);margin:6px 0 4px">
           <div style="position:absolute;left:0;top:0;bottom:0;border-radius:5px;width:${Math.max(0, Math.min(100, soc)).toFixed(1)}%;background:${aktiv ? "#fb8c00" : "var(--success-color,#43a047)"}"></div>
           ${Number.isFinite(schwelleP) && schwelleP > basis ? `<div title="Spitzenreserve" style="position:absolute;top:0;bottom:0;left:${Math.max(0, basis).toFixed(1)}%;width:${Math.max(0, schwelleP - basis).toFixed(1)}%;background:repeating-linear-gradient(135deg,rgba(251,140,0,.35) 0 3px,transparent 3px 6px)"></div>` : ""}
           ${marke(basis, "#e53935", "Mindest-Ladestand")}
-          ${marke(schwelleP, "#fb8c00", "Schwelle")}
+          ${mitReserve ? marke(schwelleP, "#fb8c00", "Obergrenze der Spitzenreserve") : ""}
         </div>
         <div style="display:flex;justify-content:space-between;font-size:11px">
           <span>Ladestand <strong style="color:var(--primary-text-color)">${fmtDe(soc, 0)} %</strong></span>
-          <span>${Number.isFinite(schwelleP) ? `Schwelle ${fmtDe(schwelleP, 0)} %` : ""}${Number.isFinite(basis) ? ` · Mindest-Ladestand ${fmtDe(basis, 0)} %` : ""}</span>
+          <span>${mitReserve ? `Reserve bis ${fmtDe(schwelleP, 0)} % · ` : ""}${Number.isFinite(basis) ? `Mindest-Ladestand ${fmtDe(basis, 0)} %` : ""}</span>
         </div>` : "";
       let satz;
       if (k.steuert === false) {
@@ -5718,16 +5734,16 @@ class EegOptimizerPanel extends HTMLElement {
         satz = "Wartet auf den nächsten Planlauf.";
       } else if (aktiv && b.deckel_kw != null) {
         satz = b.deckel_kw > 0
-          ? `Hält die Reserve und deckt nur, was über der Schwelle liegt — höchstens <strong>${fmtDe(Number(b.deckel_kw), 2)} kW</strong>.`
+          ? `Hält die Reserve und deckt nur, was ${this._reserveGegen(d.schwelle_kw, d.grenze_kw)} liegt — höchstens <strong>${fmtDe(Number(b.deckel_kw), 2)} kW</strong>.`
           : "Hält die Reserve — die Grundlast kommt aus dem Netz.";
       } else if (aktiv) {
         satz = "In der Reserve — die Entladegrenze ist noch nicht gesetzt, wird wiederholt.";
       } else if (Number(b.reserve_pct) <= 0) {
         satz = b.statistik === false
           ? `Keine Reserve: Die Statistik reicht noch nicht (${b.tage ?? 0} von 7 Tagen). Die Batterie arbeitet normal und hält erst am Mindest-Ladestand.`
-          : "Keine Reserve nötig — in den letzten Wochen kam keine Spitze über die Schwelle. Die Batterie arbeitet normal und hält erst am Mindest-Ladestand.";
+          : `Keine Reserve nötig — in den letzten vier Wochen lag kein Verbrauch ${this._reserveGegen(d.schwelle_kw, d.grenze_kw)}. Die Batterie arbeitet normal und hält erst am Mindest-Ladestand.`;
       } else {
-        satz = `Arbeitet normal. Reserve jetzt <strong>${fmtDe(Number(b.reserve_pct), 0)} %</strong> — darunter deckt sie nur noch Spitzen.`;
+        satz = `Arbeitet normal. Reserve jetzt <strong>${fmtDe(Number(b.reserve_pct), 0)} %</strong> — unter <strong>${fmtDe(schwelleP, 0)} %</strong> Ladestand deckt sie nur noch Spitzen.`;
       }
       batterie = `${balken}<div style="margin-top:4px">${satz}</div>`;
     }
@@ -9358,7 +9374,7 @@ class EegOptimizerPanel extends HTMLElement {
     return SPITZENKAPPUNG_BATTERIE_TREIBER.includes(d?.inverter_type || this._config?.inverter_type);
   }
 
-  _kappungBatterieZustand(b) {
+  _kappungBatterieZustand(b, grenzeKw) {
     // Was die Batterie-Stufe gerade tut — aus Plan und Executor (sensor.py
     // _kappung_batterie). Leer, solange noch kein Lauf da ist.
     if (!b) return "";
@@ -9368,9 +9384,9 @@ class EegOptimizerPanel extends HTMLElement {
       teile.push(`Die Statistik reicht noch nicht (${b.tage ?? 0} von 7 vergleichbaren Tagen) — bis dahin gilt die Mindestreserve.`);
     }
     if (b.reserve_pct != null && b.schwelle_pct != null && Number(b.reserve_pct) <= 0) {
-      teile.push(`Keine Reserve nötig — in den letzten Wochen kam keine Spitze über die Grenze. Die Batterie arbeitet normal und hält erst am Mindest-Ladestand (<strong>${pct(b.schwelle_pct)} %</strong>).`);
+      teile.push(`Keine Reserve nötig — in den letzten vier Wochen lag kein Verbrauch ${this._reserveGegen(b.schwelle_kw, grenzeKw)}. Die Batterie arbeitet normal und hält erst am Mindest-Ladestand (<strong>${pct(b.basis_pct ?? b.schwelle_pct)} %</strong>).`);
     } else if (b.reserve_pct != null && b.schwelle_pct != null) {
-      teile.push(`Reserve jetzt <strong>${pct(b.reserve_pct)} %</strong> — unter <strong>${pct(b.schwelle_pct)} %</strong> Ladestand deckt die Batterie nur noch, was über der Grenze liegt.`);
+      teile.push(`Reserve jetzt <strong>${pct(b.reserve_pct)} %</strong> — unter <strong>${pct(b.schwelle_pct)} %</strong> Ladestand deckt die Batterie nur noch, was ${this._reserveGegen(b.schwelle_kw, grenzeKw)} liegt.`);
     } else if (b.plan_pct != null) {
       teile.push(`Der Fahrplan hält <strong>${pct(b.plan_wirksam_pct ?? b.plan_pct)} %</strong> für Spitzen zurück.`);
     }
@@ -9403,7 +9419,7 @@ class EegOptimizerPanel extends HTMLElement {
     // Was gerade abgeschaltet ist — aus den Attributen der Bezugsspitze.
     const kappung = this._readState(this._entityIds?.bezugsspitze_monat)?.attributes?.kappung;
     const ab = kappung?.abgeschaltet || [];
-    const batterieText = this._kappungBatterieZustand(kappung?.batterie);
+    const batterieText = this._kappungBatterieZustand(kappung?.batterie, d.spitzenkappung_grenze_kw ?? 5);
     const zustand = !kappung ? "" : `
       <div class="help-text" style="margin-bottom:12px">
         ${kappung.schwelle_kw != null

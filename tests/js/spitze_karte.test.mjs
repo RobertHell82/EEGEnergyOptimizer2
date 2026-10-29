@@ -123,10 +123,40 @@ test("Reserve 0: sagt, dass keine nötig ist, statt ein leeres Band zu zeigen", 
   const p = panel(hass);
   p._loadSpitze();
   const a = antwort();
-  a.kappung.batterie = { unterstuetzt: true, aktiv: false, reserve_pct: 0, schwelle_pct: 20, deckel_kw: null, statistik: true, tage: 25 };
+  a.kappung.batterie = { unterstuetzt: true, aktiv: false, reserve_pct: 0, basis_pct: 20, schwelle_pct: 20, deckel_kw: null, statistik: true, tage: 25 };
   spitzeAnfragen(hass)[0].antworten(a);
   await warten();
-  assert.match(p._renderSpitzeKarte(), /Keine Reserve nötig/);
+  const html = p._renderSpitzeKarte();
+  assert.match(html, /Keine Reserve nötig/);
+  // Monatsspitze 7,43 kW über der Grenze 5 kW: die Spitze ist der Maßstab.
+  assert.match(html, /über der aktuellen Monatsspitze \(7,43 kW\)/);
+  // Reserve 0: kein zweiter Name für den Mindest-Ladestand.
+  assert.doesNotMatch(html, /Schwelle 20 %|Reserve bis/);
+  assert.match(html, /Mindest-Ladestand 20 %/);
+});
+
+test("Reserve 0 ohne höhere Monatsspitze: die Grenze ist der Maßstab", async () => {
+  const hass = aufzeichnendesHass();
+  const p = panel(hass);
+  p._loadSpitze();
+  const a = antwort({ schwelle_kw: 5 });
+  a.kappung.batterie = { unterstuetzt: true, aktiv: false, reserve_pct: 0, basis_pct: 20, schwelle_pct: 20, deckel_kw: null, statistik: true, tage: 25 };
+  spitzeAnfragen(hass)[0].antworten(a);
+  await warten();
+  assert.match(p._renderSpitzeKarte(), /über deiner Grenze \(5,00 kW\)/);
+});
+
+test("Reserve > 0: Ladestand-Zeile nennt „Reserve bis x %“", async () => {
+  const hass = aufzeichnendesHass();
+  const p = panel(hass);
+  p._loadSpitze();
+  const a = antwort();
+  a.kappung.batterie = { unterstuetzt: true, aktiv: false, reserve_pct: 15, basis_pct: 20, schwelle_pct: 35, deckel_kw: null, statistik: true, tage: 25 };
+  spitzeAnfragen(hass)[0].antworten(a);
+  await warten();
+  const html = p._renderSpitzeKarte();
+  assert.match(html, /Reserve bis 35 %/);
+  assert.match(html, /unter <strong>35 %<\/strong> Ladestand/);
 });
 
 test("Blättern: ein Monat zurück fragt den Monat an, 0 springt zurück", async () => {

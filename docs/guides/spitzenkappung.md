@@ -110,7 +110,7 @@ _Alle Felder wirken ohne Neustart der Integration._
 ## Anzeige
 
 - **Karte „Bezugsspitze & Spitzenkappung"** im Dashboard: Sie zeigt die Monatsspitze, die laufende Viertelstunde im Vergleich zur Schwelle und die Tagesspitzen des Monats. Darunter steht, was die Spitzenkappung gerade tut:
-  - Stufe 1 (Batterie) mit Ladestand, Schwelle und Reserve
+  - Stufe 1 (Batterie) mit Ladestand, Mindest-Ladestand und dem Ladestand, bis zu dem die Reserve reicht
   - Stufe 2 (Verbraucher) mit dem Zustand jedes Geräts
 
   Mehr dazu in der Anleitung „Dashboard".
@@ -120,7 +120,7 @@ _Alle Felder wirken ohne Neustart der Integration._
 - **Fahrplan-Status:** Der Statussensor zeigt „Spitzenkappung: Batterie hält Reserve" oder „… deckt Spitzen". Die Begründung steht im Attribut `status`.
 - **Aktivitätsprotokoll:** Jedes Ab- und Einschalten eines Verbrauchers steht dort mit Grund.
 
-**Reserve 0 %** heißt: In den letzten Wochen kam keine Spitze über die Schwelle. Die Batterie arbeitet normal und hält erst am Mindest-Ladestand an. Mit eingeschalteter Spitzenkappung ist der Mindest-Ladestand eine echte Untergrenze, auch im Automatikbetrieb.
+**Reserve 0 %** heißt: In den letzten vier Wochen lag kein Verbrauch über der Schwelle. Die Schwelle ist deine Grenze oder, wenn sie schon höher ist, die aktuelle Monatsspitze; die Karte nennt den Wert. Die Batterie arbeitet normal und hält erst am Mindest-Ladestand an. Mit eingeschalteter Spitzenkappung ist der Mindest-Ladestand eine echte Untergrenze, auch im Automatikbetrieb.
 
 ## Gut zu wissen
 
