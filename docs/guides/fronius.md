@@ -1,66 +1,79 @@
 # Fronius Gen24 einrichten
 
+Bei Fronius braucht der EEG Energy Optimizer zwei Wege zum Wechselrichter:
+
+| Weg | Wofür |
+|---|---|
+| **Fronius-Integration** in Home Assistant | Lesen der Messwerte (PV, Batterie, SOC, Netz) |
+| **Modbus TCP** am Wechselrichter | Steuern der Batterie |
+
+_**Modbus TCP** ist die Sprache, mit der Home Assistant im Heimnetz direkt mit dem Wechselrichter redet. Die **IP-Adresse** ist die Adresse des Geräts in deinem Heimnetz. **SOC** ist der Ladestand der Batterie._
+
 ## 1. Fronius Integration in Home Assistant
 
-Die native Fronius Integration wird für das Lesen der Sensoren (PV, Batterie, SOC, Netz) benötigt:
+Die eingebaute Fronius-Integration liest die Sensoren (PV, Batterie, SOC, Netz).
 
-1. Wird normalerweise **automatisch via Auto-Discovery** erkannt<br>
+1. Home Assistant findet den Wechselrichter normalerweise **von selbst (Auto-Discovery)**.<br>
    _Falls nicht: Einstellungen → Geräte & Dienste → Integration hinzufügen → „Fronius"_
-2. IP-Adresse des Wechselrichters angeben
-3. Die **Solar API** muss im Fronius Web-Interface aktiviert sein (Standard ab FW 1.14.1)
+2. Gib die IP-Adresse des Wechselrichters an.
+3. Im Fronius Web-Interface muss die **Solar API** aktiviert sein. Ab FW 1.14.1 ist sie das standardmäßig.
 
 ## 2. Modbus TCP am Wechselrichter aktivieren
 
-Der EEG Energy Optimizer steuert die Batterie über Modbus TCP (SunSpec Model 124). Dafür muss Modbus am Wechselrichter aktiviert werden:
+Der EEG Energy Optimizer steuert die Batterie über Modbus TCP (SunSpec Model 124). So schaltest du Modbus ein:
 
-1. Fronius Web-Interface öffnen: `http://<IP des Wechselrichters>`
+1. Öffne das Fronius Web-Interface: `http://<IP des Wechselrichters>`
 2. **Communication → Modbus → Aktivieren**
 3. Mode: **TCP Server**
 4. SunSpec Model Type: **int + SF**<br>
-   _Wichtig: Nicht „float" wählen — die Register-Adressen unterscheiden sich!_
+   _Wichtig: Nicht „float" wählen — die Register-Adressen sind dann andere!_
 5. Port: **502** (Standard)
 6. **Allow Control via Modbus: EIN**<br>
-   _Ohne diese Einstellung werden alle Schreibzugriffe abgelehnt!_
+   _Ohne diese Einstellung lehnt der Wechselrichter alle Steuerbefehle ab!_
 
 > [!WARNING]
-> **Wichtig:** Alle Scheduled (Dis)Charging Zeitpläne im Web-Interface deaktivieren! Modbus und Web-Interface konkurrieren — der höhere Wert gewinnt.
+> **Wichtig:** Schalte alle Zeitpläne für Scheduled (Dis)Charging im Web-Interface aus! Modbus und Web-Interface arbeiten sonst gegeneinander — der höhere Wert gewinnt.
 
 > [!NOTE]
-> **Sicherheitsnetz:** Solange eine Ladesperre oder eine Entladung aktiv ist, meldet sich der Optimizer jede Minute beim Wechselrichter. Bleiben diese Meldungen aus — etwa weil Home Assistant abgestürzt ist —, beendet der Wechselrichter den erzwungenen Betrieb nach 5 Minuten selbst und schaltet auf seine eigene Batteriesteuerung zurück. Die Batterie bleibt also nicht dauerhaft blockiert.
+> **Sicherheitsnetz:** Solange eine Ladesperre oder eine Entladung läuft, meldet sich der Optimizer jede Minute beim Wechselrichter. Bleiben diese Meldungen aus — etwa weil Home Assistant abgestürzt ist —, beendet der Wechselrichter den erzwungenen Betrieb nach 5 Minuten selbst. Er schaltet dann auf seine eigene Batteriesteuerung zurück. Die Batterie bleibt also nicht dauerhaft blockiert.
 >
-> Ein anderes Programm, das denselben Wechselrichter über Modbus abfragt (z. B. evcc), hält diesen Timer mit am Leben. In so einer Kombination kann das Sicherheitsnetz später oder gar nicht greifen.
+> Achtung: Fragt ein anderes Programm denselben Wechselrichter über Modbus ab (z. B. evcc), hält es diesen Zeitgeber mit am Leben. Dann greift das Sicherheitsnetz eventuell später oder gar nicht.
 
 ## 3. Firmware
 
-- **Minimum:** >= 1.34.6-1
-- **Empfohlen:** >= 1.40.0
+| | Version |
+|---|---|
+| **Minimum** | >= 1.34.6-1 |
+| **Empfohlen** | >= 1.40.0 |
 
 ## 4. Prüfen
 
-1. Unter **Einstellungen → Integrationen**: Fronius zeigt **„geladen"**
-2. **Entwicklerwerkzeuge → Zustände**: Suche nach `power_photovoltaics` / `pv_leistung` und `state_of_charge` / `ladezustand`
-3. Kehre in den Assistenten zurück — die Sensoren werden automatisch erkannt
+1. Unter **Einstellungen → Integrationen** zeigt Fronius **„geladen"**.
+2. Unter **Entwicklerwerkzeuge → Zustände** suchst du nach `power_photovoltaics` / `pv_leistung` und `state_of_charge` / `ladezustand`.
+3. Kehre in den Assistenten zurück. Die Sensoren werden automatisch erkannt.
 
 ## Im Assistenten: Schritt „Wechselrichter“
 
-Hier bleibt man am häufigsten hängen: **„Weiter“** geht erst, wenn alles Folgende stimmt.
+Hier bleiben die meisten hängen. **„Weiter“** geht erst, wenn alle folgenden Punkte stimmen:
 
-1. **Fronius Gen24** wählen. Ohne die Fronius-Integration aus Schritt 1 geht es nicht weiter — sie liefert alle Messwerte, Modbus allein genügt nicht.
-2. **Fünf Leistungssensoren**, alle Pflicht. Fronius meldet Batterie und Netz nicht als einen Wert mit Vorzeichen, sondern als je **zwei getrennte Sensoren**:
-   - PV-Leistung
-   - Batterie **Laden** (`*_battery_power_charging` / `*_ladeleistung`) und Batterie **Entladen** (`*_battery_power_discharging` / `*_entladeleistung`)
-   - Netz **Einspeisung** (`*_leistung_netzeinspeisung`) und Netz **Bezug** (`*_leistung_netzbezug`)
+1. Wähle **Fronius Gen24**. Ohne die Fronius-Integration aus Schritt 1 geht es nicht weiter. Sie liefert alle Messwerte — Modbus allein genügt nicht.
+2. **Fünf Leistungssensoren**, alle Pflicht. Fronius meldet Batterie und Netz nicht als einen Wert mit Plus/Minus, sondern als je **zwei getrennte Sensoren**:
 
-   Die Erkennung trägt sie selbst ein; fehlt einer, bleibt „Weiter“ gesperrt.
-3. **Modbus IP-Adresse** (Pflicht): die IP des Wechselrichters. Sie wird aus der Fronius-Integration vorbelegt — prüfen, ob sie stimmt. Port **502**.
-4. Bei **„Weiter“** prüft der Assistent die Modbus-Verbindung (nur lesend). Schlägt sie fehl, geht es nicht weiter: Modbus aktiviert (Schritt 2)? IP richtig? Wechselrichter im selben Netz?
+    - PV-Leistung
+    - Batterie **Laden** (`*_battery_power_charging` / `*_ladeleistung`) und Batterie **Entladen** (`*_battery_power_discharging` / `*_entladeleistung`)
+    - Netz **Einspeisung** (`*_leistung_netzeinspeisung`) und Netz **Bezug** (`*_leistung_netzbezug`)
+
+    Die Erkennung trägt sie selbst ein. Fehlt einer, bleibt „Weiter“ gesperrt.
+
+3. **Modbus IP-Adresse** (Pflicht): die IP des Wechselrichters. Das Feld ist mit der IP aus der Fronius-Integration schon ausgefüllt — prüfe, ob sie stimmt. Port **502**.
+4. Bei **„Weiter“** prüft der Assistent die Modbus-Verbindung (nur lesend). Klappt das nicht, geht es nicht weiter. Prüfe dann: Ist Modbus aktiviert (Schritt 2)? Stimmt die IP? Ist der Wechselrichter im selben Netz?
 
 ## Häufige Probleme
 
 | Problem | Lösung |
 |---|---|
 | **Modbus Connection refused** | Modbus TCP nicht aktiviert, falscher Port oder falsche IP → Schritt 2 wiederholen |
-| **Verbindung klappt, Steuerbefehle werden abgelehnt** | „Allow Control via Modbus" nicht EIN → Schritt 2, Punkt 6 |
+| **Verbindung klappt, Steuerbefehle werden abgelehnt** | „Allow Control via Modbus" ist nicht EIN → Schritt 2, Punkt 6 |
 | **Alle Werte 0 oder unsinnig** | Falscher SunSpec-Modus → „int + SF" statt „float" einstellen |
-| **Keine Fronius-Sensoren in HA** | Fronius Integration prüfen: Solar API im Web-Interface aktiviert? |
-| **Steuerung funktioniert manchmal nicht** | Scheduled Charging/Discharging im Web-Interface deaktivieren (konkurriert mit Modbus) |
+| **Keine Fronius-Sensoren in HA** | Fronius-Integration prüfen: Ist die Solar API im Web-Interface aktiviert? |
+| **Steuerung funktioniert manchmal nicht** | Scheduled Charging/Discharging im Web-Interface ausschalten (arbeitet gegen Modbus) |

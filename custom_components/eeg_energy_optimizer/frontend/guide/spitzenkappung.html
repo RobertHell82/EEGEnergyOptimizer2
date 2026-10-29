@@ -2,49 +2,81 @@
      Quelle: docs/guides/spitzenkappung.md
      Neu generieren mit: python scripts/build_guides.py -->
 <h2 class="guide-title">Spitzenkappung</h2>
-<p>Mit der neuen Tarifstruktur richtet sich ein Teil der Netzgebühr nach der <strong>Bezugsspitze</strong>: dem höchsten Netzbezug, gemittelt über eine Viertelstunde, im ganzen Monat (Elektrizitätswirtschaftsgesetz, ElWG). Wann das für dich gilt, legt dein Netzbetreiber fest — frühestens 1.1.2027, ohne eigene Meldung 1.12.2027, spätestens 1.7.2028 (siehe Anleitung „Dashboard"). Eine einzige Viertelstunde, in der Auto, Herd und Wärmepumpe gleichzeitig laufen, legt den Preis für den ganzen Monat fest. Die Spitzenkappung hält diese Viertelstunden niedrig, in zwei Stufen:</p>
+<p>Mit der neuen Tarifstruktur hängt ein Teil der Netzgebühr an deiner <strong>Bezugsspitze</strong>. Das ist der höchste Netzbezug des ganzen Monats, gemittelt über eine Viertelstunde. Netzbezug heißt: Strom, den du aus dem Netz holst. Die Regel kommt aus dem Elektrizitätswirtschaftsgesetz (ElWG).</p>
+<p>Ab wann das für dich gilt, legt dein Netzbetreiber fest (siehe Anleitung „Dashboard"):</p>
+<ul>
+<li>frühestens ab 1.1.2027</li>
+<li>ohne eigene Meldung des Netzbetreibers ab 1.12.2027</li>
+<li>spätestens ab 1.7.2028</li>
+</ul>
+<p>Schon eine einzige Viertelstunde zählt: Laufen Auto, Herd und Wärmepumpe gleichzeitig, legt diese Viertelstunde den Preis für den ganzen Monat fest. Die Spitzenkappung hält solche Viertelstunden niedrig. Sie arbeitet in zwei Stufen:</p>
 <ol>
-<li><strong>Die Batterie.</strong> Solange sie genug hat, deckt sie Spitzen ohnehin. Wird sie knapp, hält sie eine <strong>Reserve</strong> zurück und gibt darin nur noch ab, was über deiner Grenze liegt. Den Grundverbrauch bezieht das Haus dann aus dem Netz.</li>
-<li><strong>Verbraucher abschalten.</strong> Reicht die Batterie nicht, etwa weil sie leer ist oder das Auto mehr zieht, als sie liefern kann, schaltet die Integration die Verbraucher, die du einträgst, der Reihe nach ab. Sobald wieder Platz ist, schaltet sie sie wieder ein.</li>
+<li><strong>Die Batterie.</strong> Solange sie genug Energie hat, deckt sie Spitzen ohnehin. Wird sie knapp, hält sie eine <strong>Reserve</strong> zurück. Aus dieser Reserve gibt sie nur noch ab, was über deiner Grenze liegt. Den Grundverbrauch holt sich das Haus dann aus dem Netz.</li>
+<li><strong>Verbraucher abschalten.</strong> Reicht die Batterie nicht, schaltet die Integration die Verbraucher ab, die du einträgst, einen nach dem anderen. Das passiert etwa, wenn die Batterie leer ist oder das Auto mehr zieht, als sie liefern kann. Sobald wieder Platz ist, schaltet sie die Verbraucher wieder ein.</li>
 </ol>
 <div class="guide-alert note"><p>Die erste Stufe gibt es derzeit mit <strong>Huawei</strong>, <strong>Fronius</strong>, <strong>SMA</strong> und <strong>SolaX</strong>. Mit den anderen Wechselrichtern kappt die Integration derzeit nur über das Abschalten von Verbrauchern.</p></div>
 
 <h3>Wie es funktioniert</h3>
 <h4>Die Grenze</h4>
-<p>Du stellst eine <strong>Grenze</strong> in kW ein. Darunter wird nie gekappt. Wer ohnehin regelmäßig viel braucht, etwa ein Auto, das jeden Abend mit 5 kW lädt, trägt diesen Wert ein. Dann versucht die Integration gar nicht erst, darunter zu bleiben.</p>
-<p>Liegt die Bezugsspitze des Monats schon höher als die Grenze, gilt die Monatsspitze: Bis dorthin kostet eine Viertelstunde nichts mehr. Unter 2 kW geht es nicht, so viel wird ohnehin mindestens verrechnet.</p>
-<p>Gezählt wird wie beim Netzbetreiber das <strong>Mittel der Viertelstunde</strong>, nicht der Augenblick. Ein Wasserkocher, der zwei Minuten läuft, kostet keine Batterie, solange der Rest der Viertelstunde ruhig ist.</p>
+<ul>
+<li>Du stellst eine <strong>Grenze</strong> in kW ein. Darunter wird nie gekappt.</li>
+<li>Brauchst du regelmäßig viel Leistung, trägst du diesen Wert ein. Beispiel: Dein Auto lädt jeden Abend mit 5 kW, also stellst du 5 kW ein. Dann versucht die Integration gar nicht erst, darunter zu bleiben.</li>
+<li>Ist die Bezugsspitze des Monats schon höher als die Grenze, gilt die Monatsspitze. Bis zu diesem Wert kostet eine Viertelstunde nichts mehr.</li>
+<li>Unter 2 kW geht es nicht. So viel wird ohnehin mindestens verrechnet.</li>
+</ul>
+<p><strong>Gezählt wird das Viertelstundenmittel</strong>, wie beim Netzbetreiber. Das ist der Durchschnitt über die ganze Viertelstunde, nicht der Wert in einem Augenblick. Ein Wasserkocher, der zwei Minuten läuft, kostet deshalb keine Batterie, solange der Rest der Viertelstunde ruhig ist.</p>
 <h4>Die Reserve</h4>
-<p>Ein fester Prozentwert wäre entweder zu klein (die Spitze kommt trotzdem) oder zu groß (die Batterie hält jede Nacht Energie zurück, die das Haus dann teuer aus dem Netz kauft). Deshalb <strong>rechnet</strong> die Integration die Reserve:</p>
+<p><img alt="So entsteht die Spitzenreserve: Was in den letzten Nächten über der Grenze lag, der Wert, den 9 von 10 Nächten nicht überschreiten, und wie die Reserve über die Nacht fällt" src="/eeg_optimizer_panel/guide/spitzenkappung/reserve_berechnung.svg" /></p>
+<p>Ein fester Prozentwert wäre zu klein (die Spitze kommt trotzdem) oder zu groß (das Haus kauft die zurückgehaltene Energie jede Nacht teuer aus dem Netz). Deshalb <strong>rechnet</strong> die Integration die Reserve:</p>
 <ul>
-<li>Aus den letzten <strong>vier Wochen</strong> liest sie, wie viel Strom das Haus zu jeder Uhrzeit über der Grenze gebraucht hat (Hausverbrauch minus PV, je Viertelstunde). Mehr, als die Batterie abgeben kann, zählt dabei nicht mit: Das kann sie ohnehin nicht kappen.</li>
-<li>Die Reserve ist die Energie, die von <strong>jetzt</strong> bis zur nächsten Sonne noch über der Grenze gebraucht wird. Gezählt wird so viel, wie <strong>9 von 10</strong> vergleichbaren Tagen nicht überschritten haben. Lädt das Auto eine Nacht pro Woche, ist diese Nacht also abgedeckt. Der Durchschnitt würde genau sie verfehlen.</li>
-<li>Die Reserve <strong>fällt über die Nacht</strong>: Was schon vorbei ist, braucht keine Reserve mehr. Kurz vor Sonnenaufgang ist fast nichts mehr zurückgehalten, und die Batterie gibt den Rest wieder fürs Haus frei.</li>
+<li><strong>Rückblick:</strong> Sie schaut auf die letzten <strong>vier Wochen</strong>. Wie viel Strom hat das Haus zu jeder Uhrzeit über der Grenze gebraucht? Gerechnet wird Hausverbrauch minus PV, je Viertelstunde. Was mehr ist, als die Batterie abgeben kann, zählt nicht mit. Das kann sie ohnehin nicht kappen.</li>
+<li><strong>Bis zur nächsten Sonne:</strong> Die Reserve ist die Energie, die von <strong>jetzt</strong> bis zur nächsten Sonne noch über der Grenze gebraucht wird. Gezählt wird so viel, wie <strong>9 von 10</strong> vergleichbaren Tagen nicht überschritten haben. Beispiel: Lädt das Auto eine Nacht pro Woche, ist diese Nacht abgedeckt. Ein Durchschnitt würde genau diese Nacht verfehlen.</li>
+<li><strong>Sinkt über die Nacht:</strong> Was schon vorbei ist, braucht keine Reserve mehr. Kurz vor Sonnenaufgang hält die Batterie fast nichts mehr zurück. Den Rest gibt sie wieder fürs Haus frei.</li>
 </ul>
-<p>Die Werte kommen aus der Statistik von Home Assistant. Beim ersten Einschalten liegen dort meist schon die letzten zehn Tage, die Integration führt sie dann selbst auf vier Wochen fort. Solange weniger als <strong>sieben</strong> vergleichbare Tage da sind, gilt nur die Mindestreserve.</p>
-<p>Die Reserve liegt immer <strong>über dem Mindest-Ladestand</strong> (Tab <strong>Anlage</strong>). Bei 10 % Mindest-Ladestand und 20 % Reserve hält die Batterie unter 30 % zurück. Den Mindest-Ladestand selbst unterschreitet sie auch für Spitzen nicht.</p>
+<p>Die Werte kommen aus der Statistik von Home Assistant. Beim ersten Einschalten liegen dort meist schon die letzten zehn Tage. Die Integration führt sie dann selbst auf vier Wochen fort. Solange weniger als <strong>sieben</strong> vergleichbare Tage da sind, gilt nur die Mindestreserve.</p>
+<p>Die Reserve kommt immer <strong>oben auf den Mindest-Ladestand</strong> (Tab <strong>Anlage</strong>). Der Ladestand (auch SOC) sagt, wie voll die Batterie ist, in Prozent. Beispiel: Bei 10 % Mindest-Ladestand und 20 % Reserve hält die Batterie unter 30 % Energie zurück. Den Mindest-Ladestand selbst unterschreitet sie auch für Spitzen nicht.</p>
 <h4>Was die Batterie in der Reserve tut</h4>
-<p>Über der Reserve läuft alles wie bisher. Darunter begrenzt die Integration alle 30 Sekunden, wie viel die Batterie abgeben darf:</p>
+<p>Über der Reserve läuft alles wie bisher. Darunter begrenzt die Integration alle 30 Sekunden, wie viel Leistung die Batterie abgeben darf:</p>
 <ul>
-<li><strong>Bleibt der Verbrauch unter der Grenze</strong>, gibt sie nichts ab. Das Haus bezieht seinen Grundverbrauch aus dem Netz.</li>
-<li><strong>Steigt er darüber</strong>, gibt sie genau den Teil ab, der über der Grenze liegt. Kleinigkeiten unter 0,2 kW deckt sie nicht (aus dem Halten heraus erst ab 0,4 kW, damit die Einstellung nicht ständig hin- und herspringt): Dafür ist unter der Grenze ein Abstand von 0,3 kW eingerechnet.</li>
+<li><strong>Verbrauch unter der Grenze:</strong> Die Batterie gibt nichts ab. Das Haus bezieht seinen Grundverbrauch aus dem Netz.</li>
+<li><strong>Verbrauch über der Grenze:</strong> Die Batterie gibt genau den Teil ab, der über der Grenze liegt.</li>
+<li><strong>Sicherheitsabstand:</strong> Die Batterie regelt nicht genau auf die Grenze, sondern auf 0,3 kW darunter. So bleibt die Viertelstunde auch bei kleinen Schwankungen unter der Grenze.</li>
+<li><strong>Kleinigkeiten:</strong> Müsste die Batterie weniger als 0,2 kW abgeben, gibt sie gar nichts ab. Hält sie gerade zurück, beginnt sie erst wieder ab 0,4 kW. So springt der Wert nicht ständig zwischen „halten“ und „abgeben“ hin und her.</li>
 </ul>
-<p>Der Fahrplan rechnet die Reserve mit ein. Er verkauft am Abend nicht mehr, was in der Nacht für Spitzen gebraucht wird. Tagsüber soll die Batterie am Ende der Sonnenstunden mindestens Mindest-Ladestand plus Abendreserve erreichen; ist das <strong>Ladeziel</strong> (Tab <strong>Anlage</strong>) höher, gilt das Ladeziel. Steht die Batterie unter der Reserve, etwa morgens nach einer Nacht mit Spitzen, rechnet der Plan vom tatsächlichen Ladestand aus und lädt sie wieder auf. Im Modus <strong>Aus</strong> und während einer <strong>Pause</strong> rechnet der Plan ohne Reserve.</p>
+<p>Auch der Fahrplan rechnet die Reserve mit ein:</p>
+<ul>
+<li>Am Abend verkauft er nicht mehr, was in der Nacht für Spitzen gebraucht wird.</li>
+<li>Tagsüber soll die Batterie am Ende der Sonnenstunden mindestens Mindest-Ladestand plus Abendreserve erreichen. Ist das <strong>Ladeziel</strong> (Tab <strong>Anlage</strong>) höher, gilt das Ladeziel.</li>
+<li>Liegt die Batterie unter der Reserve, etwa morgens nach einer Nacht mit Spitzen, rechnet der Plan vom tatsächlichen Ladestand aus und lädt sie wieder auf.</li>
+<li>Im Modus <strong>Aus</strong> und während einer <strong>Pause</strong> rechnet der Plan ohne Reserve.</li>
+</ul>
 <div class="guide-alert note"><p>Hast du das Ladeziel ausgeschaltet, erscheint tagsüber trotzdem eine Ladeziel-Marke im Ladestandsdiagramm: Das ist die Abendreserve. Mit <strong>Batterie aus dem Netz laden</strong> (Beta, Huawei) darf der Plan sie auch mit günstigem Netzstrom erreichen, wie jedes andere Ladeziel.</p></div>
 
 <h4>Verbraucher abschalten</h4>
-<p>Die Verbraucher werden in der Reihenfolge der Liste abgeschaltet, aber nur, wenn die Batterie die Spitze nicht mehr decken kann und der Verbraucher gerade läuft (ab 0,2 kW). Ob die Batterie noch mehr könnte, weiß die Integration derzeit nur bei Huawei, Fronius, SMA und SolaX; bei den anderen Wechselrichtern rechnet sie ohne die Batterie und schaltet ab, sobald die Viertelstunde über die Grenze zu gehen droht. Nach jedem Abschalten wartet die Integration 60 Sekunden, denn ein Auto regelt langsam herunter und meldet seine Leistung oft verzögert.</p>
-<p>Wieder eingeschaltet wird ein Verbraucher frühestens nach 5 Minuten, und nur, wenn er neben dem übrigen Haus eine ganze Viertelstunde lang unter die Grenze passt. Die Batterie zählt dabei nicht mit: Sonst würde der Verbraucher die Reserve leeren. Ein 11-kW-Auto kommt bei einer Grenze von 5 kW also erst zurück, wenn die Spitze vorbei ist und der Monat eine höhere Spitze erlaubt.</p>
-<p>Damit das nicht hin- und herpendelt:</p>
+<p><strong>Wann schaltet die Integration ab?</strong></p>
 <ul>
-<li>Als Leistung gilt die <strong>höchste der letzten fünf Minuten</strong> vor dem Abschalten. Ein Auto, das beim Abschalten gerade erst auf 2 kW hochregelt, wird so nicht für einen 2-kW-Verbraucher gehalten. Ist die <strong>Nennleistung</strong> eingetragen und größer, gilt sie.</li>
-<li>Muss ein Verbraucher innerhalb von 15 Minuten nach dem Wiedereinschalten erneut aus, <strong>verdoppelt sich seine Wartezeit</strong>: 5, 10, 20, 40, höchstens 60 Minuten. Nach einer Stunde ohne erneutes Abschalten gelten wieder 5 Minuten. Ein Neustart von Home Assistant setzt das nicht zurück.</li>
+<li>Immer in der Reihenfolge deiner Liste.</li>
+<li>Nur, wenn die Batterie die Spitze nicht mehr decken kann.</li>
+<li>Nur, wenn der Verbraucher gerade läuft (ab 0,2 kW).</li>
 </ul>
-<p>Was du von Hand wieder einschaltest, bleibt an. Die Integration greift erst bei der nächsten Spitze wieder ein. Ist die Optimierung aus, pausiert oder die Spitzenkappung abgeschaltet, schaltet sie alles wieder ein, was sie abgeschaltet hat.</p>
-<div class="guide-alert note"><p>Gut geeignet sind Verbraucher, die nach dem Wiedereinschalten selbst langsam hochfahren, etwa eine Wallbox mit Ladeprofil. Schlecht geeignet sind Geräte, die sofort mit voller Leistung starten oder nach dem Abschalten eine lange Mindestpause brauchen, etwa manche Wärmepumpen.</p></div>
+<p>Ob die Batterie noch mehr könnte, weiß die Integration derzeit nur bei Huawei, Fronius, SMA und SolaX. Bei den anderen Wechselrichtern rechnet sie ohne die Batterie. Sie schaltet dann ab, sobald die Viertelstunde über die Grenze zu gehen droht.</p>
+<p>Nach jedem Abschalten wartet sie 60 Sekunden, denn ein Auto regelt langsam herunter und meldet seine Leistung oft verzögert.</p>
+<p><strong>Wann schaltet sie wieder ein?</strong></p>
+<ul>
+<li>Frühestens nach 5 Minuten.</li>
+<li>Nur, wenn der Verbraucher neben dem übrigen Haus eine ganze Viertelstunde lang unter die Grenze passt. Die Batterie zählt dabei nicht mit, sonst würde der Verbraucher die Reserve leeren.</li>
+</ul>
+<p>Beispiel: Ein 11-kW-Auto kommt bei einer Grenze von 5 kW erst zurück, wenn die Spitze vorbei ist und der Monat eine höhere Spitze erlaubt.</p>
+<p>Damit nichts hin- und herpendelt:</p>
+<ul>
+<li><strong>Leistung des Verbrauchers:</strong> Es zählt die <strong>höchste Leistung der letzten fünf Minuten</strong> vor dem Abschalten. Ein Auto, das beim Abschalten gerade erst auf 2 kW hochregelt, gilt so nicht als 2-kW-Verbraucher. Hast du eine <strong>Nennleistung</strong> eingetragen und ist sie größer, gilt sie.</li>
+<li><strong>Wartezeit:</strong> Muss ein Verbraucher innerhalb von 15 Minuten nach dem Wiedereinschalten erneut aus, <strong>verdoppelt sich seine Wartezeit</strong>: 5, 10, 20, 40, höchstens 60 Minuten. Nach einer Stunde ohne erneutes Abschalten gelten wieder 5 Minuten. Ein Neustart von Home Assistant setzt das nicht zurück.</li>
+</ul>
+<p>Schaltest du einen Verbraucher von Hand wieder ein, bleibt er an. Die Integration greift erst bei der nächsten Spitze wieder ein. Ist die Optimierung aus, pausiert oder die Spitzenkappung abgeschaltet, schaltet sie alles wieder ein, was sie abgeschaltet hat.</p>
+<div class="guide-alert note"><p><strong>Gut geeignet</strong> sind Verbraucher, die nach dem Wiedereinschalten selbst langsam hochfahren, etwa eine Wallbox mit Ladeprofil. <strong>Schlecht geeignet</strong> sind Geräte, die sofort mit voller Leistung starten oder nach dem Abschalten eine lange Mindestpause brauchen, etwa manche Wärmepumpen.</p></div>
 
 <h3>Einrichtung</h3>
-<p>Die Spitzenkappung steht in den <strong>Einstellungen</strong> im Tab <strong>Spitzenkappung</strong>.</p>
+<p>Die Spitzenkappung findest du in den <strong>Einstellungen</strong> im Tab <strong>Spitzenkappung</strong>.</p>
 <table>
 <thead>
 <tr>
@@ -63,36 +95,41 @@
 </tr>
 <tr>
 <td><strong>Mindestreserve (%)</strong></td>
-<td>Derzeit nur mit Huawei, Fronius, SMA oder SolaX. Hält die Batterie immer für Spitzen zurück, auch wenn die Statistik weniger verlangt. Vorgabe 0</td>
+<td>Derzeit nur mit Huawei, Fronius, SMA oder SolaX. So viel hält die Batterie immer für Spitzen zurück, auch wenn die Statistik weniger verlangt. Vorgabe 0</td>
 </tr>
 <tr>
 <td><strong>Maximalreserve (%)</strong></td>
-<td>Derzeit nur mit Huawei, Fronius, SMA oder SolaX. Mehr hält die Batterie nie zurück. Vorgabe 30, ein leeres Feld heißt ebenfalls 30, 0 schaltet die Reserve ab</td>
+<td>Derzeit nur mit Huawei, Fronius, SMA oder SolaX. Mehr hält die Batterie nie zurück. Vorgabe 30. Ein leeres Feld heißt ebenfalls 30, 0 schaltet die Reserve ab</td>
 </tr>
 <tr>
 <td><strong>Verbraucher</strong></td>
-<td>Bis zu zehn, in der Reihenfolge, in der abgeschaltet wird. Je Verbraucher ein <strong>Leistungssensor</strong> (W oder kW), ein <strong>Schalter</strong> (<code>switch.</code> oder <code>input_boolean.</code>) und optional die <strong>Nennleistung</strong> in kW</td>
+<td>Bis zu zehn, in der Reihenfolge, in der abgeschaltet wird. Je Verbraucher brauchst du einen <strong>Leistungssensor</strong> (W oder kW) und einen <strong>Schalter</strong> (<code>switch.</code> oder <code>input_boolean.</code>). Optional trägst du die <strong>Nennleistung</strong> in kW ein</td>
 </tr>
 </tbody>
 </table>
-<p>Ohne Batterie-Stufe (andere Wechselrichter) braucht es mindestens einen Verbraucher, sonst täte die Funktion nichts.</p>
-<p><strong>Wann sich eine Mindestreserve lohnt:</strong> Die Statistik kennt nur die letzten vier Wochen. Ist ein großer Verbraucher neu dazugekommen, etwa ein neues E-Auto, kann eine Mindestreserve von 5 bis 10 % die Zeit überbrücken, bis die Statistik ihn kennt. Sonst bleibt sie besser bei 0: Sie hält die Batterie auch in Nächten ohne Spitze zurück.</p>
+<p>Ohne Batterie-Stufe (andere Wechselrichter) brauchst du mindestens einen Verbraucher. Sonst täte die Funktion nichts.</p>
+<p><strong>Wann lohnt sich eine Mindestreserve?</strong> Wenn ein großer Verbraucher neu ist, etwa ein E-Auto: 5 bis 10 % überbrücken die Zeit, bis die Statistik (letzte vier Wochen) ihn kennt. Sonst lass sie bei 0, denn sie hält die Batterie auch in Nächten ohne Spitze zurück.</p>
 <p><em>Alle Felder wirken ohne Neustart der Integration.</em></p>
 <h3>Anzeige</h3>
 <ul>
-<li><strong>Karte „Bezugsspitze &amp; Spitzenkappung"</strong> im Dashboard: Monatsspitze, laufende Viertelstunde gegen die Schwelle, Tagesspitzen des Monats und darunter, was die Spitzenkappung gerade tut — Stufe 1 (Batterie) mit Ladestand, Schwelle und Reserve, Stufe 2 (Verbraucher) mit dem Zustand jedes Geräts (siehe Anleitung „Dashboard").</li>
-<li><strong>Statuskarte, Zeile „Bezugsspitze":</strong> Greift die Spitzenkappung gerade, steht dort ein Hinweis („Batterie hält Reserve", „Batterie deckt nur Spitzen", „Wallbox aus"). Ein Tipp springt zur Karte.</li>
-<li><strong>Fahrplan, Ladestandsdiagramm:</strong> Die orange gestrichelte Linie über dem Mindest-Ladestand ist die <strong>Spitzenreserve</strong> je Viertelstunde. Unter ihr deckt die Batterie nur noch Spitzen. Ist die Reserve 0, fehlt die Linie.</li>
-<li><strong>Einstellungen, Tab Spitzenkappung:</strong> oben der aktuelle Stand in einem Satz.</li>
-<li><strong>Fahrplan-Status:</strong> Der Statussensor zeigt „Spitzenkappung: Batterie hält Reserve" oder „… deckt Spitzen", die Begründung steht im Attribut <code>status</code>.</li>
-<li><strong>Aktivitätsprotokoll:</strong> Jedes Ab- und Einschalten eines Verbrauchers steht dort mit Grund.</li>
+<li><strong>Karte „Bezugsspitze &amp; Spitzenkappung"</strong> im Dashboard: Sie zeigt die Monatsspitze, die laufende Viertelstunde im Vergleich zur Schwelle und die Tagesspitzen des Monats. Darunter steht, was die Spitzenkappung gerade tut:</li>
+<li>Stufe 1 (Batterie) mit Ladestand, Schwelle und Reserve</li>
+<li>Stufe 2 (Verbraucher) mit dem Zustand jedes Geräts</li>
 </ul>
-<p><strong>Reserve 0 %</strong> heißt: In den letzten Wochen kam keine Spitze über die Schwelle, die Batterie arbeitet normal. Sie hält dann erst am Mindest-Ladestand an — mit eingeschalteter Spitzenkappung ist er eine echte Untergrenze, auch im Automatikbetrieb.</p>
+<p>Mehr dazu in der Anleitung „Dashboard".
+- <strong>Statuskarte, Zeile „Bezugsspitze":</strong> Greift die Spitzenkappung gerade, steht dort ein Hinweis: „Batterie hält Reserve", „Batterie deckt nur Spitzen" oder „Wallbox aus". Ein Tipp darauf springt zur Karte.
+- <strong>Fahrplan, Ladestandsdiagramm:</strong> Die orange gestrichelte Linie über dem Mindest-Ladestand ist die <strong>Spitzenreserve</strong> je Viertelstunde. Unter dieser Linie deckt die Batterie nur noch Spitzen. Ist die Reserve 0, fehlt die Linie.
+- <strong>Einstellungen, Tab Spitzenkappung:</strong> Oben steht der aktuelle Stand in einem Satz.
+- <strong>Fahrplan-Status:</strong> Der Statussensor zeigt „Spitzenkappung: Batterie hält Reserve" oder „… deckt Spitzen". Die Begründung steht im Attribut <code>status</code>.
+- <strong>Aktivitätsprotokoll:</strong> Jedes Ab- und Einschalten eines Verbrauchers steht dort mit Grund.</p>
+<p><strong>Reserve 0 %</strong> heißt: In den letzten Wochen kam keine Spitze über die Schwelle. Die Batterie arbeitet normal und hält erst am Mindest-Ladestand an. Mit eingeschalteter Spitzenkappung ist der Mindest-Ladestand eine echte Untergrenze, auch im Automatikbetrieb.</p>
 <h3>Gut zu wissen</h3>
 <ul>
 <li><strong>Optimierung aus oder Pause:</strong> Die Spitzenkappung tut nichts. Die Batterie läuft im Automatikbetrieb, abgeschaltete Verbraucher kommen zurück.</li>
-<li><strong>Absturz von Home Assistant:</strong> Fronius und SMA geben die Batterie nach spätestens fünf Minuten von selbst frei. Bei <strong>Huawei</strong> bleibt die gesetzte Entladeleistung im Wechselrichter stehen, bis Home Assistant wieder läuft. Ist die Spitzenkappung beim Start eingeschaltet, setzt die Integration sie auf das Maximum zurück. Wer sie in der Zwischenzeit ausgeschaltet hat, prüft die Entität <strong>Maximale Entladeleistung</strong> und stellt sie von Hand zurück.</li>
-<li><strong>SolaX:</strong> Die Integration stellt den maximalen Entladestrom (<code>battery_discharge_max_current</code>). Wie bei Huawei bleibt er bei einem Absturz stehen; den Wert, der vorher eingestellt war, sichert die Integration und stellt ihn beim Aufheben wieder her. Am Gerät ist das noch nicht geprüft — wer es testet, schaut auf diese Entität.</li>
-<li><strong>Huawei: Entladeleistung:</strong> Die Integration stellt die Number-Entität <strong>Maximale Entladeleistung</strong>. Wird die Batterie freigegeben, setzt sie sie auf das Maximum des Geräts zurück. Ein eigener, niedrigerer Wert, der dort vorher stand, geht dabei verloren.</li>
-<li><strong>Kosten:</strong> Die Spitzenkappung rechnet nicht nach, ob sie sich lohnt. Eingeschaltet heißt, sie kappt. Was die Monatsspitze kostet, steht im ⓘ der Zeile „Bezugsspitze" (siehe Anleitung „Dashboard").</li>
+<li><strong>Absturz von Home Assistant:</strong></li>
+<li><strong>Fronius</strong> und <strong>SMA</strong> geben die Batterie nach spätestens fünf Minuten von selbst frei.</li>
+<li>Bei <strong>Huawei</strong> bleibt die gesetzte Entladeleistung im Wechselrichter stehen, bis Home Assistant wieder läuft. Ist die Spitzenkappung beim Start eingeschaltet, setzt die Integration sie auf das Maximum zurück. Hast du die Spitzenkappung in der Zwischenzeit ausgeschaltet, prüf die Entität <strong>Maximale Entladeleistung</strong> und stell sie von Hand zurück.</li>
+<li><strong>SolaX:</strong> Die Integration stellt den maximalen Entladestrom (<code>battery_discharge_max_current</code>). Wie bei Huawei bleibt er bei einem Absturz stehen. Den Wert, der vorher eingestellt war, sichert die Integration und stellt ihn beim Aufheben wieder her. Am Gerät ist das noch nicht geprüft. Wer es testet, schaut auf diese Entität.</li>
+<li><strong>Huawei, Entladeleistung:</strong> Die Integration stellt die Number-Entität <strong>Maximale Entladeleistung</strong>. Gibt sie die Batterie frei, setzt sie diesen Wert auf das Maximum des Geräts zurück. Ein eigener, niedrigerer Wert, der dort vorher stand, geht dabei verloren.</li>
+<li><strong>Kosten:</strong> Die Spitzenkappung rechnet nicht nach, ob sie sich lohnt. Eingeschaltet heißt: Sie kappt. Was die Monatsspitze kostet, steht im ⓘ der Zeile „Bezugsspitze" (siehe Anleitung „Dashboard").</li>
 </ul>

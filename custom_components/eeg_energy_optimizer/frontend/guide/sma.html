@@ -2,52 +2,60 @@
      Quelle: docs/guides/sma.md
      Neu generieren mit: python scripts/build_guides.py -->
 <h2 class="guide-title">SMA Smart Energy einrichten</h2>
-<div class="guide-alert note"><p>Unterstützt werden <strong>Sunny Tripower Smart Energy</strong> (STP 5.0–10.0 SE), <strong>Sunny Boy Storage</strong> (SBS 3.7/5.0/6.0) und <strong>Sunny Boy Smart Energy</strong> — jeweils mit Batteriespeicher (z.B. BYD Battery-Box). Sunny Island wird nicht unterstützt.</p></div>
+<div class="guide-alert note"><p>Unterstützt werden <strong>Sunny Tripower Smart Energy</strong> (STP 5.0–10.0 SE), <strong>Sunny Boy Storage</strong> (SBS 3.7/5.0/6.0) und <strong>Sunny Boy Smart Energy</strong> — jeweils mit Batteriespeicher (z. B. BYD Battery-Box). Sunny Island wird nicht unterstützt.</p></div>
 
+<p>Du brauchst zwei Verbindungen: die <strong>SMA-Integration</strong> zum Lesen der Messwerte und <strong>Modbus TCP</strong> zum Steuern der Batterie.</p>
+<p><em><strong>Modbus TCP</strong> ist die Sprache, mit der Home Assistant im Heimnetz direkt mit dem Wechselrichter redet. Die <strong>IP-Adresse</strong> ist die Adresse des Geräts in deinem Heimnetz.</em></p>
 <h3>1. SMA Solar Integration in Home Assistant</h3>
-<p>Die native SMA-Integration wird für das Lesen der Sensoren (PV, Batterie, SOC, Netz) benötigt:</p>
+<p>Die eingebaute SMA-Integration liest die Sensoren (PV, Batterie, SOC = Ladestand, Netz).</p>
 <ol>
 <li><strong>Einstellungen → Geräte &amp; Dienste → Integration hinzufügen → „SMA Solar"</strong></li>
-<li>IP-Adresse des Wechselrichters angeben</li>
-<li>Gruppe: <strong>Benutzer</strong> (user) genügt — der EEG Energy Optimizer benötigt die Integration nur lesend</li>
-<li>Passwort: das Benutzer-Passwort des SMA-Webinterface (<code>https://&lt;IP des Wechselrichters&gt;</code>)</li>
+<li>Gib die IP-Adresse des Wechselrichters an.</li>
+<li>Gruppe: <strong>Benutzer</strong> (user) genügt — der Optimizer liest nur.</li>
+<li>Passwort: das Benutzer-Passwort des SMA-Webinterface (<code>https://&lt;IP des Wechselrichters&gt;</code>).</li>
 </ol>
 <h3>2. Modbus-TCP-Server am Wechselrichter aktivieren</h3>
-<p>Der EEG Energy Optimizer steuert die Batterie über Modbus TCP. Den Modbus-Server kann der Anlagenbetreiber selbst aktivieren — es ist <strong>kein Grid-Guard-Code nötig</strong>:</p>
+<p>Das kannst du selbst — es ist <strong>kein Grid-Guard-Code nötig</strong>.</p>
 <ol>
-<li>SMA-Webinterface öffnen: <code>https://&lt;IP des Wechselrichters&gt;</code>, als <strong>Installateur</strong> (oder Benutzer mit Parameterrechten) anmelden</li>
+<li>Öffne das SMA-Webinterface (<code>https://&lt;IP des Wechselrichters&gt;</code>) und melde dich als <strong>Installateur</strong> an (oder als Benutzer mit Parameterrechten).</li>
 <li><strong>Geräteparameter → Externe Kommunikation → Modbus → TCP-Server</strong> → <strong>aktivieren</strong></li>
 <li>Port: <strong>502</strong> (Standard, nicht ändern)</li>
 </ol>
-<p>Die Unit-ID 3 für die Steuerregister ist im Optimizer fest hinterlegt.</p>
+<p>Die Unit-ID 3 für die Steuerregister ist im Optimizer fest eingestellt.</p>
 <h3>3. Sunny Home Manager 2.0 (falls vorhanden)</h3>
-<div class="guide-alert caution"><p><strong>Prognosebasiertes Laden deaktivieren:</strong> Wenn ein Sunny Home Manager 2.0 verbaut ist, muss dessen <strong>„prognosebasiertes Batterieladen"</strong> in Sunny Portal deaktiviert werden. Sonst steuern zwei Systeme gleichzeitig die Batterie und arbeiten gegeneinander. Ein SMA Energy Meter (ohne Home Manager) ist unproblematisch — er misst nur.</p></div>
+<div class="guide-alert caution"><p><strong>Prognosebasiertes Laden ausschalten:</strong> Hast du einen Sunny Home Manager 2.0, schalte in Sunny Portal sein <strong>„prognosebasiertes Batterieladen"</strong> aus. Sonst steuern zwei Systeme die Batterie gegeneinander. Ein SMA Energy Meter (ohne Home Manager) ist kein Problem — er misst nur.</p></div>
 
-<div class="guide-alert note"><p><strong>Eingebauter Failsafe:</strong> SMA erwartet zyklische Steuerbefehle (Refresh spätestens alle 300 Sekunden). Fällt der Optimizer oder Home Assistant aus, kehrt der Wechselrichter automatisch zur internen Batterie-Automatik zurück — die Anlage läuft also nie unkontrolliert weiter.</p></div>
+<div class="guide-alert note"><p><strong>Eingebauter Failsafe:</strong> SMA erwartet spätestens alle 300 Sekunden einen neuen Steuerbefehl. Fallen Optimizer oder Home Assistant aus, kehrt der Wechselrichter von selbst zu seiner eigenen Batterie-Automatik zurück.</p></div>
 
-<div class="guide-alert warning"><p><strong>Nur ein steuerndes System:</strong> Es darf immer nur ein System die Batterie über Modbus steuern. Parallelbetrieb mit evcc-Batteriesteuerung oder anderen Modbus-Steuerungen ist nicht möglich. Lesende Zugriffe (z.B. die SMA-Integration aus Schritt 1) sind unproblematisch.</p></div>
+<div class="guide-alert warning"><p><strong>Nur ein steuerndes System:</strong> Immer nur ein System darf die Batterie über Modbus steuern — also nicht zusätzlich evcc-Batteriesteuerung oder andere Modbus-Steuerungen. Nur lesen (z. B. die SMA-Integration aus Schritt 1) ist kein Problem.</p></div>
 
 <h3>4. Prüfen</h3>
 <ol>
-<li>Unter <strong>Einstellungen → Geräte &amp; Dienste</strong>: SMA Solar zeigt <strong>„geladen"</strong> und listet Sensoren</li>
-<li><strong>Entwicklerwerkzeuge → Zustände</strong>: Suche nach <code>battery_soc_total</code>, <code>metering_power_absorbed</code> und <code>pv_power</code> — die Werte müssen plausibel sein</li>
-<li>Kehre in den Assistenten zurück — die Sensoren werden automatisch erkannt</li>
+<li>Unter <strong>Einstellungen → Geräte &amp; Dienste</strong> zeigt SMA Solar <strong>„geladen"</strong> und listet Sensoren.</li>
+<li>Unter <strong>Entwicklerwerkzeuge → Zustände</strong> suchst du <code>battery_soc_total</code>, <code>metering_power_absorbed</code> und <code>pv_power</code>. Die Werte müssen plausibel sein.</li>
+<li>Kehre in den Assistenten zurück. Die Sensoren werden automatisch erkannt.</li>
 </ol>
-<p><em>Hinweis: Der Sensor <code>sensor.*_grid_power</code> ist bei SMA die AC-Ausgangsleistung des Wechselrichters, <strong>nicht</strong> der Netzanschlusspunkt. Für die Netzleistung verwendet der Optimizer das Sensorpaar <code>metering_power_supplied</code> (Einspeisung) und <code>metering_power_absorbed</code> (Bezug).</em></p>
+<p><em>Achtung: <code>sensor.*_grid_power</code> ist bei SMA die Ausgangsleistung des Wechselrichters, <strong>nicht</strong> die Leistung am Netzanschluss. Für die Netzleistung nimmt der Optimizer <code>metering_power_supplied</code> (Einspeisung) und <code>metering_power_absorbed</code> (Bezug).</em></p>
 <h3>Im Assistenten: Schritt „Wechselrichter“</h3>
-<p>Hier bleibt man am häufigsten hängen: <strong>„Weiter“</strong> geht erst, wenn alles Folgende stimmt.</p>
+<p><strong>„Weiter“</strong> geht erst, wenn alle Punkte stimmen:</p>
 <ol>
-<li><strong>SMA Smart Energy</strong> wählen. Ohne die SMA-Integration aus Schritt 1 geht es nicht weiter — sie liefert alle Messwerte, Modbus allein genügt nicht.</li>
-<li><strong>Fünf Leistungssensoren</strong>, alle Pflicht. SMA meldet Batterie und Netz nicht als einen Wert mit Vorzeichen, sondern als je <strong>zwei getrennte Sensoren</strong>:</li>
+<li>Wähle <strong>SMA Smart Energy</strong>. Ohne die SMA-Integration aus Schritt 1 geht es nicht weiter — Modbus allein genügt nicht.</li>
+<li>
+<p><strong>Fünf Leistungssensoren</strong>, alle Pflicht. SMA meldet Batterie und Netz als je <strong>zwei getrennte Sensoren</strong>:</p>
+<ul>
 <li>PV-Leistung</li>
 <li>Batterie <strong>Laden</strong> (<code>*_battery_power_charge_total</code>) und Batterie <strong>Entladen</strong> (<code>*_battery_power_discharge_total</code>)</li>
 <li>Netz <strong>Einspeisung</strong> (<code>*_metering_power_supplied</code>) und Netz <strong>Bezug</strong> (<code>*_metering_power_absorbed</code>)</li>
+</ul>
+<p>Die Erkennung trägt sie selbst ein. Fehlt einer, bleibt „Weiter“ gesperrt.</p>
+</li>
+<li>
+<p><strong>Modbus IP-Adresse</strong> (Pflicht): die IP des Wechselrichters. Sie ist <strong>nicht</strong> vorausgefüllt — bitte eintragen. Port <strong>502</strong>.</p>
+</li>
+<li>Bei <strong>„Weiter“</strong> prüft der Assistent die Modbus-Verbindung und liest das Steuerregister (nur lesend). Klappt das nicht: Ist der Modbus-TCP-Server aktiviert (Schritt 2)? Stimmt die IP?</li>
 </ol>
-<p>Die Erkennung trägt sie selbst ein; fehlt einer, bleibt „Weiter“ gesperrt.
-3. <strong>Modbus IP-Adresse</strong> (Pflicht): die IP des Wechselrichters — sie wird <strong>nicht</strong> vorbelegt, bitte eintragen. Port <strong>502</strong>.
-4. Bei <strong>„Weiter“</strong> prüft der Assistent die Modbus-Verbindung und liest dabei das Steuerregister (nur lesend). Schlägt sie fehl, geht es nicht weiter: Modbus-TCP-Server aktiviert (Schritt 2)? IP richtig?</p>
 <h3>Was der Optimizer am Gerät tut</h3>
-<p>Der Fahrplan stellt den SMA über das <strong>externe Batteriemanagement</strong> (CmpBMS, „6-Parameter-Methode"). Jeder Befehl schreibt den kompletten Block aus Betriebsart und vier Leistungsgrenzen plus Netz-Sollwert — so verlangt es die SMA-Spezifikation, einzelne Register wären wirkungslos.</p>
+<p>Der Optimizer steuert den SMA über das <strong>externe Batteriemanagement</strong> (CmpBMS, „6-Parameter-Methode"). Jeder Befehl schreibt den ganzen Block: Betriebsart, vier Leistungsgrenzen und Netz-Sollwert. So verlangt es SMA — einzelne Register wirken nicht.</p>
 <table>
 <thead>
 <tr>
@@ -58,19 +66,19 @@
 <tbody>
 <tr>
 <td><strong>40795</strong> Max. Ladeleistung</td>
-<td>Der Fahrplan begrenzt das Laden auf die geplante Leistung. 0 W blockiert das Laden, das Entladen für den Hausverbrauch bleibt möglich</td>
+<td>Begrenzt das Laden auf die geplante Leistung. 0 W sperrt das Laden; Entladen für das Haus bleibt möglich</td>
 </tr>
 <tr>
 <td><strong>40801</strong> Netz-Sollwert</td>
-<td>Erzwungene Einspeisung: positiver Wert in Watt <strong>am Netzanschlusspunkt</strong></td>
+<td>Erzwungene Einspeisung: positiver Wert in Watt <strong>am Netzanschluss</strong></td>
 </tr>
 </tbody>
 </table>
-<p><strong>Der Netz-Sollwert ist die Besonderheit gegenüber anderen Wechselrichtern.</strong> Fronius, Huawei, Kostal, Sigenergy und SolaX bekommen gesagt, mit wie viel die <em>Batterie</em> entladen soll — davon deckt das Gerät zuerst das Haus, der Rest geht ins Netz. Der SMA bekommt stattdessen gesagt, wie viel <em>ins Netz</em> gehen soll, und legt die Hauslast selbst obendrauf. Die Steuerung gibt ihm deshalb direkt die geplante Einspeisung vor. Reicht die Entladeleistung der Batterie für Haus plus Einspeisung nicht, senkt sie den Sollwert um das Fehlende, statt dass das Gerät still weniger liefert.</p>
-<p><strong>Der Watchdog ist das Sicherheitsnetz:</strong> Der Block muss spätestens alle 300 Sekunden erneuert werden, sonst fällt der Wechselrichter in sein internes Batteriemanagement zurück. Der Treiber schreibt alle 60 Sekunden nach. Stürzt Home Assistant mitten in einer Einspeisung ab, endet sie also von selbst.</p>
-<p>Einen Ziel-Ladestand kennt die SMA-Schnittstelle nicht; der Optimizer prüft den Ladestand alle 30 Sekunden selbst und beendet die Einspeisung.</p>
+<p><strong>Der Unterschied zu anderen Wechselrichtern:</strong> Fronius, Huawei, Kostal, Sigenergy und SolaX bekommen gesagt, wie viel die <em>Batterie</em> entladen soll — zuerst fürs Haus, der Rest geht ins Netz. Der SMA bekommt gesagt, wie viel <em>ins Netz</em> gehen soll, und deckt das Haus selbst dazu. Der Optimizer gibt ihm daher direkt die geplante Einspeisung vor. Reicht die Batterie nicht für Haus plus Einspeisung, senkt er den Sollwert um das Fehlende.</p>
+<p><strong>Sicherheitsnetz (Watchdog):</strong> Der Block muss spätestens alle 300 Sekunden erneuert werden, sonst fällt der Wechselrichter in sein eigenes Batteriemanagement zurück. Der Optimizer schreibt alle 60 Sekunden nach. Stürzt Home Assistant während einer Einspeisung ab, endet sie also von selbst.</p>
+<p>Einen Ziel-Ladestand kennt SMA nicht. Der Optimizer prüft den Ladestand alle 30 Sekunden selbst und beendet die Einspeisung.</p>
 <blockquote>
-<p>Ladeblockierung, Netz-Sollwert und Stopp sind am Gerät verifiziert (Sunny Tripower 10.0 Smart Energy). Mit einem Sunny Home Manager 2.0 muss dessen prognosebasiertes Laden aus sein (Abschnitt 3).</p>
+<p>Ladesperre, Netz-Sollwert und Stopp sind am Gerät getestet (Sunny Tripower 10.0 Smart Energy). Mit einem Sunny Home Manager 2.0 muss dessen prognosebasiertes Laden aus sein (Abschnitt 3).</p>
 </blockquote>
 <h3>Häufige Probleme</h3>
 <table>
@@ -87,19 +95,19 @@
 </tr>
 <tr>
 <td><strong>Die Verbindungsprüfung im Assistenten meldet „Steuerregister 40236 nicht lesbar"</strong></td>
-<td>Manche Firmwares nutzen eine abweichende Registeradresse — bitte beim Support melden, bevor die Steuerung aktiviert wird</td>
+<td>Manche Firmwares nutzen eine andere Registeradresse. Bitte beim Support melden, bevor du die Steuerung einschaltest</td>
 </tr>
 <tr>
 <td><strong>Keine SMA-Sensoren in HA</strong></td>
-<td>Falsche Gruppe/Passwort bei der SMA-Integration — Benutzer-Zugang des Webinterface verwenden</td>
+<td>Falsche Gruppe oder falsches Passwort bei der SMA-Integration — den Benutzer-Zugang des Webinterface verwenden</td>
 </tr>
 <tr>
-<td><strong>Batterie lädt trotz Blockierung</strong></td>
-<td>Sunny Home Manager 2.0 steuert noch mit → Schritt 3: prognosebasiertes Laden deaktivieren</td>
+<td><strong>Batterie lädt trotz Sperre</strong></td>
+<td>Der Sunny Home Manager 2.0 steuert noch mit → Schritt 3: prognosebasiertes Laden ausschalten</td>
 </tr>
 <tr>
 <td><strong>Keine Batteriekapazität erkannt</strong></td>
-<td>SMA liefert keinen Kapazitätssensor — die nutzbare Kapazität (z.B. vom BYD-Typenschild) im Wizard manuell eintragen</td>
+<td>SMA liefert keinen Kapazitätssensor. Trag die nutzbare Kapazität (z. B. vom BYD-Typenschild) im Wizard von Hand ein</td>
 </tr>
 </tbody>
 </table>

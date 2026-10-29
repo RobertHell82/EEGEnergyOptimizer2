@@ -1,0 +1,345 @@
+<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 820 900' width='820' height='900'>
+<rect width='820' height='900' rx='12' fill='#ffffff' stroke='#cfd8dc'/>
+<text x='24' y='34' font-family='Segoe UI,Roboto,Helvetica,Arial,sans-serif' font-size='20' fill='#263238' text-anchor='start' font-weight='600'>So entsteht die Spitzenreserve</text>
+<text x='24' y='56' font-family='Segoe UI,Roboto,Helvetica,Arial,sans-serif' font-size='13' fill='#607d8b' text-anchor='start' font-weight='normal'>Beispiel: Grenze 5 kW, Batterie 15 kWh, Mindest-Ladestand 20 %</text>
+<text x='24' y='92' font-family='Segoe UI,Roboto,Helvetica,Arial,sans-serif' font-size='15' fill='#263238' text-anchor='start' font-weight='600'>1  Was lag in den letzten Nächten über der Grenze?</text>
+<text x='24' y='144' font-family='Segoe UI,Roboto,Helvetica,Arial,sans-serif' font-size='12' fill='#607d8b' text-anchor='start' font-weight='normal'>vor 1 Tag</text>
+<rect x='120.5' y='150.0' width='9.8' height='4.0' fill='#b0bec5'/>
+<rect x='131.3' y='150.0' width='9.8' height='4.0' fill='#b0bec5'/>
+<rect x='142.2' y='150.0' width='9.8' height='4.0' fill='#b0bec5'/>
+<rect x='153.0' y='150.0' width='9.8' height='4.0' fill='#b0bec5'/>
+<rect x='163.8' y='129.0' width='9.8' height='25.0' fill='#b0bec5'/>
+<rect x='163.8' y='119.0' width='9.8' height='10.0' fill='#ef6c00'/>
+<rect x='174.7' y='129.0' width='9.8' height='25.0' fill='#b0bec5'/>
+<rect x='174.7' y='119.0' width='9.8' height='10.0' fill='#ef6c00'/>
+<rect x='185.5' y='129.0' width='9.8' height='25.0' fill='#b0bec5'/>
+<rect x='185.5' y='119.0' width='9.8' height='10.0' fill='#ef6c00'/>
+<rect x='196.3' y='129.0' width='9.8' height='25.0' fill='#b0bec5'/>
+<rect x='196.3' y='119.0' width='9.8' height='10.0' fill='#ef6c00'/>
+<rect x='207.2' y='129.0' width='9.8' height='25.0' fill='#b0bec5'/>
+<rect x='207.2' y='119.0' width='9.8' height='10.0' fill='#ef6c00'/>
+<rect x='218.0' y='129.0' width='9.8' height='25.0' fill='#b0bec5'/>
+<rect x='218.0' y='119.0' width='9.8' height='10.0' fill='#ef6c00'/>
+<rect x='228.8' y='129.0' width='9.8' height='25.0' fill='#b0bec5'/>
+<rect x='228.8' y='119.0' width='9.8' height='10.0' fill='#ef6c00'/>
+<rect x='239.7' y='129.0' width='9.8' height='25.0' fill='#b0bec5'/>
+<rect x='239.7' y='119.0' width='9.8' height='10.0' fill='#ef6c00'/>
+<rect x='250.5' y='150.0' width='9.8' height='4.0' fill='#b0bec5'/>
+<rect x='261.3' y='150.0' width='9.8' height='4.0' fill='#b0bec5'/>
+<rect x='272.2' y='150.0' width='9.8' height='4.0' fill='#b0bec5'/>
+<rect x='283.0' y='150.0' width='9.8' height='4.0' fill='#b0bec5'/>
+<rect x='293.8' y='150.0' width='9.8' height='4.0' fill='#b0bec5'/>
+<rect x='304.7' y='150.0' width='9.8' height='4.0' fill='#b0bec5'/>
+<rect x='315.5' y='150.0' width='9.8' height='4.0' fill='#b0bec5'/>
+<rect x='326.3' y='150.0' width='9.8' height='4.0' fill='#b0bec5'/>
+<rect x='337.2' y='150.0' width='9.8' height='4.0' fill='#b0bec5'/>
+<rect x='348.0' y='150.0' width='9.8' height='4.0' fill='#b0bec5'/>
+<rect x='358.8' y='150.0' width='9.8' height='4.0' fill='#b0bec5'/>
+<rect x='369.7' y='150.0' width='9.8' height='4.0' fill='#b0bec5'/>
+<rect x='380.5' y='151.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='391.3' y='151.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='402.2' y='151.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='413.0' y='151.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='423.8' y='151.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='434.7' y='151.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='445.5' y='151.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='456.3' y='151.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='467.2' y='151.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='478.0' y='151.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='488.8' y='151.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='499.7' y='151.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='510.5' y='151.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='521.3' y='151.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='532.2' y='151.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='543.0' y='151.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='553.8' y='151.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='564.7' y='151.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='575.5' y='151.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='586.3' y='151.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='597.2' y='151.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='608.0' y='151.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='618.8' y='151.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='629.7' y='151.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<line x1='120' y1='129.0' x2='640' y2='129.0' stroke='#fb8c00' stroke-width='1.5' stroke-dasharray='5 4'/>
+<line x1='120' y1='154' x2='640' y2='154' stroke='#cfd8dc'/>
+<text x='256.0' y='123.0' font-family='Segoe UI,Roboto,Helvetica,Arial,sans-serif' font-size='12' fill='#ef6c00' text-anchor='start' font-weight='600'>Auto 19–21 Uhr</text>
+<text x='654' y='144' font-family='Segoe UI,Roboto,Helvetica,Arial,sans-serif' font-size='14' fill='#ef6c00' text-anchor='start' font-weight='600'>4,0 kWh</text>
+<text x='24' y='198' font-family='Segoe UI,Roboto,Helvetica,Arial,sans-serif' font-size='12' fill='#607d8b' text-anchor='start' font-weight='normal'>vor 2 Tagen</text>
+<rect x='120.5' y='204.0' width='9.8' height='4.0' fill='#b0bec5'/>
+<rect x='131.3' y='204.0' width='9.8' height='4.0' fill='#b0bec5'/>
+<rect x='142.2' y='204.0' width='9.8' height='4.0' fill='#b0bec5'/>
+<rect x='153.0' y='204.0' width='9.8' height='4.0' fill='#b0bec5'/>
+<rect x='163.8' y='204.0' width='9.8' height='4.0' fill='#b0bec5'/>
+<rect x='174.7' y='204.0' width='9.8' height='4.0' fill='#b0bec5'/>
+<rect x='185.5' y='204.0' width='9.8' height='4.0' fill='#b0bec5'/>
+<rect x='196.3' y='204.0' width='9.8' height='4.0' fill='#b0bec5'/>
+<rect x='207.2' y='204.0' width='9.8' height='4.0' fill='#b0bec5'/>
+<rect x='218.0' y='204.0' width='9.8' height='4.0' fill='#b0bec5'/>
+<rect x='228.8' y='204.0' width='9.8' height='4.0' fill='#b0bec5'/>
+<rect x='239.7' y='204.0' width='9.8' height='4.0' fill='#b0bec5'/>
+<rect x='250.5' y='204.0' width='9.8' height='4.0' fill='#b0bec5'/>
+<rect x='261.3' y='204.0' width='9.8' height='4.0' fill='#b0bec5'/>
+<rect x='272.2' y='204.0' width='9.8' height='4.0' fill='#b0bec5'/>
+<rect x='283.0' y='204.0' width='9.8' height='4.0' fill='#b0bec5'/>
+<rect x='293.8' y='204.0' width='9.8' height='4.0' fill='#b0bec5'/>
+<rect x='304.7' y='204.0' width='9.8' height='4.0' fill='#b0bec5'/>
+<rect x='315.5' y='204.0' width='9.8' height='4.0' fill='#b0bec5'/>
+<rect x='326.3' y='204.0' width='9.8' height='4.0' fill='#b0bec5'/>
+<rect x='337.2' y='204.0' width='9.8' height='4.0' fill='#b0bec5'/>
+<rect x='348.0' y='204.0' width='9.8' height='4.0' fill='#b0bec5'/>
+<rect x='358.8' y='204.0' width='9.8' height='4.0' fill='#b0bec5'/>
+<rect x='369.7' y='204.0' width='9.8' height='4.0' fill='#b0bec5'/>
+<rect x='380.5' y='205.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='391.3' y='205.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='402.2' y='205.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='413.0' y='205.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='423.8' y='205.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='434.7' y='205.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='445.5' y='205.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='456.3' y='205.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='467.2' y='205.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='478.0' y='205.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='488.8' y='205.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='499.7' y='205.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='510.5' y='205.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='521.3' y='205.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='532.2' y='205.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='543.0' y='205.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='553.8' y='205.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='564.7' y='205.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='575.5' y='205.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='586.3' y='205.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='597.2' y='205.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='608.0' y='205.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='618.8' y='205.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='629.7' y='205.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<line x1='120' y1='183.0' x2='640' y2='183.0' stroke='#fb8c00' stroke-width='1.5' stroke-dasharray='5 4'/>
+<line x1='120' y1='208' x2='640' y2='208' stroke='#cfd8dc'/>
+<text x='654' y='198' font-family='Segoe UI,Roboto,Helvetica,Arial,sans-serif' font-size='14' fill='#607d8b' text-anchor='start' font-weight='600'>0,0 kWh</text>
+<text x='24' y='252' font-family='Segoe UI,Roboto,Helvetica,Arial,sans-serif' font-size='12' fill='#607d8b' text-anchor='start' font-weight='normal'>vor 3 Tagen</text>
+<rect x='120.5' y='237.0' width='9.8' height='25.0' fill='#b0bec5'/>
+<rect x='120.5' y='229.5' width='9.8' height='7.5' fill='#ef6c00'/>
+<rect x='131.3' y='237.0' width='9.8' height='25.0' fill='#b0bec5'/>
+<rect x='131.3' y='229.5' width='9.8' height='7.5' fill='#ef6c00'/>
+<rect x='142.2' y='258.0' width='9.8' height='4.0' fill='#b0bec5'/>
+<rect x='153.0' y='258.0' width='9.8' height='4.0' fill='#b0bec5'/>
+<rect x='163.8' y='258.0' width='9.8' height='4.0' fill='#b0bec5'/>
+<rect x='174.7' y='258.0' width='9.8' height='4.0' fill='#b0bec5'/>
+<rect x='185.5' y='258.0' width='9.8' height='4.0' fill='#b0bec5'/>
+<rect x='196.3' y='258.0' width='9.8' height='4.0' fill='#b0bec5'/>
+<rect x='207.2' y='258.0' width='9.8' height='4.0' fill='#b0bec5'/>
+<rect x='218.0' y='258.0' width='9.8' height='4.0' fill='#b0bec5'/>
+<rect x='228.8' y='258.0' width='9.8' height='4.0' fill='#b0bec5'/>
+<rect x='239.7' y='258.0' width='9.8' height='4.0' fill='#b0bec5'/>
+<rect x='250.5' y='258.0' width='9.8' height='4.0' fill='#b0bec5'/>
+<rect x='261.3' y='258.0' width='9.8' height='4.0' fill='#b0bec5'/>
+<rect x='272.2' y='258.0' width='9.8' height='4.0' fill='#b0bec5'/>
+<rect x='283.0' y='258.0' width='9.8' height='4.0' fill='#b0bec5'/>
+<rect x='293.8' y='258.0' width='9.8' height='4.0' fill='#b0bec5'/>
+<rect x='304.7' y='258.0' width='9.8' height='4.0' fill='#b0bec5'/>
+<rect x='315.5' y='258.0' width='9.8' height='4.0' fill='#b0bec5'/>
+<rect x='326.3' y='258.0' width='9.8' height='4.0' fill='#b0bec5'/>
+<rect x='337.2' y='258.0' width='9.8' height='4.0' fill='#b0bec5'/>
+<rect x='348.0' y='258.0' width='9.8' height='4.0' fill='#b0bec5'/>
+<rect x='358.8' y='258.0' width='9.8' height='4.0' fill='#b0bec5'/>
+<rect x='369.7' y='258.0' width='9.8' height='4.0' fill='#b0bec5'/>
+<rect x='380.5' y='259.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='391.3' y='259.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='402.2' y='259.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='413.0' y='259.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='423.8' y='259.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='434.7' y='259.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='445.5' y='259.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='456.3' y='259.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='467.2' y='259.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='478.0' y='259.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='488.8' y='259.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='499.7' y='259.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='510.5' y='259.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='521.3' y='259.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='532.2' y='259.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='543.0' y='259.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='553.8' y='259.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='564.7' y='259.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='575.5' y='259.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='586.3' y='259.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='597.2' y='259.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='608.0' y='259.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='618.8' y='259.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='629.7' y='259.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<line x1='120' y1='237.0' x2='640' y2='237.0' stroke='#fb8c00' stroke-width='1.5' stroke-dasharray='5 4'/>
+<line x1='120' y1='262' x2='640' y2='262' stroke='#cfd8dc'/>
+<text x='147.66666666666666' y='231.0' font-family='Segoe UI,Roboto,Helvetica,Arial,sans-serif' font-size='12' fill='#ef6c00' text-anchor='start' font-weight='600'>Backrohr</text>
+<text x='654' y='252' font-family='Segoe UI,Roboto,Helvetica,Arial,sans-serif' font-size='14' fill='#ef6c00' text-anchor='start' font-weight='600'>0,8 kWh</text>
+<text x='24' y='306' font-family='Segoe UI,Roboto,Helvetica,Arial,sans-serif' font-size='12' fill='#607d8b' text-anchor='start' font-weight='normal'>vor 4 Tagen</text>
+<rect x='120.5' y='312.0' width='9.8' height='4.0' fill='#b0bec5'/>
+<rect x='131.3' y='312.0' width='9.8' height='4.0' fill='#b0bec5'/>
+<rect x='142.2' y='312.0' width='9.8' height='4.0' fill='#b0bec5'/>
+<rect x='153.0' y='312.0' width='9.8' height='4.0' fill='#b0bec5'/>
+<rect x='163.8' y='312.0' width='9.8' height='4.0' fill='#b0bec5'/>
+<rect x='174.7' y='312.0' width='9.8' height='4.0' fill='#b0bec5'/>
+<rect x='185.5' y='312.0' width='9.8' height='4.0' fill='#b0bec5'/>
+<rect x='196.3' y='312.0' width='9.8' height='4.0' fill='#b0bec5'/>
+<rect x='207.2' y='312.0' width='9.8' height='4.0' fill='#b0bec5'/>
+<rect x='218.0' y='312.0' width='9.8' height='4.0' fill='#b0bec5'/>
+<rect x='228.8' y='312.0' width='9.8' height='4.0' fill='#b0bec5'/>
+<rect x='239.7' y='312.0' width='9.8' height='4.0' fill='#b0bec5'/>
+<rect x='250.5' y='312.0' width='9.8' height='4.0' fill='#b0bec5'/>
+<rect x='261.3' y='312.0' width='9.8' height='4.0' fill='#b0bec5'/>
+<rect x='272.2' y='312.0' width='9.8' height='4.0' fill='#b0bec5'/>
+<rect x='283.0' y='312.0' width='9.8' height='4.0' fill='#b0bec5'/>
+<rect x='293.8' y='291.0' width='9.8' height='25.0' fill='#b0bec5'/>
+<rect x='293.8' y='281.0' width='9.8' height='10.0' fill='#ef6c00'/>
+<rect x='304.7' y='291.0' width='9.8' height='25.0' fill='#b0bec5'/>
+<rect x='304.7' y='281.0' width='9.8' height='10.0' fill='#ef6c00'/>
+<rect x='315.5' y='291.0' width='9.8' height='25.0' fill='#b0bec5'/>
+<rect x='315.5' y='281.0' width='9.8' height='10.0' fill='#ef6c00'/>
+<rect x='326.3' y='291.0' width='9.8' height='25.0' fill='#b0bec5'/>
+<rect x='326.3' y='281.0' width='9.8' height='10.0' fill='#ef6c00'/>
+<rect x='337.2' y='291.0' width='9.8' height='25.0' fill='#b0bec5'/>
+<rect x='337.2' y='281.0' width='9.8' height='10.0' fill='#ef6c00'/>
+<rect x='348.0' y='291.0' width='9.8' height='25.0' fill='#b0bec5'/>
+<rect x='348.0' y='281.0' width='9.8' height='10.0' fill='#ef6c00'/>
+<rect x='358.8' y='291.0' width='9.8' height='25.0' fill='#b0bec5'/>
+<rect x='358.8' y='281.0' width='9.8' height='10.0' fill='#ef6c00'/>
+<rect x='369.7' y='291.0' width='9.8' height='25.0' fill='#b0bec5'/>
+<rect x='369.7' y='281.0' width='9.8' height='10.0' fill='#ef6c00'/>
+<rect x='380.5' y='313.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='391.3' y='313.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='402.2' y='313.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='413.0' y='313.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='423.8' y='313.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='434.7' y='313.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='445.5' y='313.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='456.3' y='313.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='467.2' y='313.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='478.0' y='313.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='488.8' y='313.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='499.7' y='313.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='510.5' y='313.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='521.3' y='313.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='532.2' y='313.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='543.0' y='313.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='553.8' y='313.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='564.7' y='313.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='575.5' y='313.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='586.3' y='313.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='597.2' y='313.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='608.0' y='313.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='618.8' y='313.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='629.7' y='313.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<line x1='120' y1='291.0' x2='640' y2='291.0' stroke='#fb8c00' stroke-width='1.5' stroke-dasharray='5 4'/>
+<line x1='120' y1='316' x2='640' y2='316' stroke='#cfd8dc'/>
+<text x='386.0' y='285.0' font-family='Segoe UI,Roboto,Helvetica,Arial,sans-serif' font-size='12' fill='#ef6c00' text-anchor='start' font-weight='600'>Auto 22–24 Uhr</text>
+<text x='654' y='306' font-family='Segoe UI,Roboto,Helvetica,Arial,sans-serif' font-size='14' fill='#ef6c00' text-anchor='start' font-weight='600'>4,0 kWh</text>
+<text x='24' y='360' font-family='Segoe UI,Roboto,Helvetica,Arial,sans-serif' font-size='12' fill='#607d8b' text-anchor='start' font-weight='normal'>vor 5 Tagen</text>
+<rect x='120.5' y='366.0' width='9.8' height='4.0' fill='#b0bec5'/>
+<rect x='131.3' y='366.0' width='9.8' height='4.0' fill='#b0bec5'/>
+<rect x='142.2' y='366.0' width='9.8' height='4.0' fill='#b0bec5'/>
+<rect x='153.0' y='366.0' width='9.8' height='4.0' fill='#b0bec5'/>
+<rect x='163.8' y='366.0' width='9.8' height='4.0' fill='#b0bec5'/>
+<rect x='174.7' y='366.0' width='9.8' height='4.0' fill='#b0bec5'/>
+<rect x='185.5' y='366.0' width='9.8' height='4.0' fill='#b0bec5'/>
+<rect x='196.3' y='366.0' width='9.8' height='4.0' fill='#b0bec5'/>
+<rect x='207.2' y='366.0' width='9.8' height='4.0' fill='#b0bec5'/>
+<rect x='218.0' y='366.0' width='9.8' height='4.0' fill='#b0bec5'/>
+<rect x='228.8' y='366.0' width='9.8' height='4.0' fill='#b0bec5'/>
+<rect x='239.7' y='366.0' width='9.8' height='4.0' fill='#b0bec5'/>
+<rect x='250.5' y='366.0' width='9.8' height='4.0' fill='#b0bec5'/>
+<rect x='261.3' y='366.0' width='9.8' height='4.0' fill='#b0bec5'/>
+<rect x='272.2' y='366.0' width='9.8' height='4.0' fill='#b0bec5'/>
+<rect x='283.0' y='366.0' width='9.8' height='4.0' fill='#b0bec5'/>
+<rect x='293.8' y='366.0' width='9.8' height='4.0' fill='#b0bec5'/>
+<rect x='304.7' y='366.0' width='9.8' height='4.0' fill='#b0bec5'/>
+<rect x='315.5' y='366.0' width='9.8' height='4.0' fill='#b0bec5'/>
+<rect x='326.3' y='366.0' width='9.8' height='4.0' fill='#b0bec5'/>
+<rect x='337.2' y='366.0' width='9.8' height='4.0' fill='#b0bec5'/>
+<rect x='348.0' y='366.0' width='9.8' height='4.0' fill='#b0bec5'/>
+<rect x='358.8' y='366.0' width='9.8' height='4.0' fill='#b0bec5'/>
+<rect x='369.7' y='366.0' width='9.8' height='4.0' fill='#b0bec5'/>
+<rect x='380.5' y='367.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='391.3' y='367.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='402.2' y='367.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='413.0' y='367.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='423.8' y='367.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='434.7' y='367.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='445.5' y='367.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='456.3' y='367.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='467.2' y='367.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='478.0' y='367.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='488.8' y='367.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='499.7' y='367.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='510.5' y='367.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='521.3' y='367.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='532.2' y='367.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='543.0' y='367.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='553.8' y='367.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='564.7' y='367.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='575.5' y='367.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='586.3' y='367.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='597.2' y='367.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='608.0' y='367.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='618.8' y='367.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<rect x='629.7' y='367.5' width='9.8' height='2.5' fill='#b0bec5'/>
+<line x1='120' y1='345.0' x2='640' y2='345.0' stroke='#fb8c00' stroke-width='1.5' stroke-dasharray='5 4'/>
+<line x1='120' y1='370' x2='640' y2='370' stroke='#cfd8dc'/>
+<text x='654' y='360' font-family='Segoe UI,Roboto,Helvetica,Arial,sans-serif' font-size='14' fill='#607d8b' text-anchor='start' font-weight='600'>0,0 kWh</text>
+<text x='120.0' y='392' font-family='Segoe UI,Roboto,Helvetica,Arial,sans-serif' font-size='11' fill='#607d8b' text-anchor='middle' font-weight='normal'>18 Uhr</text>
+<text x='250.0' y='392' font-family='Segoe UI,Roboto,Helvetica,Arial,sans-serif' font-size='11' fill='#607d8b' text-anchor='middle' font-weight='normal'>21 Uhr</text>
+<text x='380.0' y='392' font-family='Segoe UI,Roboto,Helvetica,Arial,sans-serif' font-size='11' fill='#607d8b' text-anchor='middle' font-weight='normal'>24 Uhr</text>
+<text x='510.0' y='392' font-family='Segoe UI,Roboto,Helvetica,Arial,sans-serif' font-size='11' fill='#607d8b' text-anchor='middle' font-weight='normal'>03 Uhr</text>
+<text x='640.0' y='392' font-family='Segoe UI,Roboto,Helvetica,Arial,sans-serif' font-size='11' fill='#607d8b' text-anchor='middle' font-weight='normal'>06 Uhr</text>
+<text x='654' y='92' font-family='Segoe UI,Roboto,Helvetica,Arial,sans-serif' font-size='12' fill='#607d8b' text-anchor='start' font-weight='normal'>über der Grenze</text>
+<text x='24' y='414' font-family='Segoe UI,Roboto,Helvetica,Arial,sans-serif' font-size='12' fill='#607d8b' text-anchor='start' font-weight='normal'>… und so weiter für alle 28 Nächte. Grau = Verbrauch bis zur Grenze, orange = was darüber lag (Hausverbrauch minus PV).</text>
+<text x='24' y='454' font-family='Segoe UI,Roboto,Helvetica,Arial,sans-serif' font-size='15' fill='#263238' text-anchor='start' font-weight='600'>2  Welcher Wert zählt? Der, den 9 von 10 Nächten nicht überschreiten</text>
+<rect x='24' y='490.0' width='22' height='56.0' rx='2' fill='#ffcc80'/>
+<rect x='50' y='490.0' width='22' height='56.0' rx='2' fill='#ffcc80'/>
+<rect x='76' y='490.0' width='22' height='56.0' rx='2' fill='#ef6c00'/>
+<rect x='102' y='516.6' width='22' height='29.4' rx='2' fill='#ffcc80'/>
+<rect x='128' y='529.2' width='22' height='16.8' rx='2' fill='#ffcc80'/>
+<rect x='154' y='535.5' width='22' height='10.5' rx='2' fill='#ffcc80'/>
+<rect x='180' y='535.5' width='22' height='10.5' rx='2' fill='#ffcc80'/>
+<rect x='206' y='540.4' width='22' height='5.6' rx='2' fill='#ffcc80'/>
+<rect x='232' y='541.8' width='22' height='4.2' rx='2' fill='#ffcc80'/>
+<rect x='258' y='544.0' width='22' height='2.0' rx='2' fill='#eceff1'/>
+<rect x='284' y='544.0' width='22' height='2.0' rx='2' fill='#eceff1'/>
+<rect x='310' y='544.0' width='22' height='2.0' rx='2' fill='#eceff1'/>
+<rect x='336' y='544.0' width='22' height='2.0' rx='2' fill='#eceff1'/>
+<rect x='362' y='544.0' width='22' height='2.0' rx='2' fill='#eceff1'/>
+<rect x='388' y='544.0' width='22' height='2.0' rx='2' fill='#eceff1'/>
+<rect x='414' y='544.0' width='22' height='2.0' rx='2' fill='#eceff1'/>
+<rect x='440' y='544.0' width='22' height='2.0' rx='2' fill='#eceff1'/>
+<rect x='466' y='544.0' width='22' height='2.0' rx='2' fill='#eceff1'/>
+<rect x='492' y='544.0' width='22' height='2.0' rx='2' fill='#eceff1'/>
+<rect x='518' y='544.0' width='22' height='2.0' rx='2' fill='#eceff1'/>
+<rect x='544' y='544.0' width='22' height='2.0' rx='2' fill='#eceff1'/>
+<rect x='570' y='544.0' width='22' height='2.0' rx='2' fill='#eceff1'/>
+<rect x='596' y='544.0' width='22' height='2.0' rx='2' fill='#eceff1'/>
+<rect x='622' y='544.0' width='22' height='2.0' rx='2' fill='#eceff1'/>
+<rect x='648' y='544.0' width='22' height='2.0' rx='2' fill='#eceff1'/>
+<rect x='674' y='544.0' width='22' height='2.0' rx='2' fill='#eceff1'/>
+<rect x='700' y='544.0' width='22' height='2.0' rx='2' fill='#eceff1'/>
+<rect x='726' y='544.0' width='22' height='2.0' rx='2' fill='#eceff1'/>
+<line x1='87.0' y1='552' x2='87.0' y2='566' stroke='#ef6c00' stroke-width='2'/>
+<text x='81.0' y='582' font-family='Segoe UI,Roboto,Helvetica,Arial,sans-serif' font-size='13' fill='#ef6c00' text-anchor='start' font-weight='600'>drittgrößter von 28 Werten = 4,0 kWh</text>
+<text x='748' y='562' font-family='Segoe UI,Roboto,Helvetica,Arial,sans-serif' font-size='11' fill='#607d8b' text-anchor='end' font-weight='normal'>die 28 Nächte, nach Größe sortiert</text>
+<text x='24' y='604' font-family='Segoe UI,Roboto,Helvetica,Arial,sans-serif' font-size='12' fill='#607d8b' text-anchor='start' font-weight='normal'>Nicht der Durchschnitt: Der läge bei rund 0,6 kWh und verfehlte genau die Nächte mit dem Auto.</text>
+<text x='24' y='622' font-family='Segoe UI,Roboto,Helvetica,Arial,sans-serif' font-size='12' fill='#607d8b' text-anchor='start' font-weight='normal'>4,0 kWh von 15 kWh = 27 % Reserve (höchstens die eingestellte Maximalreserve).</text>
+<text x='24' y='662' font-family='Segoe UI,Roboto,Helvetica,Arial,sans-serif' font-size='15' fill='#263238' text-anchor='start' font-weight='600'>3  Die Reserve fällt über die Nacht — was vorbei ist, muss nicht mehr reserviert werden</text>
+<line x1='120' y1='812' x2='640' y2='812' stroke='#cfd8dc'/>
+<line x1='120' y1='768.7' x2='640' y2='768.7' stroke='#e53935' stroke-width='1.5' stroke-dasharray='5 3'/>
+<text x='650' y='772.6666666666666' font-family='Segoe UI,Roboto,Helvetica,Arial,sans-serif' font-size='12' fill='#e53935' text-anchor='start' font-weight='normal'>Mindest-Ladestand 20 %</text>
+<path d='M120.0,710.2 L293.3,710.2 L380.0,762.2 L640.0,768.7 L640.0,768.7 L120.0,768.7 Z' fill='#fb8c00' fill-opacity='0.18'/>
+<path d='M120.0,710.2 L293.3,710.2 L380.0,762.2 L640.0,768.7' fill='none' stroke='#fb8c00' stroke-width='2.5'/>
+<text x='650' y='714.1666666666666' font-family='Segoe UI,Roboto,Helvetica,Arial,sans-serif' font-size='12' fill='#fb8c00' text-anchor='start' font-weight='600'>Schwelle 47 %</text>
+<text x='152.5' y='702.1666666666666' font-family='Segoe UI,Roboto,Helvetica,Arial,sans-serif' font-size='12' fill='#fb8c00' text-anchor='start' font-weight='normal'>Reserve 27 %</text>
+<text x='401.6666666666667' y='747.0' font-family='Segoe UI,Roboto,Helvetica,Arial,sans-serif' font-size='11' fill='#607d8b' text-anchor='start' font-weight='normal'>schmilzt nach der letzten</text>
+<text x='401.6666666666667' y='761.0' font-family='Segoe UI,Roboto,Helvetica,Arial,sans-serif' font-size='11' fill='#607d8b' text-anchor='start' font-weight='normal'>üblichen Spitze</text>
+<text x='120.0' y='828' font-family='Segoe UI,Roboto,Helvetica,Arial,sans-serif' font-size='11' fill='#607d8b' text-anchor='middle' font-weight='normal'>18 Uhr</text>
+<text x='250.0' y='828' font-family='Segoe UI,Roboto,Helvetica,Arial,sans-serif' font-size='11' fill='#607d8b' text-anchor='middle' font-weight='normal'>21 Uhr</text>
+<text x='380.0' y='828' font-family='Segoe UI,Roboto,Helvetica,Arial,sans-serif' font-size='11' fill='#607d8b' text-anchor='middle' font-weight='normal'>24 Uhr</text>
+<text x='510.0' y='828' font-family='Segoe UI,Roboto,Helvetica,Arial,sans-serif' font-size='11' fill='#607d8b' text-anchor='middle' font-weight='normal'>03 Uhr</text>
+<text x='640.0' y='828' font-family='Segoe UI,Roboto,Helvetica,Arial,sans-serif' font-size='11' fill='#607d8b' text-anchor='middle' font-weight='normal'>06 Uhr</text>
+<text x='24' y='854' font-family='Segoe UI,Roboto,Helvetica,Arial,sans-serif' font-size='12' fill='#607d8b' text-anchor='start' font-weight='normal'>Über der Linie arbeitet die Batterie wie immer. Darunter gibt sie nur noch ab, was über der Grenze liegt;</text>
+<text x='24' y='870' font-family='Segoe UI,Roboto,Helvetica,Arial,sans-serif' font-size='12' fill='#607d8b' text-anchor='start' font-weight='normal'>den Grundverbrauch bezieht das Haus aus dem Netz. Am Mindest-Ladestand hält sie ganz an. Mit der Sonne ist die Reserve wieder 0.</text>
+</svg>

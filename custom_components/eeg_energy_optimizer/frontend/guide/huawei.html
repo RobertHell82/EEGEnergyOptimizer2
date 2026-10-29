@@ -2,45 +2,46 @@
      Quelle: docs/guides/huawei.md
      Neu generieren mit: python scripts/build_guides.py -->
 <h2 class="guide-title">Huawei Solar Integration einrichten</h2>
-<div class="guide-alert note"><p><strong>EMMA-Energiemanagement:</strong> Wird Home Assistant über das Huawei-EMMA angebunden, tragen die Sensoren den Präfix <code>sensor.emma_…</code>. Die EMMA-Einspeiseleistung liefert das Netz-Vorzeichen umgekehrt gegenüber der direkten SUN2000-Anbindung — der EEG Energy Optimizer erkennt solche Sensoren automatisch und dreht das Netz-Vorzeichen entsprechend um (die Batterieleistung folgt der normalen Konvention und bleibt unverändert). Trage die <code>sensor.emma_*</code>-Entitäten einfach in der Sensor-Zuordnung ein.</p></div>
+<p><em><strong>Modbus TCP</strong> ist die Sprache, mit der Home Assistant im Heimnetz direkt mit dem Wechselrichter redet. Die <strong>IP-Adresse</strong> ist die Adresse des Geräts in deinem Heimnetz. Eine <strong>Entität</strong> ist ein einzelner Wert oder Schalter in Home Assistant.</em></p>
+<div class="guide-alert note"><p><strong>Hast du ein Huawei-EMMA (Energiemanagement)?</strong> Dann heißen die Sensoren <code>sensor.emma_…</code>. Das EMMA liefert die Netzleistung mit umgekehrtem Vorzeichen als die direkte Anbindung an den SUN2000. Der EEG Energy Optimizer erkennt solche Sensoren automatisch und dreht das Netz-Vorzeichen selbst um. Die Batterieleistung folgt der normalen Regel und bleibt unverändert. Du trägst die <code>sensor.emma_*</code>-Entitäten einfach in der Sensor-Zuordnung ein.</p></div>
 
 <h3>1. Wechselrichter vorbereiten</h3>
-<p>Modbus TCP muss am Wechselrichter aktiviert sein, damit Home Assistant zugreifen kann:</p>
+<p>Am Wechselrichter muss Modbus TCP eingeschaltet sein. Sonst kommt Home Assistant nicht hinein.</p>
 <ol>
-<li>Handy-WLAN mit dem Wechselrichter-Hotspot verbinden (<code>SUN2000-&lt;Seriennummer&gt;</code>)<br>
-   <em>Passwort steht auf dem Dongle-Aufkleber. Mobile Daten am Handy deaktivieren!</em></li>
-<li><strong>FusionSolar App</strong> oder <strong>SUN2000 App</strong> öffnen → <strong>Geräte-Inbetriebnahme</strong></li>
-<li>Login als <strong>Installer</strong> mit Passwort <code>00000a</code><br>
-   <em>Standard-Passwort (6 Zeichen). Falls geändert: aktuelles Installer-Passwort verwenden.</em></li>
-<li><strong>Einstellungen → Kommunikationskonfiguration → Dongle-Parameter</strong></li>
-<li>Modbus-TCP auf <strong>„Aktivieren (uneingeschränkt)"</strong> setzen</li>
+<li>Verbinde das WLAN deines Handys mit dem Hotspot des Wechselrichters (<code>SUN2000-&lt;Seriennummer&gt;</code>).<br>
+   <em>Das Passwort steht auf dem Aufkleber am Dongle. Schalte die mobilen Daten am Handy aus!</em></li>
+<li>Öffne die <strong>FusionSolar App</strong> oder die <strong>SUN2000 App</strong> → <strong>Geräte-Inbetriebnahme</strong>.</li>
+<li>Melde dich als <strong>Installer</strong> an, mit dem Passwort <code>00000a</code>.<br>
+   <em>Das ist das Standard-Passwort (6 Zeichen). Wurde es geändert, nimm das aktuelle Installer-Passwort.</em></li>
+<li>Gehe zu <strong>Einstellungen → Kommunikationskonfiguration → Dongle-Parameter</strong>.</li>
+<li>Stelle Modbus-TCP auf <strong>„Aktivieren (uneingeschränkt)"</strong>.</li>
 </ol>
 <h3>2. HACS Integration installieren</h3>
-<p><em><strong>Voraussetzung:</strong> <a href="https://hacs.xyz/">HACS</a> muss installiert sein.</em></p>
+<p><em><strong>Voraussetzung:</strong> <a href="https://hacs.xyz/">HACS</a> muss installiert sein. HACS ist ein Zusatz-Store für Home Assistant, über den du Integrationen aus der Community installierst.</em></p>
 <ol>
-<li>Gehe zu <strong>HACS</strong> und suche dort nach <strong>„Huawei Solar"</strong><br>
+<li>Gehe zu <strong>HACS</strong> und suche dort nach <strong>„Huawei Solar"</strong>.<br>
    <em>Repository: <code>wlcrs/huawei_solar</code></em></li>
-<li>Installiere die Integration und <strong>starte Home Assistant neu</strong></li>
+<li>Installiere die Integration und <strong>starte Home Assistant neu</strong>.</li>
 </ol>
 <h3>3. Integration konfigurieren</h3>
 <ol>
-<li>Gehe zu <strong>Einstellungen → Geräte &amp; Dienste → Integration hinzufügen</strong></li>
-<li>Suche nach <strong>„Huawei Solar"</strong></li>
-<li>Wähle <strong>Netzwerk</strong> als Verbindungstyp</li>
-<li>Gib die <strong>IP-Adresse</strong> des Wechselrichters/Dongles ein</li>
-<li>Port: <strong>6607</strong> (neuere Firmware) oder <strong>502</strong> (ältere Firmware)</li>
-<li>Slave ID: <strong>1</strong> (Standard, bei Problemen 0 versuchen)</li>
-<li><strong>„Enable battery control“ MUSS aktiviert werden!</strong> (in älteren Versionen der Integration hieß die Option „Elevated Permissions“)<br>
-   <em>Ohne diese Option registriert die Integration keine Steuer-Dienste — der EEG Energy Optimizer kann dann nicht steuern, und der Assistent meldet „Die Steuer-Dienste der huawei_solar-Integration fehlen“.</em></li>
-<li>Installer-Passwort: <code>00000a</code> eingeben</li>
+<li>Gehe zu <strong>Einstellungen → Geräte &amp; Dienste → Integration hinzufügen</strong>.</li>
+<li>Suche nach <strong>„Huawei Solar"</strong>.</li>
+<li>Wähle <strong>Netzwerk</strong> als Verbindungstyp.</li>
+<li>Gib die <strong>IP-Adresse</strong> des Wechselrichters bzw. Dongles ein.</li>
+<li>Port: <strong>6607</strong> (neuere Firmware) oder <strong>502</strong> (ältere Firmware).</li>
+<li>Slave ID: <strong>1</strong> (Standard). Bei Problemen versuche 0.</li>
+<li><strong>„Enable battery control“ MUSS eingeschaltet werden!</strong> In älteren Versionen der Integration hieß diese Option „Elevated Permissions“.<br>
+   <em>Ohne diese Option fehlen die Steuer-Dienste der Integration. Der EEG Energy Optimizer kann dann nicht steuern, und der Assistent meldet „Die Steuer-Dienste der huawei_solar-Integration fehlen“.</em></li>
+<li>Gib das Installer-Passwort <code>00000a</code> ein.</li>
 </ol>
-<p><em><strong>Option vergessen?</strong> Unter Einstellungen → Integrationen → Huawei Solar → Drei-Punkte-Menü → „Neu konfigurieren" nachträglich aktivieren, dann im Assistenten „Erneut prüfen“.</em></p>
+<p><em><strong>Option vergessen?</strong> Du kannst sie nachträglich einschalten: Einstellungen → Integrationen → Huawei Solar → Drei-Punkte-Menü → „Neu konfigurieren". Danach im Assistenten auf „Erneut prüfen“ klicken.</em></p>
 <h3>4. Prüfen</h3>
 <ol>
-<li>Unter <strong>Einstellungen → Integrationen</strong>: Huawei Solar zeigt <strong>„geladen"</strong></li>
-<li><strong>Entwicklerwerkzeuge → Zustände</strong>: <code>sensor.batterien_batterieladung</code> (englisch benannt: <code>sensor.batteries_batterieladung</code>) zeigt den Ladestand (0–100 %)</li>
-<li><code>number.batteries_maximale_ladeleistung</code> existiert (= „Enable battery control“ aktiv)</li>
-<li>Kehre hierher zurück — der Wechselrichter wird automatisch erkannt</li>
+<li>Unter <strong>Einstellungen → Integrationen</strong> zeigt Huawei Solar <strong>„geladen"</strong>.</li>
+<li>Unter <strong>Entwicklerwerkzeuge → Zustände</strong> zeigt <code>sensor.batterien_batterieladung</code> (englisch benannt: <code>sensor.batteries_batterieladung</code>) den Ladestand (0–100 %).</li>
+<li>Es gibt die Entität <code>number.batteries_maximale_ladeleistung</code>. Das heißt: „Enable battery control“ ist aktiv.</li>
+<li>Kehre hierher zurück. Der Wechselrichter wird automatisch erkannt.</li>
 </ol>
 <h3>Häufige Probleme</h3>
 <table>
@@ -53,7 +54,7 @@
 <tbody>
 <tr>
 <td><strong>Connection refused</strong></td>
-<td>Modbus TCP nicht aktiviert → Schritt 1 wiederholen</td>
+<td>Modbus TCP ist nicht eingeschaltet → Schritt 1 wiederholen</td>
 </tr>
 <tr>
 <td><strong>Connection timeout</strong></td>
@@ -69,7 +70,7 @@
 </tr>
 <tr>
 <td><strong>Verbindung bricht ab</strong></td>
-<td>FusionSolar App komplett schließen, nicht nur minimieren</td>
+<td>FusionSolar App ganz schließen, nicht nur minimieren</td>
 </tr>
 </tbody>
 </table>
