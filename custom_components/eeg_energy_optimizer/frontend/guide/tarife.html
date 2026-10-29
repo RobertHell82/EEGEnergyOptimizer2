@@ -141,6 +141,37 @@
 
 <h4>Alterungskosten der Batterie (Expertenmodus)</h4>
 <p>Nur sichtbar, wenn im Tab <strong>System</strong> der Expertenmodus eingeschaltet ist. <strong>Alterungskosten der Batterie (ct/kWh)</strong> ist, was eine durchgesetzte Kilowattstunde die Batterie an Lebensdauer kostet. Höhere Werte machen die Optimierung zurückhaltender: Sie speichert nur, wenn sich der Umweg lohnt. Leer gilt 1 ct. Bei der Entladung in die Gemeinschaft ist der Wert die Schwelle — sie kommt erst zustande, wenn der Nachtsatz über der Einspeisevergütung plus Alterungskosten liegt.</p>
+<h4>Batterie aus dem Netz laden (Beta, Expertenmodus, nur Huawei)</h4>
+<p>Nur in den <strong>Einstellungen</strong>, nur mit Expertenmodus und nur mit einem Huawei-Wechselrichter. Ohne Haken rechnet der Fahrplan genau wie vorher, und keines der Felder darunter ist Pflicht.</p>
+<p>Mit Haken darf der Fahrplan das <strong>Ladeziel</strong> auch mit Netzstrom erreichen, wenn die Sonne an einem trüben Tag nicht reicht. Er kauft aber nur in Viertelstunden, in denen der Netzstrom billiger ist als der Strom, den die Batterie danach ersetzt: der Bezugspreis der Nacht nach dem Ende der PV-Zeit, abzüglich Lade- und Entladeverlust, Alterungskosten und Mindestvorteil. Gekauft wird nur vor dem Ende der PV-Zeit. Ob die Nacht die Energie wirklich braucht, fragt er nicht: Was übrig bleibt, speist er später ein, wenn sich das lohnt. Der Preis dafür ist eine volle Batterie am Abend. Höher als der <strong>maximale Ladestand</strong> (Anlage &amp; Batterie) lädt er nie, und nie schneller als die Batterieleistung.</p>
+<p>Billiger als die Nacht ist Netzstrom nur in drei Fällen, und mindestens einer muss eingerichtet sein:</p>
+<ul>
+<li><strong>Spot-Bezug.</strong> Unter <strong>Bezugstarif deines Lieferanten</strong> wählst du <strong>Börsenpreis (Spot)</strong>. Der Preis ist dann Börsenpreis plus <strong>Aufschlag auf den Börsenpreis (ct/kWh, netto)</strong> plus <strong>Aufschlag in Prozent</strong> vom Betrag, darauf die Mehrwertsteuer, plus die Netzgebühr. Gekauft wird nur zu veröffentlichten Börsenpreisen, nie zu geschätzten.</li>
+<li><strong>Bezug aus der Gemeinschaft.</strong> Je Gemeinschaft trägst du den <strong>Bezugspreis aus der Gemeinschaft (ct/kWh)</strong> inklusive Mehrwertsteuer ein und welche Art sie ist. Bei einer EEG <strong>lokal</strong> oder <strong>regional</strong>: Der Fahrplan rechnet das Netznutzungsentgelt um 57 % bzw. 28 % verringert dazu, dazu das volle Netzverlustentgelt; Elektrizitätsabgabe und Erneuerbaren-Förderbeitrag entfallen (§ 75 Abs. 5 EAG, § 2 Abs. 1 Z 4 ElAbgG). Bei einer <strong>Bürgerenergiegemeinschaft</strong> gilt die volle Netzgebühr, billiger kann dort nur der Energiepreis sein. SNAP und WiNAP gelten für Gemeinschaftsstrom nicht. Zugeteilt wird wie bei der Einspeisung: Aus einer Gemeinschaft kommt höchstens dein <strong>Anteil</strong> am Bezug, und nur so viel, wie sie laut PeakShare in der Viertelstunde übrig hat; der Rest kostet den Preis deines Lieferanten. Lässt du den Bezugspreis leer, zählt die Gemeinschaft für das Netzladen nicht. Im Quotenmodus gibt es keinen Gemeinschaftsbezug, weil kein Überschuss bekannt ist.</li>
+<li><strong>Zeitvariable Netzentgelte.</strong> Mit dem Haken <strong>Zeitvariable Netzentgelte (SNAP und WiNAP)</strong> unter Kosten ist die Netzgebühr im SNAP- bzw. WiNAP-Fenster niedriger. Ein eigenes Preisfeld gibt es dafür nicht: Der Fahrplan senkt die Netzgebühr selbst, wie oben unter „Zeitvariable Netzentgelte“ beschrieben.</li>
+</ul>
+<p>Spot- und Gemeinschaftsbezug brauchen einen <strong>Netzbereich</strong>, sonst fehlt die Netzgebühr und der Netzstrom sähe zu billig aus.</p>
+<table>
+<thead>
+<tr>
+<th>Feld</th>
+<th>Bedeutung</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Höchster Netzbezug beim Laden aus dem Netz (kW)</strong></td>
+<td>Gilt am Zähler, Haus und Batterie zusammen. Plan und Steuerung rechnen mit Hausverbrauch und PV (die Steuerung alle 30 s mit den Messwerten) und lassen die Batterie nur so schnell laden, dass der Bezug darunter bleibt. Das Haus wird nie begrenzt. Leer = keine Grenze, die Batterie lädt mit ihrer vollen Leistung. Für die Leistungsgebühr ab 2027 lohnt eine Grenze: Der Fahrplan bewertet die Bezugsspitze sonst nicht</td>
+</tr>
+<tr>
+<td><strong>Mindestvorteil (ct/kWh)</strong></td>
+<td>Um so viel muss der Netzstrom billiger sein als die Nacht. Vorgabe 2 ct</td>
+</tr>
+</tbody>
+</table>
+<p>Während der Netzladung lädt der Wechselrichter mit der geplanten Leistung bis zum geplanten Ladestand, der Statussensor zeigt „Netzladung x kW bis y %“, im Diagramm ist sie violett gestrichelt. Der Heizstab bleibt dabei aus.</p>
+<div class="guide-alert warning"><p><strong>Beta.</strong> Die Zwangsladung ist an einem SUN2000 geprüft, sie braucht die Einstellung „Laden aus dem Netz“ nicht. Der Betrieb über den Fahrplan ist noch im Feldtest.</p></div>
+
 <h3>Nachtsatz und Nachtfenster</h3>
 <p>Es gibt zwei Nachtfenster, weil ein Gemeinschaftsvertrag andere Zeiten haben kann als dein Einspeisevertrag:</p>
 <ul>
