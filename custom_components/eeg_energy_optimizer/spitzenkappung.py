@@ -1,6 +1,7 @@
 """Spitzenkappung: Verbraucher abschalten, bevor die Bezugsspitze steigt.
 
-Ab 2027 richtet sich der Leistungspreis nach dem höchsten Viertelstunden-
+Mit der neuen Tarifstruktur (Umstellung je Netzbereich 2027/28, siehe
+leistungsspitze.UMSTELLUNG) richtet sich der Leistungspreis nach dem höchsten Viertelstunden-
 Mittel des Netzbezugs im Monat (siehe leistungsspitze.py). Diese Wache
 schaltet konfigurierte Verbraucher — typischer Fall: das Laden des E-Autos —
 ab, wenn die laufende Viertelstunde darüber hinauszuwachsen droht, und
@@ -366,6 +367,39 @@ class Spitzenkappung:
             ],
             "fehler": self._letzter_fehler,
         }
+
+    def verbraucher_status(self, jetzt: datetime | None = None) -> list[dict[str, Any]]:
+        """Jeder konfigurierte Verbraucher mit seinem Zustand — für die Karte.
+
+        ``zustand``: ``abgeschaltet`` (von uns, mit ``frei_ab``, ab wann er
+        frühestens zurück darf), ``an``, ``aus`` (von Hand oder von selbst)
+        oder ``unbekannt`` (Schalter nicht lesbar).
+        """
+        jetzt = jetzt or _jetzt_utc()
+        liste = []
+        for v in verbraucher_aus_config(self._config_quelle()):
+            info = self._abgeschaltet.get(v.schalter_entity)
+            z = self._zustand(v) if self._hass is not None else VerbraucherZustand(None, None)
+            eintrag: dict[str, Any] = {
+                "name": v.name,
+                "entity": v.schalter_entity,
+                "leistung_kw": None if z.leistung_kw is None else round(z.leistung_kw, 2),
+            }
+            if info is not None:
+                eintrag["zustand"] = "abgeschaltet"
+                seit = info.get("seit")
+                if isinstance(seit, datetime):
+                    frei = seit + timedelta(seconds=float(info.get("min_aus_s") or MIN_AUS_S))
+                    eintrag["seit"] = seit.isoformat()
+                    eintrag["frei_ab"] = frei.isoformat() if frei > jetzt else None
+            elif z.eingeschaltet is True:
+                eintrag["zustand"] = "an"
+            elif z.eingeschaltet is False:
+                eintrag["zustand"] = "aus"
+            else:
+                eintrag["zustand"] = "unbekannt"
+            liste.append(eintrag)
+        return liste
 
     def add_listener(self, callback: Callable[[], None]) -> Callable[[], None]:
         self._listeners.append(callback)

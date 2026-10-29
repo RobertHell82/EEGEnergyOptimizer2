@@ -56,7 +56,7 @@ Was die Felder im Einrichtungsassistenten und in den Einstellungen bedeuten:
 
 ## ⚡ Spitzenkappung (optional)
 
-- **[Spitzenkappung](guides/spitzenkappung.md)** — die Bezugsspitze des Monats niedrig halten: die Batterie hält eine aus dem Verbrauch berechnete Reserve für Spitzen (Huawei, Fronius, SMA), reicht sie nicht, werden Verbraucher abgeschaltet
+- **[Spitzenkappung](guides/spitzenkappung.md)** — die Bezugsspitze des Monats niedrig halten: die Batterie hält eine aus dem Verbrauch berechnete Reserve für Spitzen (Huawei, Fronius, SMA, SolaX), reicht sie nicht, werden Verbraucher abgeschaltet
 
 ## 🔥 Heizstab (optional)
 

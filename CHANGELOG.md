@@ -12,6 +12,17 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+### Hinzugefügt
+
+- **Spitzenkappung mit der Batterie jetzt auch bei SolaX.** Die Batterie hält ihre Reserve über den maximalen Entladestrom (`battery_discharge_max_current`), das Gegenstück zum Ladelimit, das der Treiber schon nutzt. Der eingestellte Wert wird gesichert und beim Aufheben wiederhergestellt. Am Gerät noch nicht geprüft.
+
+- **Karte „Bezugsspitze & Spitzenkappung".** Die Angaben, die bisher in einer Zeile der Statuskarte und einem langen ⓘ-Text steckten, haben eine eigene Karte: Monatsspitze, laufende Viertelstunde als Balken gegen die Schwelle, Leistungspreis je Monat, die Tagesspitzen des Monats als Diagramm mit Grenze und Monatsspitze, und im laufenden Monat, was die Spitzenkappung gerade tut, getrennt nach Batterie (Ladestand, Schwelle, Reserve) und Verbrauchern (an, aus, abgeschaltet bis wann). Frühere Monate lassen sich durchblättern. Die Zeile in der Statuskarte zeigt nur noch Wert und Hinweis und springt per Tipp zur Karte.
+
+### Geändert
+
+- **Leistungspreis: Stand der Grundsatzverordnung.** Der gemessene Leistungspreis gilt für Haushalte erst ab der Umstellung des Netzbereichs: frühestens 1.1.2027, ohne Meldung des Netzbetreibers 1.12.2027, spätestens 1.7.2028; bis dahin gilt eine Pauschale. Der Anteil am Netznutzungsentgelt liegt 2027 und 2028 bei 40 %, ab 2029 bei 50 % (E-Control, 14.10.2026). Die Beträge bleiben Richtwerte, bis die Tarifverordnung im Dezember erscheint.
+- **„Reserve 0 %" heißt jetzt, was es ist:** keine Reserve nötig, die Batterie arbeitet normal und hält erst am Mindest-Ladestand.
+
 ## [2.1.52-beta.1] - 2026-10-29
 
 ### Geändert

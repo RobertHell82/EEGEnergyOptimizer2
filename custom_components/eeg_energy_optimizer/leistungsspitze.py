@@ -1,9 +1,12 @@
 """Netzbezug je Viertelstunde und die Bezugsspitze des laufenden Monats.
 
-Ab 1.1.2027 zahlt jeder Entnehmer auf Netzebene 7 einen Leistungspreis
-(SNE-G-V § 6, Begutachtungsentwurf 30.06.2026): verrechnet wird der höchste
-Viertelstunden-Mittelwert des Netzbezugs im Kalendermonat, kaufmännisch auf
-zwei Nachkommastellen gerundet. Dieses Modul misst genau diese Größe mit —
+Mit der neuen Tarifstruktur zahlt jeder Entnehmer auf Netzebene 7 einen
+Leistungspreis (SNE-G-V, kundgemacht Oktober 2026): verrechnet wird der
+höchste Viertelstunden-Mittelwert des Netzbezugs im Kalendermonat,
+kaufmännisch auf zwei Nachkommastellen gerundet. Wann ein Haushalt
+umgestellt wird, legt der Netzbetreiber je Netzbereich fest — frühestens
+1.1.2027, ohne eigene Meldung 1.12.2027, spätestens Mitte 2028; bis dahin
+gilt eine Pauschale (siehe ``UMSTELLUNG``). Dieses Modul misst genau diese Größe mit —
 es steuert nichts. Es ist die Grundlage, um überhaupt zu sehen, wann die
 Spitzen entstehen und was sie kosten.
 
@@ -116,20 +119,35 @@ def monat_von(t: datetime) -> str:
 
 
 # Was die Spitze kostet — RICHTWERTE, keine Tarife. Die Beträge je
-# Netzbereich kommen erst mit der Tarifverordnung (SNE-T-V) gegen Ende 2026;
-# bis dahin gibt es nur die „illustrative Überlegung" der E-Control
-# (Fachveranstaltung 14.07.2026, Folien 5 und 7), bevölkerungsgewichtete
-# Österreich-Durchschnitte, netto wie jedes Netzentgelt:
+# Netzbereich kommen erst mit der Tarifverordnung (SNE-T-V, Erlass laut
+# E-Control im Dezember 2026); bis dahin gibt es nur die „illustrative
+# Überlegung" der E-Control (Fachveranstaltung 14.07.2026, Folien 5 und 7),
+# bevölkerungsgewichtete Österreich-Durchschnitte, netto wie jedes
+# Netzentgelt:
 #
-# * Endstufe (etwa ab 2030): 33,82 €/kW im Jahr bis 10 kW, 67,64 €/kW für
-#   den Teil darüber — die HÖCHSTEN derzeit bekannten Sätze.
-# * Start 2027: etwa die Hälfte, rund 19 €/kW im Jahr (je Netzbereich 15 bis
-#   26), eine Stufe über 10 kW ohne bekannten Betrag.
+# * Endstufe (Leistungs- zu Arbeitspreis 50:50, ab 2029): 33,82 €/kW im
+#   Jahr bis 10 kW, 67,64 €/kW für den Teil darüber — die HÖCHSTEN derzeit
+#   bekannten Sätze.
+# * Einführung (40:60, 2027 und 2028): rund 19 €/kW im Jahr (je Netzbereich
+#   15 bis 26), eine Stufe über 10 kW ohne bekannten Betrag.
 #
-# Verrechnet wird die Monatsspitze, mindestens 2 kW (SNE-G-V § 6, Entwurf).
-# TODO 2027: durch die Sätze der SNE-T-V je Netzbereich ersetzen
+# Verrechnet wird die Monatsspitze, mindestens 2 kW.
+# TODO Dezember 2026: durch die Sätze der SNE-T-V je Netzbereich ersetzen
 # (netzentgelt.py liest die Verordnung ohnehin).
 LEISTUNGSPREIS_QUELLE = "E-Control, Richtwerte vom 14.07.2026"
+# Umstellung auf den gemessenen Leistungspreis (E-Control, Folien zur
+# SNE-G-V vom 14.10.2026, Folien 18–20): Der Netzbetreiber meldet seinen
+# Termin bis 11.11.2026; ohne Meldung gilt der Voreinstellungstermin. Bis
+# dahin zahlt ein Haushalt eine Pauschale plus Arbeitspreis — die
+# Monatsspitze kostet dann noch nichts.
+UMSTELLUNG = {
+    "fruehestens": "2027-01-01",
+    "vorgabe": "2027-12-01",
+    "spaetestens": "2028-07-01",
+    "quelle": "E-Control, SNE-G-V, Folien vom 14.10.2026",
+}
+# Anteil des Leistungspreises am Netznutzungsentgelt je Phase.
+LEISTUNGSPREIS_ANTEIL = (("2027", 40), ("2028", 40), ("2029", 50))
 LEISTUNGSPREIS_MINDEST_KW = 2.0
 LEISTUNGSPREIS_STUFE_KW = 10.0
 LEISTUNGSPREIS_ENDSTUFE_EUR_KW_JAHR = (33.82, 67.64)
@@ -142,7 +160,9 @@ def netzkosten_monat(kw: float | None) -> dict[str, Any] | None:
     """Leistungspreis für eine Monatsspitze, € je Monat inkl. USt.
 
     ``endstufe_eur`` mit den höchsten bekannten Sätzen, ``start_eur`` mit dem
-    Durchschnitt zum Start 2027 (ohne Stufe — ihr Betrag ist nicht bekannt).
+    Durchschnitt der Einführungsphase 2027/28 (ohne Stufe — ihr Betrag ist
+    nicht bekannt). ``umstellung`` und ``anteil_pct`` sagen, ab wann und mit
+    welchem Gewicht der Leistungspreis gilt.
     """
     if kw is None:
         return None
@@ -166,6 +186,8 @@ def netzkosten_monat(kw: float | None) -> dict[str, Any] | None:
         "start_satz_eur_kw_monat": je_monat(LEISTUNGSPREIS_START_EUR_KW_JAHR),
         "start_spanne_eur_kw_monat": [je_monat(x) for x in LEISTUNGSPREIS_START_SPANNE],
         "quelle": LEISTUNGSPREIS_QUELLE,
+        "umstellung": dict(UMSTELLUNG),
+        "anteil_pct": [{"ab": jahr, "pct": pct} for jahr, pct in LEISTUNGSPREIS_ANTEIL],
     }
 
 

@@ -9,7 +9,7 @@ Die Einstellungen öffnest du über das Zahnrad oben rechts im Dashboard. Sie si
 | **Tarife** | Karten **Vergütung und Kosten** (Standardvergütung, Nachtsatz, Bezugspreis, Netzbereich) und **Energiegemeinschaft**. Entspricht dem Assistentenschritt „Tarife & Gemeinschaft“ |
 | **Anlage** | Karten **Anlage** (Einspeisegrenze) und **Batterie** (Mindest- und Maximum-Ladestand). Entspricht dem Assistentenschritt „Anlage & Batterie“ |
 | **Prognose** | Die steuernde Quelle der PV-Prognose mit ihren Sensoren, der Schalter **Prognosevergleich** und, wenn die eigene Berechnung steuert oder mitläuft, die Flächentabelle der Anlage. Entspricht dem Assistentenschritt „PV-Prognose“ |
-| **Spitzenkappung** | Bezugsspitzen kappen: Grenzwert, Mindest- und Maximalreserve der Batterie (Huawei, Fronius, SMA) und die Verbraucher, die abgeschaltet werden dürfen (siehe Anleitung „Spitzenkappung“) |
+| **Spitzenkappung** | Bezugsspitzen kappen: Grenzwert, Mindest- und Maximalreserve der Batterie (Huawei, Fronius, SMA, SolaX) und die Verbraucher, die abgeschaltet werden dürfen (siehe Anleitung „Spitzenkappung“) |
 | **Verbraucher** | Karten **Heizstab** (Fronius Ohmpilot, siehe Anleitung „Heizstab“) und **Wallbox** (siehe Anleitung „Wallbox“). Der Tab erscheint **nur im Expertenmodus** und kommt im Assistenten nicht vor |
 | **System** | Karte **Dashboard** (Karten ausblenden), Übersicht über Anlage und Sensoren, EEG-Statistik, **Verlauf vergangener Tage**, Fahrplan-Archiv und ganz unten der Schalter **Expertenmodus** |
 

@@ -410,3 +410,70 @@ async def test_huawei_unerreichbares_geraet_ist_ein_fehlschlag(mock_hass):
     mock_hass.services.async_call.reset_mock()
     inv._compute_discharge_distribution = MagicMock(return_value={"a": 1.0, "b": 2.0})
     assert await inv.async_set_discharge_limit(3.0) is False
+
+
+# ---------------------------------------------------------------------------
+# SolaX
+# ---------------------------------------------------------------------------
+
+from custom_components.eeg_energy_optimizer.inverter.solax import SolaXInverter  # noqa: E402
+
+SOLAX_DSCH = "number.solax_inverter_battery_discharge_max_current"
+
+
+class _SolaxStore:
+    def __init__(self):
+        self.daten = None
+
+    async def async_load(self):
+        return self.daten
+
+    async def async_save(self, daten):
+        self.daten = dict(daten)
+
+
+def _solax(mock_hass, strom=25.0, maximum=30.0, spannung="400"):
+    zustaende = {
+        SOLAX_DSCH: SimpleNamespace(state=str(strom), attributes={"max": maximum}),
+        "sensor.solax_inverter_battery_voltage_charge": SimpleNamespace(state=spannung, attributes={}),
+    }
+    mock_hass.states.get = MagicMock(side_effect=lambda e: zustaende.get(e))
+    mock_hass.states.async_all = MagicMock(return_value=[])
+    inv = SolaXInverter(mock_hass, {})
+    inv._state_store._store = _SolaxStore()
+    return inv, zustaende
+
+
+def _gesetzt(mock_hass):
+    return [c.args[2]["value"] for c in mock_hass.services.async_call.await_args_list
+            if c.args[2].get("entity_id") == SOLAX_DSCH]
+
+
+async def test_solax_deckel_als_strom_und_originalwert_zurueck(mock_hass):
+    inv, zustaende = _solax(mock_hass)
+    assert inv.supports_discharge_limit is True
+    assert await inv.async_set_discharge_limit(2.0) is True      # 2 kW / 400 V = 5 A
+    assert await inv.async_set_discharge_limit(0.0) is True
+    zustaende[SOLAX_DSCH] = SimpleNamespace(state="0", attributes={"max": 30.0})
+    assert await inv.async_set_discharge_limit(None) is True     # zurück auf die 25 A von vorher
+    assert _gesetzt(mock_hass) == [5.0, 0.0, 25.0]
+    assert inv._state_store.original_discharge_current is None
+
+
+async def test_solax_neustart_im_halten_sichert_die_null_nicht(mock_hass):
+    """Steht beim ersten Deckel schon 0 A (unser eigener, vor dem Neustart),
+    wird nicht 0 als Original gemerkt — aufgehoben wird aufs Maximum."""
+    inv, _ = _solax(mock_hass, strom=0.0)
+    await inv.async_set_discharge_limit(0.0)
+    await inv.async_set_discharge_limit(None)
+    assert _gesetzt(mock_hass) == [0.0, 30.0]
+
+
+async def test_solax_deckel_nie_ueber_dem_maximum_und_ohne_entitaet_fehler(mock_hass):
+    inv, _ = _solax(mock_hass)
+    await inv.async_set_discharge_limit(50.0)
+    assert _gesetzt(mock_hass) == [30.0]
+    leer, zustaende = _solax(mock_hass)
+    zustaende.pop(SOLAX_DSCH)
+    assert await leer.async_set_discharge_limit(1.0) is False
+    assert "nicht verfügbar" in leer.last_write_error

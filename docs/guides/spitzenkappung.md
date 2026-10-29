@@ -1,12 +1,12 @@
 # Spitzenkappung
 
-Ab 2027 richtet sich ein Teil der Netzgebühr nach der **Bezugsspitze**: dem höchsten Netzbezug, gemittelt über eine Viertelstunde, im ganzen Monat (Elektrizitätswirtschaftsgesetz, ElWG). Eine einzige Viertelstunde, in der Auto, Herd und Wärmepumpe gleichzeitig laufen, legt den Preis für den ganzen Monat fest. Die Spitzenkappung hält diese Viertelstunden niedrig, in zwei Stufen:
+Mit der neuen Tarifstruktur richtet sich ein Teil der Netzgebühr nach der **Bezugsspitze**: dem höchsten Netzbezug, gemittelt über eine Viertelstunde, im ganzen Monat (Elektrizitätswirtschaftsgesetz, ElWG). Wann das für dich gilt, legt dein Netzbetreiber fest — frühestens 1.1.2027, ohne eigene Meldung 1.12.2027, spätestens 1.7.2028 (siehe Anleitung „Dashboard"). Eine einzige Viertelstunde, in der Auto, Herd und Wärmepumpe gleichzeitig laufen, legt den Preis für den ganzen Monat fest. Die Spitzenkappung hält diese Viertelstunden niedrig, in zwei Stufen:
 
 1. **Die Batterie.** Solange sie genug hat, deckt sie Spitzen ohnehin. Wird sie knapp, hält sie eine **Reserve** zurück und gibt darin nur noch ab, was über deiner Grenze liegt. Den Grundverbrauch bezieht das Haus dann aus dem Netz.
 2. **Verbraucher abschalten.** Reicht die Batterie nicht, etwa weil sie leer ist oder das Auto mehr zieht, als sie liefern kann, schaltet die Integration die Verbraucher, die du einträgst, der Reihe nach ab. Sobald wieder Platz ist, schaltet sie sie wieder ein.
 
 > [!NOTE]
-> Die erste Stufe gibt es mit **Huawei**, **Fronius** und **SMA**. Mit den anderen Wechselrichtern kappt die Integration nur über das Abschalten von Verbrauchern.
+> Die erste Stufe gibt es mit **Huawei**, **Fronius**, **SMA** und **SolaX**. Mit den anderen Wechselrichtern kappt die Integration nur über das Abschalten von Verbrauchern.
 
 ## Wie es funktioniert
 
@@ -44,7 +44,7 @@ Der Fahrplan rechnet die Reserve mit ein. Er verkauft am Abend nicht mehr, was i
 
 ### Verbraucher abschalten
 
-Die Verbraucher werden in der Reihenfolge der Liste abgeschaltet, aber nur, wenn die Batterie die Spitze nicht mehr decken kann und der Verbraucher gerade läuft (ab 0,2 kW). Ob die Batterie noch mehr könnte, weiß die Integration nur bei Huawei, Fronius und SMA; bei den anderen Wechselrichtern rechnet sie ohne die Batterie und schaltet ab, sobald die Viertelstunde über die Grenze zu gehen droht. Nach jedem Abschalten wartet die Integration 60 Sekunden, denn ein Auto regelt langsam herunter und meldet seine Leistung oft verzögert.
+Die Verbraucher werden in der Reihenfolge der Liste abgeschaltet, aber nur, wenn die Batterie die Spitze nicht mehr decken kann und der Verbraucher gerade läuft (ab 0,2 kW). Ob die Batterie noch mehr könnte, weiß die Integration nur bei Huawei, Fronius, SMA und SolaX; bei den anderen Wechselrichtern rechnet sie ohne die Batterie und schaltet ab, sobald die Viertelstunde über die Grenze zu gehen droht. Nach jedem Abschalten wartet die Integration 60 Sekunden, denn ein Auto regelt langsam herunter und meldet seine Leistung oft verzögert.
 
 Wieder eingeschaltet wird ein Verbraucher frühestens nach 5 Minuten, und nur, wenn er neben dem übrigen Haus eine ganze Viertelstunde lang unter die Grenze passt. Die Batterie zählt dabei nicht mit: Sonst würde der Verbraucher die Reserve leeren. Ein 11-kW-Auto kommt bei einer Grenze von 5 kW also erst zurück, wenn die Spitze vorbei ist und der Monat eine höhere Spitze erlaubt.
 
@@ -66,8 +66,8 @@ Die Spitzenkappung steht in den **Einstellungen** im Tab **Spitzenkappung**.
 |---|---|
 | **Bezugsspitzen kappen** | Schaltet die Funktion ein oder aus |
 | **Grenzwert (kW)** | 2 bis 20 kW, Vorgabe 5. Darunter wird nichts gekappt |
-| **Mindestreserve (%)** | Nur mit Huawei, Fronius oder SMA. Hält die Batterie immer für Spitzen zurück, auch wenn die Statistik weniger verlangt. Vorgabe 0 |
-| **Maximalreserve (%)** | Nur mit Huawei, Fronius oder SMA. Mehr hält die Batterie nie zurück. Vorgabe 30, ein leeres Feld heißt ebenfalls 30, 0 schaltet die Reserve ab |
+| **Mindestreserve (%)** | Nur mit Huawei, Fronius, SMA oder SolaX. Hält die Batterie immer für Spitzen zurück, auch wenn die Statistik weniger verlangt. Vorgabe 0 |
+| **Maximalreserve (%)** | Nur mit Huawei, Fronius, SMA oder SolaX. Mehr hält die Batterie nie zurück. Vorgabe 30, ein leeres Feld heißt ebenfalls 30, 0 schaltet die Reserve ab |
 | **Verbraucher** | Bis zu zehn, in der Reihenfolge, in der abgeschaltet wird. Je Verbraucher ein **Leistungssensor** (W oder kW), ein **Schalter** (`switch.` oder `input_boolean.`) und optional die **Nennleistung** in kW |
 
 Ohne Batterie-Stufe (andere Wechselrichter) braucht es mindestens einen Verbraucher, sonst täte die Funktion nichts.
@@ -78,15 +78,19 @@ _Alle Felder wirken ohne Neustart der Integration._
 
 ## Anzeige
 
-- **Statuskarte, Zeile „Bezugsspitze":** Hält die Batterie gerade ihre Reserve, steht dort „Batterie hält Reserve" oder „Batterie deckt nur Spitzen", abgeschaltete Verbraucher stehen mit Namen dabei. Das ⓘ nennt die Grenze, die Reserve und die Schwelle, ab der die Batterie zurückhält.
-- **Fahrplan, Ladestandsdiagramm:** Die orange gestrichelte Linie über dem Mindest-Ladestand ist die **Spitzenreserve** je Viertelstunde. Unter ihr deckt die Batterie nur noch Spitzen.
-- **Einstellungen, Tab Spitzenkappung:** oben der aktuelle Stand: Reserve, Schwelle, was gerade abgeschaltet ist, und solange die Statistik noch nicht reicht, wie viele Tage schon da sind.
-- **Fahrplan-Status:** Der Statussensor hängt „Spitzenkappung: …" an, mit der Begründung, warum die Batterie gerade zurückhält oder wie viel sie deckt.
+- **Karte „Bezugsspitze & Spitzenkappung"** im Dashboard: Monatsspitze, laufende Viertelstunde gegen die Schwelle, Tagesspitzen des Monats und darunter, was die Spitzenkappung gerade tut — Stufe 1 (Batterie) mit Ladestand, Schwelle und Reserve, Stufe 2 (Verbraucher) mit dem Zustand jedes Geräts (siehe Anleitung „Dashboard").
+- **Statuskarte, Zeile „Bezugsspitze":** Greift die Spitzenkappung gerade, steht dort ein Hinweis („Batterie hält Reserve", „Batterie deckt nur Spitzen", „Wallbox aus"). Ein Tipp springt zur Karte.
+- **Fahrplan, Ladestandsdiagramm:** Die orange gestrichelte Linie über dem Mindest-Ladestand ist die **Spitzenreserve** je Viertelstunde. Unter ihr deckt die Batterie nur noch Spitzen. Ist die Reserve 0, fehlt die Linie.
+- **Einstellungen, Tab Spitzenkappung:** oben der aktuelle Stand in einem Satz.
+- **Fahrplan-Status:** Der Statussensor zeigt „Spitzenkappung: Batterie hält Reserve" oder „… deckt Spitzen", die Begründung steht im Attribut `status`.
 - **Aktivitätsprotokoll:** Jedes Ab- und Einschalten eines Verbrauchers steht dort mit Grund.
+
+**Reserve 0 %** heißt: In den letzten Wochen kam keine Spitze über die Schwelle, die Batterie arbeitet normal. Sie hält dann erst am Mindest-Ladestand an — mit eingeschalteter Spitzenkappung ist er eine echte Untergrenze, auch im Automatikbetrieb.
 
 ## Gut zu wissen
 
 - **Optimierung aus oder Pause:** Die Spitzenkappung tut nichts. Die Batterie läuft im Automatikbetrieb, abgeschaltete Verbraucher kommen zurück.
 - **Absturz von Home Assistant:** Fronius und SMA geben die Batterie nach spätestens fünf Minuten von selbst frei. Bei **Huawei** bleibt die gesetzte Entladeleistung im Wechselrichter stehen, bis Home Assistant wieder läuft. Ist die Spitzenkappung beim Start eingeschaltet, setzt die Integration sie auf das Maximum zurück. Wer sie in der Zwischenzeit ausgeschaltet hat, prüft die Entität **Maximale Entladeleistung** und stellt sie von Hand zurück.
+- **SolaX:** Die Integration stellt den maximalen Entladestrom (`battery_discharge_max_current`). Wie bei Huawei bleibt er bei einem Absturz stehen; den Wert, der vorher eingestellt war, sichert die Integration und stellt ihn beim Aufheben wieder her. Am Gerät ist das noch nicht geprüft — wer es testet, schaut auf diese Entität.
 - **Huawei: Entladeleistung:** Die Integration stellt die Number-Entität **Maximale Entladeleistung**. Wird die Batterie freigegeben, setzt sie sie auf das Maximum des Geräts zurück. Ein eigener, niedrigerer Wert, der dort vorher stand, geht dabei verloren.
 - **Kosten:** Die Spitzenkappung rechnet nicht nach, ob sie sich lohnt. Eingeschaltet heißt, sie kappt. Was die Monatsspitze kostet, steht im ⓘ der Zeile „Bezugsspitze" (siehe Anleitung „Dashboard").
