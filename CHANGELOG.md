@@ -12,6 +12,15 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+## [2.1.53] - 2026-10-29
+
+### Geändert
+
+- **Karte „Bezugsspitze & Spitzenkappung“ sagt, wogegen die Reserve rechnet.** „Keine Reserve nötig“ nennt jetzt den Maßstab mit Wert: die aktuelle Monatsspitze, wenn sie schon über der Grenze liegt, sonst die Grenze. In Grünbach stand dort „keine Spitze über die Schwelle“, gemeint waren 7,43 kW Oktoberspitze, gelesen wurden die eingestellten 2 kW. Der Ladestand-Balken zeigt „Reserve bis x %“ statt „Schwelle x %“ und bei Reserve 0 nur den Mindest-Ladestand; vorher stand derselbe Wert (20 %) unter zwei Namen da.
+- **Anwender-Doku kürzer und einfacher**, Fakten und Zahlen unverändert. Neu ist eine Grafik in der Anleitung „Spitzenkappung“, die zeigt, wie die Reserve aus den letzten vier Wochen entsteht und über die Nacht fällt.
+- **Batterie-Stufe der Spitzenkappung an einem Fronius geprüft** (Grünbach, 29.10.2026): Reserve gesetzt → Entladelimit 0 am Gerät, Haus aus dem Netz; 6,4 kW Last unter der Schwelle → Batterie hält weiter; Reserve zurück → Automatik, Batterie übernimmt das Haus nach rund 40 Sekunden.
+- **„Batterie aus dem Netz laden“ bleibt den Betas vorbehalten**, im Release ausgeblendet und ohne Wirkung.
+
 ## [2.1.53-beta.1] - 2026-10-29
 
 ### Geändert
