@@ -12,6 +12,12 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+## [2.1.53-beta.1] - 2026-10-29
+
+### Geändert
+
+- **„Batterie aus dem Netz laden“ ist in der Beta wieder an.** Inhaltlich entspricht diese Beta dem Release 2.1.52 mit der Karte „Bezugsspitze & Spitzenkappung“ und der Spitzenkappung für SolaX. Dazu kommt die Option in den Einstellungen (Tab Tarife, Expertenmodus, nur Huawei), samt Beschreibung in der Tarife-Anleitung.
+
 ## [2.1.52] - 2026-10-29
 
 ### Hinzugefügt
