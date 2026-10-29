@@ -70,6 +70,7 @@ from .const import (
     INVERTER_TYPE_FRONIUS,
     INVERTER_TYPE_KOSTAL,
     INVERTER_TYPE_SMA,
+    INVERTER_TYPE_VICTRON,
 )
 from .energie_ag import ABSCHLAG_MAX_EUR as ENERGIE_AG_ABSCHLAG_MAX_EUR
 from .inverter.sigenergy import (
@@ -77,6 +78,11 @@ from .inverter.sigenergy import (
     SIGEN_REQUIRED_CONTROLS,
     find_sigen_control_entity,
     sigen_control_entity_status,
+)
+from .inverter.victron import (
+    VICTRON_DOMAIN,
+    victron_pruefung,
+    victron_sensoren,
 )
 from .inverter.solax import (
     SOLAX_CONTROL_ENTITY_PATTERNS,
@@ -1000,7 +1006,7 @@ async def ws_check_prerequisites(
     msg: dict,
 ) -> None:
     """Check which prerequisite integrations are installed and loaded."""
-    check_domains = ["huawei_solar", "solax_modbus", "fronius", "kostal_plenticore", "sma", "sigen", "solcast_solar", "forecast_solar"]
+    check_domains = ["huawei_solar", "solax_modbus", "fronius", "kostal_plenticore", "sma", "sigen", "victron_gx", "solcast_solar", "forecast_solar"]
     result = {}
 
     for domain in check_domains:
@@ -1211,6 +1217,23 @@ async def ws_detect_sensors(
             for k in SIGEN_REQUIRED_CONTROLS
             if k in status and status[k].get("enabled") is not True
         ]
+        connection.send_result(msg["id"], result)
+        return
+
+    # Victron (eingebaute HA-Integration „victron_gx“, MQTT). Sensoren und
+    # Stellgrößen kommen aus der Entity-Registry über die unique_id der
+    # Metrik — die Entity-IDs hängen am Gerätenamen und an der Sprache.
+    # Kapazität gibt es nur in Ah, sie wird im Assistenten von Hand
+    # eingetragen. Das Panel zeigt, was am GX-Gerät noch nicht passt.
+    victron_entries = hass.config_entries.async_entries(VICTRON_DOMAIN)
+    if any(e.state.value == "loaded" for e in victron_entries):
+        pruefung = victron_pruefung(hass)
+        result = {
+            CONF_INVERTER_TYPE: INVERTER_TYPE_VICTRON,
+            "detected": True,
+            "sensors": victron_sensoren(hass),
+            "victron_pruefung": pruefung,
+        }
         connection.send_result(msg["id"], result)
         return
 
@@ -1484,7 +1507,7 @@ async def ws_detect_sensors(
         connection.send_result(msg["id"], result)
         return
 
-    # Neither Huawei, SolaX, Sigenergy, Fronius, Kostal, nor SMA detected
+    # Neither Huawei, SolaX, Sigenergy, Victron, Fronius, Kostal, nor SMA detected
     connection.send_result(msg["id"], {"detected": False, "sensors": {}})
 
 

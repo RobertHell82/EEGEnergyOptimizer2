@@ -161,11 +161,12 @@ const INVERTER_LABELS = {
   fronius_gen24: "Fronius Gen24",
   kostal_plenticore: "Kostal Plenticore",
   sma_smart_energy: "SMA Smart Energy",
+  victron_ess: "Victron ESS",
 };
 
 // Vom Fahrplan gesteuerte Wechselrichter — alle anderen rechnen und zeigen
 // an ("nur Anzeige").
-const SCHEDULE_CONTROL_INVERTERS = ["fronius_gen24", "huawei_sun2000", "kostal_plenticore", "sigenergy_sigenstor", "sma_smart_energy", "solax_gen4"];
+const SCHEDULE_CONTROL_INVERTERS = ["fronius_gen24", "huawei_sun2000", "kostal_plenticore", "sigenergy_sigenstor", "sma_smart_energy", "solax_gen4", "victron_ess"];
 
 // Summe der Aufteilungsschluessel — es zaehlt nur, was auch eine gewaehlte
 // Gemeinschaft hat. Der Prozentsatz bleibt im Formular stehen, wenn der
@@ -423,6 +424,7 @@ const DIALOG_CONTENT = {
   prognose_eigen: { file: "prognose_eigen.html" },
   capacity_sensor: { file: "capacity_sensor.html" },
   sigenergy: { file: "sigenergy.html" },
+  victron: { file: "victron.html" },
   solax: { file: "solax.html" },
   fronius: { file: "fronius.html" },
   kostal: { file: "kostal.html" },
@@ -2949,6 +2951,24 @@ class EegOptimizerPanel extends HTMLElement {
           const fehlend = (this._detectedSensors && this._detectedSensors.sigen_controls_missing) || [];
           if (fehlend.length) {
             this._showValidationError("Sigenergy: Diese Steuerentitäten sind noch deaktiviert oder fehlen: " + fehlend.join(", ") + ". Bitte in Home Assistant aktivieren (siehe Anleitung), dann den Wechselrichter hier erneut anklicken.");
+            return false;
+          }
+        }
+        if (invType === "victron_ess" && invP && !invP.victron_gx) {
+          this._showValidationError("Victron GX ist in Home Assistant noch nicht eingerichtet (Einstellungen → Geräte & Dienste → Victron GX). Klicke auf 'Anleitung' für Hilfe, danach auf 'Erneut prüfen'.");
+          return false;
+        }
+        if (invType === "victron_ess") {
+          // Ohne Netzsollwert und Ladestrom kann der Treiber nichts stellen;
+          // falsche ESS-Einstellungen am GX-Gerät machen die Steuerung
+          // wirkungslos. Beides lässt der Assistent nicht durch.
+          const pr = (this._detectedSensors && this._detectedSensors.victron_pruefung) || null;
+          if (pr && (pr.fehlt || []).length) {
+            this._showValidationError("Victron: Diese Stellgrößen fehlen in Home Assistant: " + pr.fehlt.join(", ") + ". Ist ESS am GX-Gerät eingerichtet? Siehe Anleitung.");
+            return false;
+          }
+          if (pr && (pr.probleme || []).length) {
+            this._showValidationError("Victron: " + pr.probleme.join(" · ") + ". Bitte am GX-Gerät ändern, dann den Wechselrichter hier erneut anklicken.");
             return false;
           }
         }
@@ -5783,6 +5803,7 @@ class EegOptimizerPanel extends HTMLElement {
         p.sma && { key: "sma_smart_energy", label: "SMA" },
         p.sigen && { key: "sigenergy_sigenstor", label: "Sigenergy" },
         p.solax_modbus && { key: "solax_gen4", label: "SolaX" },
+        p.victron_gx && { key: "victron_ess", label: "Victron" },
       ].filter(Boolean)
         .filter((inv) => istWaehlbarerWr(inv.key))
         .sort((a, b) => a.label.localeCompare(b.label));
@@ -6396,7 +6417,7 @@ class EegOptimizerPanel extends HTMLElement {
     // installiert ist oder Hausverbrauch-Sensoren fehlen.
     if (name === "Wechselrichter") {
       const p = this._prerequisites;
-      if (p && !p.huawei_solar && !p.solax_modbus && !p.fronius && !p.kostal_plenticore && !p.sma && !p.sigen) return true;
+      if (p && !p.huawei_solar && !p.solax_modbus && !p.fronius && !p.kostal_plenticore && !p.sma && !p.sigen && !p.victron_gx) return true;
       const d = this._wizardData;
       if (!d.inverter_type) return true;
       if (!d.pv_power_sensor) return true;
@@ -6477,8 +6498,8 @@ class EegOptimizerPanel extends HTMLElement {
       <h3 style="margin-bottom:8px">Was du brauchst</h3>
       <ul style="line-height:1.8;margin-bottom:20px;padding-left:20px">
         <li>Einen Wechselrichter mit Batteriespeicher: Fronius Gen24, Huawei SUN2000,
-            Kostal Plenticore, Sigenergy SigenStor, SMA Smart Energy
-            oder SolaX Gen4+</li>
+            Kostal Plenticore, Sigenergy SigenStor, SMA Smart Energy,
+            SolaX Gen4+ oder Victron ESS (Multiplus/Quattro mit GX-Gerät)</li>
         <li>Eine PV-Prognose: Solcast Solar oder Forecast.Solar als Integration — oder die eigene Berechnung, die ohne Integration auskommt</li>
       </ul>
       <h3 style="margin-bottom:8px">Getestete Setups</h3>
@@ -6502,6 +6523,7 @@ class EegOptimizerPanel extends HTMLElement {
     const kostalOk = p && p.kostal_plenticore;
     const smaOk = p && p.sma;
     const sigenOk = p && p.sigen;
+    const victronOk = p && p.victron_gx;
     const selected = this._wizardData.inverter_type || "";
     const huaweiSelected = selected === "huawei_sun2000";
     const solaxSelected = selected === "solax_gen4";
@@ -6509,6 +6531,7 @@ class EegOptimizerPanel extends HTMLElement {
     const kostalSelected = selected === "kostal_plenticore";
     const smaSelected = selected === "sma_smart_energy";
     const sigenSelected = selected === "sigenergy_sigenstor";
+    const victronSelected = selected === "victron_ess";
 
     const huaweiBadge = huaweiOk
       ? '<span class="status-badge installed">Eingerichtet</span>'
@@ -6534,6 +6557,10 @@ class EegOptimizerPanel extends HTMLElement {
       ? '<span class="status-badge installed">Eingerichtet</span>'
       : '<span class="status-badge missing">Nicht eingerichtet</span>';
 
+    const victronBadge = victronOk
+      ? '<span class="status-badge installed">Eingerichtet</span>'
+      : '<span class="status-badge missing">Nicht eingerichtet</span>';
+
 
     const pvHelp = huaweiSelected
       ? "Aktuelle PV-Produktion in W oder kW (Huawei: sensor.inverter_eingangsleistung)."
@@ -6545,6 +6572,8 @@ class EegOptimizerPanel extends HTMLElement {
       ? "Aktuelle PV-Produktion in W (SMA: sensor.*_pv_power)."
       : sigenSelected
       ? "Aktuelle PV-Produktion in kW (Sigenergy: sensor.sigen_plant_pv_power — Anlagenwert, nicht der einzelne Wechselrichter)."
+      : victronSelected
+      ? "PV-Leistung der Laderegler in W (Victron: „PV power“ des Systems, Summe aller MPPT). Ein PV-Wechselrichter am Wechselstrom kommt als zweiter PV-Sensor dazu."
       : "Aktuelle PV-Produktion in W (SolaX: sensor.solax_energy_dashboard_solax_solar_power).";
     const batteryHelp = huaweiSelected
       ? "Lade- und Entladeleistung der Batterie in W oder kW (Huawei: sensor.batteries_lade_entladeleistung)."
@@ -6554,6 +6583,8 @@ class EegOptimizerPanel extends HTMLElement {
       ? "Lade- und Entladeleistung der Batterie in W (Kostal: sensor.*_battery_power — positiv = Entladen, wird automatisch umgerechnet)."
       : sigenSelected
       ? "Lade- und Entladeleistung der Batterie in kW (Sigenergy: sensor.sigen_plant_battery_power — positiv = Laden)."
+      : victronSelected
+      ? "Lade- und Entladeleistung der Batterie in W (Victron: „DC battery power“ des Systems — positiv = Laden)."
       : "Lade- und Entladeleistung der Batterie in W (SolaX: sensor.solax_energy_dashboard_solax_battery_power).";
     const gridHelp = huaweiSelected
       ? "Wirkleistung am Netzanschluss in W oder kW (Huawei: sensor.power_meter_wirkleistung)."
@@ -6563,6 +6594,8 @@ class EegOptimizerPanel extends HTMLElement {
       ? "Wirkleistung am Netzanschluss in W (Kostal: sensor.*_grid_power — positiv = Bezug, wird automatisch umgerechnet)."
       : sigenSelected
       ? "Wirkleistung am Netzanschluss in kW (Sigenergy: sensor.sigen_plant_grid_active_power — positiv = Bezug, wird automatisch umgerechnet)."
+      : victronSelected
+      ? "Wirkleistung am Netzanschluss in W (Victron: „Power“ des Netzzählers, Summe aller Phasen — positiv = Bezug, wird automatisch umgerechnet)."
       : "Wirkleistung am Netzanschluss in W (SolaX: sensor.solax_energy_dashboard_solax_grid_power).";
 
     // Build inverter cards, sort: detected first (alphabetically), then undetected (alphabetically)
@@ -6579,6 +6612,8 @@ class EegOptimizerPanel extends HTMLElement {
         logo: `<img src="https://brands.home-assistant.io/kostal_plenticore/logo.png" alt="Kostal" style="max-width:120px;max-height:60px;height:auto" onerror="this.outerHTML='<span style=font-size:32px>Kostal</span>'">` },
       { key: "sma_smart_energy", label: "SMA Smart Energy", subtitle: "Tripower/Sunny Boy mit Batteriespeicher · Steuerung über Modbus TCP", detected: smaOk, badge: smaBadge, dialog: "sma",
         logo: `<img src="https://brands.home-assistant.io/sma/logo.png" alt="SMA" style="max-width:120px;max-height:60px;height:auto" onerror="this.outerHTML='<span style=font-size:32px>SMA</span>'">` },
+      { key: "victron_ess", label: "Victron ESS", subtitle: "Multiplus/Quattro mit GX-Gerät · Steuerung über die Integration Victron GX", detected: victronOk, badge: victronBadge, dialog: "victron",
+        logo: `<img src="https://brands.home-assistant.io/victron_gx/logo.png" alt="Victron" style="max-width:120px;max-height:60px;height:auto" onerror="this.outerHTML='<span style=font-size:30px>Victron</span>'">` },
     ].filter(inv =>
       istWaehlbarerWr(inv.key) || inv.key === selected
     );
@@ -6603,7 +6638,7 @@ class EegOptimizerPanel extends HTMLElement {
       <div class="prereq-cards" style="display:grid;grid-template-columns:repeat(auto-fit, minmax(150px, 1fr));gap:16px;margin-bottom:16px">
         ${inverterCards}
       </div>
-      ${huaweiSelected || solaxSelected || froniusSelected || kostalSelected || smaSelected || sigenSelected ? `
+      ${huaweiSelected || solaxSelected || froniusSelected || kostalSelected || smaSelected || sigenSelected || victronSelected ? `
       <div class="card" style="padding:16px;margin-bottom:16px">
         <h3 style="margin:0 0 4px">Hausverbrauch-Sensoren</h3>
         <p style="font-size:13px;color:var(--secondary-text-color);margin:0 0 12px">
@@ -6611,6 +6646,7 @@ class EegOptimizerPanel extends HTMLElement {
         </p>
         ${this._renderHuaweiMultiInfo()}
         ${sigenSelected ? this._renderSigenControlInfo() : ""}
+        ${victronSelected ? this._renderVictronPruefung() : ""}
         ${this._entityPickerHtml(
           "pv_power_sensor",
           this._wizardData.pv_power_sensor,
@@ -6708,6 +6744,13 @@ class EegOptimizerPanel extends HTMLElement {
           this._wizardData.pv_power_sensor_2,
           "Zweiter PV-Sensor (optional)",
           "Für Anlagen mit Generator-Wechselrichter über Meter 2 (sensor.solax_inverter_meter_2_measured_power).",
+          "sensor"
+        ) : ""}
+        ${victronSelected ? this._entityPickerHtml(
+          "pv_power_sensor_2",
+          this._wizardData.pv_power_sensor_2,
+          "Zweiter PV-Sensor (optional)",
+          "Nur bei einem PV-Wechselrichter am Wechselstrom (Victron: „PV on output power L1“ bzw. „PV on grid power L1“) — wird automatisch erkannt und zur PV-Leistung addiert. Bei reiner MPPT-Anlage leer lassen.",
           "sensor"
         ) : ""}
         ${kostalSelected && this._wizardData.expert_mode ? this._entityPickerHtml(
@@ -7009,6 +7052,37 @@ class EegOptimizerPanel extends HTMLElement {
     </div>`;
   }
 
+  _renderVictronPruefung() {
+    // Was am GX-Gerät stimmen muss, damit der Treiber wirkt — die Erkennung
+    // prüft die ESS-Einstellungen über die Entitäten der Integration.
+    // Probleme sperren den Assistenten, Hinweise nicht.
+    const pr = (this._detectedSensors && this._detectedSensors.victron_pruefung) || null;
+    if (!pr) return "";
+    const fehlt = pr.fehlt || [];
+    const probleme = pr.probleme || [];
+    const hinweise = pr.hinweise || [];
+    const zeilen = (eintraege, farbe, vorsatz) => eintraege.map((t) =>
+      `<li><span style="color:${farbe}">${vorsatz}${this._escapeHtml(t)}</span></li>`).join("");
+    const ok = !fehlt.length && !probleme.length;
+    const rand = !ok
+      ? "var(--error-color, #db4437)"
+      : hinweise.length ? "var(--warning-color, #ffa600)" : "var(--success-color, #4caf50)";
+    const kopf = ok
+      ? "Netzsollwert und DVCC-Ladestrom gefunden, die ESS-Einstellungen passen &mdash; der Optimizer kann steuern."
+      : "Am GX-Gerät passt noch etwas nicht. Bitte dort ändern (siehe Anleitung), dann den Wechselrichter hier erneut anklicken.";
+    const liste = fehlt.length || probleme.length || hinweise.length
+      ? `<ul style="font-size:12px;margin:0;padding-left:18px;line-height:1.7">${
+          zeilen(fehlt, "var(--error-color, #db4437)", "fehlt: ")}${
+          zeilen(probleme, "var(--error-color, #db4437)", "")}${
+          zeilen(hinweise, "var(--warning-color, #ffa600)", "")}</ul>`
+      : "";
+    return `<div class="card" style="padding:12px;margin:0 0 12px;border-left:3px solid ${rand}">
+      <strong>Victron ESS am GX-Gerät</strong>
+      <p style="font-size:12px;color:var(--secondary-text-color);margin:4px 0 8px;line-height:1.5">${kopf}</p>
+      ${liste}
+    </div>`;
+  }
+
   _renderHuaweiMultiInfo() {
     if (this._wizardData.inverter_type !== "huawei_sun2000") return "";
     const ids = this._wizardData.huawei_device_ids || [];
@@ -7109,7 +7183,7 @@ class EegOptimizerPanel extends HTMLElement {
     // Auto-select capacity mode: if sensor was detected, pick "sensor"; else "manual"
     // Re-evaluate after detection (don't cache stale pre-detection default)
     // SolaX has no capacity sensor — always default to manual
-    if (this._wizardData.inverter_type === "solax_gen4" && !this._capacityModeUserSet) {
+    if ((this._wizardData.inverter_type === "solax_gen4" || this._wizardData.inverter_type === "victron_ess") && !this._capacityModeUserSet) {
       this._capacityMode = "manual";
     } else if (!this._capacityMode || (detected && !this._capacityModeUserSet)) {
       this._capacityMode = this._wizardData.battery_capacity_sensor ? "sensor" : "manual";
@@ -7141,6 +7215,8 @@ class EegOptimizerPanel extends HTMLElement {
           ? "z.B. 10.2 für BYD Battery-Box Premium HVS 10.2 (SMA liefert keinen Kapazitätssensor)"
           : this._wizardData.inverter_type === "sigenergy_sigenstor"
           ? "Sigenergy liefert die Kapazität normalerweise als Sensor (Rated Energy Capacity) — manuell nur, wenn er fehlt"
+          : this._wizardData.inverter_type === "victron_ess"
+          ? "Victron meldet die Kapazität nur in Ah — hier die Nennkapazität in kWh eintragen, z.B. 20.48 für vier Pytes V5 mit je 5,12 kWh"
           : "Nutzbare Gesamtkapazität deines Batteriespeichers in kWh"}</div>
       </div>` : "";
 
@@ -7284,7 +7360,7 @@ class EegOptimizerPanel extends HTMLElement {
     if (SCHEDULE_CONTROL_INVERTERS.includes(inverterType)) return "";
     return `<div class="help-text" style="margin-bottom:16px;padding:10px 12px;background:var(--info-color,#2196f3)18;border-left:3px solid var(--info-color,#2196f3);border-radius:4px">
            <ha-icon icon="mdi:information-outline" style="--mdc-icon-size:16px;vertical-align:middle"></ha-icon>
-           Für diesen Wechselrichter wird der Optimierungsplan nur berechnet und angezeigt — die Steuerung ist derzeit nur für Fronius, Huawei, Kostal, Sigenergy, SMA und SolaX verfügbar.
+           Für diesen Wechselrichter wird der Optimierungsplan nur berechnet und angezeigt — die Steuerung ist derzeit nur für Fronius, Huawei, Kostal, Sigenergy, SMA, SolaX und Victron verfügbar.
          </div>`;
   }
 
@@ -9097,7 +9173,7 @@ class EegOptimizerPanel extends HTMLElement {
       <div class="summary-section">
         <h3>Wechselrichter</h3>
         ${row("Typ", INVERTER_LABELS[d.inverter_type] || d.inverter_type)}
-        ${row("Steuerung", gesteuert ? "Ladelimit + Entladung nach Fahrplan" : "Nur Anzeige — Steuerung derzeit nur Fronius, Huawei, Kostal, Sigenergy, SMA und SolaX")}
+        ${row("Steuerung", gesteuert ? "Ladelimit + Entladung nach Fahrplan" : "Nur Anzeige — Steuerung derzeit nur Fronius, Huawei, Kostal, Sigenergy, SMA, SolaX und Victron")}
       </div>
 
       ${gesteuert ? `
@@ -9925,7 +10001,7 @@ class EegOptimizerPanel extends HTMLElement {
     }
     if (!gesteuert) {
       warnings += warnRow("mdi:information-outline", "var(--info-color, #2196f3)",
-        "Dieser Wechselrichter wird nicht gesteuert \u2014 der Optimierungsplan ist nur Anzeige (Steuerung derzeit nur Fronius, Huawei, Kostal, Sigenergy, SMA und SolaX).");
+        "Dieser Wechselrichter wird nicht gesteuert \u2014 der Optimierungsplan ist nur Anzeige (Steuerung derzeit nur Fronius, Huawei, Kostal, Sigenergy, SMA, SolaX und Victron).");
     }
     if (a.heizstab_sollwert_kw != null && a.heizstab_verfuegbar === false) {
       warnings += warnRow("mdi:heating-coil", "#ff9800",
