@@ -12,6 +12,12 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+## [2.1.57] - 2026-10-30
+
+### Hinzugefügt
+
+- **Die Statuskarte warnt, wenn der Wechselrichter mehr Reserve hält als eingestellt.** Darunter entlädt er die Batterie nicht, auch nicht fürs Haus, und der Plan übernimmt den höheren Wert als Untergrenze. Bisher war das nirgends zu sehen. Beim Fronius ist das der Modbus-Wert MinRsvPct, den das Webinterface nicht anzeigt. Auf einer Anlage stand er drei Wochen lang auf 49 %, eine Vorgängerversion hatte ihn angehoben zurückgelassen. Eingestellt waren 20 %, und die Batterie blieb jede Nacht bei 49 % stehen, während das Haus Netzstrom kaufte. Der Fronius-Treiber liest den Wert jetzt stündlich statt täglich, damit die Warnung nach dem Zurücksetzen bald verschwindet.
+
 ## [2.1.56] - 2026-10-30
 
 ### Hinzugefügt
