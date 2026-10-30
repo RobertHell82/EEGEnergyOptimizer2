@@ -294,13 +294,14 @@ class TestAssistent:
         assert p["entities"]["netzsollwert"] == SOLLWERT
         assert p["entities"]["ladestrom"] == LADESTROM
 
-    def test_geplantes_laden_ist_ein_problem(self, mock_hass, registry_patch):
+    def test_geplantes_laden_ist_eine_warnung(self, mock_hass, registry_patch):
         a = Anlage(mock_hass, **{GEPLANT.format(0): "on", GEPLANT.format(2): "on"})
         registry_patch.return_value = a.registry
         p = victron_pruefung(mock_hass)
-        assert len(p["probleme"]) == 1
-        assert "Geplantes Laden" in p["probleme"][0]
-        assert "Zeitfenster 1, 3" in p["probleme"][0]
+        assert p["probleme"] == []
+        assert len(p["warnungen"]) == 1
+        assert "Geplantes Laden" in p["warnungen"][0]
+        assert "Zeitfenster 1, 3" in p["warnungen"][0]
 
     @pytest.mark.parametrize(
         "entity, wert, stichwort",

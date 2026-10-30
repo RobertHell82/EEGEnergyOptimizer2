@@ -46,9 +46,39 @@ test("fehlende Stellgrößen sperren den Schritt", () => {
 });
 
 test("ein Problem am GX-Gerät sperrt den Schritt", () => {
-  const p = assistent({ ...IN_ORDNUNG, probleme: ["ESS „Geplantes Laden“ ist eingeschaltet"] });
+  const p = assistent({ ...IN_ORDNUNG, probleme: ["DVCC ist aus"] });
   assert.equal(p._validateCurrentStep(), false);
-  assert.match(p.fehler[0], /^Victron: ESS „Geplantes Laden“/);
+  assert.match(p.fehler[0], /^Victron: DVCC ist aus/);
+  assert.doesNotMatch(p._renderVictronPruefung(), /victron-trotzdem/);
+});
+
+test("eine Warnung sperrt bis „Trotzdem weitermachen“, bleibt aber rot", () => {
+  const pr = { ...IN_ORDNUNG, warnungen: ["ESS „Geplantes Laden“ ist eingeschaltet"] };
+  const p = assistent(pr);
+  assert.equal(p._validateCurrentStep(), false);
+  assert.match(p.fehler[0], /^Victron: ESS „Geplantes Laden“.*Trotzdem weitermachen/);
+  const vorher = p._renderVictronPruefung();
+  assert.match(vorher, /error-color/);
+  assert.match(vorher, /data-action="victron-trotzdem"/);
+
+  p._victronTrotzdem = pr.warnungen.join("|"); // wie der Knopf
+  p.fehler = [];
+  p._validateCurrentStep();
+  assert.ok(p.fehler.every((m) => !m.startsWith("Victron")), p.fehler.join(" | "));
+  const nachher = p._renderVictronPruefung();
+  assert.match(nachher, /error-color/);
+  assert.doesNotMatch(nachher, /data-action="victron-trotzdem"/);
+
+  // eine andere Warnung nach erneuter Prüfung fragt neu
+  p._detectedSensors.victron_pruefung = { ...IN_ORDNUNG, warnungen: ["etwas anderes"] };
+  assert.equal(p._validateCurrentStep(), false);
+});
+
+test("Trotzdem weitermachen hilft nicht gegen ein Problem", () => {
+  const p = assistent({ ...IN_ORDNUNG, probleme: ["DVCC ist aus"], warnungen: ["x"] });
+  p._victronTrotzdem = "x";
+  assert.equal(p._validateCurrentStep(), false);
+  assert.doesNotMatch(p._renderVictronPruefung(), /victron-trotzdem/);
 });
 
 test("Hinweise sperren nicht", () => {

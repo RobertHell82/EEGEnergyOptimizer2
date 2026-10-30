@@ -197,7 +197,9 @@ Freigabe zurückgeschrieben, auch über einen Neustart hinweg.
 
 Der Einrichtungsassistent prüft die GX-Einstellungen über die Integration
 und lässt erst weiter, wenn ESS-Modus „Optimiert“, Dynamic ESS aus,
-**Geplantes Laden aus**, DVCC an und die Einspeisegrenze nicht begrenzt oder mindestens 100 W ist,
+DVCC an und die Einspeisegrenze nicht begrenzt oder mindestens 100 W ist
+(eingeschaltetes **Geplantes Laden** ist eine rote Warnung, die sich mit
+„Trotzdem weitermachen“ übergehen lässt),
 Netzsollwert, DVCC-Ladestrom und Batteriespannung in Home Assistant aktiv sind und der
 Ladestrom nicht auf −1 steht, wo die Integration −1 nicht zurückschreiben kann
 (ältere Stände, Bereich 0–100 A).
@@ -227,8 +229,9 @@ Offen:
   auch dreiphasig mit Phasenausgleich?
 - Wie schnell kommen Messwerte und Befehle über MQTT an?
 - Die Feldtest-Anlage hat „Geplantes Laden“ eingeschaltet (drei
-  Zeitfenster täglich). Es muss für die Steuerung aus sein; zu klären, ob
-  der Betreiber es dafür aufgibt.
+  Zeitfenster täglich). Der Assistent warnt, lässt aber weiter; in den
+  Zeitfenstern wirkt der Fahrplan nicht. Zu klären, ob der Betreiber es
+  aufgibt.
 - Freigabe beim Start, Failsafe, Not-Aus und Wirkungskontrolle am Gerät
   (Checkliste in `docs/DEVELOPMENT.md`).
 - Netzladung (Beta): Lädt die Batterie mit DVCC-Deckel und positivem

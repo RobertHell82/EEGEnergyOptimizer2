@@ -291,8 +291,11 @@ def victron_pruefung(hass: Any) -> dict[str, Any]:
     ``entities``: Schlüssel → Entity-ID (nur gefundene). ``fehlt``: Namen der
     Pflicht-Stellgrößen ohne Entität. ``probleme``: Einstellungen, mit denen
     die Steuerung nicht oder falsch wirkt — der Assistent lässt dann nicht
-    weiter. ``hinweise``: Einstellungen, die funktionieren, aber eine Folge
-    haben, die der Betreiber kennen soll.
+    weiter. ``warnungen``: Einstellungen, die dem Fahrplan in die Quere
+    kommen, die der Betreiber aber bewusst behalten darf — rot angezeigt,
+    der Assistent lässt nach „Trotzdem weitermachen“ weiter. ``hinweise``:
+    Einstellungen, die funktionieren, aber eine Folge haben, die der
+    Betreiber kennen soll.
     """
     entities: dict[str, str] = {}
     deaktiviert: list[str] = []
@@ -307,6 +310,7 @@ def victron_pruefung(hass: Any) -> dict[str, Any]:
     fehlt = [VICTRON_NAMEN[k] for k in VICTRON_PFLICHT if k not in entities]
 
     probleme: list[str] = []
+    warnungen: list[str] = []
     hinweise: list[str] = []
     if deaktiviert:
         probleme.append(
@@ -344,12 +348,15 @@ def victron_pruefung(hass: Any) -> dict[str, Any]:
         if _zustand(hass, entities.get(f"geplantes_laden_{n}")) == "on"
     ]
     if geplant:
-        probleme.append(
+        # Eine Warnung, kein Problem: Die Steuerung wirkt außerhalb der
+        # Zeitfenster, und ein Betreiber kann es bewusst behalten wollen.
+        warnungen.append(
             "ESS „Geplantes Laden“ ist eingeschaltet (Zeitfenster "
             + ", ".join(geplant)
             + ") — es lädt zu festen Zeiten aus dem Netz und hält die "
             "Batterie dort gegen jede Entladung; der Fahrplan weiß davon "
-            "nichts. Bitte am GX-Gerät unter ESS → Geplantes Laden ausschalten"
+            "nichts. Empfohlen: am GX-Gerät unter ESS → Geplantes Laden "
+            "ausschalten"
         )
     ladestrom = _zahl(hass, entities.get("ladestrom"))
     ladestrom_min = _attribut_zahl(hass, entities.get("ladestrom"), "min")
@@ -375,6 +382,7 @@ def victron_pruefung(hass: Any) -> dict[str, Any]:
         "entities": entities,
         "fehlt": fehlt,
         "probleme": probleme,
+        "warnungen": warnungen,
         "hinweise": hinweise,
     }
 

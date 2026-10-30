@@ -56,13 +56,13 @@ Danach erscheinen unter **Einstellungen → Geräte & Dienste → Victron GX** m
 
 ## 4. Einstellungen am GX-Gerät
 
-Der Einrichtungsassistent liest diese Einstellungen über die Integration und zeigt sie im Schritt „Wechselrichter“ an. Steht dort ein **Problem**, lässt er dich nicht weiter, bis es am GX-Gerät behoben ist; danach den Wechselrichter im Assistenten erneut anklicken.
+Der Einrichtungsassistent liest diese Einstellungen über die Integration und zeigt sie im Schritt „Wechselrichter“ an. Steht dort ein **Problem**, lässt er dich nicht weiter, bis es am GX-Gerät behoben ist; danach den Wechselrichter im Assistenten erneut anklicken. Nur bei **Geplantes Laden** kannst du mit **„Trotzdem weitermachen“** bewusst weiter, falls du die Zeitfenster behalten willst. Der Fahrplan wirkt dann in diesen Zeitfenstern nicht.
 
 | Einstellung | Wo am GX-Gerät | Soll | Ohne das |
 |---|---|---|---|
 | **ESS-Modus** | Einstellungen → ESS → Modus | **Optimiert** (mit oder ohne BatteryLife) | Der Netzsollwert wirkt nicht |
 | **Dynamic ESS** | Einstellungen → Dynamic ESS | **Aus** | Dynamic ESS überschreibt den Netzsollwert |
-| **Geplantes Laden** | Einstellungen → ESS → Geplantes Laden | alle Zeitfenster **aus** | Lädt zu festen Zeiten aus dem Netz und hält die Batterie dort gegen jede Entladung; der Fahrplan weiß davon nichts |
+| **Geplantes Laden** | Einstellungen → ESS → Geplantes Laden | alle Zeitfenster **aus** (empfohlen) | Lädt zu festen Zeiten aus dem Netz und hält die Batterie dort gegen jede Entladung; der Fahrplan weiß davon nichts. Rote Warnung, mit „Trotzdem weitermachen“ übergehbar |
 | **DVCC** | Einstellungen → DVCC | **An** | Das Ladelimit wirkt nicht |
 | **Einspeisung begrenzen** | Einstellungen → ESS → Netzeinspeisung | nicht begrenzt oder mindestens 100 W | Einspeisen aus der Batterie ist gesperrt |
 | **DC-gekoppelte PV – Überschuss einspeisen** | Einstellungen → ESS → Netzeinspeisung | **An** (empfohlen) | Ein Ladelimit regelt die Laderegler ab, statt den Überschuss ins Netz zu geben. Nur ein Hinweis, kein Hindernis, und nur bei Ladereglern (MPPT) |

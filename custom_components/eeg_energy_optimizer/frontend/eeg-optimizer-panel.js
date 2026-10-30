@@ -2415,6 +2415,13 @@ class EegOptimizerPanel extends HTMLElement {
         this._render();
         break;
       }
+      case "victron-trotzdem": {
+        // Victron-Warnungen bewusst übergehen; gilt nur für genau diese.
+        const pr = this._detectedSensors && this._detectedSensors.victron_pruefung;
+        this._victronTrotzdem = ((pr && pr.warnungen) || []).join("|");
+        this._render();
+        break;
+      }
       case "add-flaeche": {
         // Eigene PV-Prognose: Zeile in der Flächentabelle (Assistent oder
         // Einstellungen, je nach data-scope).
@@ -3078,6 +3085,12 @@ class EegOptimizerPanel extends HTMLElement {
           }
           if ((pr.probleme || []).length) {
             this._showValidationError("Victron: " + pr.probleme.join(" · ") + ". Bitte am GX-Gerät ändern, dann den Wechselrichter hier erneut anklicken.");
+            return false;
+          }
+          // Warnungen lassen sich bewusst übergehen — die Bestätigung gilt
+          // nur für genau diese Warnungen, eine neue Prüfung fragt neu.
+          if ((pr.warnungen || []).length && this._victronTrotzdem !== pr.warnungen.join("|")) {
+            this._showValidationError("Victron: " + pr.warnungen.join(" · ") + ". Am GX-Gerät ändern und den Wechselrichter erneut anklicken, oder „Trotzdem weitermachen“.");
             return false;
           }
         }
@@ -7547,31 +7560,44 @@ class EegOptimizerPanel extends HTMLElement {
   _renderVictronPruefung() {
     // Was am GX-Gerät stimmen muss, damit der Treiber wirkt — die Erkennung
     // prüft die ESS-Einstellungen über die Entitäten der Integration.
-    // Probleme sperren den Assistenten, Hinweise nicht.
+    // Probleme sperren den Assistenten, Warnungen bis „Trotzdem
+    // weitermachen“, Hinweise nicht.
     const pr = (this._detectedSensors && this._detectedSensors.victron_pruefung) || null;
     if (!pr) return "";
     const fehlt = pr.fehlt || [];
     const probleme = pr.probleme || [];
+    const warnungen = pr.warnungen || [];
     const hinweise = pr.hinweise || [];
     const zeilen = (eintraege, farbe, vorsatz) => eintraege.map((t) =>
       `<li><span style="color:${farbe}">${vorsatz}${this._escapeHtml(t)}</span></li>`).join("");
-    const ok = !fehlt.length && !probleme.length;
+    const gesperrt = fehlt.length || probleme.length;
+    const ok = !gesperrt && !warnungen.length;
+    const bestaetigt = !gesperrt && warnungen.length && this._victronTrotzdem === warnungen.join("|");
     const rand = !ok
       ? "var(--error-color, #db4437)"
       : hinweise.length ? "var(--warning-color, #ffa600)" : "var(--success-color, #4caf50)";
     const kopf = ok
       ? "Netzsollwert und DVCC-Ladestrom gefunden, die ESS-Einstellungen passen &mdash; der Optimizer kann steuern."
-      : "Am GX-Gerät passt noch etwas nicht. Bitte dort ändern (siehe Anleitung), dann den Wechselrichter hier erneut anklicken.";
-    const liste = fehlt.length || probleme.length || hinweise.length
+      : gesperrt
+        ? "Am GX-Gerät passt noch etwas nicht. Bitte dort ändern (siehe Anleitung), dann den Wechselrichter hier erneut anklicken."
+        : bestaetigt
+          ? "Du machst trotz der Warnung weiter. Der Fahrplan kann in diesen Zeitfenstern nicht wirken."
+          : "Am GX-Gerät ist etwas eingestellt, das dem Fahrplan in die Quere kommt. Am besten dort ändern und den Wechselrichter erneut anklicken &mdash; oder bewusst so weitermachen.";
+    const liste = fehlt.length || probleme.length || warnungen.length || hinweise.length
       ? `<ul style="font-size:12px;margin:0;padding-left:18px;line-height:1.7">${
           zeilen(fehlt, "var(--error-color, #db4437)", "fehlt: ")}${
           zeilen(probleme, "var(--error-color, #db4437)", "")}${
+          zeilen(warnungen, "var(--error-color, #db4437)", "")}${
           zeilen(hinweise, "var(--warning-color, #ffa600)", "")}</ul>`
+      : "";
+    const knopf = !gesperrt && warnungen.length && !bestaetigt
+      ? `<button class="btn-secondary" style="margin-top:8px" data-action="victron-trotzdem">Trotzdem weitermachen</button>`
       : "";
     return `<div class="card" style="padding:12px;margin:0 0 12px;border-left:3px solid ${rand}">
       <strong>Victron ESS am GX-Gerät</strong>
       <p style="font-size:12px;color:var(--secondary-text-color);margin:4px 0 8px;line-height:1.5">${kopf}</p>
       ${liste}
+      ${knopf}
     </div>`;
   }
 

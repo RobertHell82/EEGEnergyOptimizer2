@@ -19,7 +19,7 @@ Geprüft mit einer Anlage aus drei **Multiplus-II** (dreiphasig) und einem **Cer
 
 Sieh außerdem unter *Einstellungen → Allgemein → Sicherheitsprofil lokales Netzwerk* nach, welches Profil eingestellt ist und welches Passwort dazu gehört. Davon hängt ab, was du in Abschnitt 3 einträgst.
 
-Dazu die ESS-Einstellungen, die der Einrichtungsassistent später prüft: **ESS-Modus „Optimiert“**, **Dynamic ESS aus**, **Geplantes Laden aus**, **DVCC an**, Einspeisegrenze **nicht begrenzt oder mindestens 100 W**, empfohlen **„DC-gekoppelte PV – Überschuss einspeisen“ an**. Wo du sie findest und warum sie nötig sind, steht in [Victron einrichten, Abschnitt 4](../guides/victron.md#4-einstellungen-am-gx-gerät).
+Dazu die ESS-Einstellungen, die der Einrichtungsassistent später prüft: **ESS-Modus „Optimiert“**, **Dynamic ESS aus**, **Geplantes Laden aus** (empfohlen, sonst nur eine Warnung), **DVCC an**, Einspeisegrenze **nicht begrenzt oder mindestens 100 W**, empfohlen **„DC-gekoppelte PV – Überschuss einspeisen“ an**. Wo du sie findest und warum sie nötig sind, steht in [Victron einrichten, Abschnitt 4](../guides/victron.md#4-einstellungen-am-gx-gerät).
 
 > [!NOTE]
 > MQTT einzuschalten ändert nichts am Betrieb der Anlage. Es ist nur ein Zugang im Heimnetz.

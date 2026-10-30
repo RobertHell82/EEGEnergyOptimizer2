@@ -12,6 +12,10 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+### Geändert
+
+- **Victron: Eingeschaltetes „Geplantes Laden“ sperrt den Einrichtungsassistenten nicht mehr.** Die Meldung bleibt rot, aber ein Knopf **„Trotzdem weitermachen“** lässt weiter, für Betreiber, die ihre Ladezeitfenster behalten wollen. In diesen Zeitfenstern wirkt der Fahrplan nicht. Alle anderen Probleme am GX-Gerät sperren weiter.
+
 ## [2.1.54] - 2026-10-30
 
 ### Behoben

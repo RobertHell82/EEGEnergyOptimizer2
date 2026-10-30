@@ -76,7 +76,7 @@
 <div class="guide-alert warning"><p><strong>Nicht parallel eingreifen.</strong> Die Integration legt auch Entitäten an, mit denen man die Anlage verstellen kann (Netzsollwert, Ladestrom, ESS-Modus …). Zwei davon schreibt der Optimizer selbst (siehe unten). Wer sie gleichzeitig in Home Assistant, der Remote Console oder per Node-RED ändert, überschreibt den Optimizer, oder umgekehrt.</p></div>
 
 <h3>4. Einstellungen am GX-Gerät</h3>
-<p>Der Einrichtungsassistent liest diese Einstellungen über die Integration und zeigt sie im Schritt „Wechselrichter“ an. Steht dort ein <strong>Problem</strong>, lässt er dich nicht weiter, bis es am GX-Gerät behoben ist; danach den Wechselrichter im Assistenten erneut anklicken.</p>
+<p>Der Einrichtungsassistent liest diese Einstellungen über die Integration und zeigt sie im Schritt „Wechselrichter“ an. Steht dort ein <strong>Problem</strong>, lässt er dich nicht weiter, bis es am GX-Gerät behoben ist; danach den Wechselrichter im Assistenten erneut anklicken. Nur bei <strong>Geplantes Laden</strong> kannst du mit <strong>„Trotzdem weitermachen“</strong> bewusst weiter, falls du die Zeitfenster behalten willst. Der Fahrplan wirkt dann in diesen Zeitfenstern nicht.</p>
 <table>
 <thead>
 <tr>
@@ -102,8 +102,8 @@
 <tr>
 <td><strong>Geplantes Laden</strong></td>
 <td>Einstellungen → ESS → Geplantes Laden</td>
-<td>alle Zeitfenster <strong>aus</strong></td>
-<td>Lädt zu festen Zeiten aus dem Netz und hält die Batterie dort gegen jede Entladung; der Fahrplan weiß davon nichts</td>
+<td>alle Zeitfenster <strong>aus</strong> (empfohlen)</td>
+<td>Lädt zu festen Zeiten aus dem Netz und hält die Batterie dort gegen jede Entladung; der Fahrplan weiß davon nichts. Rote Warnung, mit „Trotzdem weitermachen“ übergehbar</td>
 </tr>
 <tr>
 <td><strong>DVCC</strong></td>
