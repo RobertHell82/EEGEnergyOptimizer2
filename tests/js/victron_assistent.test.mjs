@@ -117,13 +117,24 @@ test("alle Netzladen-Felder stehen im Reiter Netzladen, keines mehr unter Tarife
     peakshare_community: "EEG Musterdorf", peakshare_share_pct: 100,
   };
   const netzladen = einstellungen(daten, "netzladen");
-  for (const feld of ["schedule_netzladen", "schedule_bezug_quelle", "schedule_netzladen_max_kw",
+  // Ein/Aus als Schalterkarte wie „Bezugsspitzen kappen“, nicht als Haken
+  assert.match(netzladen, /data-action="toggle-settings-feature" data-feature="schedule_netzladen" data-on="1"/);
+  assert.match(netzladen, /feature-badge on">Aktiv/);
+  assert.doesNotMatch(netzladen, /data-field="settings_schedule_netzladen"/);
+  assert.match(netzladen, /Fester Arbeitspreis \(Reiter Tarife\)/);
+  for (const feld of ["schedule_bezug_quelle", "schedule_netzladen_max_kw",
                       "schedule_netzladen_vorteil", "peakshare_bezug_price", "peakshare_bezug_ebene"]) {
     assert.match(netzladen, new RegExp(`data-field="settings_${feld}"`), feld);
   }
   assert.match(netzladen, /EEG Musterdorf/);
   const tarife = einstellungen(daten, "tarife");
   assert.doesNotMatch(tarife, /schedule_netzladen|peakshare_bezug/);
+});
+
+test("Netzladen aus: Karte zeigt „Aus“, keine Felder", () => {
+  const html = einstellungen({ inverter_type: "huawei_sun2000", schedule_netzladen: false }, "netzladen");
+  assert.match(html, /data-feature="schedule_netzladen" data-on="0"/);
+  assert.doesNotMatch(html, /schedule_bezug_quelle|peakshare_bezug/);
 });
 
 test("Quotenmodus: kein Gemeinschaftsbezug, nur der Hinweis", () => {

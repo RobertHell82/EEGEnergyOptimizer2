@@ -8290,21 +8290,21 @@ class EegOptimizerPanel extends HTMLElement {
     const vorteil = (vorteilRoh === undefined || vorteilRoh === null || vorteilRoh === "") ? 0.02 : Number(vorteilRoh);
     const maxKw = Number(d.schedule_netzladen_max_kw) > 0 ? d.schedule_netzladen_max_kw : "";
     const batterieKw = Number(d.discharge_power_kw) > 0 ? fmtDe(Number(d.discharge_power_kw), 1) : "der Batterie";
-    return `
-      <div class="field-group" style="margin-top:8px">
-        <label style="display:flex;align-items:center;gap:12px;cursor:pointer">
-          <input type="checkbox" data-field="${prefix}schedule_netzladen" ${an ? "checked" : ""}>
-          <div>
-            <div style="font-weight:500">Batterie aus dem Netz laden</div>
-            <div class="help-text" style="margin-top:4px">Schafft die Sonne das Ladeziel bis zum Ende der PV-Zeit nicht, darf der Fahrplan Strom zukaufen — aber nur in Viertelstunden, in denen Netzstrom billiger ist als der Strom, den die Batterie danach in der Nacht ersetzt. Gerechnet wird je Kilowattstunde, nach den Verlusten beim Laden und Entladen. Was die Nacht nicht braucht, speist der Fahrplan später ein, wenn es sich lohnt; das kann Geld kosten und ist der Preis für eine abends volle Batterie. Nur mit Ladeziel (Reiter Anlage).</div>
-          </div>
-        </label>
-      </div>
-      ${an ? `
+    const arbeitspreis = Number(d.schedule_energy_price) > 0 ? `${fmtDe(Number(d.schedule_energy_price) * 100, 2)} ct, ` : "";
+    // Gleiche Schalterkarte wie „Bezugsspitzen kappen“; die Felder stehen
+    // nur bei eingeschaltetem Netzladen im DOM, wie zuvor beim Haken.
+    return this._featureCard({
+      on: an,
+      action: prefix ? "toggle-settings-feature" : "toggle-feature",
+      feature: "schedule_netzladen",
+      icon: "mdi:battery-charging-high",
+      titel: "Batterie aus dem Netz laden",
+      beschreibung: "Schafft die Sonne das Ladeziel bis zum Ende der PV-Zeit nicht, darf der Fahrplan Strom zukaufen — aber nur in Viertelstunden, in denen Netzstrom billiger ist als der Strom, den die Batterie danach in der Nacht ersetzt. Gerechnet wird je Kilowattstunde, nach den Verlusten beim Laden und Entladen. Was die Nacht nicht braucht, speist der Fahrplan später ein, wenn es sich lohnt; das kann Geld kosten und ist der Preis für eine abends volle Batterie. Nur mit Ladeziel (Reiter Anlage).",
+      params: `
       <div class="field-group">
         <label>Bezugstarif deines Lieferanten</label>
         <select data-field="${prefix}schedule_bezug_quelle">
-          <option value="fix" ${quelle !== "spot" ? "selected" : ""}>Fester Arbeitspreis (wie oben)</option>
+          <option value="fix" ${quelle !== "spot" ? "selected" : ""}>Fester Arbeitspreis (${arbeitspreis}Reiter Tarife)</option>
           <option value="spot" ${quelle === "spot" ? "selected" : ""}>Börsenpreis (Spot, stündlich)</option>
         </select>
         <div class="help-text">Mit einem Spot-Tarif ist der Strom in manchen Stunden deutlich billiger. Gekauft wird nur auf veröffentlichte Börsenpreise, nie auf eine Schätzung für morgen.</div>
@@ -8320,7 +8320,7 @@ class EegOptimizerPanel extends HTMLElement {
         <label>Aufschlag in Prozent vom Börsenpreis</label>
         <input type="number" data-field="${prefix}spot_bezug_aufschlag_pct"
                value="${d.spot_bezug_aufschlag_pct ? d.spot_bezug_aufschlag_pct : ""}" min="0" max="100" step="0.1" placeholder="z. B. 3">
-        <div class="help-text">Vom Betrag des Börsenpreises, auch bei negativen Preisen. Danach kommen Mehrwertsteuer und die Netzgebühr oben dazu.</div>
+        <div class="help-text">Vom Betrag des Börsenpreises, auch bei negativen Preisen. Danach kommen Mehrwertsteuer und die Netzgebühr (Reiter Tarife) dazu.</div>
       </div>` : ""}
       <div class="field-group">
         <label>Höchster Netzbezug beim Laden aus dem Netz (kW)</label>
@@ -8334,7 +8334,8 @@ class EegOptimizerPanel extends HTMLElement {
                value="${ctAus(vorteil)}" min="0" max="20" step="0.5">
         <div class="help-text">Um so viel muss Netzstrom billiger sein als der Strom, den er später ersetzt. Vorgabe 2 ct. Die PV-Prognose ist unsicher: Ein Kauf um einen Zehntelcent Vorteil, den die Sonne dann doch geliefert hätte, ist ein Verlust.</div>
       </div>
-      <div class="help-text" style="margin-bottom:16px">Spot- und Gemeinschaftsbezug brauchen einen Netzbereich (Reiter Tarife), sonst fehlt die Netzgebühr.</div>` : ""}`;
+      <div class="help-text">Spot- und Gemeinschaftsbezug brauchen einen Netzbereich (Reiter Tarife), sonst fehlt die Netzgebühr.</div>`,
+    });
   }
 
   // Bezug aus der Gemeinschaft je Gemeinschaft — gehört nur zum Netzladen,

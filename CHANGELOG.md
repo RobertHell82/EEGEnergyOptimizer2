@@ -15,6 +15,7 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 ### Geändert
 
 - **Victron: Eingeschaltetes „Geplantes Laden“ sperrt den Einrichtungsassistenten nicht mehr.** Die Meldung bleibt rot, aber ein Knopf **„Trotzdem weitermachen“** lässt weiter, für Betreiber, die ihre Ladezeitfenster behalten wollen. In diesen Zeitfenstern wirkt der Fahrplan nicht. Alle anderen Probleme am GX-Gerät sperren weiter.
+- **Netzladen wird wie „Bezugsspitzen kappen“ geschaltet:** Statt des Hakens eine Schalterkarte mit „Aktiv“/„Aus“. Die Auswahl des Bezugstarifs nennt den festen Arbeitspreis jetzt mit Wert und Reiter („Fester Arbeitspreis (25,00 ct, Reiter Tarife)“) statt „wie oben“, was seit dem eigenen Reiter nirgends mehr hinzeigte.
 
 ## [2.1.54] - 2026-10-30
 
