@@ -479,6 +479,7 @@ def async_register_websocket_commands(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_clear_override)
     websocket_api.async_register_command(hass, ws_get_spot_preis)
     websocket_api.async_register_command(hass, ws_get_awattar_sunny)
+    websocket_api.async_register_command(hass, ws_get_gemeinschaftstarif)
     websocket_api.async_register_command(hass, ws_get_energie_ag)
     websocket_api.async_register_command(hass, ws_refresh_consumption_profile)
     # Eigene PV-Prognose (pvprognose/) und Prognosevergleich. Fehlten in
@@ -2655,6 +2656,53 @@ async def ws_get_spot_preis(
         await provider.async_fetch()
 
     connection.send_result(msg["id"], provider.status())
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "eeg_optimizer/get_gemeinschaftstarif",
+        vol.Optional("refresh"): bool,
+        # Die im Formular gewählten, evtl. noch nicht gespeicherten Namen.
+        vol.Optional("peakshare_community"): vol.Any(str, None),
+        vol.Optional("peakshare_community_2"): vol.Any(str, None),
+    }
+)
+@websocket_api.async_response
+async def ws_get_gemeinschaftstarif(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict,
+) -> None:
+    """Tarife der Gemeinschaften vom Server (gemeinschaftstarif.py).
+
+    Je gewählter Gemeinschaft mit Server-Eintrag: der heute gültige Tarif,
+    das Nachtfenster nach heutigem Sonnenstand und ein angekündigter
+    nächster Tarif; dazu Alter des Abrufs und letzter Fehler. Ohne je
+    geholte Daten wird einmal geholt, ``refresh`` erzwingt einen Abruf.
+    """
+    entry, data = _get_entry_data(hass, connection, msg)
+    if entry is None:
+        return
+
+    provider = data.get("gemeinschaftstarif")
+    if provider is None:
+        connection.send_result(
+            msg["id"], {"gemeinschaften": [], "namen": [], "fehler": "Anbieter nicht geladen"}
+        )
+        return
+
+    if _refresh_erlaubt(connection, msg, "gemeinschaftstarif"):
+        await provider.async_fetch(erzwingen=True)
+    elif not provider.daten:
+        await provider.async_fetch()
+
+    config = dict(data.get("config") or {})
+    for key in ("peakshare_community", "peakshare_community_2"):
+        if key in msg:
+            config[key] = msg[key] or ""
+    from homeassistant.util import dt as dt_util
+
+    connection.send_result(msg["id"], provider.status(config, dt_util.now().date()))
 
 
 @websocket_api.websocket_command(

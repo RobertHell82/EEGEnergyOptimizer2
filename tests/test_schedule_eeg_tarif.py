@@ -759,3 +759,59 @@ async def test_nan_in_den_eingaengen_liefert_keinen_plan():
         inputs, problem = await _collect(BASE_CONFIG)
     assert inputs is None
     assert "Nicht-endliche" in problem and "eeg_bonus" in problem
+
+
+# ---------------------------------------------------------------------------
+# Tarife der Gemeinschaft vom Server (gemeinschaftstarif.py)
+# ---------------------------------------------------------------------------
+
+
+class _Gemeinschaftstarif:
+    def __init__(self, daten):
+        self.daten = daten
+
+
+async def test_server_tarif_der_gemeinschaft_ersetzt_die_handeingabe():
+    from custom_components.eeg_energy_optimizer import gemeinschaftstarif as gt
+
+    daten = gt.parse_antwort({"gemeinschaften": {"BEG": {
+        "verband_name": "Energiewende Ansfelden",
+        "tarife": [{"gueltig_ab": "2026-07-01", "einspeisung_tag": 0.098,
+                    "einspeisung_nacht": 0.108, "nacht": "22-6", "bezug": 0.137}],
+    }}})
+    config = {**BASE_CONFIG, "peakshare_price_night": 0.2}
+    hass = _hass(config, peakshare=_Peakshare({h: 5.0 for h in range(24)}))
+    hass.data[sched.DOMAIN]["entry1"]["gemeinschaftstarif"] = _Gemeinschaftstarif(daten)
+    with (
+        patch.object(sched, "_now_local", return_value=NOW),
+        patch.object(
+            sched, "_async_solar_forecast_wh", AsyncMock(return_value=_wh_hours(NOW))
+        ),
+    ):
+        inputs, problem = await sched.async_collect_inputs(hass, "entry1")
+    assert problem is None
+    (tarif,) = inputs.eeg_tarife
+    assert tarif["tag"] == pytest.approx(0.098)
+    assert tarif["nacht"] == pytest.approx(0.108)
+    assert (inputs.eeg_night_start_hour, inputs.eeg_night_end_hour) == (22, 6)
+    # Die gespeicherte Konfiguration bleibt, wie sie war.
+    assert config["peakshare_price"] == 0.102
+
+
+async def test_server_tarif_aus_wenn_der_schalter_aus_ist():
+    from custom_components.eeg_energy_optimizer import gemeinschaftstarif as gt
+
+    daten = gt.parse_antwort({"gemeinschaften": {"BEG": {
+        "tarife": [{"gueltig_ab": "2026-07-01", "einspeisung_tag": 0.098}]}}})
+    hass = _hass({**BASE_CONFIG, "gemeinschaftstarif_auto": False},
+                 peakshare=_Peakshare({h: 5.0 for h in range(24)}))
+    hass.data[sched.DOMAIN]["entry1"]["gemeinschaftstarif"] = _Gemeinschaftstarif(daten)
+    with (
+        patch.object(sched, "_now_local", return_value=NOW),
+        patch.object(
+            sched, "_async_solar_forecast_wh", AsyncMock(return_value=_wh_hours(NOW))
+        ),
+    ):
+        inputs, _ = await sched.async_collect_inputs(hass, "entry1")
+    (tarif,) = inputs.eeg_tarife
+    assert tarif["tag"] == pytest.approx(0.102)

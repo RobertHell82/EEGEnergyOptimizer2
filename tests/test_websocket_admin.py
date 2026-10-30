@@ -86,6 +86,7 @@ OFFEN = {
     "eeg_optimizer/get_oemag_tarif",
     "eeg_optimizer/get_spot_preis",
     "eeg_optimizer/get_awattar_sunny",
+    "eeg_optimizer/get_gemeinschaftstarif",
     "eeg_optimizer/get_energie_ag",
     "eeg_optimizer/get_pvprognose",
     "eeg_optimizer/get_prognosevergleich",

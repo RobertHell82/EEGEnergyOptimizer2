@@ -1824,6 +1824,79 @@ class EegOptimizerPanel extends HTMLElement {
   // aWATTar SUNNY (fester Monatstarif): dieselbe Mechanik wie beim Spotpreis
   // — einmal je Sitzung holen, sobald ihn eine Ansicht zeigt; „Jetzt holen"
   // erzwingt einen neuen Abruf.
+  // Tarife der Gemeinschaften vom Server (gemeinschaftstarif.py). Neu
+  // gefragt, sobald sich die gewählten Namen ändern — auch ungespeichert.
+  _ensureGemTarif(d) {
+    const schluessel = `${d.peakshare_community || ""}|${d.peakshare_community_2 || ""}`;
+    if (this._gemTarifBusy || this._gemTarifSchluessel === schluessel || !this._hass) return;
+    this._gemTarifSchluessel = schluessel;
+    this._loadGemTarif(d);
+  }
+
+  async _loadGemTarif(d, refresh = false) {
+    if (this._gemTarifBusy || !this._hass) return;
+    this._gemTarifBusy = true;
+    try {
+      this._gemTarif = await this._hass.callWS({
+        type: "eeg_optimizer/get_gemeinschaftstarif",
+        peakshare_community: d.peakshare_community || "",
+        peakshare_community_2: d.peakshare_community_2 || "",
+        ...(refresh ? { refresh: true } : {}),
+      });
+    } catch (e) {
+      console.warn("Gemeinschaftstarife nicht abrufbar:", e);
+      this._gemTarif = { gemeinschaften: [], fehler: e?.message || String(e) };
+    } finally {
+      this._gemTarifBusy = false;
+      this._render();
+    }
+  }
+
+  // Server-Eintrag einer Gemeinschaft mit heute gültigem Tarif, oder null.
+  _gemTarifEintrag(name) {
+    if (!name) return null;
+    const g = (this._gemTarif?.gemeinschaften || []).find(x => x.name === name);
+    return g && g.tarif ? g : null;
+  }
+
+  // Derselbe, aber nur wenn er auch gilt (Schalter an).
+  _gemTarifFuer(d, name) {
+    return d.gemeinschaftstarif_auto === false ? null : this._gemTarifEintrag(name);
+  }
+
+  // Kasten im Block der Gemeinschaft: was der Server sagt, und der Schalter.
+  // Der Schalter ist einer für beide Gemeinschaften (gemeinschaftstarif_auto).
+  _gemTarifInfo(g, aktiv, prefix) {
+    const ct = (v) => `${fmtDe(Number(v) * 100, 2)} ct`;
+    const datum = (iso) => { const [y, m, t] = String(iso).split("-"); return `${t}.${m}.${y}`; };
+    const t = g.tarif;
+    const nacht = t.einspeisung_nacht != null
+      ? `, ${t.nacht === "sonne" ? "nach Sonnenuntergang" : "nachts"} ${ct(t.einspeisung_nacht)}`
+      : "";
+    const bezug = t.bezug != null ? ` · Bezug ${ct(t.bezug)} brutto` : "";
+    const quelle = t.quelle
+      ? ` · <a href="${this._escapeHtml(t.quelle)}" target="_blank" rel="noopener">Tarifblatt</a>` : "";
+    const naechster = g.naechster
+      ? `<br>Ab ${datum(g.naechster.gueltig_ab)}: ${ct(g.naechster.einspeisung_tag)}${
+          g.naechster.einspeisung_nacht != null ? ` / ${ct(g.naechster.einspeisung_nacht)}` : ""} — wechselt von selbst.`
+      : "";
+    const farbe = aktiv ? "var(--success-color, #4caf50)" : "var(--divider-color)";
+    return `
+      <div style="border-left:3px solid ${farbe};padding:6px 10px;margin:0 0 10px;font-size:12px;line-height:1.6">
+        <strong>Tarif von ${this._escapeHtml(g.verband_name)}</strong>, gültig ab ${datum(t.gueltig_ab)}:
+        Einspeisung ${ct(t.einspeisung_tag)} netto${nacht}${bezug}${quelle}
+        ${t.hinweis ? `<br><span style="color:var(--secondary-text-color)">${this._escapeHtml(t.hinweis)}</span>` : ""}
+        ${naechster}
+        <br><span style="color:var(--secondary-text-color)">${aktiv
+          ? "Wird automatisch übernommen — die Felder unten folgen dem Tarifblatt."
+          : "Nicht übernommen — es gelten deine eigenen Werte."}</span>
+        <div><button class="btn-secondary" style="margin-top:6px;padding:4px 10px"
+          data-action="${prefix ? "toggle-settings-feature" : "toggle-feature"}"
+          data-feature="gemeinschaftstarif_auto" data-on="${aktiv ? "1" : "0"}">${aktiv
+            ? "Eigene Werte verwenden" : "Tarif automatisch übernehmen"}</button></div>
+      </div>`;
+  }
+
   _ensureSunnyStatus() {
     if (this._sunnyStatus !== null || this._sunnyBusy || this._sunnyRequested) return;
     this._sunnyRequested = true;
@@ -8352,14 +8425,21 @@ class EegOptimizerPanel extends HTMLElement {
     } else if (quoten) {
       inhalt = `<div class="help-text">Mit fester Abnahmequote statt PeakShare kennt der Fahrplan keinen Überschuss der Gemeinschaft und rechnet ohne Gemeinschaftsbezug.</div>`;
     } else {
-      inhalt = namen.map(([s, name]) => `
+      this._ensureGemTarif(d);
+      inhalt = namen.map(([s, name]) => {
+        // Bezugspreis aus dem Tarifblatt, wenn der Server ihn kennt.
+        const server = this._gemTarifFuer(d, name)?.tarif;
+        const bezug = server && server.bezug != null ? server.bezug : d[`peakshare_bezug_price${s}`];
+        return `
         <div style="font-weight:500;margin:4px 0 8px">${this._escapeHtml(name)}</div>
         <div style="display:flex;gap:12px;flex-wrap:wrap">
           <div class="field-group" style="flex:1;min-width:140px">
             <label>Bezugspreis aus der Gemeinschaft (ct/kWh)</label>
             <input type="number" data-field="${prefix}peakshare_bezug_price${s}" data-unit="ct"
-                   value="${Number(d[`peakshare_bezug_price${s}`] ?? 0) > 0 ? ctAus(d[`peakshare_bezug_price${s}`]) : ""}"
-                   min="0" max="200" step="0.1" placeholder="leer = kein Bezug">
+                   value="${Number(bezug ?? 0) > 0 ? ctAus(bezug) : ""}"
+                   min="0" max="200" step="0.1" placeholder="leer = kein Bezug"
+                   ${server && server.bezug != null ? "disabled" : ""}>
+            ${server && server.bezug != null ? `<div class="help-text">Aus dem Tarifblatt (Reiter Tarife, Gemeinschaft).</div>` : ""}
           </div>
           <div class="field-group" style="flex:1;min-width:140px">
             <label>Gemeinschaft ist</label>
@@ -8369,7 +8449,8 @@ class EegOptimizerPanel extends HTMLElement {
               <option value="beg" ${d[`peakshare_bezug_ebene${s}`] === "beg" ? "selected" : ""}>Bürgerenergiegemeinschaft (volle Netzgebühr)</option>
             </select>
           </div>
-        </div>`).join("") + `
+        </div>`;
+      }).join("") + `
         <div class="help-text">Der Energiepreis, den die Gemeinschaft für bezogenen Strom verrechnet, inklusive Mehrwertsteuer. Die Netzgebühr rechnet der Fahrplan selbst dazu, ohne SNAP und WiNAP, die für Gemeinschaftsmengen nicht gelten: bei einer EEG das verringerte Netznutzungsentgelt plus Netzverlust (Elektrizitätsabgabe und Erneuerbaren-Förderbeitrag entfallen), bei einer Bürgerenergiegemeinschaft die volle Netzgebühr. Wie bei der Einspeisung kommt aus der Gemeinschaft höchstens dein Anteil, und nur so viel, wie sie laut PeakShare in der Viertelstunde übrig hat; der Rest kostet den Preis deines Lieferanten. Leer = diese Gemeinschaft zählt für das Netzladen nicht.</div>`;
     }
     return `
@@ -8538,6 +8619,7 @@ class EegOptimizerPanel extends HTMLElement {
 
   _gemeinschaftFields(d, prefix) {
     const on = d.enable_peakshare !== false;
+    if (on) this._ensureGemTarif(d);
     const communities = this._peakshareCommunitiesCache || [];
     // Feste Abnahmequote statt PeakShare-Prognose: Name als Freitext, je
     // Gemeinschaft eine Quote für Tag und Nacht, Vorschau als Mischpreis.
@@ -8605,9 +8687,14 @@ class EegOptimizerPanel extends HTMLElement {
     const tarifWerte = (nr) => {
       const s = nr === 2 ? "_2" : "";
       const pct = anteil(nr);
-      const preis = Number(d[`peakshare_price${s}`] ?? 0.102);
+      // Mit Server-Tarif rechnet die Vorschau wie der Fahrplan mit dessen
+      // Sätzen (gemeinschaftstarif.ueberlagern).
+      const server = this._gemTarifFuer(d, d[`peakshare_community${s}`])?.tarif;
+      const preis = server ? Number(server.einspeisung_tag) : Number(d[`peakshare_price${s}`] ?? 0.102);
       // Leeres Nachtfeld (0) heißt: derselbe Satz wie am Tag.
-      const preisNacht = Number(d[`peakshare_price_night${s}`] ?? 0) || preis;
+      const preisNacht = server
+        ? (Number(server.einspeisung_nacht ?? 0) || preis)
+        : (Number(d[`peakshare_price_night${s}`] ?? 0) || preis);
       // Fehlt der Wert, rechnet das Backend mit 0 (eeg_price._zahl) — die
       // Vorschau muss dasselbe tun, sonst zeigt sie einen Aufschlag, den der
       // Fahrplan nicht kennt.
@@ -8642,9 +8729,12 @@ class EegOptimizerPanel extends HTMLElement {
     };
 
     const block = (nr) => {
-      const { s, name, pct, preis, gewicht, aufTag, aufNacht,
+      const { s, name, pct, preis, preisNacht, gewicht, aufTag, aufNacht,
               quoteTag, quoteNacht, mischTag, mischNacht } = tarifWerte(nr);
       const aufschlag = Math.max(aufTag, aufNacht);
+      const eintrag = this._gemTarifEintrag(name);
+      const server = this._gemTarifFuer(d, name);
+      const gesperrt = server ? "disabled" : "";
 
       // Einen konfigurierten Namen immer anbieten, auch wenn die Liste ihn
       // (noch) nicht kennt — sonst leert das Speichern das Feld. Im
@@ -8704,13 +8794,15 @@ class EegOptimizerPanel extends HTMLElement {
             <div class="field-group" style="flex:1;min-width:120px">
               <label>Vergütung Tag (ct/kWh)</label>
               <input type="number" data-field="${prefix}peakshare_price${s}" data-unit="ct"
-                     value="${ctAus(preis)}" min="0" max="200" step="0.1">
+                     value="${ctAus(preis)}" min="0" max="200" step="0.1" ${gesperrt}>
             </div>
             <div class="field-group" style="flex:1;min-width:120px">
               <label>Vergütung Nacht (ct/kWh)</label>
               <input type="number" data-field="${prefix}peakshare_price_night${s}" data-unit="ct"
-                     value="${d[`peakshare_price_night${s}`] ? ctAus(d[`peakshare_price_night${s}`]) : ""}"
-                     min="0" max="200" step="0.1" placeholder="wie am Tag">
+                     value="${server
+                       ? (server.tarif.einspeisung_nacht != null ? ctAus(preisNacht) : "")
+                       : (d[`peakshare_price_night${s}`] ? ctAus(d[`peakshare_price_night${s}`]) : "")}"
+                     min="0" max="200" step="0.1" placeholder="wie am Tag" ${gesperrt}>
             </div>
             <div class="field-group" style="flex:1;min-width:120px">
               <label>Gewichtung (ct/kWh)</label>
@@ -8734,6 +8826,7 @@ class EegOptimizerPanel extends HTMLElement {
             </div>
           </div>
           <div class="help-text" style="margin-bottom:8px">Welcher Teil deiner angebotenen Einspeisung erfahrungsgemäß in der Gemeinschaft landet — steht in der EEG-Monatsabrechnung als Anteil der Einspeisung, der in der Gemeinschaft verbraucht wurde. Mittags im Sommer ist die Quote niedrig, weil alle einspeisen; nachts liegt sie nahe 100 %, solange die Gemeinschaft nachts mehr verbraucht, als eingespeist wird.</div>` : ""}
+          ${eintrag ? this._gemTarifInfo(eintrag, !!server, prefix) : ""}
           <div class="help-text" style="margin-bottom:8px">${wirkung}</div>
         </div>`;
     };
@@ -8762,7 +8855,16 @@ class EegOptimizerPanel extends HTMLElement {
     // die Gemeinschafts-Sektion sichtbar ist — nicht erst mit eingetragenem
     // Nachtsatz. Ein konditionales Feld muss beim Tippen nachgezogen werden,
     // und genau dieser Nachzug klemmte.
-    const nachtGesetzt = Number(d.peakshare_price_night ?? 0) > 0
+    // Ein Server-Tarif mit Nachtsatz setzt auch das Fenster (bei „Sonne"
+    // nach dem heutigen Sonnenstand); die Felder zeigen es dann gesperrt.
+    const serverNacht = [d.peakshare_community, d.peakshare_community_2]
+      .map(n => this._gemTarifFuer(d, n))
+      .find(g => g && g.tarif.einspeisung_nacht != null && g.fenster);
+    const zweistellig = (h) => `${String(h).padStart(2, "0")}:00`;
+    const fensterVon = serverNacht ? zweistellig(serverNacht.fenster[0]) : null;
+    const fensterBis = serverNacht ? zweistellig(serverNacht.fenster[1]) : null;
+    const fensterGesperrt = serverNacht ? "disabled" : "";
+    const nachtGesetzt = !!serverNacht || Number(d.peakshare_price_night ?? 0) > 0
       || Number(d.peakshare_price_night_2 ?? 0) > 0;
     const gemStern = nachtGesetzt ? " *" : "";
     const nachtfenster = `
@@ -8770,15 +8872,19 @@ class EegOptimizerPanel extends HTMLElement {
           <div class="field-group" style="flex:1">
             <label>Nachtfenster der Gemeinschaften von${gemStern}</label>
             <input type="time" step="3600" data-field="${prefix}peakshare_night_start"
-                   value="${d.peakshare_night_start || d.schedule_night_start || "20:00"}">
+                   value="${fensterVon || d.peakshare_night_start || d.schedule_night_start || "20:00"}" ${fensterGesperrt}>
           </div>
           <div class="field-group" style="flex:1">
             <label>Nachtfenster bis${gemStern}</label>
             <input type="time" step="3600" data-field="${prefix}peakshare_night_end"
-                   value="${d.peakshare_night_end || d.schedule_night_end || "06:00"}">
+                   value="${fensterBis || d.peakshare_night_end || d.schedule_night_end || "06:00"}" ${fensterGesperrt}>
           </div>
         </div>
-        <div class="help-text" style="margin-bottom:8px">Wann die Nachtvergütung der Gemeinschaften gilt. Darf über Mitternacht gehen — und darf sich vom Nachtfenster der Standardvergütung unterscheiden.${nachtGesetzt ? "" : " Ohne eingetragenen Nachtsatz wirkt es nicht."}</div>`;
+        <div class="help-text" style="margin-bottom:8px">${serverNacht
+          ? (serverNacht.tarif.nacht === "sonne"
+            ? "Vom Tarif der Gemeinschaft: von Sonnenuntergang bis Sonnenaufgang, nach dem heutigen Sonnenstand auf volle Stunden gerundet. Wandert mit den Jahreszeiten von selbst mit."
+            : "Vom Tarif der Gemeinschaft.")
+          : `Wann die Nachtvergütung der Gemeinschaften gilt. Darf über Mitternacht gehen — und darf sich vom Nachtfenster der Standardvergütung unterscheiden.${nachtGesetzt ? "" : " Ohne eingetragenen Nachtsatz wirkt es nicht."}`}</div>`;
 
     return this._featureCard({
       on,

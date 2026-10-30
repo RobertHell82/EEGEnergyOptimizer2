@@ -1534,6 +1534,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if str(config.get("schedule_feedin_source") or "manual").lower() == "awattar_sunny":
         hass.async_create_task(awattar_sunny_provider.async_fetch())
 
+    # Tarife der Energiegemeinschaften vom Telemetrie-Server
+    # (gemeinschaftstarif.py): ohne Kennung, ganze Liste, unabhängig von der
+    # Telemetrie-Zustimmung. Nur mit aktiver Gemeinschaft und eingeschaltetem
+    # Schalter holen; der gespeicherte Stand wird immer geladen.
+    from .gemeinschaftstarif import GemeinschaftstarifProvider, abruf_gewuenscht
+    gemeinschaftstarif_provider = GemeinschaftstarifProvider(hass, entry.entry_id)
+    await gemeinschaftstarif_provider.async_load()
+    hass.data[DOMAIN][entry.entry_id]["gemeinschaftstarif"] = gemeinschaftstarif_provider
+    if abruf_gewuenscht(config):
+        hass.async_create_task(gemeinschaftstarif_provider.async_fetch())
+
     # Energie AG „Team Sonne Float" (energie_ag.py): der Referenzmarktwert
     # der E-Control, aus dem die Energie AG ihren Monatspreis rechnet.
     # Bekommt den Schätzer mit — dessen Rohwert IST derselbe
@@ -2432,6 +2443,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 # Netzentgelte: der Abruf selbst prüft die Tagesfrist, der
                 # halbstündige Takt ist nur der Anlass.
                 namen.append("netzentgelt")
+                # Gemeinschaftstarife: eigene Frist (6 h) im Provider.
+                from .gemeinschaftstarif import abruf_gewuenscht
+                if abruf_gewuenscht(cfg):
+                    namen.append("gemeinschaftstarif")
                 # Eigene PV-Prognose: Wetter alle 30 Minuten, aber nur als
                 # gewählte Quelle oder als mitlaufende Vergleichsquelle —
                 # sonst ginge der Abruf ins Leere.

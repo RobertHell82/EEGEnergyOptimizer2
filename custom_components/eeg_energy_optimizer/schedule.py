@@ -2555,6 +2555,17 @@ async def async_collect_inputs(
         return None, "Integration nicht geladen"
 
     config = dict(data.get("config") or {})
+    # Tarife der Gemeinschaften vom Server (gemeinschaftstarif.py) ersetzen
+    # die eingetippten Sätze — hier und nur hier, alles danach rechnet mit
+    # der überlagerten Konfiguration.
+    tarifquelle = data.get("gemeinschaftstarif")
+    if tarifquelle is not None:
+        from . import gemeinschaftstarif
+
+        config, _ = gemeinschaftstarif.ueberlagern(
+            config, tarifquelle.daten, _now_local().date(),
+            gemeinschaftstarif.sonnenstand(hass),
+        )
     coordinator = data.get("coordinator")
     inverter = data.get("inverter")
 

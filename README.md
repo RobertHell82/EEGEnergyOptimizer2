@@ -50,6 +50,10 @@ Die Settings-Whitelist enthält ausschließlich numerische/kategorische Konfigur
 
 Pro Anlage wird einmalig eine zufällige **UUIDv4** + ein **API-Key** erzeugt und lokal gespeichert. Es gibt keinen Bezug zu HA-Account, IP, Hardware-ID oder sonstigen Identifikatoren. Beim Klick auf „Daten löschen" werden alle Daten dieser Anlage serverseitig kaskadiert gelöscht und die UUID lokal entfernt.
 
+#### Tarife der Energiegemeinschaften (kein Teil der Telemetrie)
+
+Mit aktiver Energiegemeinschaft holt die Integration alle sechs Stunden die Tarifliste vom selben Server (`/v1/tarife`). Steht deine Gemeinschaft darin (derzeit die Gemeinschaften der Energiewende Ansfelden), übernimmt der Fahrplan deren Sätze automatisch, auch einen schon angekündigten nächsten Quartalstarif zum Stichtag. Geholt wird immer die **ganze** Liste, ohne Kennung und ohne Namen deiner Gemeinschaft — der Server sieht nur, dass eine Anlage Tarife abruft. Das läuft unabhängig von der Zustimmung zur Telemetrie; abschalten lässt es sich im Block der Gemeinschaft mit **Eigene Werte verwenden**.
+
 ## Unterstützte Wechselrichter
 
 Alle sieben werden vom Fahrplan **gesteuert** (Ladelimit und erzwungene Entladung), nicht nur ausgelesen. Victron läuft noch als Feldtest:
