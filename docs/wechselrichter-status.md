@@ -65,7 +65,7 @@ Steuerung über die [Huawei Solar](https://github.com/wlcrs/huawei_solar)
 Integration. Direkte Anbindung an Wechselrichter/Dongle oder über das
 EMMA-Energiemanagement (`sensor.emma_*`-Sensoren, Netz-Vorzeichen wird
 automatisch korrigiert).
-**Beta: Batterie aus dem Netz laden** (nur Huawei; nur in den Beta-Versionen, in den Releases ausgeblendet und ohne Wirkung):
+**Beta: Batterie aus dem Netz laden** (Huawei und Victron, Expertenmodus):
 Zwangsladung über `forcible_charge_soc` mit Leistung und Ziel-Ladestand aus
 dem Fahrplan. Am Gerät geprüft (Traun, 12.10.2026): lädt auch mit
 ausgeschaltetem „Laden aus dem Netz“, 3 s nach dem Befehl. Beschreibung: [tarife.md](guides/tarife.md).
@@ -231,9 +231,14 @@ Offen:
   der Betreiber es dafür aufgibt.
 - Freigabe beim Start, Failsafe, Not-Aus und Wirkungskontrolle am Gerät
   (Checkliste in `docs/DEVELOPMENT.md`).
+- Netzladung (Beta): Lädt die Batterie mit DVCC-Deckel und positivem
+  Netzsollwert PV zuerst, und hält die Nachführung (alle 30 s, Batterie
+  0,2 kW unter dem Deckel) den Bezug so, dass die PV nicht abgeregelt wird?
 
-Spitzenkappung mit der Batterie gibt es für Victron noch nicht; Batterie
-aus dem Netz laden (Beta) nur für Huawei. Die Kapazität liefert Victron nur
+Spitzenkappung mit der Batterie gibt es für Victron noch nicht. Batterie
+aus dem Netz laden (Beta) geht wie bei Huawei: DVCC-Ladestrom als
+Ladeleistung, dazu ein positiver Netzsollwert, den der Treiber an der
+Messung nachführt. Die Kapazität liefert Victron nur
 in Ah, sie wird im Assistenten in kWh von Hand eingetragen.
 Guide: [victron.md](guides/victron.md) · Vorbereitung:
 [installation/victron.md](installation/victron.md)

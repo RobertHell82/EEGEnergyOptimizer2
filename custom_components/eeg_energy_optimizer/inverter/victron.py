@@ -11,6 +11,9 @@ Die drei Absichten des Fahrplan-Executors werden so abgebildet:
   Ladelimit X kW  → DVCC „Max. Ladestrom" = X / Batteriespannung
                     (``Settings/SystemSetup/MaxChargeCurrent``)
   Entladung X kW  → ESS-Netzsollwert = −X (``Settings/CGwacs/AcPowerSetPoint``)
+  Netzladung X kW → DVCC-Ladestrom = X / Batteriespannung, Netzsollwert
+                    positiv, alle 30 s an der Messung nachgeführt (Beta,
+                    siehe ``async_set_grid_charge``)
   Freigabe        → beide Werte zurück auf den Stand vor unserem Eingriff
 
 **Netzsollwert statt Batterieleistung.** Der ESS-Regelkreis im GX-Gerät
@@ -73,6 +76,9 @@ wo der Zähler fast null misst.
 - Folgt der Multiplus dem negativen Netzsollwert mit voller Leistung, und
   greift die ESS-Grenze „Max. Einspeiseleistung" dabei wie erwartet?
 - Wie schnell kommen Messwerte über MQTT an (Integration: „auto", je Metrik)?
+- Netzladung: Lädt die Batterie mit DVCC-Deckel und positivem Sollwert die
+  PV zuerst, und hält die Nachführung den Bezug knapp unter dem Deckel, ohne
+  die PV abzuregeln?
 
 Vorzeichen (Venus-OS-D-Bus, von der Bibliothek roh durchgereicht):
 ``Dc/Battery/Power`` positiv = Laden — wie bei uns; Netzleistung
@@ -167,6 +173,21 @@ class VictronFehler(Exception):
 # im Einstellungsspeicher des GX-Geräts, deshalb kein Schreiben ohne Not.
 NETZSOLLWERT_TOLERANZ_W = 10.0  # Schrittweite der Entität
 LADESTROM_TOLERANZ_A = 0.5
+
+# Netzladung (siehe async_set_grid_charge): Nachführtakt des positiven
+# Netzsollwerts, der Abstand, um den die Batterie unter der geplanten
+# Ladeleistung bleibt, und die Schwelle, ab der neu geschrieben wird.
+NETZLADEN_TAKT_S = 30
+NETZLADEN_ABSTAND_KW = 0.2
+NETZLADEN_NACHFUEHR_TOLERANZ_W = 150.0
+# Batterie so nah am DVCC-Deckel gilt als „am Deckel" (PV evtl. abgeregelt).
+NETZLADEN_DECKEL_KW = 0.1
+# Größte Anhebung des Sollwerts je Takt, und wie viele Takte nach einer
+# Anhebung, der die Batterie nicht folgte, nicht wieder angehoben wird.
+NETZLADEN_SCHRITT_KW = 1.0
+NETZLADEN_SPERRE_TAKTE = 10
+# Darunter ist die Netzladung eine Freigabe (Netzgrenze lässt nichts zu).
+NETZLADEN_MIN_KW = 0.05
 
 
 def _short_id_muster(short_id: str) -> re.Pattern:
@@ -413,7 +434,17 @@ class VictronInverter(InverterBase):
         # Ziel-SOC der laufenden Entladung und der Abmelder des
         # SOC-Beobachters — siehe _beobachte_ziel_soc().
         self._ziel_soc: float | None = None
+        self._ziel_laden = False  # True: Netzladung, Ziel von unten
         self._ziel_abmelden: Any = None
+        # Laufende Netzladung: geplante Ladeleistung und der Abmelder des
+        # Nachführtakts — siehe _netzbezug_nachfuehren().
+        self._netzladung_kw: float | None = None
+        self._nachfuehr_abmelden: Any = None
+        # Regelzustand: zuletzt geschriebener Sollwert (W), die letzte
+        # Anhebung (kW, Batterieladung davor) und die Anhebe-Sperre (Takte).
+        self._netz_soll_w = 0.0
+        self._anhebung: tuple[float, float] | None = None
+        self._anheben_gesperrt = 0
         # Executor (30-s-Lauf) und SOC-Beobachter schreiben nebenläufig; ein
         # Schreiben über MQTT dauert. Ohne Sperre könnte die Zielrücknahme
         # zwischen Sichern und Schreiben eines Sollwerts fallen — der Wert
@@ -519,10 +550,12 @@ class VictronInverter(InverterBase):
 
     def _am_ziel(self) -> bool:
         soc = self._soc()
-        return self._ziel_soc is not None and soc is not None and soc <= self._ziel_soc
+        if self._ziel_soc is None or soc is None:
+            return False
+        return soc >= self._ziel_soc if self._ziel_laden else soc <= self._ziel_soc
 
-    def _beobachte_ziel_soc(self, target_soc: float | None) -> None:
-        """Den Ladestand während der Entladung beobachten.
+    def _beobachte_ziel_soc(self, target_soc: float | None, laden: bool = False) -> None:
+        """Den Ladestand während der Entladung (oder Netzladung) beobachten.
 
         Das GX-Gerät kennt keinen Ziel-SOC für einen Netzsollwert — es
         regelt, bis der ESS-Mindest-SOC greift. Der Executor schreibt nur bei
@@ -530,11 +563,13 @@ class VictronInverter(InverterBase):
         meldet sich der Treiber selbst am SOC-Sensor an und nimmt den
         Sollwert zurück, sobald das Ziel erreicht ist. Ohne Ziel aus dem
         Plan gilt die Reserve des Geräts (ESS-Mindest-SOC / BatteryLife) —
-        ganz ohne Ziel liefe die Entladung unbeobachtet.
+        ganz ohne Ziel liefe die Entladung unbeobachtet. Die Netzladung lädt
+        ohne Ziel bis 100 %.
         """
         if target_soc is None:
-            target_soc = self.get_backup_reserve_soc_pct()
+            target_soc = 100.0 if laden else self.get_backup_reserve_soc_pct()
         self._ziel_soc = target_soc
+        self._ziel_laden = laden
         if target_soc is None or self._ziel_abmelden is not None:
             return
         soc_sensor = self._config.get(CONF_BATTERY_SOC_SENSOR)
@@ -555,12 +590,23 @@ class VictronInverter(InverterBase):
 
     def _beobachtung_beenden(self) -> None:
         self._ziel_soc = None
+        self._ziel_laden = False
         if self._ziel_abmelden is not None:
             try:
                 self._ziel_abmelden()
             except Exception:  # noqa: BLE001 — Abmelden darf nie werfen
                 pass
             self._ziel_abmelden = None
+        self._nachfuehrung_beenden()
+
+    def _nachfuehrung_beenden(self) -> None:
+        self._netzladung_kw = None
+        if self._nachfuehr_abmelden is not None:
+            try:
+                self._nachfuehr_abmelden()
+            except Exception:  # noqa: BLE001 — Abmelden darf nie werfen
+                pass
+            self._nachfuehr_abmelden = None
 
     async def _ziel_erreicht_gesperrt(self) -> None:
         """Aus dem SOC-Beobachter: unter der Sperre und erst nach erneuter
@@ -573,15 +619,25 @@ class VictronInverter(InverterBase):
         if self._ziel_soc is None:
             return
         ziel = self._ziel_soc
-        self._beobachtung_beenden()
+        laden = self._ziel_laden
         try:
             await self._zuruecksetzen("netzsollwert", NETZSOLLWERT_TOLERANZ_W)
-            _LOGGER.info("Victron: Ziel-SOC %.0f %% erreicht — Netzsollwert zurückgenommen", ziel)
+            if laden:
+                # Netzladung am Ziel: auch der Ladestrom zurück — sonst lüde
+                # die PV danach nur mit der Leistung der Netzladung.
+                await self._zuruecksetzen("ladestrom", LADESTROM_TOLERANZ_A)
         except Exception:  # noqa: BLE001
+            # Beobachtung bleibt: Der nächste SOC-Wechsel (Entladung) bzw.
+            # der nächste Nachführtakt (Netzladung — am Ziel ändert sich der
+            # SOC womöglich nicht mehr) versucht es erneut. Ein stehender
+            # positiver Sollwert kaufte sonst bis zum Slotwechsel weiter.
             _LOGGER.warning(
                 "Victron: Netzsollwert am Ziel-SOC nicht zurücknehmbar — "
-                "die nächste Freigabe versucht es erneut", exc_info=True,
+                "wird wiederholt", exc_info=True,
             )
+            return
+        self._beobachtung_beenden()
+        _LOGGER.info("Victron: Ziel-SOC %.0f %% erreicht — Netzsollwert zurückgenommen", ziel)
 
     # ------------------------------------------------------------------
     # InverterBase
@@ -636,6 +692,7 @@ class VictronInverter(InverterBase):
 
     async def _entladung(self, power_kw: float, target_soc: float | None) -> bool:
         try:
+            self._nachfuehrung_beenden()
             await self._zuruecksetzen("ladestrom", LADESTROM_TOLERANZ_A)
             self._beobachte_ziel_soc(target_soc)
             if self._am_ziel():
@@ -650,6 +707,229 @@ class VictronInverter(InverterBase):
         except Exception as exc:  # noqa: BLE001
             _LOGGER.exception("Victron: Entladung konnte nicht gestartet werden")
             return self._fehler(_grund(exc))
+
+    @property
+    def supports_grid_charge(self) -> bool:
+        """„Batterie aus dem Netz laden" (Beta) — DVCC-Ladestrom + Netzsollwert."""
+        return True
+
+    async def async_set_grid_charge(
+        self, power_kw: float, target_soc: float | None = None
+    ) -> bool:
+        """Batterie mit ``power_kw`` laden, PV zuerst, den Rest aus dem Netz.
+
+        Zwei Stellgrößen, dieselben wie sonst:
+
+        * **DVCC-Ladestrom = Leistung ÷ Spannung** — die Grenze, an der die
+          Batterie lädt. Sie gilt für Multiplus und Laderegler zusammen,
+          die PV hat dabei Vorrang.
+        * **Netzsollwert positiv** — erlaubt dem ESS den Bezug. Steht er höher
+          als nötig, kann die Batterie (am DVCC-Deckel) den Mehrbezug nicht
+          aufnehmen, und das ESS hielte den Sollwert, indem es die PV
+          abregelt: Bezug statt eigener Sonne. Deshalb wird er alle
+          ``NETZLADEN_TAKT_S`` an der Messung nachgeführt
+          (``_netzbezug_nachfuehren``) und so gehalten, dass die Batterie um
+          ``NETZLADEN_ABSTAND_KW`` UNTER dem Deckel bleibt — dann gibt es
+          nichts abzuregeln.
+
+        Bis ``target_soc`` (ohne Ziel 100 %), den Ladestand beobachtet der
+        Treiber selbst wie bei der Entladung; am Ziel gehen beide Werte
+        zurück. Steht der Ladestand schon dort, wird nichts geschrieben.
+        """
+        if self._nicht_endlich(power_kw, target_soc):
+            return False
+        async with self._sperre:
+            return await self._netzladung(power_kw, target_soc)
+
+    async def _netzladung(self, power_kw: float, target_soc: float | None) -> bool:
+        try:
+            ziel = 100.0 if target_soc is None else min(100.0, float(target_soc))
+            leistung = max(0.0, float(power_kw))
+            if leistung < NETZLADEN_MIN_KW:
+                # Nichts aus dem Netz (die Netzgrenze lässt gerade nichts zu):
+                # wie eine Freigabe. 0 A sperrte sonst auch das Laden aus PV.
+                self._beobachtung_beenden()
+                await self._zuruecksetzen("netzsollwert", NETZSOLLWERT_TOLERANZ_W)
+                await self._zuruecksetzen("ladestrom", LADESTROM_TOLERANZ_A)
+                return self._erfolg()
+            self._beobachte_ziel_soc(ziel, laden=True)
+            if self._am_ziel():
+                await self._ziel_erreicht()
+                return self._erfolg()
+            spannung = self._batteriespannung()
+            if spannung is None:
+                # Ohne Ladestrom-Deckel kein positiver Sollwert: er allein
+                # liefe ungebremst bis zur Ladeleistung des Multiplus.
+                raise VictronFehler("Batteriespannung unbekannt")
+            # Beide Vorwerte müssen lesbar sein, BEVOR geschrieben wird —
+            # sonst stünde der Deckel, und der Sollwert scheiterte danach.
+            self._vorwert_pruefen("ladestrom")
+            self._vorwert_pruefen("netzsollwert")
+            ampere = leistung * 1000.0 / spannung
+            maximum = self._attribut("ladestrom", "max")
+            if maximum is not None:
+                ampere = min(ampere, maximum)
+            # Erst der Deckel, dann der Bezug — umgekehrt zöge der Multiplus
+            # einen Takt lang mit voller Ladeleistung aus dem Netz.
+            await self._setze("ladestrom", round(ampere, 1), LADESTROM_TOLERANZ_A)
+            if self._netzladung_kw is None:
+                await self._netzbezug_starten(leistung)
+            else:
+                # Neue Planleistung in laufender Netzladung: der Takt regelt
+                # vom geschriebenen Sollwert aus weiter.
+                self._netzladung_kw = leistung
+            self._starte_nachfuehrung()
+            return self._erfolg()
+        except Exception as exc:  # noqa: BLE001
+            _LOGGER.exception("Victron: Netzladung konnte nicht gestartet werden")
+            await self._netzladung_abbrechen()
+            return self._fehler(_grund(exc))
+
+    def _vorwert_pruefen(self, key: str) -> None:
+        if self._state_store.vorwert(key) is None and self._lies(key) is None:
+            raise VictronFehler(f"Vorwert {key} unlesbar")
+
+    async def _netzladung_abbrechen(self) -> None:
+        """Nach einem Fehler beim Start: nichts halb stehen lassen.
+
+        Der Executor hält den Befehl für gescheitert und schreibt bei
+        unverändertem Plan womöglich nichts mehr (eine Freigabe, die er schon
+        für erledigt hält). Ein stehender Ladestrom-Deckel oder Sollwert
+        bliebe dann bis zum nächsten anderen Befehl — also zurück, so gut es
+        geht.
+        """
+        self._beobachtung_beenden()
+        for key, toleranz in (
+            ("netzsollwert", NETZSOLLWERT_TOLERANZ_W),
+            ("ladestrom", LADESTROM_TOLERANZ_A),
+        ):
+            try:
+                await self._zuruecksetzen(key, toleranz)
+            except Exception:  # noqa: BLE001
+                _LOGGER.warning("Victron: %s nach Fehler nicht zurückgesetzt", key, exc_info=True)
+
+    def _messung(self) -> tuple[float, float] | None:
+        """(Netzbezug, Batterieladung) in kW, None ohne Messung."""
+        from ..power_readings import compute_battery_now_kw, compute_grid_export_kw
+
+        export = compute_grid_export_kw(self._hass, self._config)
+        batterie = compute_battery_now_kw(self._hass, self._config)
+        if export is None or batterie is None:
+            return None
+        return -export, batterie
+
+    def _sollwert_w(self, kw: float) -> float:
+        watt = round(max(0.0, kw) * 1000.0 / NETZSOLLWERT_TOLERANZ_W) * NETZSOLLWERT_TOLERANZ_W
+        maximum = self._attribut("netzsollwert", "max")
+        if maximum is not None:
+            watt = min(watt, maximum)
+        return float(watt)
+
+    async def _netzbezug_starten(self, leistung: float) -> None:
+        """Erster Sollwert: Bezug jetzt + was der Batterie fehlt − Abstand.
+
+        Ohne Messung 0 — lieber langsamer laden als raten, der Takt hebt
+        dann an. Die Anhebung zählt wie jede: Folgt die Batterie ihr nicht,
+        nimmt der nächste Takt sie zurück.
+        """
+        self._netzladung_kw = leistung
+        messung = self._messung()
+        if messung is None:
+            soll_kw, batterie = 0.0, None
+        else:
+            bezug, batterie = messung
+            soll_kw = bezug + (leistung - batterie) - NETZLADEN_ABSTAND_KW
+        watt = self._sollwert_w(soll_kw)
+        await self._setze("netzsollwert", watt, NETZSOLLWERT_TOLERANZ_W)
+        self._netz_soll_w = watt
+        self._anhebung = None
+        if messung is not None:
+            self._anhebung = (max(0.0, watt / 1000.0 - bezug), batterie)
+        self._anheben_gesperrt = 0
+
+    def _naechster_sollwert_w(self, bezug: float, batterie: float) -> float:
+        """Der Regelschritt der Netzladung (rein, ohne Schreiben).
+
+        Der Sollwert ist nur eine Erlaubnis zum Bezug; die Ladeleistung
+        deckelt der DVCC-Strom. Steht er höher, als die Batterie aufnimmt,
+        hält das ESS ihn, indem es die PV abregelt — Bezug statt Sonne. Drei
+        Fälle:
+
+        * **Batterie am Deckel** (≥ Leistung − 0,1 kW): Ob die PV gerade
+          abgeregelt wird, sieht man nicht. Also rasch zurück: halbieren,
+          mindestens um den Abstand.
+        * **Batterie folgt der letzten Anhebung nicht** (weniger als die
+          Hälfte davon angekommen — Absorptionsphase, Temperatur, Grenze des
+          Ladegeräts): Die Anhebung ging an die Abregelung. Zurücknehmen und
+          ``NETZLADEN_SPERRE_TAKTE`` lang nicht wieder anheben. Ohne diese
+          Sperre zöge der Sollwert hoch, bis alle PV abgeregelt ist.
+        * **Batterie fehlt Leistung**: anheben um das Fehlende bis zur
+          Leistung − Abstand, höchstens ``NETZLADEN_SCHRITT_KW`` je Takt.
+
+        Dazwischen (Batterie im Band knapp unter dem Deckel) bleibt er stehen.
+        """
+        leistung = float(self._netzladung_kw or 0.0)
+        soll = self._netz_soll_w / 1000.0
+        anhebung = self._anhebung
+        self._anhebung = None
+        if self._anheben_gesperrt > 0:
+            self._anheben_gesperrt -= 1
+        if batterie >= leistung - NETZLADEN_DECKEL_KW:
+            return self._sollwert_w(min(soll - NETZLADEN_ABSTAND_KW, soll / 2.0))
+        if anhebung is not None:
+            delta, batterie_vorher = anhebung
+            if delta > 0 and batterie - batterie_vorher < delta / 2.0:
+                self._anheben_gesperrt = NETZLADEN_SPERRE_TAKTE
+                return self._sollwert_w(soll - delta)
+        fehlt = leistung - NETZLADEN_ABSTAND_KW - batterie
+        if fehlt > 0 and self._anheben_gesperrt == 0:
+            delta = min(fehlt, NETZLADEN_SCHRITT_KW)
+            neu = self._sollwert_w(soll + delta)
+            if neu - self._netz_soll_w >= NETZLADEN_NACHFUEHR_TOLERANZ_W:
+                self._anhebung = ((neu - self._netz_soll_w) / 1000.0, batterie)
+            return neu
+        return self._netz_soll_w
+
+    async def _nachfuehren(self) -> None:
+        """Ein Takt: am Ziel zurücknehmen (auch als Wiederholung), sonst regeln."""
+        if self._am_ziel():
+            await self._ziel_erreicht()
+            return
+        messung = self._messung()
+        if messung is None:
+            return  # ohne Messung halten
+        neu = self._naechster_sollwert_w(*messung)
+        if abs(neu - self._netz_soll_w) < NETZLADEN_NACHFUEHR_TOLERANZ_W:
+            self._anhebung = None
+            return
+        await self._setze("netzsollwert", neu, NETZSOLLWERT_TOLERANZ_W)
+        self._netz_soll_w = neu
+
+    def _starte_nachfuehrung(self) -> None:
+        if self._nachfuehr_abmelden is not None:
+            return
+        try:
+            from datetime import timedelta
+
+            from homeassistant.helpers.event import async_track_time_interval
+        except ImportError:  # pragma: no cover — Testumgebung
+            return
+
+        async def _takt(_jetzt: Any) -> None:
+            async with self._sperre:
+                if self._netzladung_kw is None:
+                    return
+                try:
+                    await self._nachfuehren()
+                except Exception:  # noqa: BLE001
+                    _LOGGER.warning(
+                        "Victron: Netzsollwert der Netzladung nicht nachgeführt",
+                        exc_info=True,
+                    )
+
+        self._nachfuehr_abmelden = async_track_time_interval(
+            self._hass, _takt, timedelta(seconds=NETZLADEN_TAKT_S)
+        )
 
     async def async_stop_forcible(self) -> bool:
         """Freigeben: Netzsollwert, dann Ladestrom auf die Vorwerte.

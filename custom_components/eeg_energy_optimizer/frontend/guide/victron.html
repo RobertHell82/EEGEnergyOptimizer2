@@ -190,6 +190,10 @@
 <td>ESS <strong>Netzsollwert</strong> = −geplante Einspeisung (negativ = Einspeisung). Den Hausverbrauch legt der Multiplus selbst obendrauf</td>
 </tr>
 <tr>
+<td><strong>Aus dem Netz laden</strong> (Beta)</td>
+<td>DVCC <strong>Max. Ladestrom</strong> = geplante Ladeleistung ÷ Batteriespannung, dazu ein <strong>positiver Netzsollwert</strong> (Bezug). Den Sollwert führt der Optimizer alle 30 Sekunden an der Messung nach, so dass die Batterie knapp (0,2 kW) unter der geplanten Leistung lädt. Ziel: Die PV hat Vorrang und wird nicht zugunsten des Netzbezugs abgeregelt. Nimmt die Batterie weniger auf (gegen Ende der Ladung), wird der Bezug zurückgenommen statt erhöht. Am Gerät noch nicht erprobt</td>
+</tr>
+<tr>
 <td><strong>Freigabe</strong> (Normalbetrieb)</td>
 <td>Netzsollwert und Ladestrom zurück auf deine Werte von vorher</td>
 </tr>
@@ -203,7 +207,7 @@
 <ul>
 <li><strong>Kein „External control“:</strong> Der ESS-Modus 3 hätte eine Rückfallzeit, übergibt aber die ganze ESS-Regelung nach außen. Der Optimizer müsste dann auch den Eigenverbrauch regeln. Deshalb bleibt ESS in „Optimiert“, geschrieben werden nur Netzsollwert und Ladestrom.</li>
 <li><strong>Spitzenkappung mit der Batterie</strong> gibt es für Victron noch nicht. Verbraucher abschalten funktioniert wie bei jedem Wechselrichter.</li>
-<li><strong>Batterie aus dem Netz laden</strong> (Beta) gibt es nur für Huawei.</li>
+<li><strong>Batterie aus dem Netz laden</strong> (Beta, Expertenmodus, Einstellungen → Tarife) funktioniert auch mit Victron, siehe Anleitung „Tarife &amp; Gemeinschaft“. Mit Bezug aus der Gemeinschaft lädt der Fahrplan genau in den Viertelstunden, in denen die Gemeinschaft laut PeakShare Strom übrig hat. Damit ersetzt er das <strong>Geplante Laden</strong> am GX-Gerät, das für die Steuerung aus sein muss. Den Ziel-Ladestand überwacht der Optimizer wie bei der Entladung selbst.</li>
 </ul>
 <h3>Häufige Probleme</h3>
 <table>

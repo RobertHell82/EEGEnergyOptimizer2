@@ -93,6 +93,7 @@ Der Hausverbrauch wird aus PV, Batterie und Netz berechnet. Er enthält damit di
 |---|---|
 | **Laden begrenzen** (auch 0 kW = Laden sperren) | DVCC **Max. Ladestrom** = Leistung ÷ Batteriespannung. Gilt für das ganze System, Multiplus und Laderegler zusammen |
 | **Einspeisen ins Netz** | ESS **Netzsollwert** = −geplante Einspeisung (negativ = Einspeisung). Den Hausverbrauch legt der Multiplus selbst obendrauf |
+| **Aus dem Netz laden** (Beta) | DVCC **Max. Ladestrom** = geplante Ladeleistung ÷ Batteriespannung, dazu ein **positiver Netzsollwert** (Bezug). Den Sollwert führt der Optimizer alle 30 Sekunden an der Messung nach, so dass die Batterie knapp (0,2 kW) unter der geplanten Leistung lädt. Ziel: Die PV hat Vorrang und wird nicht zugunsten des Netzbezugs abgeregelt. Nimmt die Batterie weniger auf (gegen Ende der Ladung), wird der Bezug zurückgenommen statt erhöht. Am Gerät noch nicht erprobt |
 | **Freigabe** (Normalbetrieb) | Netzsollwert und Ladestrom zurück auf deine Werte von vorher |
 
 Beide Stellgrößen sind deine gespeicherten Einstellungen am GX-Gerät (Netzsollwert oft 0 oder +50 W, Ladestrom oft eine Schutzgrenze). Der Optimizer merkt sich den Wert vor seinem **ersten** Eingriff, auch über einen Neustart von Home Assistant hinweg, und schreibt ihn bei der Freigabe zurück. Steht der Ladestrom auf −1 („nicht begrenzen“), wird auch −1 zurückgeschrieben. Ältere Stände der Integration lassen −1 nicht zu. Dann meldet der Assistent ein Problem: Trag am GX-Gerät unter *DVCC* einen festen Höchststrom ein (etwa den Ladestrom des BMS) oder aktualisiere Home Assistant. Sonst stünde nach der ersten Freigabe still das Maximum der Entität statt −1.
@@ -106,7 +107,7 @@ Der Ziel-Ladestand einer Entladung kommt aus dem Fahrplan. Das GX-Gerät kennt f
 
 - **Kein „External control“:** Der ESS-Modus 3 hätte eine Rückfallzeit, übergibt aber die ganze ESS-Regelung nach außen. Der Optimizer müsste dann auch den Eigenverbrauch regeln. Deshalb bleibt ESS in „Optimiert“, geschrieben werden nur Netzsollwert und Ladestrom.
 - **Spitzenkappung mit der Batterie** gibt es für Victron noch nicht. Verbraucher abschalten funktioniert wie bei jedem Wechselrichter.
-- **Batterie aus dem Netz laden** (Beta) gibt es nur für Huawei.
+- **Batterie aus dem Netz laden** (Beta, Expertenmodus, Einstellungen → Tarife) funktioniert auch mit Victron, siehe Anleitung „Tarife & Gemeinschaft“. Mit Bezug aus der Gemeinschaft lädt der Fahrplan genau in den Viertelstunden, in denen die Gemeinschaft laut PeakShare Strom übrig hat. Damit ersetzt er das **Geplante Laden** am GX-Gerät, das für die Steuerung aus sein muss. Den Ziel-Ladestand überwacht der Optimizer wie bei der Entladung selbst.
 
 ## Häufige Probleme
 

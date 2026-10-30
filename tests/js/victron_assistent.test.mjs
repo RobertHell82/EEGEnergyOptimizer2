@@ -57,6 +57,16 @@ test("Hinweise sperren nicht", () => {
   assert.ok(p.fehler.every((m) => !m.startsWith("Victron")), p.fehler.join(" | "));
 });
 
+test("„Batterie aus dem Netz laden“ steht auch für Victron in den Einstellungen", () => {
+  const p = neuesPanel();
+  const feld = (inverter_type, expert_mode = true) =>
+    p._netzladenFeld({ inverter_type, expert_mode }, "settings_");
+  assert.match(feld("victron_ess"), /Batterie aus dem Netz laden/);
+  assert.match(feld("huawei_sun2000"), /Batterie aus dem Netz laden/);
+  assert.equal(feld("victron_ess", false), "");
+  assert.equal(feld("sma"), "");
+});
+
 test("Prüfkarte: grün ohne Befund, rot mit Problem, Text wird maskiert", () => {
   const ok = assistent(IN_ORDNUNG)._renderVictronPruefung();
   assert.match(ok, /success-color/);

@@ -261,7 +261,7 @@ MAX_NETZDIENLICH_BONUS = 0.20
 # Batterie, und Bonus und Ziel ringen Minute für Minute um den Vormittag.
 NETZDIENLICH_UEBERSCHUSS_FAKTOR = 1.2
 
-# „Batterie aus dem Netz laden" (Beta, nur Huawei, Expertenmodus): Bringt die
+# „Batterie aus dem Netz laden" (Beta, Huawei und Victron, Expertenmodus): Bringt die
 # PV die Batterie bis zum Ende der PV-Zeit nicht aufs Ladeziel, darf der Plan
 # zukaufen — aber nur in Slots, in denen Netzstrom billiger ist als der Strom,
 # den die Batterie danach ersetzt (die Nacht bis zur nächsten PV-Zeit). Der
@@ -275,10 +275,10 @@ NETZDIENLICH_UEBERSCHUSS_FAKTOR = 1.2
 # EEG-Bezug je Gemeinschaft (Energiepreis + um den Ortstarif verringertes
 # Netznutzungsentgelt, gewichtet mit dem Überschuss der Gemeinschaft).
 CONF_SCHEDULE_NETZLADEN = "schedule_netzladen"
-# Schalter für das ganze Netzladen, zusammen mit NETZLADEN_SICHTBAR im
-# Panel: in Releases aus, in Betas an. Immer beide gemeinsam umlegen — nur
-# ausgeblendet, aber wirksam, ließe sich ein in der Beta gesetzter Haken
-# nicht mehr abschalten.
+# Notschalter für das ganze Netzladen, zusammen mit NETZLADEN_SICHTBAR im
+# Panel. Seit 30.10.2026 auch in Releases an (docs/DEVELOPMENT.md). Immer
+# beide gemeinsam umlegen — nur ausgeblendet, aber wirksam, ließe sich ein
+# gesetzter Haken nicht mehr abschalten.
 NETZLADEN_FREIGEGEBEN = True
 # Höchste Netzbezugsleistung, die in die Batterie gehen darf (kW, AC). 0 oder
 # leer = die Batterieleistung. Eigene Grenze, weil ab 2027 die Bezugsspitze
@@ -1495,7 +1495,7 @@ def netzladen_max_kw(config: dict, inverter: Any = None) -> float:
     """Netzbezugsleistung in die Batterie (kW) — 0 heißt „aus dem Netz laden" aus.
 
     Nur mit dem Schalter und nur, wenn der Treiber Netzladen kann
-    (``supports_grid_charge``, derzeit Huawei). Das ist die Batterieleistung;
+    (``supports_grid_charge``, derzeit Huawei und Victron). Das ist die Batterieleistung;
     die Grenze am Zähler ist ``netzladen_netzgrenze_kw``.
     """
     if not NETZLADEN_FREIGEGEBEN or not config.get(CONF_SCHEDULE_NETZLADEN):

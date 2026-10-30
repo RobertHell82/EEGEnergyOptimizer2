@@ -196,18 +196,19 @@ const quoteLuecken = (d) => {
 };
 
 // „Batterie aus dem Netz laden" (Beta): nur Einstellungen, Expertenmodus,
-// Huawei — derselbe Treiber-Schalter wie im Backend (supports_grid_charge).
-// Gemeinsam mit schedule.NETZLADEN_FREIGEGEBEN umlegen: in Releases aus,
-// in Betas an.
+// Huawei und Victron — dieselben Treiber wie im Backend (supports_grid_charge).
+// Notschalter, gemeinsam mit schedule.NETZLADEN_FREIGEGEBEN; seit 30.10.2026
+// auch in Releases an (docs/DEVELOPMENT.md).
 const NETZLADEN_SICHTBAR = true;
+const NETZLADEN_TREIBER = ["huawei_sun2000", "victron_ess"];
 const netzladenSichtbar = (d, prefix) =>
-  NETZLADEN_SICHTBAR && !!prefix && !!d.expert_mode && d.inverter_type === "huawei_sun2000";
+  NETZLADEN_SICHTBAR && !!prefix && !!d.expert_mode && NETZLADEN_TREIBER.includes(d.inverter_type);
 
 // Was mit eingeschaltetem Netzladen fehlt. Ohne einen Preis, der irgendwo
 // billiger ist als die Nacht, kauft der Fahrplan nie — der Haken wäre
 // wirkungslos. Spot- und Gemeinschaftsbezug brauchen die Netzgebühr.
 const netzladenLuecken = (d) => {
-  if (!NETZLADEN_SICHTBAR || !d.expert_mode || d.inverter_type !== "huawei_sun2000" || !d.schedule_netzladen) return [];
+  if (!NETZLADEN_SICHTBAR || !d.expert_mode || !NETZLADEN_TREIBER.includes(d.inverter_type) || !d.schedule_netzladen) return [];
   const spot = String(d.schedule_bezug_quelle || "fix") === "spot";
   const eeg = [["", d.peakshare_community], ["_2", d.peakshare_community_2]]
     .some(([sfx, name]) => name && Number(d[`peakshare_bezug_price${sfx}`] ?? 0) > 0);
@@ -7819,7 +7820,7 @@ class EegOptimizerPanel extends HTMLElement {
   }
 
   // „Batterie aus dem Netz laden" (Beta): nur in den Einstellungen, nur im
-  // Expertenmodus, nur für Huawei (schedule.py: CONF_SCHEDULE_NETZLADEN,
+  // Expertenmodus, nur für Huawei und Victron (schedule.py: CONF_SCHEDULE_NETZLADEN,
   // InverterBase.supports_grid_charge). Erst mit dem Haken erscheinen die
   // Bezugspreise, die ein billigeres Fenster sichtbar machen — der
   // EEG-Bezugspreis steht bei der jeweiligen Gemeinschaft.
@@ -7837,7 +7838,7 @@ class EegOptimizerPanel extends HTMLElement {
           <input type="checkbox" data-field="${prefix}schedule_netzladen" ${an ? "checked" : ""}>
           <div>
             <div style="font-weight:500">Batterie aus dem Netz laden${BETA_BADGE}</div>
-            <div class="help-text" style="margin-top:4px">Schafft die Sonne das Ladeziel bis zum Ende der PV-Zeit nicht, darf der Fahrplan Strom zukaufen — aber nur in Viertelstunden, in denen Netzstrom billiger ist als der Strom, den die Batterie danach in der Nacht ersetzt. Gerechnet wird je Kilowattstunde, nach den Verlusten beim Laden und Entladen. Was die Nacht nicht braucht, speist der Fahrplan später ein, wenn es sich lohnt; das kann Geld kosten und ist der Preis für eine abends volle Batterie. Nur Huawei, nur mit Ladeziel.</div>
+            <div class="help-text" style="margin-top:4px">Schafft die Sonne das Ladeziel bis zum Ende der PV-Zeit nicht, darf der Fahrplan Strom zukaufen — aber nur in Viertelstunden, in denen Netzstrom billiger ist als der Strom, den die Batterie danach in der Nacht ersetzt. Gerechnet wird je Kilowattstunde, nach den Verlusten beim Laden und Entladen. Was die Nacht nicht braucht, speist der Fahrplan später ein, wenn es sich lohnt; das kann Geld kosten und ist der Preis für eine abends volle Batterie. Nur Huawei und Victron, nur mit Ladeziel.</div>
           </div>
         </label>
       </div>
@@ -9506,7 +9507,7 @@ class EegOptimizerPanel extends HTMLElement {
         </button>` : ""}
         <button class="settings-tab ${activeTab === "spitzenkappung" ? "active" : ""}" data-action="set-settings-tab" data-tab="spitzenkappung" role="tab">
           <ha-icon icon="mdi:transmission-tower-import" style="--mdc-icon-size:18px"></ha-icon>
-          <span>Spitzenkappung</span>
+          <span>Spitzenkappung</span><sup class="tab-beta">Beta</sup>
         </button>
         <button class="settings-tab ${activeTab === "system" ? "active" : ""}" data-action="set-settings-tab" data-tab="system" role="tab">
           <ha-icon icon="mdi:tune" style="--mdc-icon-size:18px"></ha-icon>
@@ -12465,6 +12466,14 @@ class EegOptimizerPanel extends HTMLElement {
           transition: background 0.15s, color 0.15s;
         }
         .settings-tab:hover { color: var(--primary-text-color); }
+        /* Beta am Reiter: ein <sup>, kein <span> — die Spans (Beschriftung)
+           blendet das Handy-Layout aus, die Kennzeichnung soll bleiben. */
+        .tab-beta {
+          align-self: flex-start; padding: 0 5px; border-radius: 7px;
+          background: var(--warning-color, #ff9800); color: #fff;
+          font-size: 9px; font-weight: 600; letter-spacing: .04em; line-height: 14px;
+          text-transform: uppercase;
+        }
         .settings-tab.active {
           background: var(--card-background-color, #fff);
           color: var(--primary-color, #03a9f4);

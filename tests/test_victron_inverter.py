@@ -161,10 +161,20 @@ def soc_beobachter():
         rueckrufe.append((list(entities), callback))
         return abmelder
 
+    takte = []
+    takt_abmelder = MagicMock()
+
+    def _intervall(hass, callback, intervall):
+        takte.append((callback, intervall))
+        return takt_abmelder
+
     modul = ModuleType("homeassistant.helpers.event")
     modul.async_track_state_change_event = _track
+    modul.async_track_time_interval = _intervall
     with patch.dict(sys.modules, {"homeassistant.helpers.event": modul}):
-        yield SimpleNamespace(rueckrufe=rueckrufe, abmelder=abmelder)
+        yield SimpleNamespace(
+            rueckrufe=rueckrufe, abmelder=abmelder, takte=takte, takt_abmelder=takt_abmelder
+        )
 
 
 def _treiber(hass, store=None, **config):
@@ -192,7 +202,7 @@ class TestRegistrierung:
         inv = VictronInverter(mock_hass, {})
         assert inv.supports_schedule_control is True
         assert inv.discharge_is_grid_setpoint is True
-        assert inv.supports_grid_charge is False
+        assert inv.supports_grid_charge is True
         assert inv.supports_discharge_limit is False
 
     def test_verfuegbar_nur_mit_geladener_integration(self, mock_hass):
@@ -713,3 +723,294 @@ class TestVorzeichen:
             CONF_GRID_POWER_SENSOR: NETZ,
         }
         assert compute_house_load_kw(mock_hass, cfg) == pytest.approx(7.3768, abs=1e-3)
+
+
+# ----------------------------------------------------------------------
+# Netzladung (Beta): DVCC-Deckel + positiver, nachgeführter Netzsollwert
+# ----------------------------------------------------------------------
+MESSUNG = {
+    CONF_INVERTER_TYPE: INVERTER_TYPE_VICTRON,
+    CONF_PV_POWER_SENSOR: DC_PV,
+    CONF_BATTERY_POWER_SENSOR: BATTERIE,
+    CONF_GRID_POWER_SENSOR: NETZ,
+}
+
+
+def _netzlader(hass, anlage, bezug_w=500.0, batterie_w=1000.0, soc="50"):
+    """Mittags, Batterie lädt 1 kW aus der PV, Haus bezieht 0,5 kW."""
+    anlage.setze(NETZ, bezug_w)
+    anlage.setze(BATTERIE, batterie_w)
+    anlage.setze(SOC, soc)
+    return _treiber(hass, **MESSUNG)
+
+
+class TestNetzladung:
+    async def test_deckel_und_bezug(self, mock_hass, anlage, soc_beobachter):
+        inv = _netzlader(mock_hass, anlage)
+        assert await inv.async_set_grid_charge(3.0, 80) is True
+        # 3 kW / 52,6 V = 57,0 A; Sollwert = 0,5 + (3 − 1) − 0,2 = 2,3 kW
+        assert _schreibvorgaenge(mock_hass) == [(LADESTROM, 57.0), (SOLLWERT, 2300.0)]
+        assert inv._state_store.vorwert("ladestrom") == 125.0
+        assert inv._state_store.vorwert("netzsollwert") == 0.0
+        assert len(soc_beobachter.takte) == 1
+
+    async def test_ladestrom_vor_sollwert(self, mock_hass, anlage, soc_beobachter):
+        """Umgekehrt zöge der Multiplus einen Takt lang mit voller
+        Ladeleistung aus dem Netz."""
+        inv = _netzlader(mock_hass, anlage)
+        await inv.async_set_grid_charge(3.0, 80)
+        assert [e for e, _ in _schreibvorgaenge(mock_hass)] == [LADESTROM, SOLLWERT]
+
+    async def test_nachfuehrung_senkt_den_bezug_wenn_die_pv_reicht(
+        self, mock_hass, anlage, soc_beobachter
+    ):
+        """Batterie am Deckel: Ob die PV abgeregelt wird, sieht man nicht —
+        also rasch zurück (halbieren), statt 0,2 kW je Takt."""
+        inv = _netzlader(mock_hass, anlage)
+        await inv.async_set_grid_charge(3.0, 80)
+        [(takt, _)] = soc_beobachter.takte
+        anlage.setze(BATTERIE, 3000.0)
+        anlage.setze(NETZ, 2300.0)
+        await takt(None)
+        assert anlage.wert(SOLLWERT) == 1150.0
+
+    async def test_nachfuehrung_hebt_den_bezug_wenn_die_pv_nachlaesst(
+        self, mock_hass, anlage, soc_beobachter
+    ):
+        inv = _netzlader(mock_hass, anlage)
+        await inv.async_set_grid_charge(3.0, 80)
+        [(takt, _)] = soc_beobachter.takte
+        anlage.setze(BATTERIE, 2000.0)  # Wolke: 1 kW fehlt
+        anlage.setze(NETZ, 2300.0)
+        await takt(None)
+        assert anlage.wert(SOLLWERT) == 3100.0
+
+    async def test_kleine_abweichung_schreibt_nicht(self, mock_hass, anlage, soc_beobachter):
+        inv = _netzlader(mock_hass, anlage)
+        await inv.async_set_grid_charge(3.0, 80)
+        [(takt, _)] = soc_beobachter.takte
+        anlage.setze(BATTERIE, 2750.0)
+        anlage.setze(NETZ, 2300.0)
+        vorher = len(_schreibvorgaenge(mock_hass))
+        await takt(None)  # Soll 2350 W, 50 W neben 2300
+        assert len(_schreibvorgaenge(mock_hass)) == vorher
+
+    async def test_nie_ein_negativer_sollwert(self, mock_hass, anlage, soc_beobachter):
+        """Viel PV, Einspeisung: Die Netzladung speist nicht selbst ein."""
+        inv = _netzlader(mock_hass, anlage, bezug_w=-2000.0, batterie_w=3000.0)
+        await inv.async_set_grid_charge(3.0, 80)
+        assert anlage.wert(SOLLWERT) == 0.0
+
+    async def test_ohne_messung_kein_bezug(self, mock_hass, anlage, soc_beobachter):
+        inv = _netzlader(mock_hass, anlage)
+        anlage.setze(NETZ, "unavailable")
+        anlage.setze(SOLLWERT, "50")
+        assert await inv.async_set_grid_charge(3.0, 80) is True
+        assert anlage.wert(SOLLWERT) == 0.0
+
+    async def test_auf_den_bereich_des_ladestroms_begrenzt(self, mock_hass, anlage, soc_beobachter):
+        anlage.werte[LADESTROM][1] = {"min": -1, "max": 50}
+        inv = _netzlader(mock_hass, anlage)
+        await inv.async_set_grid_charge(5.0, 80)
+        assert anlage.wert(LADESTROM) == 50.0
+
+    async def test_ohne_spannung_kein_bezug(self, mock_hass, anlage, soc_beobachter):
+        inv = _netzlader(mock_hass, anlage)
+        await inv.async_set_grid_charge(3.0, 80)
+        anlage.setze(SPANNUNG, "unavailable")
+        assert await inv.async_set_grid_charge(2.0, 80) is False
+        assert inv.last_write_error == "Batteriespannung unbekannt"
+        assert anlage.wert(SOLLWERT) == 0.0
+        soc_beobachter.takt_abmelder.assert_called_once()
+
+    async def test_am_ziel_wird_nicht_geladen(self, mock_hass, anlage, soc_beobachter):
+        inv = _netzlader(mock_hass, anlage, soc="80")
+        assert await inv.async_set_grid_charge(3.0, 80) is True
+        mock_hass.services.async_call.assert_not_called()
+
+    async def test_ziel_nimmt_beide_werte_zurueck(self, mock_hass, anlage, soc_beobachter):
+        inv = _netzlader(mock_hass, anlage)
+        await inv.async_set_grid_charge(3.0, 80)
+        [(entities, rueckruf)] = soc_beobachter.rueckrufe
+        assert entities == [SOC]
+        anlage.setze(SOC, "79")
+        rueckruf(None)
+        mock_hass.async_create_task.assert_not_called()
+        anlage.setze(SOC, "80")
+        rueckruf(None)
+        await mock_hass.async_create_task.call_args.args[0]
+        assert anlage.wert(SOLLWERT) == 0.0
+        assert anlage.wert(LADESTROM) == 125.0
+        soc_beobachter.takt_abmelder.assert_called_once()
+
+    async def test_ohne_ziel_bis_voll(self, mock_hass, anlage, soc_beobachter):
+        inv = _netzlader(mock_hass, anlage)
+        await inv.async_set_grid_charge(3.0, None)
+        assert inv._ziel_soc == 100.0 and inv._ziel_laden is True
+
+    async def test_entladung_danach_beendet_die_nachfuehrung(
+        self, mock_hass, anlage, soc_beobachter
+    ):
+        inv = _netzlader(mock_hass, anlage)
+        await inv.async_set_grid_charge(3.0, 80)
+        await inv.async_set_discharge(2.0, 30)
+        soc_beobachter.takt_abmelder.assert_called_once()
+        assert anlage.wert(SOLLWERT) == -2000.0
+        assert anlage.wert(LADESTROM) == 125.0
+        assert inv._ziel_laden is False and inv._ziel_soc == 30
+
+    async def test_ladelimit_danach_nimmt_den_bezug_zurueck(
+        self, mock_hass, anlage, soc_beobachter
+    ):
+        inv = _netzlader(mock_hass, anlage)
+        await inv.async_set_grid_charge(3.0, 80)
+        await inv.async_set_charge_limit(0)
+        assert anlage.wert(SOLLWERT) == 0.0
+        assert anlage.wert(LADESTROM) == 0.0
+        soc_beobachter.takt_abmelder.assert_called_once()
+
+    async def test_freigabe_stellt_alles_wieder_her(self, mock_hass, anlage, soc_beobachter):
+        inv = _netzlader(mock_hass, anlage)
+        await inv.async_set_grid_charge(3.0, 80)
+        assert await inv.async_stop_forcible() is True
+        assert anlage.wert(SOLLWERT) == 0.0
+        assert anlage.wert(LADESTROM) == 125.0
+        assert inv._netzladung_kw is None
+
+    async def test_takt_nach_der_freigabe_schreibt_nichts(
+        self, mock_hass, anlage, soc_beobachter
+    ):
+        inv = _netzlader(mock_hass, anlage)
+        await inv.async_set_grid_charge(3.0, 80)
+        [(takt, _)] = soc_beobachter.takte
+        await inv.async_stop_forcible()
+        vorher = len(_schreibvorgaenge(mock_hass))
+        await takt(None)
+        assert len(_schreibvorgaenge(mock_hass)) == vorher
+
+    async def test_neuer_befehl_nur_ein_takt(self, mock_hass, anlage, soc_beobachter):
+        inv = _netzlader(mock_hass, anlage)
+        await inv.async_set_grid_charge(3.0, 80)
+        await inv.async_set_grid_charge(2.0, 85)
+        assert len(soc_beobachter.takte) == 1
+        assert len(soc_beobachter.rueckrufe) == 1
+        assert anlage.wert(LADESTROM) == pytest.approx(38.0)
+
+    async def test_schreibfehler(self, mock_hass, anlage, soc_beobachter):
+        anlage.schreibfehler = True
+        inv = _netzlader(mock_hass, anlage)
+        assert await inv.async_set_grid_charge(3.0, 80) is False
+        assert inv.last_write_error == "RuntimeError"
+        assert inv._ziel_soc is None and inv._netzladung_kw is None
+        soc_beobachter.abmelder.assert_called_once()
+        assert soc_beobachter.takte == []
+
+    async def test_kein_aufschaukeln_wenn_die_batterie_nicht_folgt(
+        self, mock_hass, anlage, soc_beobachter
+    ):
+        """Absorptionsphase: Die Batterie nimmt nur 1,5 kW, das ESS hält den
+        Sollwert durch Abregeln der PV. Ohne Sperre stiege er Takt für Takt,
+        bis alle PV abgeregelt wäre."""
+        inv = _netzlader(mock_hass, anlage)
+        await inv.async_set_grid_charge(3.0, 80)  # Sollwert 2,3 kW
+        [(takt, _)] = soc_beobachter.takte
+        anlage.setze(BATTERIE, 1500.0)
+        sollwerte = []
+        for _ in range(30):
+            anlage.setze(NETZ, anlage.wert(SOLLWERT))  # ESS hält den Sollwert
+            await takt(None)
+            sollwerte.append(anlage.wert(SOLLWERT))
+        assert max(sollwerte) <= 2300.0
+        assert sollwerte[0] == 500.0  # Anhebung (1,8 kW) zurückgenommen
+
+    async def test_nach_der_sperre_wird_wieder_angehoben(self, mock_hass, anlage, soc_beobachter):
+        """Folgt die Batterie wieder (Wolke statt Absorption), steigt der
+        Sollwert nach der Sperre in Schritten von höchstens 1 kW."""
+        from custom_components.eeg_energy_optimizer.inverter.victron import (
+            NETZLADEN_SPERRE_TAKTE,
+        )
+
+        inv = _netzlader(mock_hass, anlage)
+        await inv.async_set_grid_charge(3.0, 80)
+        [(takt, _)] = soc_beobachter.takte
+        anlage.setze(BATTERIE, 1000.0)
+        anlage.setze(NETZ, 2300.0)
+        await takt(None)  # nicht gefolgt → 0,5 kW, gesperrt
+        for _ in range(NETZLADEN_SPERRE_TAKTE - 1):
+            await takt(None)
+        assert anlage.wert(SOLLWERT) == 500.0
+        await takt(None)
+        assert anlage.wert(SOLLWERT) == 1500.0
+
+    async def test_takt_ohne_messung_haelt(self, mock_hass, anlage, soc_beobachter):
+        inv = _netzlader(mock_hass, anlage)
+        await inv.async_set_grid_charge(3.0, 80)
+        [(takt, _)] = soc_beobachter.takte
+        anlage.setze(NETZ, "unavailable")
+        await takt(None)
+        assert anlage.wert(SOLLWERT) == 2300.0
+
+    async def test_sollwert_auf_den_bereich_begrenzt(self, mock_hass, anlage, soc_beobachter):
+        anlage.werte[SOLLWERT][1] = {"min": -1000, "max": 1000}
+        inv = _netzlader(mock_hass, anlage)
+        await inv.async_set_grid_charge(3.0, 80)
+        assert anlage.wert(SOLLWERT) == 1000.0
+
+    async def test_null_kw_ist_eine_freigabe(self, mock_hass, anlage, soc_beobachter):
+        """Die Netzgrenze lässt nichts zu: 0 A sperrte auch das Laden aus PV."""
+        inv = _netzlader(mock_hass, anlage)
+        await inv.async_set_grid_charge(3.0, 80)
+        assert await inv.async_set_grid_charge(0.0, 80) is True
+        assert anlage.wert(LADESTROM) == 125.0
+        assert anlage.wert(SOLLWERT) == 0.0
+        soc_beobachter.takt_abmelder.assert_called_once()
+
+    async def test_teilfehler_beim_start_laesst_nichts_stehen(
+        self, mock_hass, anlage, soc_beobachter
+    ):
+        """Ladestrom geschrieben, Sollwert scheitert: Der Executor hält den
+        Befehl für gescheitert — der Deckel darf nicht bleiben."""
+        inv = _netzlader(mock_hass, anlage)
+        original = anlage.call
+
+        async def sollwert_scheitert(domain, service, data, blocking=False):
+            if data["entity_id"] == SOLLWERT and data["value"] > 0:
+                raise RuntimeError("MQTT Zeitüberschreitung")
+            await original(domain, service, data, blocking)
+
+        mock_hass.services.async_call = AsyncMock(side_effect=sollwert_scheitert)
+        assert await inv.async_set_grid_charge(3.0, 80) is False
+        assert anlage.wert(LADESTROM) == 125.0
+        assert anlage.wert(SOLLWERT) == 0.0
+        assert inv._ziel_soc is None and inv._netzladung_kw is None
+        assert inv._state_store.vorwert("ladestrom") is None
+
+    async def test_unlesbarer_sollwert_verhindert_auch_den_deckel(
+        self, mock_hass, anlage, soc_beobachter
+    ):
+        anlage.setze(SOLLWERT, "unavailable")
+        inv = _netzlader(mock_hass, anlage)
+        assert await inv.async_set_grid_charge(3.0, 80) is False
+        assert inv.last_write_error == "Vorwert netzsollwert unlesbar"
+        mock_hass.services.async_call.assert_not_called()
+
+    async def test_fehlgeschlagene_zielruecknahme_wird_im_takt_wiederholt(
+        self, mock_hass, anlage, soc_beobachter
+    ):
+        """Am Ziel ändert sich der SOC womöglich nicht mehr — ein stehender
+        positiver Sollwert kaufte bis zum Slotwechsel weiter."""
+        inv = _netzlader(mock_hass, anlage)
+        await inv.async_set_grid_charge(3.0, 80)
+        [(takt, _)] = soc_beobachter.takte
+        [(_, rueckruf)] = soc_beobachter.rueckrufe
+        anlage.setze(SOC, "80")
+        anlage.schreibfehler = True
+        rueckruf(None)
+        await mock_hass.async_create_task.call_args.args[0]
+        assert anlage.wert(SOLLWERT) == 2300.0
+        soc_beobachter.takt_abmelder.assert_not_called()
+        anlage.schreibfehler = False
+        await takt(None)
+        assert anlage.wert(SOLLWERT) == 0.0
+        assert anlage.wert(LADESTROM) == 125.0
+        soc_beobachter.takt_abmelder.assert_called_once()

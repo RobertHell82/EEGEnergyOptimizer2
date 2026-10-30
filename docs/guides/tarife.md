@@ -88,9 +88,9 @@ Zeiträume, Uhrzeiten und Rabatt stehen in der Verordnung und sind deshalb fest.
 
 Nur sichtbar, wenn im Tab **System** der Expertenmodus eingeschaltet ist. **Alterungskosten der Batterie (ct/kWh)** ist, was eine durchgesetzte Kilowattstunde die Batterie an Lebensdauer kostet. Höhere Werte machen die Optimierung zurückhaltender: Sie speichert nur, wenn sich der Umweg lohnt. Leer gilt 1 ct. Bei der Entladung in die Gemeinschaft ist der Wert die Schwelle — sie kommt erst zustande, wenn der Nachtsatz über der Einspeisevergütung plus Alterungskosten liegt.
 
-### Batterie aus dem Netz laden (Beta, Expertenmodus, nur Huawei)
+### Batterie aus dem Netz laden (Beta, Expertenmodus, Huawei und Victron)
 
-Nur in den **Einstellungen**, nur mit Expertenmodus und nur mit einem Huawei-Wechselrichter. Ohne Haken rechnet der Fahrplan genau wie vorher, und keines der Felder darunter ist Pflicht.
+Nur in den **Einstellungen**, nur mit Expertenmodus und nur mit einem Huawei-Wechselrichter oder einem Victron-System (Victron im Feldtest). Ohne Haken rechnet der Fahrplan genau wie vorher, und keines der Felder darunter ist Pflicht.
 
 Mit Haken darf der Fahrplan das **Ladeziel** auch mit Netzstrom erreichen, wenn die Sonne an einem trüben Tag nicht reicht. Er kauft aber nur in Viertelstunden, in denen der Netzstrom billiger ist als der Strom, den die Batterie danach ersetzt: der Bezugspreis der Nacht nach dem Ende der PV-Zeit, abzüglich Lade- und Entladeverlust, Alterungskosten und Mindestvorteil. Gekauft wird nur vor dem Ende der PV-Zeit. Ob die Nacht die Energie wirklich braucht, fragt er nicht: Was übrig bleibt, speist er später ein, wenn sich das lohnt. Der Preis dafür ist eine volle Batterie am Abend. Höher als der **maximale Ladestand** (Anlage & Batterie) lädt er nie, und nie schneller als die Batterieleistung.
 

@@ -107,21 +107,18 @@ steht in [NECESSARY_SENSORS_NEW_INVERTER.md](../NECESSARY_SENSORS_NEW_INVERTER.m
    Kurzfassung des CHANGELOG-Abschnitts. Betas (`X.Y.Z-beta.N`) als
    Prerelease.
 
-### Netzladen: in Betas an, in Releases aus
+### Netzladen: auch in Releases an
 
-„Batterie aus dem Netz laden“ ist Beta. Zwei Schalter werden immer
-gemeinsam umgelegt: `NETZLADEN_FREIGEGEBEN` in `schedule.py` (Sperre in
-`netzladen_max_kw`) und `NETZLADEN_SICHTBAR` im Panel.
+„Batterie aus dem Netz laden“ ist seit dem 30.10.2026 auch in stabilen
+Releases eingeschaltet und bleibt in den Einstellungen als **Beta**
+gekennzeichnet. Bis dahin wurde es für jedes Release aus- und für die
+nächste Beta wieder eingeschaltet (Beispiele: `ffe9747`, `5601904`); das
+entfällt.
 
-- **Stabiles Release:** vor dem Release-Commit beide auf `false`, den
-  Abschnitt „Batterie aus dem Netz laden“ aus `docs/guides/tarife.md`
-  entfernen und `python scripts/build_guides.py` laufen lassen — als eigener
-  Commit (Beispiel: `ffe9747`).
-- **Nächste Beta:** beide wieder auf `true`, den Abschnitt aus Git
-  zurückholen, Guides neu bauen (Beispiel: `5601904`).
-
-Die Tests in `tests/test_netzladen.py` schalten die Funktion per Fixture
-ein und laufen deshalb in beiden Zuständen; `test_zurueckgezogen_wirkt_nicht`
+Die beiden Schalter bleiben als Notschalter: `NETZLADEN_FREIGEGEBEN` in
+`schedule.py` (Sperre in `netzladen_max_kw`) und `NETZLADEN_SICHTBAR` im
+Panel, immer gemeinsam. Nur ausgeblendet, aber wirksam, ließe sich ein
+gesetzter Haken nicht mehr abschalten. `test_zurueckgezogen_wirkt_nicht`
 hält fest, dass die Sperre im ausgeschalteten Zustand greift.
 
 ## Weitere interne Dokumente

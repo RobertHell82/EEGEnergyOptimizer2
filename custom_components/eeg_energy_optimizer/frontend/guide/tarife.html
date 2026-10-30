@@ -141,8 +141,8 @@
 
 <h4>Alterungskosten der Batterie (Expertenmodus)</h4>
 <p>Nur sichtbar, wenn im Tab <strong>System</strong> der Expertenmodus eingeschaltet ist. <strong>Alterungskosten der Batterie (ct/kWh)</strong> ist, was eine durchgesetzte Kilowattstunde die Batterie an Lebensdauer kostet. Höhere Werte machen die Optimierung zurückhaltender: Sie speichert nur, wenn sich der Umweg lohnt. Leer gilt 1 ct. Bei der Entladung in die Gemeinschaft ist der Wert die Schwelle — sie kommt erst zustande, wenn der Nachtsatz über der Einspeisevergütung plus Alterungskosten liegt.</p>
-<h4>Batterie aus dem Netz laden (Beta, Expertenmodus, nur Huawei)</h4>
-<p>Nur in den <strong>Einstellungen</strong>, nur mit Expertenmodus und nur mit einem Huawei-Wechselrichter. Ohne Haken rechnet der Fahrplan genau wie vorher, und keines der Felder darunter ist Pflicht.</p>
+<h4>Batterie aus dem Netz laden (Beta, Expertenmodus, Huawei und Victron)</h4>
+<p>Nur in den <strong>Einstellungen</strong>, nur mit Expertenmodus und nur mit einem Huawei-Wechselrichter oder einem Victron-System (Victron im Feldtest). Ohne Haken rechnet der Fahrplan genau wie vorher, und keines der Felder darunter ist Pflicht.</p>
 <p>Mit Haken darf der Fahrplan das <strong>Ladeziel</strong> auch mit Netzstrom erreichen, wenn die Sonne an einem trüben Tag nicht reicht. Er kauft aber nur in Viertelstunden, in denen der Netzstrom billiger ist als der Strom, den die Batterie danach ersetzt: der Bezugspreis der Nacht nach dem Ende der PV-Zeit, abzüglich Lade- und Entladeverlust, Alterungskosten und Mindestvorteil. Gekauft wird nur vor dem Ende der PV-Zeit. Ob die Nacht die Energie wirklich braucht, fragt er nicht: Was übrig bleibt, speist er später ein, wenn sich das lohnt. Der Preis dafür ist eine volle Batterie am Abend. Höher als der <strong>maximale Ladestand</strong> (Anlage &amp; Batterie) lädt er nie, und nie schneller als die Batterieleistung.</p>
 <p>Billiger als die Nacht ist Netzstrom nur in drei Fällen, und mindestens einer muss eingerichtet sein:</p>
 <ul>

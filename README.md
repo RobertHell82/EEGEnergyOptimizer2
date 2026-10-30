@@ -17,7 +17,7 @@ HACS-kompatible Home Assistant Integration für vorausschauendes Batteriemanagem
 - **Prognosevergleich** — die zweite Quelle läuft mit, ohne zu steuern; jeden Morgen werden beide Prognosen festgehalten und im Dashboard gegen die Messung gestellt (Diagramm je Tag, Abweichung der letzten 30 Tage)
 - **Verbrauchsprofil** — lernt den stündlichen Verbrauch aus den HA-Recorder-Daten, getrennt nach Werktag und Wochenende/Feiertag
 - **Live-Dashboard** — Sidebar-Panel mit Energiefluss, Fahrplan und Ist-Verlauf, PeakShare-Bedarfskurve, Geldbilanz, Einspeise-Karte (was ins Netz ging, wie viel davon aus der Batterie, wie viel die Gemeinschaft genommen hat), Bezug-Karte (Netzbezug, Kosten zum Bezugspreis der Viertelstunde, höchste Viertelstunde) — beide je Tag, Monat, Jahr oder gesamt, mit Blättern in vergangene Zeiträume — und Aktivitätsprotokoll. Die Steuerung lässt sich pausieren — für eine Dauer oder bis die Batterie einen Ladestand erreicht hat
-- **Batterie aus dem Netz laden** (Beta, nur Huawei, Expertenmodus) — schafft die Sonne das Ladeziel nicht, darf der Fahrplan Netzstrom zukaufen, aber nur in Viertelstunden, in denen er billiger ist als der Strom, den die Batterie danach in der Nacht ersetzt (Spot-Bezug, Bezug aus der Gemeinschaft oder zeitvariable Netzentgelte)
+- **Batterie aus dem Netz laden** (Beta, Huawei und Victron, Expertenmodus) — schafft die Sonne das Ladeziel nicht, darf der Fahrplan Netzstrom zukaufen, aber nur in Viertelstunden, in denen er billiger ist als der Strom, den die Batterie danach in der Nacht ersetzt (Spot-Bezug, Bezug aus der Gemeinschaft oder zeitvariable Netzentgelte)
 - **Bezugsspitze** — misst den Netzbezug je Viertelstunde und die Monatsspitze, nach der sich ab 2027 der Leistungspreis des Netzentgelts richtet, samt Richtwert der Netzkosten (misst nur, steuert nicht)
 - **Einrichtungsassistent** — schrittweises Onboarding mit automatischer Sensorerkennung
 
@@ -149,7 +149,7 @@ Alle 30 Sekunden hält die **Steuerung** den zuletzt gerechneten Fahrplan gegen 
 - **Plant der Slot Einspeisung aus der Batterie**, wird eine erzwungene Entladung gestartet. Die **Entlade-Nachführung** rechnet die gemessene Hauslast auf die geplante Netzleistung auf, damit die geplante Einspeisung tatsächlich am Netzanschluss ankommt.
 - **Plant der Slot nur Entladung für das Haus**, wird der Wechselrichter freigegeben — das erledigt sein Automatikmodus selbst.
 - **Plant der Slot nichts**, kommt es auf die Sonne an: Erwartet er keinen PV-Überschuss (Nacht, trüber Nachmittag), wird freigegeben — ein Ladelimit hielte nichts frei und sperrte nur fremdes Laden („Normalbetrieb (kein PV-Überschuss)“). Mit Überschuss und Platz in der Batterie bleibt das Laden blockiert (Ladelimit 0) — sonst würde der Automatikmodus Überschuss laden, den der Plan einspeisen will. Ist die Batterie voll, wird gar nicht eingegriffen.
-- **Plant der Slot Laden aus dem Netz** (Beta, nur Huawei), lädt der Wechselrichter mit der geplanten Leistung bis zum geplanten Ladestand, PV zuerst, den Rest aus dem Netz („Netzladung x kW bis y %“).
+- **Plant der Slot Laden aus dem Netz** (Beta, Huawei und Victron), lädt der Wechselrichter mit der geplanten Leistung bis zum geplanten Ladestand, PV zuerst, den Rest aus dem Netz („Netzladung x kW bis y %“).
 - **Ist ein Heizstab eingerichtet**, führt die Steuerung ihn im selben Takt nach: geregelt auf „Einspeisung ≈ 0“, gedeckelt auf die geplante Wärme. Der Sollwert geht alle 20 Sekunden an den Ohmpilot, weil dessen Watchdog nach 50 Sekunden abschaltet.
 
 Sicherheitsnetze:
