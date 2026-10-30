@@ -1422,6 +1422,35 @@ class EnergieBilanz:
             "reihe": self._bezug_reihe(zeitraum, tage, auswahl, heute_datum),
         }
 
+    def tagesspitzen(self, monat: str) -> list[dict[str, Any]]:
+        """Höchste Viertelstunde Netzbezug je Tag eines Monats (``JJJJ-MM``).
+
+        Für die Karte „Bezugsspitze & Spitzenkappung". Je Bilanztag
+        (04:00–04:00) — eine Spitze um 02:00 am Monatsersten zählt also zum
+        letzten Tag des Vormonats; für die Monatsspitze selbst gilt die
+        Messung der Leistungsspitze (Kalendermonat). Der laufende Tag kommt
+        aus der laufenden Reihe, ältere aus dem Archiv (seit 2.1.30 mit
+        Spitze).
+        """
+        tage: dict[str, dict[str, Any]] = {
+            d: e for d, e in self._tage.items() if str(d).startswith(monat)
+        }
+        heute = self._heute.get("datum") or ""
+        if heute.startswith(monat):
+            tage[heute] = self._bezug_tag(self._heute)
+        reihe = []
+        for datum in sorted(tage):
+            e = tage[datum]
+            kw = e.get("bezug_spitze_kw")
+            if kw is None:
+                continue
+            reihe.append({
+                "datum": datum,
+                "spitze_kw": round(float(kw), 2),
+                "zeit": e.get("bezug_spitze_zeit"),
+            })
+        return reihe
+
     def _bezug_tag(self, tag: dict[str, Any]) -> dict[str, Any]:
         """Die Bezugs-Felder von ``bewerte_tag`` — ohne den Rest der Bewertung."""
         paare = self._sortierte_paare(tag)

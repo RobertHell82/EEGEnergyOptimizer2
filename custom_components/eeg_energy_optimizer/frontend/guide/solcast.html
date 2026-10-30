@@ -2,60 +2,60 @@
      Quelle: docs/guides/solcast.md
      Neu generieren mit: python scripts/build_guides.py -->
 <h2 class="guide-title">Solcast Solar einrichten</h2>
-<h3>1. Registrierung bei Solcast</h3>
+<h3>1. Bei Solcast registrieren</h3>
 <ol>
-<li>Gehe auf <a href="https://toolkit.solcast.com.au/">toolkit.solcast.com.au</a> um dich zu registrieren.</li>
-<li>Wähle dort den Accounttyp <strong>Home User</strong>.<br>
+<li>Registriere dich auf <a href="https://toolkit.solcast.com.au/">toolkit.solcast.com.au</a>.</li>
+<li>Wähle den Accounttyp <strong>Home User</strong>.<br>
    <img alt="Home User wählen" src="/eeg_optimizer_panel/guide/solcast/01_Home_User.png" /></li>
 <li>Wähle <strong>Hobbyist</strong>, gib deine Daten ein und klicke auf <strong>Submit</strong>.<br>
    <img alt="Registrierung" src="/eeg_optimizer_panel/guide/solcast/02_Registration.png" /></li>
 <li>Wähle ein Passwort und klicke auf <strong>Submit</strong>.</li>
-<li>Du erhältst eine E-Mail zur Bestätigung — öffne den Link darin.</li>
-<li>Melde dich mit dem neuen Benutzer an.</li>
+<li>Öffne den Link in der Bestätigungs-E-Mail.</li>
+<li>Melde dich an.</li>
 <li>Klicke auf <strong>„Add your first Home PV System to get started"</strong>.<br>
    <img alt="PV System hinzufügen" src="/eeg_optimizer_panel/guide/solcast/03_Add_PV_System.png" /></li>
 <li>
-<p>Daten der PV-Anlage erfassen:</p>
+<p>Gib deine Anlage ein:</p>
 <ul>
 <li><strong>Capacity (kW)</strong> — Anlagenleistung in kWp (z.B. 10)</li>
 <li><strong>Tilt</strong> — Dachneigung in Grad (typisch 30–35°)</li>
-<li><strong>Azimuth</strong> — Ausrichtung: 0°=Nord, -90°=Ost, ±180°=Süd, 90°=West</li>
+<li><strong>Azimuth</strong> — Ausrichtung: 0° = Nord, -90° = Ost, ±180° = Süd, 90° = West</li>
 </ul>
-<p>Auf <strong>Submit</strong> klicken.<br>
+<p>Klicke auf <strong>Submit</strong>.<br>
 <img alt="PV System speichern" src="/eeg_optimizer_panel/guide/solcast/04_Save_PV_System.png" /></p>
 </li>
 <li>
-<p><strong>Mehrere Ausrichtungen (Ost/West)?</strong> Klicke auf <strong>„Add another PV System"</strong> und erfasse die zweite Dachfläche separat. Beide nutzen denselben API-Key.</p>
+<p><strong>Mehrere Ausrichtungen (Ost/West)?</strong> Klicke auf <strong>„Add another PV System"</strong> und gib die zweite Dachfläche extra ein. Beide nutzen denselben API-Key.</p>
 </li>
-<li>Öffne oben rechts das Menü neben dem Benutzernamen und klicke auf <strong>Your API Key</strong>.</li>
-<li>Kopiere den angezeigten Key für später.<br>
+<li>Öffne oben rechts das Menü neben deinem Namen und klicke auf <strong>Your API Key</strong>.</li>
+<li>Kopiere den Key (deinen Zugangsschlüssel) für später.<br>
     <img alt="API Key kopieren" src="/eeg_optimizer_panel/guide/solcast/05_API_Key.png" /></li>
 </ol>
 <h3>2. Integration installieren — nur bei selbst eingerichtetem Gerät</h3>
-<div class="guide-alert note"><p><strong>Vorbereitetes EEG-Gerät (Home Assistant Green) erhalten?</strong> Dann ist die Solcast-Integration bereits installiert. <strong>Überspringe diesen Abschnitt</strong> und mache direkt bei <strong>3. API-Key in Home Assistant eintragen</strong> weiter.</p></div>
+<div class="guide-alert note"><p><strong>Vorbereitetes EEG-Gerät (Home Assistant Green) erhalten?</strong> Dann ist Solcast schon installiert. <strong>Überspringe diesen Abschnitt</strong> und mach bei <strong>3. API-Key in Home Assistant eintragen</strong> weiter.</p></div>
 
-<p><em><strong>Voraussetzung:</strong> <a href="https://hacs.xyz/">HACS</a> muss installiert sein (Solcast ist eine Custom Integration, kein HA-Standard).</em></p>
+<p><em><strong>Voraussetzung:</strong> <a href="https://hacs.xyz/">HACS</a> ist installiert (Solcast ist nicht in Home Assistant enthalten).</em></p>
 <ol>
-<li>Gehe zu <strong>HACS</strong> und suche dort nach <strong>„Solcast PV Forecast"</strong></li>
+<li>Suche in <strong>HACS</strong> nach <strong>„Solcast PV Forecast"</strong></li>
 <li>Installiere die Integration und starte Home Assistant neu.</li>
 </ol>
 <h3>3. API-Key in Home Assistant eintragen</h3>
-<p><em>Dieser Abschnitt gilt für <strong>alle</strong> — auch bei einem vorbereiteten EEG-Gerät, denn jedes Mitglied nutzt seinen eigenen API-Key.</em></p>
-<p>Den Key trägst du <strong>nicht</strong> im EEG Energy Optimizer ein, sondern in der Solcast-Integration von Home Assistant:</p>
+<p><em>Das gilt für <strong>alle</strong>, auch beim vorbereiteten EEG-Gerät — jedes Mitglied hat seinen eigenen Key.</em></p>
+<p>Den Key trägst du in der Solcast-Integration ein, <strong>nicht</strong> im EEG Energy Optimizer:</p>
 <ol>
-<li>Klicke in Home Assistant links unten auf <strong>Einstellungen</strong>, dann auf <strong>Geräte &amp; Dienste</strong>.</li>
-<li>Klicke rechts unten auf den blauen Knopf <strong>„+ Integration hinzufügen"</strong>.</li>
-<li>Tippe in das Suchfeld <strong>„Solcast"</strong> und wähle <strong>Solcast PV Forecast</strong>.</li>
-<li>Es öffnet sich ein Fenster mit dem Feld <strong>API-Key</strong>: Füge dort den zuvor kopierten Key ein (Rechtsklick → Einfügen bzw. lange auf das Feld tippen). Lasse die restlichen Einstellungen wie vorausgewählt und klicke auf <strong>OK</strong> bzw. <strong>Absenden</strong>.</li>
-<li>Aktiviere die deaktivierten Prognose-Sensoren für die Tage 3 bis 7: Klicke den Sensor an, dann auf das Zahnrad und stelle ihn auf <strong>Aktiviert</strong>.<br>
+<li>Klicke links unten auf <strong>Einstellungen</strong>, dann auf <strong>Geräte &amp; Dienste</strong>.</li>
+<li>Klicke rechts unten auf <strong>„+ Integration hinzufügen"</strong>.</li>
+<li>Tippe <strong>„Solcast"</strong> ein und wähle <strong>Solcast PV Forecast</strong>.</li>
+<li>Füge im Feld <strong>API-Key</strong> deinen Key ein (Rechtsklick → Einfügen bzw. lange auf das Feld tippen). Lass den Rest wie vorgegeben und klicke auf <strong>OK</strong> bzw. <strong>Absenden</strong>.</li>
+<li>Schalte die Prognose-Sensoren für die Tage 3 bis 7 ein: Sensor anklicken, Zahnrad, <strong>Aktiviert</strong>.<br>
    <img alt="Sensoren aktivieren" src="/eeg_optimizer_panel/guide/solcast/06_Prognosesensoren.png" /></li>
 </ol>
-<div class="guide-alert note"><p><strong>Solcast taucht in der Suche nicht auf?</strong> Dann ist die Integration nicht installiert — siehe Abschnitt 2. <strong>Meldung „Ungültiger API-Key"?</strong> Key in Solcast noch einmal kopieren (oben rechts im Menü → <strong>Your API Key</strong>) und darauf achten, dass kein Leerzeichen am Anfang oder Ende mitkommt.</p></div>
+<div class="guide-alert note"><p><strong>Solcast taucht in der Suche nicht auf?</strong> Dann ist die Integration nicht installiert — siehe Abschnitt 2. <strong>Meldung „Ungültiger API-Key"?</strong> Kopiere den Key noch einmal (oben rechts im Menü → <strong>Your API Key</strong>), ohne Leerzeichen am Anfang oder Ende.</p></div>
 
 <h3>4. Prüfen</h3>
 <ol>
-<li>Warte 1–2 Minuten nach der Einrichtung</li>
-<li>Prüfe unter <strong>Entwicklerwerkzeuge → Zustände</strong>: Suche nach <code>solcast</code></li>
-<li>Die Sensoren <code>sensor.solcast_pv_forecast_prognose_verbleibende_leistung_heute</code> (die <strong>verbleibende</strong> Prognose für heute, nicht die Tagessumme) und <code>sensor.solcast_pv_forecast_prognose_morgen</code> sollten kWh-Werte zeigen. Ältere Versionen der Integration nennen sie <code>…_prognose_fuer_heute</code> und <code>…_prognose_fuer_morgen</code></li>
+<li>Warte 1–2 Minuten</li>
+<li>Suche unter <strong>Entwicklerwerkzeuge → Zustände</strong> nach <code>solcast</code></li>
+<li><code>sensor.solcast_pv_forecast_prognose_verbleibende_leistung_heute</code> (was heute <strong>noch</strong> kommt, nicht die Tagessumme) und <code>sensor.solcast_pv_forecast_prognose_morgen</code> sollten kWh-Werte zeigen. Ältere Versionen heißen <code>…_prognose_fuer_heute</code> und <code>…_prognose_fuer_morgen</code></li>
 <li>Kehre hierher zurück — die Sensoren werden automatisch zugeordnet</li>
 </ol>

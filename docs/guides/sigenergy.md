@@ -1,47 +1,59 @@
 # Sigenergy einrichten
 
+_**Modbus TCP** ist die Sprache, mit der Home Assistant im Heimnetz direkt mit dem Wechselrichter redet. Die **IP-Adresse** ist die Adresse des Geräts in deinem Heimnetz. Eine **Entität** ist ein einzelner Wert oder Schalter in Home Assistant._
+
 ## 1. Unterstützte Geräte
 
-**SigenStor**-Anlagen mit Batteriespeicher (EC- und CMU-Serie, Hybrid) ab Firmware **SPC109**; damit das Ladelimit auch im Eigenverbrauchsmodus wirkt, ab **SPC113** (siehe unten). Gesteuert wird die **ganze Anlage** über eine Verbindung — auch wenn mehrere Wechselrichter parallel laufen.
+**SigenStor**-Anlagen mit Batteriespeicher (EC- und CMU-Serie, Hybrid):
+
+| Firmware | |
+|---|---|
+| ab **SPC109** | unterstützt |
+| ab **SPC113** | nötig, damit das Ladelimit auch im Eigenverbrauchsmodus wirkt (siehe unten) |
+
+Gesteuert wird die **ganze Anlage** über eine Verbindung — auch bei mehreren Wechselrichtern.
 
 _Getestet mit SigenStor EC 25.0 TP (Firmware V100R001C21SPC116, 40 kWh Speicher)._
 
 ## 2. Modbus TCP am Gerät freischalten
 
-Der Wechselrichter muss seine Modbus-TCP-Schnittstelle anbieten. Das schaltet der Installateur (oder du mit Installateur-Zugang) in der **Sigen-App** frei:
+Das macht der Installateur (oder du mit Installateur-Zugang) in der **Sigen-App**:
 
 **System → Devices → SigenStor → Operation → Parameter Settings → ModBus Settings → Local ModBus TCP** aktivieren.
 
 Port ist **502**. Home Assistant muss das Gerät im Netzwerk erreichen (gleiches LAN oder Route).
 
 > [!NOTE]
-> Die IP des Wechselrichters zeigt die Sigen-App unter den Geräteinformationen. Alternativ im Router nachsehen oder aus Home Assistant heraus nach einem offenen Port 502 suchen.
+> Die IP des Wechselrichters steht in der Sigen-App bei den Geräteinformationen. Oder du siehst im Router nach, oder suchst aus Home Assistant nach einem offenen Port 502.
 
 ## 3. HACS-Integration installieren
 
-_**Voraussetzung:** [HACS](https://hacs.xyz/) muss installiert sein._
+_**Voraussetzung:** [HACS](https://hacs.xyz/) (Zusatz-Store für Home Assistant) muss installiert sein._
 
-1. Gehe zu **HACS** und suche dort nach **„Sigenergy"**<br>
+1. Gehe zu **HACS** und suche nach **„Sigenergy"**.<br>
    _Repository: `TypQxQ/Sigenergy-Local-Modbus`_
-2. Installiere die Integration und **starte Home Assistant neu**
+2. Installiere die Integration und **starte Home Assistant neu**.
 
 ## 4. Integration konfigurieren
 
-1. Gehe zu **Einstellungen → Geräte & Dienste → Integration hinzufügen**
-2. Suche nach **„Sigenergy ESS"**
-3. Gib die **IP-Adresse** des Wechselrichters ein, Port **502**
-4. Die Anlagen-Adresse (Plant-ID) bleibt auf **247** — das ist die Sammeladresse für die ganze Anlage
+1. **Einstellungen → Geräte & Dienste → Integration hinzufügen**
+2. Suche nach **„Sigenergy ESS"**.
+3. Gib die **IP-Adresse** des Wechselrichters ein, Port **502**.
+4. Die Anlagen-Adresse (Plant-ID) bleibt auf **247** — das ist die Adresse für die ganze Anlage.
 
-Danach erscheinen mehrere Geräte: **„Sigen Plant"** (die Anlage), „Sigen Inverter" (je Wechselrichter), „Sigen Inverter PV1…" (Strings) und ggf. ein DC-Ladegerät. **Der Optimizer arbeitet mit dem Gerät „Sigen Plant".**
+Danach gibt es mehrere Geräte: **„Sigen Plant"** (die Anlage), „Sigen Inverter" (je Wechselrichter), „Sigen Inverter PV1…" (Strings) und ggf. ein DC-Ladegerät. **Der Optimizer arbeitet mit „Sigen Plant".**
 
 ## 5. Steuerentitäten aktivieren — Pflicht
 
-Die Integration legt **alle Steuerentitäten deaktiviert** an. Ohne die folgenden vier kann der Optimizer nichts stellen, und der Einrichtungsassistent lässt dich nicht weiter:
+Die Integration legt **alle Steuerentitäten ausgeschaltet (deaktiviert)** an. Ohne die vier unten kann der Optimizer nichts steuern, und der Assistent lässt dich nicht weiter.
 
-1. Gehe zu **Einstellungen → Geräte & Dienste → Sigenergy ESS**
-2. Öffne das Gerät **„Sigen Plant"**
-3. Klicke in der Entitäten-Liste auf **„+ x Entitäten sind deaktiviert"**
-4. Aktiviere nacheinander (Entität anklicken → Zahnrad → **Aktiviert** → **Aktualisieren**):
+1. **Einstellungen → Geräte & Dienste → Sigenergy ESS**
+2. Öffne das Gerät **„Sigen Plant"**.
+3. Klicke in der Entitäten-Liste auf **„+ x Entitäten sind deaktiviert"**.
+4. Aktiviere die Entitäten aus der Tabelle unten, eine nach der anderen: Entität anklicken → Zahnrad → **Aktiviert** → **Aktualisieren**.
+5. Warte etwa 30 Sekunden, bis die Entitäten Werte zeigen.
+
+**Pflicht:**
 
 | Entität | Typ | Wofür |
 |---|---|---|
@@ -50,20 +62,18 @@ Die Integration legt **alle Steuerentitäten deaktiviert** an. Ohne die folgende
 | **ESS Max Charging Limit** | Zahl (kW) | Ladelimit des Speichers |
 | **ESS Max Discharging Limit** | Zahl (kW) | Entladeleistung des Speichers |
 
-Optional, als Untergrenze für den Fahrplan (der Optimizer liest sie nur):
+**Optional** — Untergrenze für den Fahrplan (der Optimizer liest sie nur):
 
 | Entität | Wofür |
 |---|---|
-| ESS Discharge Cut-Off State of Charge | Entladeboden des Geräts |
+| ESS Discharge Cut-Off State of Charge | Entladegrenze des Geräts |
 | ESS Backup State of Charge | Notstrom-Reserve des Geräts |
 
-5. Warte etwa 30 Sekunden, bis die Entitäten Werte zeigen
-
 > [!NOTE]
-> **„Remote EMS Control Mode" zeigt „nicht verfügbar", solange der Schalter „Remote EMS" aus ist.** Das ist normal — die Auswahl wird erst mit dem Schalter freigegeben. Der Optimizer schaltet ihn selbst ein, wenn er steuert, und wieder aus, wenn er freigibt.
+> **„Remote EMS Control Mode" zeigt „nicht verfügbar", solange der Schalter „Remote EMS" aus ist.** Das ist normal. Der Optimizer schaltet ihn selbst ein, wenn er steuert, und wieder aus, wenn er freigibt.
 
 > [!CAUTION]
-> Der Einrichtungsassistent zeigt im Schritt „Wechselrichter" den Zustand dieser Entitäten an. Steht dort „deaktiviert" oder „nicht vorhanden", zuerst hier aktivieren, dann den Wechselrichter im Assistenten erneut anklicken.
+> Der Assistent zeigt im Schritt „Wechselrichter" den Zustand dieser Entitäten. Steht dort „deaktiviert" oder „nicht vorhanden": zuerst hier aktivieren, dann den Wechselrichter im Assistenten noch einmal anklicken.
 
 ## 6. Sensoren
 
@@ -75,50 +85,50 @@ Der Optimizer erkennt die **Anlagen-Sensoren** automatisch (alle in **kW**):
 | Netzleistung | `sensor.sigen_plant_grid_active_power` | positiv = Bezug — wird automatisch umgerechnet |
 | Batterieleistung | `sensor.sigen_plant_battery_power` | positiv = Laden |
 | Ladestand | `sensor.sigen_plant_battery_state_of_charge` | |
-| Kapazität | `sensor.sigen_plant_rated_energy_capacity` | Sigenergy liefert die Kapazität als Sensor — keine manuelle Eingabe nötig |
+| Kapazität | `sensor.sigen_plant_rated_energy_capacity` | Kommt als Sensor — keine Eingabe von Hand nötig |
 
-_Wer das Gerät „Sigen Plant" umbenannt hat, bekommt andere Entity-IDs. Der Optimizer findet die Sensoren auch dann über ihre Endung._
+_Hast du das Gerät „Sigen Plant" umbenannt, heißen die Entitäten anders. Der Optimizer findet sie trotzdem über das Ende des Namens._
 
 ## 7. Betriebsmodus der Anlage
 
-Die Anlage soll in der Sigen-App im Modus **„Maximum Self Consumption"** (Eigenverbrauch) laufen. Zeitpläne wie **TOU** oder **Peak Shaving** kollidieren mit der Steuerung — ausschalten.
+Stelle die Anlage in der Sigen-App auf **„Maximum Self Consumption"** (Eigenverbrauch). Zeitpläne wie **TOU** oder **Peak Shaving** stören die Steuerung — ausschalten.
 
-Während der Optimizer steuert, steht der Schalter „Remote EMS" auf **an**; gibt er frei (Modus „Aus", Neustart, kein Plan), schaltet er ihn wieder **aus** und die Anlage läuft in ihrem eigenen Modus weiter.
+Während der Optimizer steuert, ist der Schalter „Remote EMS" **an**. Gibt er frei (Modus „Aus", Neustart, kein Plan), schaltet er ihn **aus**, und die Anlage läuft in ihrem eigenen Modus weiter.
 
 > [!WARNING]
-> **Nicht parallel eingreifen.** Die MySigen-App und andere Steuerungen (z. B. evcc) schreiben dieselben Register. Wer während der Steuerung in der App Werte ändert, überschreibt den Optimizer — oder umgekehrt.
+> **Nicht gleichzeitig eingreifen.** Die MySigen-App und andere Steuerungen (z. B. evcc) schreiben dieselben Register. Änderst du während der Steuerung Werte in der App, überschreibst du den Optimizer — oder umgekehrt.
 
 ## 8. Prüfen
 
-1. Unter **Einstellungen → Integrationen**: Sigenergy ESS zeigt **„geladen"**
-2. **Entwicklerwerkzeuge → Zustände**: `sensor.sigen_plant_battery_state_of_charge` zeigt den Ladestand (0–100 %)
-3. `switch.sigen_plant_remote_ems_controlled_by_home_assistant` existiert und steht auf **aus**
-4. Kehre hierher zurück — der Wechselrichter wird automatisch erkannt
+1. Unter **Einstellungen → Integrationen** zeigt Sigenergy ESS **„geladen"**.
+2. Unter **Entwicklerwerkzeuge → Zustände** zeigt `sensor.sigen_plant_battery_state_of_charge` den Ladestand (0–100 %).
+3. `switch.sigen_plant_remote_ems_controlled_by_home_assistant` existiert und steht auf **aus**.
+4. Kehre hierher zurück. Der Wechselrichter wird automatisch erkannt.
 
 ## Was der Optimizer am Gerät tut
 
-| Absicht des Fahrplans | Am Gerät |
+| Fahrplan will | Am Gerät |
 |---|---|
 | **Laden begrenzen** (auch 0 kW = Laden sperren) | Remote EMS an, Modus bleibt „Maximum Self Consumption“ — nur das Ladelimit wird gesetzt |
 | **Entladen ins Netz** | Remote EMS an → „Command Discharging (ESS First)" mit Entladelimit |
 | **Freigabe** (Normalbetrieb) | „Maximum Self Consumption" → Remote EMS **aus** |
 
 > [!WARNING]
-> **Kein geräteseitiges Sicherheitsnetz.** Sigenergy kennt — anders als Fronius, Kostal oder SMA — keine Rückfallzeit: Ein Befehl läuft am Gerät weiter, bis er zurückgenommen wird. Der Optimizer gibt beim Umschalten auf „Aus", bei fehlendem Plan und beim Neustart aktiv frei. Stürzt Home Assistant **hart** ab (Stromausfall, eingefrorenes System), bleibt der letzte Befehl stehen — dann den Schalter „Remote EMS" in Home Assistant oder der Sigen-App manuell ausschalten.
+> **Kein Sicherheitsnetz im Gerät.** Anders als Fronius, Kostal oder SMA hat Sigenergy keine Rückfallzeit: Ein Befehl läuft weiter, bis er zurückgenommen wird. Der Optimizer gibt bei „Aus", bei fehlendem Plan und beim Neustart selbst frei. Stürzt Home Assistant **hart** ab (Stromausfall, eingefroren), bleibt der letzte Befehl stehen. Dann schalte „Remote EMS" in Home Assistant oder in der Sigen-App von Hand aus.
 
 ## Zu beachten
 
-- **Kein „Command Charging“:** Für ein Ladelimit wird bewusst nicht in „Command Charging (PV First)“ geschaltet. Dieser Modus ist ein Ladebefehl, kein Limit — er lädt den Rest aus dem Netz, wenn die PV nicht reicht (an einer Anlage 5,35 kWh Netzladung an einem Morgen ohne Sonne).
-- **Firmware SPC113:** Im Eigenverbrauchsmodus wirkt das Ladelimit laut Anwenderberichten erst ab dieser Firmware. Auf älterer Firmware bleibt es wirkungslos — die Anlage lädt dann mit Überschuss weiter, aber nie aus dem Netz. Den Stand zeigt die Sigen-App.
-- **Entladeboden:** „ESS Discharge Cut-Off State of Charge“ liest der Optimizer als Untergrenze der Planung, schreibt ihn aber nicht.
+- **Kein „Command Charging“:** Für ein Ladelimit nutzt der Optimizer bewusst nicht „Command Charging (PV First)“. Dieser Modus lädt den Rest aus dem Netz, wenn die PV nicht reicht.
+- **Firmware SPC113:** Laut Berichten wirkt das Ladelimit im Eigenverbrauchsmodus erst ab dieser Firmware. Davor wirkt es nicht — die Anlage lädt dann mit Überschuss weiter, aber nie aus dem Netz. Den Stand zeigt die Sigen-App.
+- **Entladegrenze:** „ESS Discharge Cut-Off State of Charge“ liest der Optimizer als Untergrenze für den Plan, ändert sie aber nicht.
 
 ## Häufige Probleme
 
 | Problem | Lösung |
 |---|---|
-| **Integration lädt nicht / Timeout** | Local Modbus TCP am Gerät nicht freigeschaltet (→ Abschnitt 2) oder IP falsch |
-| **Assistent meldet „Steuerentitäten deaktiviert"** | Abschnitt 5 — die vier Pflicht-Entitäten aktivieren, dann Wechselrichter erneut anklicken |
-| **„Remote EMS Control Mode" ist nicht verfügbar** | Normal, solange „Remote EMS" aus ist — kein Fehler |
-| **Befehle ohne Wirkung** | Sigen-App: EMS-Modus auf „Maximum Self Consumption", TOU/Peak Shaving aus; kein zweites Programm (evcc, App) parallel |
-| **Netzleistung mit falschem Vorzeichen** | Der Optimizer dreht das Sigenergy-Vorzeichen selbst (positiv = Bezug). Bei Einspeisung muss `binary_sensor.sigen_plant_exporting_to_grid` „an" zeigen |
-| **Nach HA-Absturz läuft ein Befehl weiter** | Schalter „Remote EMS (Controlled by Home Assistant)" manuell ausschalten |
+| **Integration lädt nicht / Timeout** | Local Modbus TCP nicht freigeschaltet (→ Abschnitt 2) oder IP falsch |
+| **Assistent meldet „Steuerentitäten deaktiviert"** | Abschnitt 5 — die vier Pflicht-Entitäten aktivieren, dann Wechselrichter noch einmal anklicken |
+| **„Remote EMS Control Mode" ist nicht verfügbar** | Normal, solange „Remote EMS" aus ist |
+| **Befehle ohne Wirkung** | Sigen-App: EMS-Modus „Maximum Self Consumption", TOU/Peak Shaving aus; kein zweites Programm (evcc, App) gleichzeitig |
+| **Netzleistung mit falschem Vorzeichen** | Der Optimizer dreht das Vorzeichen selbst (positiv = Bezug). Bei Einspeisung muss `binary_sensor.sigen_plant_exporting_to_grid` „an" zeigen |
+| **Nach HA-Absturz läuft ein Befehl weiter** | Schalter „Remote EMS (Controlled by Home Assistant)" von Hand ausschalten |

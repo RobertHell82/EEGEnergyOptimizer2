@@ -3,9 +3,9 @@
      Neu generieren mit: python scripts/build_guides.py -->
 <h2 class="guide-title">SolaX Modbus einrichten</h2>
 <h3>1. Unterstützte Wechselrichter</h3>
-<p>Nur <strong>Gen4, Gen5 und Gen6</strong> Wechselrichter werden unterstützt. Ältere Generationen (Gen2/Gen3) haben keine Remote Control Funktion.</p>
+<p>Nur <strong>Gen4, Gen5 und Gen6</strong>. Ältere Geräte (Gen2/Gen3) haben keine Remote Control (Fernsteuerung).</p>
 <h3>2. Wechselrichter-Einstellungen</h3>
-<p>Diese Einstellungen müssen am Wechselrichter oder in der SolaX-App korrekt gesetzt sein:</p>
+<p>Stelle am Wechselrichter oder in der SolaX-App ein:</p>
 <table>
 <thead>
 <tr>
@@ -24,14 +24,14 @@
 </tr>
 <tr>
 <td><strong>Smart Schedule / Zeitplan</strong></td>
-<td><strong>Aus</strong> — kollidiert mit der Optimizer-Steuerung</td>
+<td><strong>Aus</strong> — stört die Optimizer-Steuerung</td>
 </tr>
 </tbody>
 </table>
-<div class="guide-alert warning"><p><strong>Wichtig:</strong> Der Work Mode darf <strong>NICHT</strong> auf „Feedin Priority" oder „Force Time Use" stehen! Der EEG Energy Optimizer steuert die Batterie über Remote Control (Mode 1) und setzt voraus, dass der Wechselrichter im Self Use Modus läuft.</p></div>
+<div class="guide-alert warning"><p><strong>Wichtig:</strong> Der Work Mode darf <strong>NICHT</strong> auf „Feedin Priority" oder „Force Time Use" stehen! Der Optimizer steuert über Remote Control (Mode 1) und braucht dafür den Self Use Modus.</p></div>
 
 <h3>3. Verbindung zum Wechselrichter — was du brauchst</h3>
-<p>Home Assistant spricht mit dem Wechselrichter über <strong>Modbus TCP</strong> im Heimnetz, nicht über die SolaX-Cloud. Dafür braucht der Wechselrichter eine Netzwerkverbindung, die Modbus TCP kann. <strong>Das kann nicht jeder Stick</strong>, und das ist die häufigste Ursache, wenn die Einrichtung scheitert:</p>
+<p>Home Assistant redet mit dem Wechselrichter über <strong>Modbus TCP</strong> im Heimnetz, nicht über die SolaX-Cloud. <em>Modbus TCP ist eine Sprache für Geräte im Netzwerk.</em> <strong>Nicht jeder Stick kann das</strong> — das ist der häufigste Grund, wenn die Einrichtung scheitert:</p>
 <table>
 <thead>
 <tr>
@@ -54,61 +54,61 @@
 </tr>
 <tr>
 <td><strong>RS485-zu-LAN-Adapter</strong> am COM-/RS485-Anschluss des Wechselrichters (z. B. Waveshare)</td>
-<td>Ja, am zuverlässigsten — Anschluss am besten durch den Elektriker</td>
+<td>Ja, am zuverlässigsten — am besten vom Elektriker anschließen lassen</td>
 </tr>
 </tbody>
 </table>
-<p>Außerdem brauchst du die <strong>IP-Adresse</strong> des Sticks bzw. Adapters. Du findest sie in der Geräteliste deines Routers (z. B. bei der FRITZ!Box unter <em>Heimnetz → Netzwerk</em>). Damit sie sich nicht ändert, stelle im Router „immer dieselbe IP-Adresse zuweisen" ein.</p>
-<div class="guide-alert note"><p><strong>Unsicher, welchen Stick du hast?</strong> Er steckt unten am Wechselrichter, das Modell steht auf dem Aufkleber. Schick uns im Zweifel ein Foto davon.</p></div>
+<p>Du brauchst außerdem die <strong>IP-Adresse</strong> (Adresse im Heimnetz) des Sticks bzw. Adapters. Sie steht in der Geräteliste deines Routers (z. B. FRITZ!Box: <em>Heimnetz → Netzwerk</em>). Stelle dort „immer dieselbe IP-Adresse zuweisen" ein, damit sie sich nicht ändert.</p>
+<div class="guide-alert note"><p><strong>Welchen Stick hast du?</strong> Er steckt unten am Wechselrichter, das Modell steht auf dem Aufkleber. Im Zweifel schick uns ein Foto davon.</p></div>
 
 <h3>4. Integration installieren</h3>
-<p><strong>Zuerst prüfen, ob sie schon da ist:</strong> Gehe zu <strong>Einstellungen → Geräte &amp; Dienste</strong>, klicke rechts unten auf <strong>„+ Integration hinzufügen"</strong> und tippe <strong>„SolaX"</strong> ein. Erscheint <strong>„SolaX Inverter Modbus"</strong> in der Liste, ist sie installiert — weiter mit Abschnitt 5.</p>
-<p>Erscheint sie nicht, installiere sie über HACS:</p>
+<p><strong>Erst prüfen, ob sie schon da ist:</strong> <strong>Einstellungen → Geräte &amp; Dienste</strong> → rechts unten <strong>„+ Integration hinzufügen"</strong> → <strong>„SolaX"</strong> eintippen. Erscheint <strong>„SolaX Inverter Modbus"</strong>, ist sie installiert — weiter mit Abschnitt 5.</p>
+<p>Sonst installiere sie über HACS (Zusatz-Store für Home Assistant):</p>
 <p><em><strong>Voraussetzung:</strong> <a href="https://hacs.xyz/">HACS</a> muss installiert sein.</em></p>
 <ol>
-<li>Gehe zu <strong>HACS</strong> und suche dort nach <strong>„SolaX Inverter Modbus"</strong><br>
+<li>Gehe zu <strong>HACS</strong> und suche nach <strong>„SolaX Inverter Modbus"</strong>.<br>
    <em>Repository: <code>wills106/homeassistant-solax-modbus</code></em></li>
-<li>Installiere die Integration und <strong>starte Home Assistant neu</strong> (Einstellungen → oben rechts die drei Punkte → <strong>Neu starten</strong>)</li>
+<li>Installiere die Integration und <strong>starte Home Assistant neu</strong> (Einstellungen → oben rechts die drei Punkte → <strong>Neu starten</strong>).</li>
 </ol>
-<div class="guide-alert warning"><p>Ohne Neustart meldet Home Assistant beim Hinzufügen einen Fehler wie <strong>„Konfigurationsablauf konnte nicht geladen werden"</strong>. Dann einfach neu starten und es noch einmal versuchen.</p></div>
+<div class="guide-alert warning"><p>Ohne Neustart meldet Home Assistant beim Hinzufügen <strong>„Konfigurationsablauf konnte nicht geladen werden"</strong>. Dann neu starten und noch einmal versuchen.</p></div>
 
 <h3>5. Integration konfigurieren</h3>
 <ol>
-<li>Gehe zu <strong>Einstellungen → Geräte &amp; Dienste → „+ Integration hinzufügen"</strong></li>
-<li>Suche nach <strong>„SolaX Inverter Modbus"</strong></li>
-<li>Als Verbindungsart <strong>TCP / Ethernet</strong> wählen</li>
-<li>Gib die <strong>IP-Adresse</strong> des Sticks bzw. Adapters ein (→ Abschnitt 3)</li>
+<li><strong>Einstellungen → Geräte &amp; Dienste → „+ Integration hinzufügen"</strong></li>
+<li>Suche nach <strong>„SolaX Inverter Modbus"</strong>.</li>
+<li>Verbindungsart: <strong>TCP / Ethernet</strong></li>
+<li>Gib die <strong>IP-Adresse</strong> des Sticks bzw. Adapters ein (→ Abschnitt 3).</li>
 <li>Port: <strong>502</strong> (Standard für Modbus TCP), Modbus-Adresse: <strong>1</strong></li>
-<li>Mit <strong>OK</strong> bzw. <strong>Absenden</strong> bestätigen — die Integration erkennt den Wechselrichter dann selbst</li>
+<li>Mit <strong>OK</strong> bzw. <strong>Absenden</strong> bestätigen. Die Integration erkennt den Wechselrichter selbst.</li>
 </ol>
-<p>Kommt eine Fehlermeldung, schau unter <strong>Häufige Probleme</strong> ganz unten nach.</p>
+<p>Bei einer Fehlermeldung: siehe <strong>Häufige Probleme</strong> unten.</p>
 <h3>6. Batterie-Kapazität</h3>
-<p>SolaX stellt <strong>keinen Sensor für die Batteriekapazität</strong> bereit. Die Kapazität gibst du später im Wizard manuell ein (z.B. 5.8 kWh für eine T-BAT 5.8).</p>
+<p>SolaX hat <strong>keinen Sensor für die Batteriekapazität</strong>. Du gibst sie später im Wizard von Hand ein (z. B. 5.8 kWh für eine T-BAT 5.8).</p>
 <h3>7. Zweiter Wechselrichter am Generator-Eingang</h3>
-<p>Ist am SolaX-Hybrid ein <strong>zweiter Wechselrichter als Generator</strong> angeschlossen (z.B. eine bestehende PV-Anlage am Generator-/Meter-2-Eingang), wird dessen Erzeugung <strong>nicht</strong> im normalen PV-Sensor (<code>sensor.solax_*solar_power</code>) mitgezählt — sie läuft ausschließlich über <strong>Meter 2</strong>.</p>
-<p>Der dafür benötigte Sensor ist in der SolaX-Modbus-Integration standardmäßig <strong>deaktiviert</strong> und muss aktiviert werden:</p>
+<p>Hängt am SolaX-Hybrid ein <strong>zweiter Wechselrichter als Generator</strong> (z. B. eine bestehende PV-Anlage am Generator-/Meter-2-Eingang)? Dann zählt dessen Erzeugung <strong>nicht</strong> im normalen PV-Sensor (<code>sensor.solax_*solar_power</code>), sondern nur über <strong>Meter 2</strong>.</p>
+<p>Den Sensor dafür musst du erst aktivieren — er ist ab Werk <strong>deaktiviert</strong>:</p>
 <ol>
-<li>Gehe zu <strong>Einstellungen → Geräte &amp; Dienste → SolaX Inverter Modbus</strong></li>
-<li>Klicke auf dein <strong>Wechselrichter-Gerät</strong></li>
-<li>Öffne in der Entitäten-Liste den Filter für <strong>deaktivierte Entitäten</strong> („+ x Entitäten sind deaktiviert")</li>
-<li>Suche nach <strong>„Meter 2 Measured Power"</strong></li>
-<li>Klicke auf die Entität → Zahnrad → <strong>Aktiviert</strong> → <strong>Aktualisieren</strong></li>
-<li>Warte ca. 30 Sekunden bis der Sensor Werte liefert</li>
+<li><strong>Einstellungen → Geräte &amp; Dienste → SolaX Inverter Modbus</strong></li>
+<li>Klicke auf dein <strong>Wechselrichter-Gerät</strong>.</li>
+<li>Klicke in der Liste der Entitäten (einzelne Werte und Schalter) auf <strong>„+ x Entitäten sind deaktiviert"</strong>.</li>
+<li>Suche <strong>„Meter 2 Measured Power"</strong>.</li>
+<li>Entität anklicken → Zahnrad → <strong>Aktiviert</strong> → <strong>Aktualisieren</strong></li>
+<li>Warte ca. 30 Sekunden, bis der Sensor Werte liefert.</li>
 </ol>
-<p><em>Der Sensor heißt typischerweise <code>sensor.solax_inverter_meter_2_measured_power</code> (Prefix je Installation abweichend) und zeigt die Leistung in W.</em></p>
-<div class="guide-alert note"><p><strong>Voraussetzung:</strong> Meter 2 muss auch am Wechselrichter bzw. in der SolaX-App als Generator-/zweiter Zähler konfiguriert sein. Ohne diese Konfiguration liefert der Sensor dauerhaft 0.</p></div>
+<p><em>Der Sensor heißt meist <code>sensor.solax_inverter_meter_2_measured_power</code> (Prefix je Installation anders) und zeigt die Leistung in W.</em></p>
+<div class="guide-alert note"><p><strong>Voraussetzung:</strong> Meter 2 muss auch am Wechselrichter bzw. in der SolaX-App als Generator-/zweiter Zähler eingerichtet sein. Sonst zeigt der Sensor immer 0.</p></div>
 
-<p>Im Assistenten gibt es dafür das Feld <strong>„Zweiter PV-Sensor (optional)"</strong> — es erscheint nur im <strong>Expertenmodus</strong> (Schalter oben rechts im Assistenten). Vorbelegt wird es mit dem Meter-2-Sensor, wenn dieser schon <strong>vor</strong> der Sensorerkennung aktiv war; hast du ihn erst danach aktiviert, klicke auf <strong>„Erneut prüfen"</strong> oder trage ihn im Expertenmodus von Hand ein. Der Optimizer addiert diesen Wert zur PV-Leistung des Hybrid-Wechselrichters.</p>
-<div class="guide-alert warning"><p>Wird der Sensor nicht aktiviert bzw. nicht im Wizard hinterlegt, rechnet der Optimizer mit <strong>zu geringer PV-Leistung</strong>. Folge: Hausverbrauch und Fahrplan arbeiten mit falschen Werten.</p></div>
+<p>Im Assistenten trägst du ihn im Feld <strong>„Zweiter PV-Sensor (optional)"</strong> ein. Das Feld gibt es nur im <strong>Expertenmodus</strong> (Schalter oben rechts im Assistenten). Es ist schon ausgefüllt, wenn der Sensor <strong>vor</strong> der Sensorerkennung aktiv war. Hast du ihn erst danach aktiviert, klicke auf <strong>„Erneut prüfen"</strong> oder trag ihn von Hand ein. Der Optimizer zählt diesen Wert zur PV-Leistung des Hybrid-Wechselrichters dazu.</p>
+<div class="guide-alert warning"><p>Fehlt der Sensor, rechnet der Optimizer mit <strong>zu wenig PV-Leistung</strong>. Hausverbrauch und Fahrplan stimmen dann nicht.</p></div>
 
 <h3>8. Prüfen</h3>
 <ol>
-<li>Unter <strong>Einstellungen → Integrationen</strong>: SolaX Inverter Modbus zeigt <strong>„geladen"</strong></li>
-<li><strong>Entwicklerwerkzeuge → Zustände</strong>: <code>sensor.solax_*battery_capacity</code> zeigt SOC (0–100%)</li>
-<li>Ein Button <code>button.solax_*remotecontrol_trigger*</code> existiert (neuere Versionen hängen den Modus an, z. B. <code>…_remotecontrol_trigger_mode_1_7</code>) — dann ist Remote Control verfügbar</li>
-<li>Kehre hierher zurück — der Wechselrichter wird automatisch erkannt</li>
+<li>Unter <strong>Einstellungen → Integrationen</strong> zeigt SolaX Inverter Modbus <strong>„geladen"</strong>.</li>
+<li>Unter <strong>Entwicklerwerkzeuge → Zustände</strong> zeigt <code>sensor.solax_*battery_capacity</code> den Ladestand (0–100%).</li>
+<li>Es gibt einen Button <code>button.solax_*remotecontrol_trigger*</code> (neuere Versionen hängen den Modus an, z. B. <code>…_remotecontrol_trigger_mode_1_7</code>). Dann ist Remote Control verfügbar.</li>
+<li>Kehre hierher zurück. Der Wechselrichter wird automatisch erkannt.</li>
 </ol>
-<p><em><strong>Hinweis:</strong> Der Entity-Prefix variiert je Installation (z.B. <code>solax_inverter_</code> statt <code>solax_</code>). Der EEG Energy Optimizer erkennt den Prefix automatisch.</em></p>
+<p><em><strong>Hinweis:</strong> Der Anfang der Entity-Namen ist je Installation anders (z. B. <code>solax_inverter_</code> statt <code>solax_</code>). Der Optimizer erkennt das automatisch.</em></p>
 <h3>Häufige Probleme</h3>
 <table>
 <thead>
@@ -132,31 +132,31 @@
 </tr>
 <tr>
 <td><strong>EEG-Assistent: „SolaX Modbus Integration muss zuerst installiert werden"</strong></td>
-<td>Erst die SolaX-Integration einrichten (Abschnitte 4–5), dann im Assistenten auf <strong>„Erneut prüfen"</strong></td>
+<td>Erst die SolaX-Integration einrichten (Abschnitte 4–5), dann im Assistenten <strong>„Erneut prüfen"</strong></td>
 </tr>
 <tr>
 <td><strong>Kein remotecontrol_trigger</strong></td>
 <td>Gen2/Gen3 oder X1 Fit (AC-coupled) → nicht unterstützt</td>
 </tr>
 <tr>
-<td><strong>Kommandos ohne Wirkung</strong></td>
-<td>Work Mode auf „Self Use" prüfen, Night Charge und Smart Schedule aus</td>
+<td><strong>Befehle ohne Wirkung</strong></td>
+<td>Work Mode „Self Use"? Night Charge und Smart Schedule aus?</td>
 </tr>
 <tr>
-<td><strong>Batterie lädt trotz Blockierung</strong></td>
+<td><strong>Batterie lädt trotz Sperre</strong></td>
 <td>Lock State prüfen — Passwort <code>2014</code> zum Entsperren</td>
 </tr>
 <tr>
-<td><strong>Sensoren „unavailable" nachts</strong></td>
-<td>Normal — Wechselrichter im Sleep Mode (kein PV, keine Last)</td>
+<td><strong>Sensoren nachts „unavailable"</strong></td>
+<td>Normal — der Wechselrichter schläft (kein PV, keine Last)</td>
 </tr>
 <tr>
 <td><strong>PV-Leistung zu niedrig (Generator-WR fehlt)</strong></td>
-<td><code>sensor.solax_inverter_meter_2_measured_power</code> aktivieren (→ Abschnitt 7) und im Assistenten (Expertenmodus) als zweiten PV-Sensor hinterlegen</td>
+<td><code>sensor.solax_inverter_meter_2_measured_power</code> aktivieren (→ Abschnitt 7) und im Assistenten (Expertenmodus) als zweiten PV-Sensor eintragen</td>
 </tr>
 <tr>
-<td><strong>Meter 2 Sensor zeigt immer 0</strong></td>
-<td>Meter 2 am Wechselrichter / in der SolaX-App als Generator-Zähler konfigurieren</td>
+<td><strong>Meter-2-Sensor zeigt immer 0</strong></td>
+<td>Meter 2 am Wechselrichter / in der SolaX-App als Generator-Zähler einrichten</td>
 </tr>
 </tbody>
 </table>

@@ -114,7 +114,7 @@ const EINSP_BEDARF_HINWEIS = "„Bei Gemeinschaftsbedarf“ zählt die Einspeisu
 // Treiber, deren Batterie die Spitzenkappung über einen Entladedeckel
 // hält (InverterBase.supports_discharge_limit). Alle anderen kappen nur
 // über das Abschalten von Verbrauchern.
-const SPITZENKAPPUNG_BATTERIE_TREIBER = ["huawei_sun2000", "fronius_gen24", "sma_smart_energy"];
+const SPITZENKAPPUNG_BATTERIE_TREIBER = ["huawei_sun2000", "fronius_gen24", "sma_smart_energy", "solax_gen4"];
 
 // Nur der Startwert, bis _resolveEntityIds die Registry gelesen hat. Der
 // Statussensor steht in beiden Schreibweisen drin — Bestandsinstallationen
@@ -494,6 +494,9 @@ const euroAus = (ct) => Math.round(Number(ct || 0) * 1000) / 100000;
 
 // Ein Zahlenfeld lesen. Cent-Felder tragen data-unit="ct" und werden hier
 // zurueckgerechnet — so kann kein einzelnes Feld die Umrechnung vergessen.
+// kW-Angabe für Fließtext; "—" ohne Wert.
+const kwOhne = (x) => (x == null || !Number.isFinite(Number(x)) ? "—" : `${fmtDe(Number(x), 2)} kW`);
+
 const leseZahl = (el) => {
   // data-leer="vorgabe": ein geleertes Feld bleibt leer und das Backend nimmt
   // die Vorgabe. Sonst würde aus einer gelöschten Maximalreserve eine 0 —
@@ -914,6 +917,14 @@ class EegOptimizerPanel extends HTMLElement {
     this._bezugZeitraum = this._loadPref("bezug_zeitraum", "monat", ["heute", "monat", "jahr", "gesamt"]);
     this._bezugAuswahl = null;
     this._bezugDatum = null;
+    // Karte „Bezugsspitze & Spitzenkappung": ein Monat, live solange offen.
+    this._spitzeOpen = this._loadPref("spitze_open", "1", ["0", "1"]) === "1";
+    this._spitze = null;
+    this._spitzeBusy = false;
+    this._spitzeGeholt = 0;
+    this._spitzeMonat = null;      // null = laufender Monat
+    this._spitzeAuswahl = null;    // angetippter Tag im Diagramm
+    this._spitzeTarifOpen = false; // „Was kostet die Spitze?" aufgeklappt
     // Befristeter Eingriff (Pause) — Zustand vom Backend, Dialog und
     // Eingabewerte lokal. Ohne Pause: null.
     this._override = null;
@@ -1259,7 +1270,7 @@ class EegOptimizerPanel extends HTMLElement {
         const x = (e.clientX - box.left) * Number(ds.einspW) / Math.max(1, box.width);
         const k = Math.floor((x - Number(ds.einspL)) / Number(ds.einspSlot));
         const n = Number(ds.einspN);
-        const feld = ds.auswahl === "bezug" ? "_bezugAuswahl" : "_einspeisungAuswahl";
+        const feld = ["bezug", "spitze"].includes(ds.auswahl) ? `_${ds.auswahl}Auswahl` : "_einspeisungAuswahl";
         this[feld] = k >= 0 && k < n && this[feld] !== k ? k : null;
         this._render();
         return;
@@ -1719,6 +1730,45 @@ class EegOptimizerPanel extends HTMLElement {
     }
   }
 
+  // Wie _ensureKarte, aber alle 30 s: Die laufende Viertelstunde und der
+  // Zustand der Spitzenkappung ändern sich schneller als Tageswerte.
+  _ensureSpitze() {
+    if (this._spitzeBusy || !this._hass) return;
+    if (!this._zeigt("spitze") || !this._spitzeOpen) return;
+    const d = this._spitze;
+    if (d !== null && Date.now() - this._spitzeGeholt < 30000 && d.angefragt === this._spitzeMonat) return;
+    this._loadSpitze();
+  }
+
+  async _loadSpitze() {
+    if (!this._hass) return;
+    const monat = this._spitzeMonat;
+    this._spitzeBusy = true;
+    try {
+      const r = await this._hass.callWS({
+        type: "eeg_optimizer/get_spitze", ...(monat ? { monat } : {}),
+      });
+      if (monat === this._spitzeMonat) {
+        if (monat && r?.verfuegbar === false) {
+          this._spitzeMonat = null;
+          this._spitze = null;
+        } else {
+          this._spitze = { ...r, angefragt: monat };
+        }
+      }
+    } catch (e) {
+      console.warn("Bezugsspitze nicht abrufbar:", e);
+      // Ein Vormonat, der nicht geht, soll die Karte nicht verschwinden
+      // lassen (und nicht alle 30 s erneut scheitern): zurück zum laufenden.
+      this._spitze = monat ? null : { verfuegbar: false, angefragt: monat };
+      if (monat && monat === this._spitzeMonat) this._spitzeMonat = null;
+    } finally {
+      this._spitzeBusy = false;
+      this._spitzeGeholt = Date.now();
+      this._render();
+    }
+  }
+
   async _loadOverride() {
     if (!this._hass) return;
     try {
@@ -1959,6 +2009,7 @@ class EegOptimizerPanel extends HTMLElement {
       ["bilanz", "Was deine PV bringt"],
       ["einspeisung", "Einspeisung"],
       ["bezug", "Bezug"],
+      ["spitze", "Bezugsspitze & Spitzenkappung"],
       ["gewinn", "Optimierungsgewinn"],
       ["prognosevergleich", "Prognosevergleich"],
       ["prognose", "Energieprognose (7 Tage)"],
@@ -2559,6 +2610,53 @@ class EegOptimizerPanel extends HTMLElement {
         this._bezugOpen = !this._bezugOpen;
         this._savePref("bezug_open", this._bezugOpen ? "1" : "0");
         this._render();
+        break;
+      case "toggle-spitze-karte":
+        this._spitzeOpen = !this._spitzeOpen;
+        this._savePref("spitze_open", this._spitzeOpen ? "1" : "0");
+        this._render();
+        break;
+      case "toggle-spitze-tarif":
+        this._spitzeTarifOpen = !this._spitzeTarifOpen;
+        this._render();
+        break;
+      case "spitze-monat": {
+        // ‹ › blättern, 0 = zurück zum laufenden Monat.
+        const d = this._spitze;
+        const schritt = Number(dataset?.schritt) || 0;
+        if (!d) break;
+        let ziel = null;
+        if (schritt) {
+          ziel = zeitraumVerschieben(this._spitzeMonat || d.monat, schritt);
+          if (ziel < d.aeltester || ziel > d.neuester) break;
+          if (ziel === d.neuester) ziel = null;
+        }
+        if (ziel === this._spitzeMonat) break;
+        this._spitzeMonat = ziel;
+        this._spitzeAuswahl = null;
+        this._loadSpitze();
+        this._render();
+        break;
+      }
+      case "zeige-spitze-karte": {
+        // Tipp auf die Zeile der Statuskarte: zur Karte, aufgeklappt. Ist
+        // sie ausgeblendet, bleibt der Sensor-Dialog wie bisher.
+        if (!this._zeigt("spitze")) {
+          this._handleAction("show-entity", { entity: dataset?.entity });
+          break;
+        }
+        this._spitzeOpen = true;
+        this._savePref("spitze_open", "1");
+        this._render();
+        requestAnimationFrame(() => {
+          this._shadow?.getElementById?.("spitze-karte")?.scrollIntoView?.({ behavior: "smooth", block: "start" });
+        });
+        break;
+      }
+      case "open-spitzenkappung-settings":
+        this._settingsTab = "spitzenkappung";
+        this._savePref("settings_tab", "spitzenkappung");
+        this._handleAction("open-settings", {});
         break;
       case "toggle-vergleich-karte":
         this._vergleichOpen = !this._vergleichOpen;
@@ -5242,7 +5340,7 @@ class EegOptimizerPanel extends HTMLElement {
   // SVG samt Fußzeile und Detailbox des angetippten Balkens. Der Klick wird
   // über data-einsp-* auf den Balken abgebildet (siehe Klick-Handler):
   // `<title>` erreicht Touch nicht, und eine Viertelstunde ist 3 px breit.
-  _balkenSvg(g, { legende = "", defs = "", hinter = "", rects = "", details = {}, leer }) {
+  _balkenSvg(g, { legende = "", defs = "", hinter = "", rects = "", details = {}, leer, fuss = null }) {
     const { art, W, H, padL, slotW, n, schmal, zeitraum, jeJahr, auswahl } = g;
     return `
       <div style="margin-top:14px">
@@ -5254,7 +5352,7 @@ class EegOptimizerPanel extends HTMLElement {
         </svg>
         <div style="display:flex;justify-content:space-between;gap:8px;font-size:11px;color:var(--secondary-text-color)">
           <span>${schmal ? "Balken antippen für Details" : "Balken anklicken für Details"}</span>
-          <span style="white-space:nowrap">kWh je ${zeitraum === "heute" ? "Viertelstunde" : zeitraum === "monat" ? "Tag" : jeJahr ? "Jahr" : "Monat"}</span>
+          <span style="white-space:nowrap">${fuss ?? `kWh je ${zeitraum === "heute" ? "Viertelstunde" : zeitraum === "monat" ? "Tag" : jeJahr ? "Jahr" : "Monat"}`}</span>
         </div>
         ${auswahl != null ? `
         <div style="margin-top:6px;padding:8px 10px;border-radius:8px;background:var(--secondary-background-color,#f5f5f5);font-size:13px;line-height:1.5">
@@ -5406,6 +5504,340 @@ class EegOptimizerPanel extends HTMLElement {
           <div style="font-size:12px;color:var(--secondary-text-color);margin-top:8px;line-height:1.5">${hinweise.join("<br>")}</div>
         </div>
       </div>`;
+  }
+
+  // Karte „Bezugsspitze & Spitzenkappung" (websocket_api.spitze_karte).
+  // Oben die Zahlen, die zählen (Monatsspitze, laufende Viertelstunde,
+  // Grenze, Kosten), darunter die Tagesspitzen des Monats und — im
+  // laufenden Monat — was die Spitzenkappung gerade tut, getrennt nach
+  // Batterie und Verbrauchern. Die Tarifdetails stehen zugeklappt darunter:
+  // Wer sie braucht, klappt auf; alle anderen sehen nur die Zahlen.
+  _renderSpitzeKarte() {
+    const d = this._spitze;
+    if (d?.verfuegbar === false) return "";
+    const offen = this._spitzeOpen;
+    const kopf = `
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+          <h3 data-action="toggle-spitze-karte" style="margin:0;flex:1;cursor:pointer;user-select:none">
+            <ha-icon icon="mdi:chart-bell-curve-cumulative" style="--mdc-icon-size:20px;color:var(--primary-color,#03a9f4);vertical-align:middle"></ha-icon>
+            Bezugsspitze &amp; Spitzenkappung
+          </h3>
+          <ha-icon data-action="toggle-spitze-karte" icon="mdi:chevron-${offen ? "up" : "down"}" style="--mdc-icon-size:24px;color:var(--secondary-text-color);flex-shrink:0;cursor:pointer"></ha-icon>
+        </div>`;
+    if (!offen || !d) return `<div class="card" id="spitze-karte">${kopf}</div>`;
+
+    const schmal = !!this._narrow;
+    const esc = (v) => this._escapeHtml(v ?? "");
+    const kw = (x, st = 2) => (x == null || !Number.isFinite(Number(x)) ? "—" : `${fmtDe(Number(x), st)}&nbsp;kW`);
+    const uhr = (iso) => {
+      const t = iso ? new Date(iso) : null;
+      return t && !isNaN(t) ? t.toLocaleTimeString("de-AT", { hour: "2-digit", minute: "2-digit" }) : "";
+    };
+    const tagUhr = (iso) => {
+      const t = iso ? new Date(iso) : null;
+      if (!t || isNaN(t)) return "";
+      return `${t.toLocaleDateString("de-AT", { day: "2-digit", month: "2-digit" })} um ${uhr(iso)}`;
+    };
+    const laufenderMonat = d.monat === d.laufend_monat;
+    const spitze = d.spitze?.kw;
+    const kosten = d.netzkosten;
+    const lv = d.laufend;
+    const schwelle = d.schwelle_kw;
+    const mitGrenze = d.kappung_an !== false;
+    const ueberTage = mitGrenze ? (d.tage || []).filter(t => t.spitze_kw > (d.grenze_kw || 0)).length : null;
+
+    // --- Navigation ‹ Monat › ---
+    const vor = zeitraumVerschieben(d.monat, 1) <= d.neuester;
+    const zurueck = zeitraumVerschieben(d.monat, -1) >= d.aeltester;
+    const knopf = (schritt, icon, an, titel) => `
+          <button type="button" ${an ? `data-action="spitze-monat" data-schritt="${schritt}"` : "disabled"}
+            title="${titel}" aria-label="${titel}"
+            style="appearance:none;border:0;background:transparent;padding:0;width:${schmal ? 44 : 32}px;height:${schmal ? 44 : 32}px;border-radius:50%;cursor:${an ? "pointer" : "default"};color:${an ? "var(--primary-text-color)" : "var(--disabled-text-color,#bdbdbd)"};display:inline-flex;align-items:center;justify-content:center">
+            <ha-icon icon="${icon}" style="--mdc-icon-size:22px;pointer-events:none"></ha-icon>
+          </button>`;
+    const monatName = laufenderMonat
+      ? `<span style="font-size:14px;font-weight:500">${zeitraumName(d.monat)}</span>`
+      : `<button type="button" data-action="spitze-monat" data-schritt="0" title="Zurück zum laufenden Monat"
+            style="appearance:none;border:0;background:transparent;padding:4px 6px;font:inherit;font-size:14px;font-weight:500;color:var(--primary-text-color);cursor:pointer">
+            ${zeitraumName(d.monat)}
+            <span style="display:block;font-size:11px;font-weight:400;color:var(--primary-color,#03a9f4)">zurück zum laufenden Monat</span>
+          </button>`;
+    const nav = `
+        <div style="display:flex;align-items:center;justify-content:center;gap:6px;margin-top:8px;text-align:center">
+          ${knopf(-1, "mdi:chevron-left", zurueck, "Monat davor")}
+          <div style="min-width:${schmal ? 120 : 150}px">${monatName}</div>
+          ${knopf(1, "mdi:chevron-right", vor, "Monat danach")}
+        </div>`;
+
+    // --- Kennzahlen ---
+    const kachel = (wert, titel, unter = "", extra = "") => `
+      <div class="einsp-kachel">
+        <div class="einsp-wert">${wert}</div>
+        <div class="einsp-titel">${titel}</div>
+        ${extra}
+        ${unter ? `<div class="einsp-unter">${unter}</div>` : ""}
+      </div>`;
+    const kacheln = [];
+    kacheln.push(kachel(
+      kw(spitze), "Monatsspitze",
+      spitze == null ? "noch keine Viertelstunde abgeschlossen"
+        : `${tagUhr(d.spitze.start)}${d.spitze.vollstaendig === false ? " · mit Messlücken (Untergrenze)" : ""}`,
+    ));
+    if (laufenderMonat) {
+      // Laufende Viertelstunde als Balken gegen die Schwelle: hochgerechnet,
+      // was sie wird, wenn der jetzige Bezug anhält.
+      const hoch = Number(lv?.hochrechnung_kw);
+      const bisher = Number(lv?.bisher_kw);
+      const anteil = Number.isFinite(hoch) && schwelle > 0 ? Math.min(hoch / schwelle, 1.2) : 0;
+      const ueber = Number.isFinite(hoch) && hoch > schwelle;
+      const farbe = ueber ? "var(--error-color,#db4437)" : anteil > 0.8 ? "var(--warning-color,#ff9800)" : "var(--success-color,#43a047)";
+      const balken = `
+        <div style="position:relative;height:6px;border-radius:3px;background:var(--divider-color,#e0e0e0);margin-top:6px;overflow:hidden">
+          <div style="position:absolute;left:0;top:0;bottom:0;width:${(Math.min(anteil, 1) * 100).toFixed(1)}%;background:${farbe}"></div>
+        </div>`;
+      kacheln.push(kachel(
+        Number.isFinite(hoch) ? kw(hoch) : kw(bisher), "Laufende Viertelstunde",
+        Number.isFinite(hoch)
+          ? `hochgerechnet${Number.isFinite(bisher) ? `, bisher ${fmtDe(bisher, 2)} kW` : ""}${ueber ? " — <strong style=\"color:var(--error-color,#db4437)\">über der Schwelle</strong>" : ""}`
+          : "keine frische Messung",
+        balken,
+      ));
+      if (mitGrenze) {
+        kacheln.push(kachel(
+          kw(schwelle), "Schwelle",
+          schwelle > (d.grenze_kw || 0) ? `Monatsspitze liegt über der Grenze (${fmtDe(d.grenze_kw, 1)} kW)` : "eingestellte Grenze",
+        ));
+      } else {
+        kacheln.push(kachel(kw(d.letzte?.kw), "Letzte Viertelstunde", "abgeschlossen"));
+      }
+    } else if (mitGrenze) {
+      kacheln.push(kachel(String(ueberTage), "Tage über der Grenze", `gemessen an der heutigen Grenze (${fmtDe(d.grenze_kw, 1)} kW)`));
+    }
+    if (kosten && Number.isFinite(Number(kosten.endstufe_eur))) {
+      kacheln.push(kachel(
+        `${fmtDe(Number(kosten.start_eur), 0)}–${fmtDe(Number(kosten.endstufe_eur), 0)}&nbsp;€`, "Leistungspreis je Monat",
+        "Richtwerte, ab Umstellung deines Netzbereichs",
+      ));
+    }
+    const spalten = schmal ? 2 : kacheln.length;
+
+    return `
+      <div class="card" id="spitze-karte">
+        ${kopf}
+        ${nav}
+        <div style="opacity:${d.angefragt !== this._spitzeMonat ? 0.5 : 1};transition:opacity .2s">
+          <div class="einsp-kacheln" style="grid-template-columns:repeat(${spalten},minmax(0,1fr))">${kacheln.join("")}</div>
+          ${this._spitzeChart(d)}
+          ${laufenderMonat ? this._spitzeKappungBlock(d) : ""}
+          ${this._spitzeTarifBlock(kosten, d.tarif)}
+        </div>
+      </div>`;
+  }
+
+  // Tagesspitzen des Monats mit den beiden Linien, um die es geht: der
+  // Grenze (ab hier wird gekappt) und der Monatsspitze (das wird bezahlt).
+  _spitzeChart(d) {
+    const reihe = d.tage || [];
+    if (!reihe.length) {
+      return `<p style="margin:14px 0 0;font-size:13px;color:var(--secondary-text-color);text-align:center">Für diesen Monat gibt es noch keine Tageswerte.</p>`;
+    }
+    const grenze = d.kappung_an !== false ? Number(d.grenze_kw) || 0 : 0;
+    const spitze = Number(d.spitze?.kw) || 0;
+    const g = this._balkenRahmen(
+      { zeitraum: "monat", auswahl: d.monat, bilanztag: d.monat, reihe }, "spitze",
+      Math.max(grenze, spitze, ...reihe.map(r => r.spitze_kw || 0)),
+    );
+    g.reihe = reihe;
+    const { n, index, W, padL, padR } = g;
+    const details = {};
+    let hinter = "", rects = "";
+    reihe.forEach((r, i) => {
+      const k = index(r, i);
+      if (k < 0 || k >= n) return;
+      const wert = r.spitze_kw || 0;
+      const ueber = grenze > 0 && wert > grenze;
+      const zeit = r.zeit ? new Date(r.zeit).toLocaleTimeString("de-AT", { hour: "2-digit", minute: "2-digit" }) : "";
+      const titel = [
+        g.name(r),
+        `höchste Viertelstunde ${fmtDe(wert, 2)} kW${zeit ? ` um ${zeit}` : ""}`,
+        grenze > 0 ? (ueber ? `${fmtDe(wert - grenze, 2)} kW über der Grenze` : "unter der Grenze") : "",
+      ].filter(Boolean);
+      details[k] = titel;
+      if (k === g.auswahl) hinter += g.band(k, "var(--primary-color,#03a9f4)", 0.15, 3);
+      rects += `<g><title>${this._escapeHtml(titel.join("\n"))}</title>${g.saeule(k, 0, wert, ueber ? "#ef6c00" : "#90a4ae")}</g>`;
+    });
+    const linie = (wert, farbe, strich) => wert > 0
+      ? `<line x1="${padL}" y1="${g.y(wert).toFixed(1)}" x2="${W - padR}" y2="${g.y(wert).toFixed(1)}" stroke="${farbe}" stroke-width="1.4"${strich ? ` stroke-dasharray="${strich}"` : ""}/>`
+      : "";
+    rects += linie(grenze, "#fb8c00", "5 4") + linie(spitze, "#e53935", "");
+    const eintrag = (stil, text) =>
+      `<span style="display:inline-flex;align-items:center;gap:5px;margin-right:14px;font-size:12px;color:var(--secondary-text-color);white-space:nowrap">
+         <span style="width:14px;height:0;display:inline-block;flex-shrink:0;${stil}"></span>${text}
+       </span>`;
+    const legende = [
+      eintrag("border-top:2px solid #e53935", "Monatsspitze"),
+      grenze > 0 ? eintrag("border-top:2px dashed #fb8c00", d.monat === d.laufend_monat ? "Grenze" : "Grenze (heutige)") : "",
+      grenze > 0 ? eintrag("border-top:8px solid #ef6c00", "Tag über der Grenze") : "",
+    ].join("");
+    return this._balkenSvg(g, {
+      legende, hinter, rects, details, leer: "Kein Wert für diesen Tag.",
+      fuss: "höchste Viertelstunde je Tag, kW",
+    });
+  }
+
+  // Gegen welchen Wert die Reserve rechnet: die eingestellte Grenze oder die
+  // schon höhere Monatsspitze (schwelle_kw = das Größere von beiden). Ohne
+  // Wert die allgemeine Fassung.
+  _reserveGegen(schwelleKw, grenzeKw) {
+    const s = Number(schwelleKw);
+    const g = Number(grenzeKw);
+    if (!Number.isFinite(s)) return "über der Schwelle (Grenze oder höhere Monatsspitze)";
+    const wert = `${fmtDe(s, 2)} kW`;
+    return Number.isFinite(g) && s > g + 0.005
+      ? `über der aktuellen Monatsspitze (${wert})`
+      : `über deiner Grenze (${wert})`;
+  }
+
+  // Was die Spitzenkappung gerade tut: Batterie und Verbraucher getrennt,
+  // jede Stufe in einer Zeile. Ohne Funktion ein Hinweis zum Einschalten.
+  _spitzeKappungBlock(d) {
+    const k = d.kappung;
+    const esc = (v) => this._escapeHtml(v ?? "");
+    const rahmen = (inhalt) => `
+      <div style="margin-top:14px;padding:12px 14px;border-radius:8px;background:var(--secondary-background-color,#f5f5f5)">${inhalt}</div>`;
+    if (!k) {
+      return rahmen(`
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:13px;color:var(--secondary-text-color)">
+          <ha-icon icon="mdi:shield-off-outline" style="--mdc-icon-size:20px;flex-shrink:0"></ha-icon>
+          <span style="flex:1;min-width:180px">Die Spitzenkappung ist aus — die Monatsspitze wird nur gemessen.</span>
+          <button class="btn-secondary" data-action="open-spitzenkappung-settings" style="padding:6px 12px">Einschalten …</button>
+        </div>`);
+    }
+    const b = k.batterie;
+    const soc = Number(k.soc_pct);
+    const zeile = (icon, titel, inhalt) => `
+      <div style="display:flex;gap:10px;align-items:flex-start;padding:8px 0;border-top:1px solid var(--divider-color,#e0e0e0)">
+        <ha-icon icon="${icon}" style="--mdc-icon-size:20px;color:var(--secondary-text-color);flex-shrink:0;margin-top:1px"></ha-icon>
+        <div style="flex:1;min-width:0">
+          <div style="font-size:13px;font-weight:500;margin-bottom:2px">${titel}</div>
+          <div style="font-size:12px;line-height:1.5;color:var(--secondary-text-color)">${inhalt}</div>
+        </div>
+      </div>`;
+
+    // Stufe 1: Batterie — Ladestandsbalken mit Mindest-Ladestand und Schwelle.
+    let batterie;
+    if (!b) {
+      batterie = "Dieser Wechselrichter kappt nicht über die Batterie (nur Huawei, Fronius, SMA und SolaX) — hier wirken nur die Verbraucher.";
+    } else {
+      const basis = b.basis_pct != null ? Number(b.basis_pct) : Number(b.schwelle_pct) - Number(b.reserve_pct);
+      const schwelleP = Number(b.schwelle_pct);
+      const marke = (pct, farbe, titel) => Number.isFinite(pct)
+        ? `<div title="${titel}" style="position:absolute;top:-3px;bottom:-3px;left:${Math.max(0, Math.min(100, pct)).toFixed(1)}%;width:2px;background:${farbe}"></div>`
+        : "";
+      const aktiv = !!b.aktiv;
+      // Schwelle in % = Mindest-Ladestand + Reserve; bei Reserve 0 nur der
+      // Mindest-Ladestand unter zweitem Namen — dann nicht anzeigen.
+      const mitReserve = Number.isFinite(schwelleP) && Number.isFinite(basis) && schwelleP > basis + 0.5;
+      const balken = Number.isFinite(soc) ? `
+        <div style="position:relative;height:10px;border-radius:5px;background:var(--divider-color,#e0e0e0);margin:6px 0 4px">
+          <div style="position:absolute;left:0;top:0;bottom:0;border-radius:5px;width:${Math.max(0, Math.min(100, soc)).toFixed(1)}%;background:${aktiv ? "#fb8c00" : "var(--success-color,#43a047)"}"></div>
+          ${Number.isFinite(schwelleP) && schwelleP > basis ? `<div title="Spitzenreserve" style="position:absolute;top:0;bottom:0;left:${Math.max(0, basis).toFixed(1)}%;width:${Math.max(0, schwelleP - basis).toFixed(1)}%;background:repeating-linear-gradient(135deg,rgba(251,140,0,.35) 0 3px,transparent 3px 6px)"></div>` : ""}
+          ${marke(basis, "#e53935", "Mindest-Ladestand")}
+          ${mitReserve ? marke(schwelleP, "#fb8c00", "Obergrenze der Spitzenreserve") : ""}
+        </div>
+        <div style="display:flex;justify-content:space-between;font-size:11px">
+          <span>Ladestand <strong style="color:var(--primary-text-color)">${fmtDe(soc, 0)} %</strong></span>
+          <span>${mitReserve ? `Reserve bis ${fmtDe(schwelleP, 0)} % · ` : ""}${Number.isFinite(basis) ? `Mindest-Ladestand ${fmtDe(basis, 0)} %` : ""}</span>
+        </div>` : "";
+      let satz;
+      if (k.steuert === false) {
+        satz = "Inaktiv — die Optimierung ist aus oder pausiert, die Batterie läuft im Automatikbetrieb.";
+      } else if (k.plan_aktion === "discharge" || k.plan_aktion === "grid_charge") {
+        satz = k.plan_aktion === "discharge"
+          ? "Ruht — gerade läuft eine geplante Einspeisung; der Plan hält die Reserve dabei ein."
+          : "Ruht — gerade lädt die Batterie aus dem Netz.";
+      } else if (b.reserve_pct == null) {
+        satz = "Wartet auf den nächsten Planlauf.";
+      } else if (aktiv && b.deckel_kw != null) {
+        satz = b.deckel_kw > 0
+          ? `Hält die Reserve und deckt nur, was ${this._reserveGegen(d.schwelle_kw, d.grenze_kw)} liegt — höchstens <strong>${fmtDe(Number(b.deckel_kw), 2)} kW</strong>.`
+          : "Hält die Reserve — die Grundlast kommt aus dem Netz.";
+      } else if (aktiv) {
+        satz = "In der Reserve — die Entladegrenze ist noch nicht gesetzt, wird wiederholt.";
+      } else if (Number(b.reserve_pct) <= 0) {
+        satz = b.statistik === false
+          ? `Keine Reserve: Die Statistik reicht noch nicht (${b.tage ?? 0} von 7 Tagen). Die Batterie arbeitet normal und hält erst am Mindest-Ladestand.`
+          : `Keine Reserve nötig — in den letzten vier Wochen lag kein Verbrauch ${this._reserveGegen(d.schwelle_kw, d.grenze_kw)}. Die Batterie arbeitet normal und hält erst am Mindest-Ladestand.`;
+      } else {
+        satz = `Arbeitet normal. Reserve jetzt <strong>${fmtDe(Number(b.reserve_pct), 0)} %</strong> — unter <strong>${fmtDe(schwelleP, 0)} %</strong> Ladestand deckt sie nur noch Spitzen.`;
+      }
+      batterie = `${balken}<div style="margin-top:4px">${satz}</div>`;
+    }
+
+    // Stufe 2: Verbraucher — Name, Zustand, Leistung.
+    const liste = k.verbraucher || [];
+    const jetzt = Date.now();
+    const zustand = (v) => {
+      if (v.zustand === "abgeschaltet") {
+        const frei = v.frei_ab ? new Date(v.frei_ab) : null;
+        const rest = frei ? Math.max(0, Math.ceil((frei.getTime() - jetzt) / 60000)) : 0;
+        return `<span style="color:var(--warning-color,#ff9800);font-weight:500">abgeschaltet</span>${rest > 0 ? ` · frühestens in ${rest} min zurück` : " · kommt zurück, sobald Platz ist"}`;
+      }
+      if (v.zustand === "an") return `<span style="color:var(--success-color,#43a047)">an</span>`;
+      if (v.zustand === "aus") return "aus";
+      return "Zustand unbekannt";
+    };
+    const verbraucher = liste.length
+      ? liste.map(v => `
+          <div style="display:flex;justify-content:space-between;gap:8px">
+            <span style="color:var(--primary-text-color);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(v.name)}</span>
+            <span style="white-space:nowrap">${zustand(v)}${v.leistung_kw != null && v.zustand === "an" ? ` · ${fmtDe(v.leistung_kw, 1)} kW` : ""}</span>
+          </div>`).join("")
+      : "Keine eingetragen — abgeschaltet wird nichts.";
+
+    const ruhig = !(b?.aktiv) && !liste.some(v => v.zustand === "abgeschaltet");
+    const inaktiv = k.steuert === false;
+    const punkt = inaktiv ? "var(--disabled-text-color,#9e9e9e)" : ruhig ? "var(--success-color,#43a047)" : "#fb8c00";
+    return rahmen(`
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+        <span style="width:9px;height:9px;border-radius:50%;background:${punkt};flex-shrink:0"></span>
+        <span style="font-size:14px;font-weight:500;flex:1">Spitzenkappung ${inaktiv ? "inaktiv (Optimierung aus oder pausiert)" : ruhig ? "bereit" : "greift gerade"}</span>
+        <span style="font-size:12px;color:var(--secondary-text-color)">ab ${kwOhne(d.schwelle_kw)}</span>
+      </div>
+      ${zeile("mdi:home-battery-outline", "Stufe 1 · Batterie", batterie)}
+      ${zeile("mdi:power-plug-off-outline", "Stufe 2 · Verbraucher abschalten", verbraucher)}
+      ${k.fehler ? `<div style="font-size:12px;color:var(--error-color,#db4437);margin-top:6px">Letzter Schaltfehler: ${esc(k.fehler)}</div>` : ""}`);
+  }
+
+  // Zugeklappt: was die Spitze kostet und ab wann. Richtwerte, keine
+  // Tarife — die Verordnung mit den Beträgen kommt im Dezember 2026.
+  _spitzeTarifBlock(kosten, tarif) {
+    const offen = this._spitzeTarifOpen;
+    const kopf = `
+      <div data-action="toggle-spitze-tarif" style="display:flex;align-items:center;gap:6px;margin-top:14px;cursor:pointer;user-select:none;font-size:13px;color:var(--primary-color,#03a9f4)">
+        <ha-icon icon="mdi:chevron-${offen ? "down" : "right"}" style="--mdc-icon-size:18px;pointer-events:none"></ha-icon>
+        Was kostet die Spitze — und ab wann?
+      </div>`;
+    if (!offen) return kopf;
+    const datum = (iso) => {
+      const [j, m, t] = String(iso || "").split("-");
+      return j ? `${Number(t)}.${Number(m)}.${j}` : "";
+    };
+    const u = kosten?.umstellung || tarif?.umstellung || {};
+    const anteil = (kosten?.anteil_pct || tarif?.anteil_pct || []).map(a => `${a.pct}:${100 - a.pct} ab ${a.ab}`).join(", ");
+    const quelle = kosten?.quelle || tarif?.quelle || "";
+    const z = [];
+    if (kosten && Number.isFinite(Number(kosten.endstufe_eur))) {
+      z.push(`<li>Für diese Spitze${Number(kosten.verrechnet_kw) > 0 ? ` (verrechnet ${fmtDe(Number(kosten.verrechnet_kw), 2)} kW, mindestens 2 kW)` : ""}: zur Einführung etwa <strong>${fmtDe(Number(kosten.start_eur), 2)} €</strong> im Monat (rund ${fmtDe(Number(kosten.start_satz_eur_kw_monat), 2)} € je kW, je Netzbereich ${fmtDe(Number(kosten.start_spanne_eur_kw_monat?.[0]), 2)} bis ${fmtDe(Number(kosten.start_spanne_eur_kw_monat?.[1]), 2)} €), im Endausbau bis zu <strong>${fmtDe(Number(kosten.endstufe_eur), 2)} €</strong> (${fmtDe(Number(kosten.satz_bis_eur_kw_monat), 2)} € je kW bis ${fmtDe(Number(kosten.stufe_kw), 0)} kW, ${fmtDe(Number(kosten.satz_darueber_eur_kw_monat), 2)} € darüber). Inklusive 20 % USt.</li>`);
+    }
+    if (u.vorgabe) {
+      z.push(`<li><strong>Ab wann:</strong> Gemessen und verrechnet wird ab der Umstellung deines Netzbereichs. Der Netzbetreiber legt den Termin fest: frühestens ${datum(u.fruehestens)}, ohne eigene Meldung ${datum(u.vorgabe)}, spätestens ${datum(u.spaetestens)}. Bis dahin zahlt ein Haushalt eine Pauschale — die Spitze kostet dann noch nichts.</li>`);
+    }
+    if (anteil) z.push(`<li><strong>Aufteilung</strong> Leistungs- zu Arbeitspreis: ${anteil}. Je höher der Anteil, desto mehr zählt die Spitze.</li>`);
+    z.push(`<li><strong>Flexible Entnahme:</strong> Für Leistung, die der Netzbetreiber zweimal täglich bis zu 2 Stunden begrenzen darf, zahlt man derzeit nur 25 % des Leistungspreises; Haushalte haben Anspruch auf diesen Tarif (E-Control, Folie 7 vom 14.10.2026).</li>`);
+    return `${kopf}
+      <ul style="margin:6px 0 0;padding-left:20px;font-size:12px;line-height:1.55;color:var(--secondary-text-color)">${z.join("")}</ul>
+      <div style="font-size:11px;color:var(--secondary-text-color);margin-top:6px">${quelle ? `Richtwerte der E-Control (${this._escapeHtml(quelle)}), keine Tarife.` : "Keine Tarife, nur Richtwerte."} Die Beträge je Netzbereich kommen mit der Tarifverordnung (Erlass im Dezember 2026). Termine: ${this._escapeHtml(u.quelle || "")}.</div>`;
   }
 
   // Balken je Viertelstunde, Tag, Monat oder Jahr; die Kosten stehen im
@@ -7868,7 +8300,7 @@ class EegOptimizerPanel extends HTMLElement {
         <label>Höchster Netzbezug beim Laden aus dem Netz (kW)</label>
         <input type="number" data-field="${prefix}schedule_netzladen_max_kw"
                value="${maxKw}" min="0" max="100" step="0.1" placeholder="keine Grenze">
-        <div class="help-text">Gilt am Zähler, für Haus und Batterie zusammen. Der Fahrplan rechnet dafür mit Hausverbrauch und PV-Prognose, die Steuerung führt die Ladeleistung alle 30 Sekunden an den Messwerten nach: Läuft der Herd oder kommt weniger Sonne, lädt die Batterie langsamer. Das Haus selbst wird nie begrenzt. Leer heißt: keine eigene Grenze — die Batterie lädt mit bis zu ${batterieKw} kW, das Haus kommt dazu. Ab 2027 kostet die höchste Viertelstunde Netzbezug im Monat Geld — eine Grenze hält diese Spitze niedrig.</div>
+        <div class="help-text">Gilt am Zähler, für Haus und Batterie zusammen. Der Fahrplan rechnet dafür mit Hausverbrauch und PV-Prognose, die Steuerung führt die Ladeleistung alle 30 Sekunden an den Messwerten nach: Läuft der Herd oder kommt weniger Sonne, lädt die Batterie langsamer. Das Haus selbst wird nie begrenzt. Leer heißt: keine eigene Grenze — die Batterie lädt mit bis zu ${batterieKw} kW, das Haus kommt dazu. Mit der neuen Tarifstruktur (je nach Netzbereich ab 2027 oder 2028) kostet die höchste Viertelstunde Netzbezug im Monat Geld — eine Grenze hält diese Spitze niedrig.</div>
       </div>
       <div class="field-group">
         <label>Mindestvorteil (ct/kWh)</label>
@@ -9050,7 +9482,7 @@ class EegOptimizerPanel extends HTMLElement {
     return SPITZENKAPPUNG_BATTERIE_TREIBER.includes(d?.inverter_type || this._config?.inverter_type);
   }
 
-  _kappungBatterieZustand(b) {
+  _kappungBatterieZustand(b, grenzeKw) {
     // Was die Batterie-Stufe gerade tut — aus Plan und Executor (sensor.py
     // _kappung_batterie). Leer, solange noch kein Lauf da ist.
     if (!b) return "";
@@ -9059,8 +9491,10 @@ class EegOptimizerPanel extends HTMLElement {
     if (b.statistik === false) {
       teile.push(`Die Statistik reicht noch nicht (${b.tage ?? 0} von 7 vergleichbaren Tagen) — bis dahin gilt die Mindestreserve.`);
     }
-    if (b.reserve_pct != null && b.schwelle_pct != null) {
-      teile.push(`Reserve jetzt <strong>${pct(b.reserve_pct)} %</strong> — unter <strong>${pct(b.schwelle_pct)} %</strong> Ladestand deckt die Batterie nur noch, was über der Grenze liegt.`);
+    if (b.reserve_pct != null && b.schwelle_pct != null && Number(b.reserve_pct) <= 0) {
+      teile.push(`Keine Reserve nötig — in den letzten vier Wochen lag kein Verbrauch ${this._reserveGegen(b.schwelle_kw, grenzeKw)}. Die Batterie arbeitet normal und hält erst am Mindest-Ladestand (<strong>${pct(b.basis_pct ?? b.schwelle_pct)} %</strong>).`);
+    } else if (b.reserve_pct != null && b.schwelle_pct != null) {
+      teile.push(`Reserve jetzt <strong>${pct(b.reserve_pct)} %</strong> — unter <strong>${pct(b.schwelle_pct)} %</strong> Ladestand deckt die Batterie nur noch, was ${this._reserveGegen(b.schwelle_kw, grenzeKw)} liegt.`);
     } else if (b.plan_pct != null) {
       teile.push(`Der Fahrplan hält <strong>${pct(b.plan_wirksam_pct ?? b.plan_pct)} %</strong> für Spitzen zurück.`);
     }
@@ -9093,7 +9527,7 @@ class EegOptimizerPanel extends HTMLElement {
     // Was gerade abgeschaltet ist — aus den Attributen der Bezugsspitze.
     const kappung = this._readState(this._entityIds?.bezugsspitze_monat)?.attributes?.kappung;
     const ab = kappung?.abgeschaltet || [];
-    const batterieText = this._kappungBatterieZustand(kappung?.batterie);
+    const batterieText = this._kappungBatterieZustand(kappung?.batterie, d.spitzenkappung_grenze_kw ?? 5);
     const zustand = !kappung ? "" : `
       <div class="help-text" style="margin-bottom:12px">
         ${kappung.schwelle_kw != null
@@ -9139,8 +9573,8 @@ class EegOptimizerPanel extends HTMLElement {
       icon: "mdi:transmission-tower-import",
       titel: "Bezugsspitzen kappen",
       beschreibung: mitBatterie
-        ? "Ab 2027 kostet der höchste Viertelstunden-Bezug des Monats extra. Solange die Batterie genug hat, deckt sie Spitzen ohnehin. Wird sie knapp, hält sie eine Reserve zurück: Darin gibt sie nur noch ab, was über dem Grenzwert liegt, die Grundlast kommt aus dem Netz. Wie groß die Reserve ist, rechnet die Integration aus dem Verbrauch der letzten vier Wochen. Reicht die Batterie nicht, schaltet sie die Verbraucher unten der Reihe nach ab. Ist die Optimierung aus oder pausiert, greift nichts davon."
-        : "Ab 2027 kostet der höchste Viertelstunden-Bezug des Monats extra. Droht die laufende Viertelstunde über den Grenzwert und über die bisherige Monatsspitze zu steigen, schaltet die Integration die Verbraucher unten der Reihe nach ab — und wieder ein, sobald sie eine volle Viertelstunde lang Platz hätten. Gemessen wird am Netz, also nach der Batterie: Was sie deckt, zählt gar nicht erst. Über die Batterie kappt dieser Wechselrichter nicht (nur Huawei, Fronius und SMA). Ist die Optimierung aus oder pausiert, wird alles wieder eingeschaltet.",
+        ? "Mit der neuen Tarifstruktur (je nach Netzbereich ab 2027 oder 2028) kostet der höchste Viertelstunden-Bezug des Monats extra. Solange die Batterie genug hat, deckt sie Spitzen ohnehin. Wird sie knapp, hält sie eine Reserve zurück: Darin gibt sie nur noch ab, was über dem Grenzwert liegt, die Grundlast kommt aus dem Netz. Wie groß die Reserve ist, rechnet die Integration aus dem Verbrauch der letzten vier Wochen. Reicht die Batterie nicht, schaltet sie die Verbraucher unten der Reihe nach ab. Ist die Optimierung aus oder pausiert, greift nichts davon."
+        : "Mit der neuen Tarifstruktur (je nach Netzbereich ab 2027 oder 2028) kostet der höchste Viertelstunden-Bezug des Monats extra. Droht die laufende Viertelstunde über den Grenzwert und über die bisherige Monatsspitze zu steigen, schaltet die Integration die Verbraucher unten der Reihe nach ab — und wieder ein, sobald sie eine volle Viertelstunde lang Platz hätten. Gemessen wird am Netz, also nach der Batterie: Was sie deckt, zählt gar nicht erst. Über die Batterie kappt dieser Wechselrichter nicht (nur Huawei, Fronius, SMA und SolaX). Ist die Optimierung aus oder pausiert, wird alles wieder eingeschaltet.",
       params: `
         ${zustand}
         <div class="field-group">
@@ -10329,13 +10763,12 @@ class EegOptimizerPanel extends HTMLElement {
   }
 
   _renderSpitzeZeile() {
-    // Bezugsspitze des Monats — die Bemessungsgrundlage des Leistungspreises
-    // ab 2027 (leistungsspitze.py). In der Zeile nur Monat und Wert; alles
-    // Weitere steht im ⓘ (.info-popup-trigger: Hover am Desktop, Tippen am
-    // Handy, dort als Blatt am unteren Rand). Ein Tipp auf den Rest der Zeile
-    // öffnet den Sensor. Orange wird der Wert, wenn die Hochrechnung der
-    // laufenden Viertelstunde über der Monatsspitze liegt — dann entsteht
-    // gerade eine neue.
+    // Bezugsspitze des Monats in der Statuskarte: nur Monat, Wert und —
+    // wenn gerade etwas passiert — ein Chip. Alles Weitere steht in der
+    // Karte „Bezugsspitze & Spitzenkappung"; ein Tipp springt dorthin (ist
+    // sie ausgeblendet, öffnet sich der Sensor). Orange wird der Wert, wenn
+    // die Hochrechnung der laufenden Viertelstunde über der Monatsspitze
+    // liegt — dann entsteht gerade eine neue.
     const spitzeState = this._readState(this._entityIds?.bezugsspitze_monat);
     if (!spitzeState) return "";
     const vsState = this._readState(this._entityIds?.netzbezug_viertelstunde);
@@ -10343,97 +10776,37 @@ class EegOptimizerPanel extends HTMLElement {
     const v = vsState?.attributes || {};
     const spitze = parseFloat(spitzeState.state);
     const spitzeBekannt = Number.isFinite(spitze);
-
     let monat = "Monat";
     if (a.monat) {
       const [j, m] = String(a.monat).split("-").map(Number);
       if (j && m) monat = new Date(j, m - 1, 1).toLocaleString("de-AT", { month: "long" });
     }
-    const wann = (iso) => {
-      const d = iso ? new Date(iso) : null;
-      if (!d || isNaN(d)) return "";
-      const tag = d.toLocaleDateString("de-AT", { day: "2-digit", month: "2-digit" });
-      const zeit = d.toLocaleTimeString("de-AT", { hour: "2-digit", minute: "2-digit" });
-      return `${tag} um ${zeit}`;
-    };
-
-    const bisher = Number(v.laufend_bisher_kw);
     const hoch = Number(v.laufend_hochrechnung_kw);
     const droht = spitzeBekannt && Number.isFinite(hoch) && hoch > spitze;
     const wertFarbe = droht ? "var(--warning-color,#ff9800)" : "var(--primary-text-color)";
 
-    const details = [];
-    if (spitzeBekannt) {
-      const zeitpunkt = wann(a.zeitpunkt);
-      if (zeitpunkt) {
-        details.push(`<p>Gemessen am ${zeitpunkt}${a.vollstaendig === false ? " — die Viertelstunde hatte Messlücken, der Wert ist eine Untergrenze" : ""}.</p>`);
-      }
-    } else {
-      details.push("<p>In diesem Monat ist noch keine Viertelstunde abgeschlossen.</p>");
-    }
-    if (Number.isFinite(bisher)) {
-      details.push(`<p>Laufende Viertelstunde: bisher ${fmtDe(bisher, 2)} kW`
-        + (Number.isFinite(hoch) ? `, hochgerechnet ${fmtDe(hoch, 2)} kW` : "")
-        + (droht ? ` — <span style="color:var(--warning-color,#ff9800)">sie setzt gerade eine neue Monatsspitze</span>` : "")
-        + ".</p>");
-    }
-    const letzte = parseFloat(vsState?.state);
-    if (Number.isFinite(letzte)) {
-      details.push(`<p>Letzte abgeschlossene Viertelstunde: ${fmtDe(letzte, 2)} kW.</p>`);
-    }
-    const vormonate = Object.entries(a.verlauf || {}).slice(-3).reverse()
-      .filter(([, kw]) => Number.isFinite(Number(kw)))
-      .map(([mon, kw]) => {
-        const [j, m] = String(mon).split("-").map(Number);
-        const name = j && m ? new Date(j, m - 1, 1).toLocaleString("de-AT", { month: "long", year: "numeric" }) : mon;
-        return `<li>${this._escapeHtml(name)}: ${fmtDe(Number(kw), 2)} kW</li>`;
-      });
-    if (vormonate.length) details.push(`<p>Vormonate:</p><ul>${vormonate.join("")}</ul>`);
-    const kosten = a.netzkosten_monat;
-    if (kosten && Number.isFinite(Number(kosten.endstufe_eur))) {
-      const mindest = spitzeBekannt && spitze < Number(kosten.verrechnet_kw)
-        ? ` (verrechnet werden mindestens ${fmtDe(Number(kosten.verrechnet_kw), 0)}&nbsp;kW)`
-        : "";
-      details.push(`<p>Netzkosten dafür${mindest}: bis zu <strong>${fmtDe(Number(kosten.endstufe_eur), 2)}&nbsp;€ im Monat</strong> im Endausbau
-        (${fmtDe(Number(kosten.satz_bis_eur_kw_monat), 2)}&nbsp;€ je kW und Monat bis ${fmtDe(Number(kosten.stufe_kw), 0)}&nbsp;kW, ${fmtDe(Number(kosten.satz_darueber_eur_kw_monat), 2)}&nbsp;€ darüber),
-        zum Start 2027 etwa ${fmtDe(Number(kosten.start_eur), 2)}&nbsp;€ (rund ${fmtDe(Number(kosten.start_satz_eur_kw_monat), 2)}&nbsp;€ je kW und Monat,
-        je Netzbereich ${fmtDe(Number(kosten.start_spanne_eur_kw_monat?.[0]), 2)} bis ${fmtDe(Number(kosten.start_spanne_eur_kw_monat?.[1]), 2)}&nbsp;€). Alle Beträge inklusive 20&nbsp;% USt.</p>`);
-      details.push(`<p style="color:var(--secondary-text-color)">Das sind Richtwerte der E-Control vom 14.07.2026, keine Tarife — die Beträge je Netzbereich kommen mit der Tarifverordnung Ende 2026.</p>`);
-    }
-    details.push(`<p style="color:var(--secondary-text-color)">Ab 2027 richtet sich der Leistungspreis des Netzentgelts nach diesem Wert: dem höchsten Viertelstunden-Mittel des Netzbezugs im Monat.</p>`);
-
-    // Spitzenkappung: was sie gerade abgeschaltet hat, steht in der Zeile
-    // selbst — wer das Auto nicht laden sieht, soll den Grund finden. Hält
-    // die Batterie gerade ihre Reserve, steht das ebenfalls dort, sonst
-    // wundert sich jemand über Netzbezug bei halbvoller Batterie.
     const kappung = a.kappung;
-    const gekappt = (kappung?.abgeschaltet || []).map(x => this._escapeHtml(x.name || x.entity));
     const kb = kappung?.batterie;
-    if (kappung) {
-      details.push(`<p>Spitzenkappung${kappung.schwelle_kw != null ? ` kappt über ${fmtDe(Number(kappung.schwelle_kw), 2)}&nbsp;kW im Viertelstundenmittel` : " ist gerade nicht aktiv (Optimierung aus oder pausiert)"}${gekappt.length ? ` — abgeschaltet: ${gekappt.join(", ")}` : ""}.</p>`);
-      const batterieText = this._kappungBatterieZustand(kb);
-      if (batterieText) details.push(`<p>${batterieText}</p>`);
+    const gekappt = (kappung?.abgeschaltet || []).map(x => this._escapeHtml(x.name || x.entity));
+    const chip = (text, farbe) => `
+        <span style="display:inline-flex;align-items:center;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;color:${farbe};border:1px solid ${farbe}">${text}</span>`;
+    const chips = [];
+    if (kb?.aktiv && kb.deckel_kw != null) {
+      chips.push(chip(kb.deckel_kw > 0 ? "Batterie deckt nur Spitzen" : "Batterie hält Reserve", "#ef6c00"));
     }
-    const teile = [];
-    if (kb?.aktiv && kb.deckel_kw != null) teile.push(kb.deckel_kw > 0 ? `Batterie deckt nur Spitzen` : `Batterie hält Reserve`);
-    if (gekappt.length) teile.push(`${gekappt.join(", ")} aus`);
-    const gekapptText = teile.length
-      ? `<span style="color:var(--warning-color,#ff9800);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0">· ${teile.join(" · ")}</span>`
-      : "";
+    if (gekappt.length) chips.push(chip(`${gekappt.join(", ")} aus`, "var(--warning-color,#ff9800)"));
+    if (droht && !chips.length) chips.push(chip("neue Spitze droht", "var(--warning-color,#ff9800)"));
 
     const entity = this._entityIds?.bezugsspitze_monat;
     return `
-      <div data-action="show-entity" data-entity="${entity}"
+      <div data-action="zeige-spitze-karte" data-entity="${entity}" title="Details in der Karte „Bezugsspitze &amp; Spitzenkappung“"
            style="display:flex;align-items:center;gap:8px;margin-top:10px;padding:6px 12px;border-radius:6px;cursor:pointer;
-                  background:var(--secondary-background-color,#f5f5f5);font-size:13px">
+                  background:var(--secondary-background-color,#f5f5f5);font-size:13px;min-width:0">
         <ha-icon icon="mdi:transmission-tower-import" style="--mdc-icon-size:18px;color:var(--secondary-text-color);flex-shrink:0"></ha-icon>
-        <span>Bezugsspitze ${this._escapeHtml(monat)}</span>
-        <strong style="color:${wertFarbe}">${spitzeBekannt ? `${fmtDe(spitze, 2)} kW` : "—"}</strong>
-        ${gekapptText}
-        <span class="info-popup-trigger">
-          <ha-icon icon="mdi:information-outline" style="--mdc-icon-size:16px;color:var(--secondary-text-color);cursor:pointer"></ha-icon>
-          <div class="info-popup"><strong>Bezugsspitze ${this._escapeHtml(monat)}</strong>${details.join("")}</div>
-        </span>
+        <span style="white-space:nowrap">Bezugsspitze ${this._escapeHtml(monat)}</span>
+        <strong style="color:${wertFarbe};white-space:nowrap">${spitzeBekannt ? `${fmtDe(spitze, 2)} kW` : "—"}</strong>
+        <span style="display:flex;gap:6px;flex:1;min-width:0;overflow:hidden">${chips.join("")}</span>
+        <ha-icon icon="mdi:chevron-right" style="--mdc-icon-size:18px;color:var(--secondary-text-color);flex-shrink:0"></ha-icon>
       </div>`;
   }
 
@@ -11431,6 +11804,7 @@ class EegOptimizerPanel extends HTMLElement {
     this._ensureBilanz();
     this._ensureKarte("einspeisung");
     this._ensureKarte("bezug");
+    this._ensureSpitze();
     // Prognosevergleich nachziehen (nur mit eingeschaltetem Vergleich).
     this._ensurePrognosevergleich();
 
@@ -11753,6 +12127,10 @@ class EegOptimizerPanel extends HTMLElement {
 
         <!-- Bezug: was aus dem Netz kam und was es gekostet hat -->
         ${this._zeigt("bezug") ? this._renderBezugKarte() : ""}
+
+        <!-- Bezugsspitze & Spitzenkappung: Monatsspitze, laufende
+             Viertelstunde, Tagesspitzen und was die Kappung gerade tut -->
+        ${this._zeigt("spitze") ? this._renderSpitzeKarte() : ""}
 
         <!-- Optimierungsgewinn: was die Optimierung gegenüber Standardbetrieb bringt -->
         ${this._zeigt("gewinn") ? this._renderGewinnKarte() : ""}

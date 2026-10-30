@@ -2,39 +2,39 @@
      Quelle: docs/guides/einstellungen.md
      Neu generieren mit: python scripts/build_guides.py -->
 <h2 class="guide-title">Einstellungen und Expertenmodus</h2>
-<p>Die Einstellungen öffnest du über das Zahnrad oben rechts im Dashboard. Sie sind in Tabs gegliedert. Die Tabs <strong>Tarife</strong>, <strong>Anlage</strong> und <strong>Prognose</strong> enthalten dieselben Felder wie die entsprechenden Schritte des Einrichtungsassistenten. Du musst den Assistenten also nicht noch einmal durchlaufen, nur um einen Preis oder den Mindest-Ladestand zu ändern.</p>
+<p>Die Einstellungen öffnest du über das Zahnrad oben rechts im Dashboard. Die Tabs <strong>Tarife</strong>, <strong>Anlage</strong> und <strong>Prognose</strong> haben dieselben Felder wie der Einrichtungsassistent. Für eine kleine Änderung musst du den Assistenten also nicht neu durchlaufen.</p>
 <h3>Die Tabs</h3>
 <table>
 <thead>
 <tr>
 <th>Tab</th>
-<th>Was dort steht</th>
+<th>Inhalt</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td><strong>Tarife</strong></td>
-<td>Karten <strong>Vergütung und Kosten</strong> (Standardvergütung, Nachtsatz, Bezugspreis, Netzbereich) und <strong>Energiegemeinschaft</strong>. Entspricht dem Assistentenschritt „Tarife &amp; Gemeinschaft“</td>
+<td>Karten <strong>Vergütung und Kosten</strong> (Standardvergütung, Nachtsatz, Bezugspreis, Netzbereich) und <strong>Energiegemeinschaft</strong>. Wie der Assistentenschritt „Tarife &amp; Gemeinschaft“</td>
 </tr>
 <tr>
 <td><strong>Anlage</strong></td>
-<td>Karten <strong>Anlage</strong> (Einspeisegrenze) und <strong>Batterie</strong> (Mindest- und Maximum-Ladestand). Entspricht dem Assistentenschritt „Anlage &amp; Batterie“</td>
+<td>Karten <strong>Anlage</strong> (Einspeisegrenze) und <strong>Batterie</strong> (Mindest- und Maximum-Ladestand). Wie der Assistentenschritt „Anlage &amp; Batterie“</td>
 </tr>
 <tr>
 <td><strong>Prognose</strong></td>
-<td>Die steuernde Quelle der PV-Prognose mit ihren Sensoren, der Schalter <strong>Prognosevergleich</strong> und, wenn die eigene Berechnung steuert oder mitläuft, die Flächentabelle der Anlage. Entspricht dem Assistentenschritt „PV-Prognose“</td>
+<td>Steuernde Quelle der PV-Prognose mit Sensoren, Schalter <strong>Prognosevergleich</strong> und – wenn die eigene Berechnung steuert oder mitläuft – die Flächentabelle. Wie der Assistentenschritt „PV-Prognose“</td>
 </tr>
 <tr>
 <td><strong>Spitzenkappung</strong> (Beta)</td>
-<td>Bezugsspitzen kappen: Grenzwert, Mindest- und Maximalreserve der Batterie (Huawei, Fronius, SMA) und die Verbraucher, die abgeschaltet werden dürfen (siehe Anleitung „Spitzenkappung“)</td>
+<td>Bezugsspitzen kappen: Grenzwert, Mindest- und Maximalreserve der Batterie (Huawei, Fronius, SMA, SolaX) und Verbraucher, die abgeschaltet werden dürfen (siehe Anleitung „Spitzenkappung“)</td>
 </tr>
 <tr>
 <td><strong>Netzladen</strong> (Beta)</td>
-<td><em>Batterie aus dem Netz laden</em>: der Schalter, Bezugstarif des Lieferanten, Grenze am Zähler, Mindestvorteil und der Bezugspreis je Gemeinschaft (siehe Anleitung „Batterie aus dem Netz laden“). Der Tab erscheint <strong>nur im Expertenmodus</strong> und nur bei Huawei und Victron</td>
+<td><em>Batterie aus dem Netz laden</em>: Schalter, Bezugstarif des Lieferanten, Grenze am Zähler, Mindestvorteil und Bezugspreis je Gemeinschaft (siehe Anleitung „Batterie aus dem Netz laden“). <strong>Nur im Expertenmodus</strong> und nur bei Huawei und Victron</td>
 </tr>
 <tr>
 <td><strong>Verbraucher</strong></td>
-<td>Karten <strong>Heizstab</strong> (Fronius Ohmpilot, siehe Anleitung „Heizstab“) und <strong>Wallbox</strong> (siehe Anleitung „Wallbox“). Der Tab erscheint <strong>nur im Expertenmodus</strong> und kommt im Assistenten nicht vor</td>
+<td>Karten <strong>Heizstab</strong> (Fronius Ohmpilot, siehe Anleitung „Heizstab“) und <strong>Wallbox</strong> (siehe Anleitung „Wallbox“). <strong>Nur im Expertenmodus</strong>, nicht im Assistenten</td>
 </tr>
 <tr>
 <td><strong>System</strong></td>
@@ -43,7 +43,7 @@
 </tbody>
 </table>
 <h3>Expertenmodus</h3>
-<p>Der Schalter steht im Tab <strong>System</strong> ganz unten. Er blendet zusätzliche Optionen und Diagnose-Details ein. Die Einstellungen zeigen das sofort; im Dashboard erscheint es, sobald du gespeichert hast.</p>
+<p>Der Schalter steht ganz unten im Tab <strong>System</strong>. Er zeigt zusätzliche Optionen und Diagnose-Details. In den Einstellungen sofort, im Dashboard nach dem Speichern.</p>
 <p>Zusätzlich sichtbar werden:</p>
 <ul>
 <li><strong>Tab Tarife:</strong> <em>Alterungskosten der Batterie (ct/kWh)</em></li>
@@ -51,16 +51,16 @@
 <li><strong>Tab Anlage:</strong> die Gerätedaten <em>AC-Grenzleistung des Wechselrichters</em>, <em>PV-Spitzenleistung</em> und <em>Batterie-Leistungsgrenze</em>, dazu <em>Sicherheitspuffer auf die Prognose (%)</em>, <em>Ladeziel am Abend (%)</em> und <em>Vormittags bevorzugt netzdienlich</em> (siehe Anleitung „Anlage &amp; Batterie“)</li>
 <li><strong>Tab Prognose:</strong> bei Solcast die <em>Weiteren Prognose-Sensoren</em> (PV-Prognose heute gesamt, Tag 3 bis Tag 7)</li>
 <li><strong>Tab Verbraucher</strong> als Ganzes, mit Heizstab und Wallbox</li>
-<li><strong>Tab System:</strong> die Karten <strong>Verbrauchsprofil</strong> (Rückblick in Wochen) und <strong>Tagesbilanz</strong></li>
-<li><strong>Dashboard:</strong> in der aufgeklappten Karte <strong>Verbrauchsprofil</strong> Datenpunkte, Fenster, letzte Berechnung und der Knopf <strong>Verbrauchsprofil neu berechnen</strong>, bei einer Wallbox der Handbetrieb (Laden/Entladen) in der Statuskarte</li>
-<li><strong>Assistent:</strong> Der Assistent hat oben einen eigenen Haken <em>Expertenmodus</em>. Damit erscheinen bei Solcast die <em>Weiteren Prognose-Sensoren</em> (PV-Prognose heute gesamt, Tag 3 bis Tag 7) und je nach Wechselrichter ein zweiter PV- bzw. Batterie-Sensor</li>
+<li><strong>Tab System:</strong> Karten <strong>Verbrauchsprofil</strong> (Rückblick in Wochen) und <strong>Tagesbilanz</strong></li>
+<li><strong>Dashboard:</strong> in der aufgeklappten Karte <strong>Verbrauchsprofil</strong> Datenpunkte, Fenster, letzte Berechnung und der Knopf <strong>Verbrauchsprofil neu berechnen</strong>; bei einer Wallbox der Handbetrieb (Laden/Entladen) in der Statuskarte</li>
+<li><strong>Assistent:</strong> eigener Haken <em>Expertenmodus</em> oben. Damit erscheinen bei Solcast die <em>Weiteren Prognose-Sensoren</em> und je nach Wechselrichter ein zweiter PV- bzw. Batterie-Sensor</li>
 </ul>
-<p><em>Die Gerätedaten stehen im Assistenten immer da. Du trägst sie einmal aus dem Datenblatt ein; danach ändern sie sich nicht mehr. Deshalb sind sie in den Einstellungen im Expertenmodus versteckt.</em></p>
-<div class="guide-alert note"><p>Der Sicherheitspuffer steht bewusst auf 0 %. Ein Aufschlag macht die Prognose nicht besser, sondern verschiebt sie nur. Außerdem verlagert er Einspeisung aus den Bedarfsstunden der Gemeinschaft in die Batterie und kostet so Ertrag.</p></div>
+<p><em>Im Assistenten stehen die Gerätedaten immer da. Sie ändern sich nach dem ersten Eintragen kaum, darum sind sie in den Einstellungen im Expertenmodus versteckt.</em></p>
+<div class="guide-alert note"><p>Der Sicherheitspuffer steht bewusst auf 0 %. Ein Aufschlag macht die Prognose nicht besser, er verlagert nur Einspeisung aus den Bedarfsstunden der Gemeinschaft in die Batterie und kostet Ertrag.</p></div>
 
 <h3>Sensoren ändern</h3>
-<p>Die Karte <strong>Anlage und Sensoren</strong> im Tab <strong>System</strong> zeigt nur an, welcher Wechselrichter und welche Sensoren zugeordnet sind. Ändern kannst du sie hier nicht. Dafür gibt es den Knopf <strong>Einrichtung erneut durchlaufen</strong>: Er startet den Assistenten direkt beim Schritt „Wechselrichter“, und alle Felder sind mit deiner aktuellen Konfiguration vorbefüllt. Der Grund für den Umweg: Nur der Assistent erkennt Sensoren automatisch und testet die Verbindung zum Wechselrichter.</p>
-<p>Es gibt eine Ausnahme: die Sensoren der PV-Prognose im Tab <strong>Prognose</strong>. Die steuernde Quelle wählst du dort wie im Assistenten über die drei Karten. Bei Solcast und Forecast.Solar stehen die Sensoren darunter, zugeklappt unter <strong>Prognose-Sensoren</strong>; die Zeile zeigt, welche gerade zugeordnet sind. Ein Wechsel der Quelle belegt sie aus der Erkennung vor, aufgeklappt kannst du sie ändern. Fehlt ein Pflichtsensor, ist der Bereich von selbst offen. Ohne diese Sensoren wäre der Wechsel wertlos.</p>
+<p>Die Karte <strong>Anlage und Sensoren</strong> im Tab <strong>System</strong> zeigt nur an, welcher Wechselrichter und welche Sensoren zugeordnet sind. Ändern kannst du sie mit <strong>Einrichtung erneut durchlaufen</strong>: Der Assistent startet beim Schritt „Wechselrichter“, mit deinen aktuellen Werten vorbefüllt. Nur der Assistent erkennt Sensoren automatisch und testet die Verbindung.</p>
+<p>Ausnahme: die Sensoren der PV-Prognose im Tab <strong>Prognose</strong>. Die Quelle wählst du dort über die drei Karten. Bei Solcast und Forecast.Solar stehen die Sensoren darunter, zugeklappt unter <strong>Prognose-Sensoren</strong>. Wechselst du die Quelle, werden sie aus der Erkennung vorbelegt; aufgeklappt kannst du sie ändern. Fehlt ein Pflichtsensor, ist der Bereich von selbst offen.</p>
 <h3>Speichern</h3>
 <p>Der Knopf <strong>Speichern</strong> unter den Tabs übernimmt die Änderungen aus <strong>allen</strong> Tabs auf einmal. Danach bist du wieder im Dashboard. Fehlt ein Pflichtwert oder passt etwas nicht zusammen, wird nichts gespeichert; über dem Knopf steht dann, was fehlt. Geprüft werden:</p>
 <ul>
@@ -71,43 +71,43 @@
 <li><strong>Verbraucher:</strong> Adresse, Leistung und Maximaltemperatur des Heizstabs, Adresse der Ambibox</li>
 <li><strong>Spitzenkappung</strong> (wenn eingeschaltet): Grenzwert zwischen 2 und 20 kW, Mindest- und Maximalreserve zwischen 0 und 80 % (die Mindestreserve nicht über der maximalen), je Verbraucher Leistungssensor und Schalter, und ohne Batterie-Stufe mindestens ein Verbraucher</li>
 </ul>
-<p>Die meisten Änderungen wirken <strong>sofort</strong>: Der Fahrplan wird gleich neu gerechnet, die Steuerung behält ihren Zustand. Einen geänderten Rückblick des Verbrauchsprofils rechnet die Integration im Hintergrund neu.</p>
-<p>Bei einigen Änderungen <strong>lädt die Integration neu</strong>, weil Treiber und Sensoren mit der neuen Anbindung neu entstehen müssen. Das dauert einige Sekunden:</p>
+<p>Die meisten Änderungen wirken <strong>sofort</strong>: Der Fahrplan wird neu gerechnet, die Steuerung läuft weiter. Ein geänderter Rückblick des Verbrauchsprofils wird im Hintergrund neu berechnet.</p>
+<p>Bei diesen Änderungen <strong>lädt die Integration neu</strong> (dauert einige Sekunden):</p>
 <ul>
-<li>die steuernde Quelle der PV-Prognose und ihre Sensoren</li>
-<li>PV-Flächen, Verluste und der Schalter Prognosevergleich</li>
-<li>beim Heizstab: Ein/Aus, Adresse, Port und Leistung (Temperaturen, Wärmewert und die anderen Heizstab-Felder wirken sofort)</li>
-<li>bei der Wallbox: Typ, Adresse, Port, Unit-ID und Ladepunkt</li>
-<li>alles, was du über <strong>Einrichtung erneut durchlaufen</strong> an Wechselrichter und Sensoren änderst</li>
+<li>steuernde Quelle der PV-Prognose und ihre Sensoren</li>
+<li>PV-Flächen, Verluste und Schalter Prognosevergleich</li>
+<li>Heizstab: Ein/Aus, Adresse, Port und Leistung (die übrigen Heizstab-Felder wirken sofort)</li>
+<li>Wallbox: Typ, Adresse, Port, Unit-ID und Ladepunkt</li>
+<li>alles, was du über <strong>Einrichtung erneut durchlaufen</strong> änderst</li>
 </ul>
 <h3>Der Tab System im Einzelnen</h3>
 <h4>Dashboard</h4>
-<p>Hier wählst du, welche Karten das Dashboard zeigt. Die Wahl gilt nur für dieses Gerät und diesen Browser, wirkt sofort und braucht kein <strong>Speichern</strong> — sie ist keine Einstellung der Anlage. Ausgeblendet heißt nur nicht angezeigt: Gerechnet, gesteuert und aufgezeichnet wird weiter. Die Statuskarte lässt sich nicht ausblenden.</p>
+<p>Hier wählst du, welche Karten das Dashboard zeigt. Das gilt nur für dieses Gerät und diesen Browser, wirkt sofort und braucht kein <strong>Speichern</strong>. Ausgeblendete Karten rechnen, steuern und zeichnen weiter auf. Die Statuskarte lässt sich nicht ausblenden.</p>
 <h4>Verlauf vergangener Tage</h4>
-<p>Der Schalter <strong>Viertelstunden speichern</strong> (Vorgabe ein) legt beim Tageswechsel Bezug, Einspeisung und Kosten je Viertelstunde ab. Damit zeigen die Karten <strong>Einspeisung</strong> und <strong>Bezug</strong> auch für einen vergangenen Tag den Verlauf, nicht nur die Summe. Aufbewahrt wird 400 Tage, rund 4 kB je Tag, nach einem Jahr knapp 2 MB. Ausgeschaltet wird nichts mehr abgelegt; bereits gespeicherte Tage bleiben sichtbar.</p>
+<p>Der Schalter <strong>Viertelstunden speichern</strong> (Vorgabe ein) legt beim Tageswechsel Bezug, Einspeisung und Kosten je Viertelstunde ab. So zeigen die Karten <strong>Einspeisung</strong> und <strong>Bezug</strong> auch für vergangene Tage den Verlauf, nicht nur die Summe. Aufbewahrt werden 400 Tage (rund 4 kB je Tag, nach einem Jahr knapp 2 MB). Ausgeschaltet wird nichts Neues abgelegt; gespeicherte Tage bleiben sichtbar.</p>
 <h4>EEG-Statistik</h4>
-<p>Mit <strong>EEG-Statistik aktivieren</strong> sendet deine Anlage anonymisierte Diagnose- und Wirksamkeitsdaten, also keine personenbezogenen Daten und keine IP-Adressen. Der Schalter wirkt sofort, <strong>Speichern</strong> brauchst du dafür nicht. Ausschalten pausiert nur: Die anonyme Kennung bleibt gespeichert. Mit <strong>Daten löschen</strong> werden nach einer Rückfrage alle übermittelten Daten am Server entfernt und die lokale Anmeldung verworfen. Das lässt sich nicht rückgängig machen. Was genau übertragen wird, steht in der Karte unter <em>Datenschutz-Details</em> und ausführlich in der <a href="https://github.com/RobertHell82/EEGEnergyOptimizer2#eeg-statistik">README</a>.</p>
+<p>Mit <strong>EEG-Statistik aktivieren</strong> sendet deine Anlage anonymisierte Diagnose- und Wirksamkeitsdaten – keine personenbezogenen Daten, keine IP-Adressen. Wirkt sofort, ohne <strong>Speichern</strong>. Ausschalten pausiert nur, die anonyme Kennung bleibt. <strong>Daten löschen</strong> entfernt nach einer Rückfrage alle übermittelten Daten am Server und verwirft die lokale Anmeldung – endgültig. Was übertragen wird, steht unter <em>Datenschutz-Details</em> und in der <a href="https://github.com/RobertHell82/EEGEnergyOptimizer2#eeg-statistik">README</a>.</p>
 <h4>Fahrplan-Archiv</h4>
-<p>Alle 15 Minuten und zusätzlich bei jeder deutlichen Planänderung legt die Integration den gerechneten Fahrplan ab und bewahrt ihn <strong>7 Tage</strong> auf. Die Karte zeigt, wie viele Fahrpläne aus welchem Zeitraum vorliegen. <strong>Archiv herunterladen</strong> liefert ein ZIP mit:</p>
+<p>Alle 15 Minuten und bei jeder deutlichen Planänderung wird der Fahrplan abgelegt und <strong>7 Tage</strong> aufbewahrt. Die Karte zeigt, wie viele Fahrpläne aus welchem Zeitraum vorliegen. <strong>Archiv herunterladen</strong> liefert ein ZIP mit:</p>
 <ul>
-<li>allen archivierten Fahrplänen, jeweils mit sämtlichen Eingangsgrößen des Modells (PV samt unterer Prognose, Verbrauch, Batterie, Preise und Gemeinschaftsbedarf je Viertelstunde, Heizstab-Zustand)</li>
+<li>allen archivierten Fahrplänen samt allen Eingangsgrößen (PV samt unterer Prognose, Verbrauch, Batterie, Preise und Gemeinschaftsbedarf je Viertelstunde, Heizstab-Zustand)</li>
 <li>dem gemessenen Verlauf der Leistungen im 5-Minuten-Raster</li>
 <li>den Einstellungen, <strong>ohne</strong> Netzwerk- und Zugangsdaten</li>
 <li>einer Lesehilfe</li>
 </ul>
-<p>Hat die Anlage etwas Unerwartetes getan, schick dieses ZIP an den Support. Damit lässt sich jeder Lauf nachrechnen, ohne deine Anlage zu befragen. <em>Der Download-Link gilt nur wenige Minuten. Funktioniert er nicht mehr, klick auf <strong>Zustand aktualisieren</strong>.</em></p>
+<p>Hat die Anlage etwas Unerwartetes getan, schick dieses ZIP an den Support. <em>Der Download-Link gilt nur wenige Minuten. Geht er nicht mehr, klick auf <strong>Zustand aktualisieren</strong>.</em></p>
 <h4>Verbrauchsprofil (Expertenmodus)</h4>
-<p><strong>Rückblick (Wochen)</strong> legt fest, über wie viele Wochen der Hausverbrauch gemittelt wird (1–52, Vorgabe 4). Gemittelt wird über zwei Gruppen: Werktage und Wochenende samt Feiertagen. Der höchste Wert je Stunde wird verworfen, damit ein Ausreißer wie eine E-Auto-Ladung kaum ins Gewicht fällt. Wenn du das Profil sofort neu berechnen willst, klapp im Dashboard die Karte <strong>Verbrauchsprofil</strong> auf und klick auf <strong>Verbrauchsprofil neu berechnen</strong>.</p>
+<p><strong>Rückblick (Wochen)</strong>: über wie viele Wochen der Hausverbrauch gemittelt wird (1–52, Vorgabe 4). Getrennt nach Werktagen und Wochenende samt Feiertagen. Der höchste Wert je Stunde wird verworfen, damit Ausreißer wie eine E-Auto-Ladung kaum zählen. Sofort neu berechnen: im Dashboard die Karte <strong>Verbrauchsprofil</strong> aufklappen und <strong>Verbrauchsprofil neu berechnen</strong> klicken.</p>
 <h4>Tagesbilanz (Expertenmodus)</h4>
-<p>Die Karte stellt für den letzten abgeschlossenen Tag gegenüber, was der Fahrplan an PV-Ertrag und Verbrauch erwartet hatte und was gemessen wurde. Verglichen wird mit dem Plan vom Vorabend (24 h) und dem von zwei Tagen vorher (48 h). Sie läuft jede Nacht um 00:15 von selbst; <strong>Jetzt rechnen</strong> holt das sofort nach. Ist die EEG-Statistik aktiv, wird das Ergebnis mitgesendet. Die Bilanz braucht für 95 % des Tages Messwerte, deshalb bleibt sie bei einer frisch eingerichteten Anlage anfangs leer.</p>
+<p>Vergleicht für den letzten abgeschlossenen Tag erwarteten und gemessenen PV-Ertrag und Verbrauch – mit dem Plan vom Vorabend (24 h) und von zwei Tagen vorher (48 h). Läuft jede Nacht um 00:15; <strong>Jetzt rechnen</strong> startet sie sofort. Mit aktiver EEG-Statistik wird das Ergebnis mitgesendet. Sie braucht Messwerte für 95 % des Tages und bleibt bei einer neuen Anlage daher anfangs leer.</p>
 <h3>Wer was darf</h3>
-<p>Das Panel sehen <strong>alle angemeldeten Benutzer</strong>. Dashboard, Optimierungsplan und alle Anzeigen funktionieren auch ohne Administratorrechte, ebenso Pause und Aufheben, das Neurechnen des Plans, <strong>Jetzt rechnen</strong> in der Tagesbilanz und der Archiv-Download.</p>
+<p>Das Panel sehen <strong>alle angemeldeten Benutzer</strong>. Ohne Administratorrechte funktionieren Dashboard, Optimierungsplan und alle Anzeigen, Pause und Aufheben, Neurechnen des Plans, <strong>Jetzt rechnen</strong> in der Tagesbilanz und der Archiv-Download.</p>
 <p>Nur <strong>Administratoren</strong> dürfen:</p>
 <ul>
-<li>Einstellungen <strong>speichern</strong> und den Einrichtungsassistenten nutzen (Sensorerkennung, Verbindungstests der Wechselrichter)</li>
+<li>Einstellungen <strong>speichern</strong> und den Assistenten nutzen (Sensorerkennung, Verbindungstests)</li>
 <li><strong>Prognose berechnen</strong> bei der eigenen PV-Prognose</li>
-<li>die EEG-Statistik ein- und ausschalten und <strong>Daten löschen</strong></li>
+<li>EEG-Statistik ein- und ausschalten und <strong>Daten löschen</strong></li>
 <li><strong>Verbrauchsprofil neu berechnen</strong></li>
 <li>bei der Wallbox <strong>Verbindung testen</strong> und den Handbetrieb starten</li>
 </ul>
-<div class="guide-alert note"><p>Meldet ein Benutzer „Fehler beim Speichern“, fehlen ihm meist die Administratorrechte. Die Einstellungen kann er ansehen, ändern kann sie nur ein Administrator.</p></div>
+<div class="guide-alert note"><p>Meldet jemand „Fehler beim Speichern“, fehlen meist die Administratorrechte.</p></div>

@@ -2,9 +2,9 @@
      Quelle: docs/guides/prognose_eigen.md
      Neu generieren mit: python scripts/build_guides.py -->
 <h2 class="guide-title">Eigene PV-Prognose einrichten</h2>
-<p>Die Integration rechnet die PV-Prognose selbst: Wetterdaten kommen von <strong>Open-Meteo</strong> (kostenlos, ohne Konto, ohne Schlüssel), die Anlage trägst du hier ein. Es ist keine weitere Home-Assistant-Integration nötig.</p>
+<p>Die Integration rechnet die PV-Prognose selbst. Die Wetterdaten kommen von <strong>Open-Meteo</strong> (kostenlos, ohne Konto, ohne Schlüssel), deine Anlage trägst du hier ein. Eine weitere Home-Assistant-Integration brauchst du nicht.</p>
 <h3>1. Standort prüfen</h3>
-<p>Open-Meteo braucht Breiten- und Längengrad. Die Integration nimmt sie aus der Home-Assistant-Konfiguration (<strong>Einstellungen → System → Allgemein → Standort</strong>). Steht dort noch der Platzhalter, ist die Prognose für einen falschen Ort — bitte einmal prüfen.</p>
+<p>Der Standort kommt aus <strong>Einstellungen → System → Allgemein → Standort</strong>. Steht dort noch der Platzhalter, gilt die Prognose für einen falschen Ort — bitte prüfen.</p>
 <h3>2. Flächen eintragen</h3>
 <p>Eine Zeile je Modulfläche mit gleicher Ausrichtung. Ein Süddach ist eine Fläche, ein Ost-West-Dach sind zwei.</p>
 <table>
@@ -21,57 +21,57 @@
 </tr>
 <tr>
 <td><strong>Leistung (kWp)</strong></td>
-<td>Modulleistung dieser Fläche (Summe der Module)</td>
+<td>Summe der Module dieser Fläche</td>
 </tr>
 <tr>
 <td><strong>Neigung</strong></td>
-<td>0° = flach liegend, 90° = senkrecht. Typische Dächer: <strong>30–35°</strong>, Flachdach-Aufständerung: 10–15°</td>
+<td>0° = flach, 90° = senkrecht. Typische Dächer: <strong>30–35°</strong>, aufgeständert am Flachdach: 10–15°</td>
 </tr>
 <tr>
 <td><strong>Azimut</strong></td>
-<td>Himmelsrichtung der Module als Kompasswert:<br><strong>0° = Nord</strong>, 90° = Ost, <strong>180° = Süd</strong>, 270° = West</td>
+<td>Himmelsrichtung als Kompasswert:<br><strong>0° = Nord</strong>, 90° = Ost, <strong>180° = Süd</strong>, 270° = West</td>
 </tr>
 </tbody>
 </table>
-<p><em><strong>Achtung Azimut:</strong> Es gilt die Kompass-Konvention (Süd = 180°), dieselbe wie bei <code>sun.sun</code> und bei Forecast.Solar in Home Assistant. Open-Meteo selbst zählt anders (0° = Süd) — die Umrechnung macht die Integration, du trägst den Kompasswert ein. Die Himmelsrichtung neben dem Feld zeigt, ob der Wert stimmt.</em></p>
+<p><em><strong>Achtung Azimut:</strong> Süd = 180°, wie bei Forecast.Solar in Home Assistant. Die Himmelsrichtung neben dem Feld zeigt dir, ob der Wert stimmt.</em></p>
 <h4>Grenze je Fläche (optional)</h4>
-<p>Hängt eine Fläche an einem eigenen Wechselrichter oder MPP-Tracker, trägst du dessen AC-Grenze in <strong>Grenze (kW)</strong> ein. Beispiel: Süddach 10 kWp an einem 8-kW-Gerät, Ostdach an einem zweiten — dann wird das Süddach für sich bei 8 kW abgeschnitten, nicht erst die Summe. Leer gelassen deckelt nur die AC-Grenzleistung der ganzen Anlage.</p>
+<p>Hängt eine Fläche an einem eigenen Wechselrichter oder MPP-Tracker (Solareingang des Wechselrichters), trag dessen AC-Grenze in <strong>Grenze (kW)</strong> ein. Beispiel: Süddach 10 kWp an einem 8-kW-Gerät, Ostdach an einem zweiten — dann wird das Süddach allein bei 8 kW gedeckelt. Leer gelassen deckelt nur die AC-Grenzleistung der ganzen Anlage.</p>
 <h3>3. Systemverluste</h3>
-<p>Pauschale Verluste in Prozent für Verschmutzung, Leitungen, Mismatch, Wechselrichter und Alterung. <strong>14 %</strong> ist der übliche Richtwert (PVWatts). Wer seine Anlage kennt, kann anpassen: neue, saubere Anlage eher 10 %, ältere oder verschmutzte eher 18 %.</p>
-<p>Die <strong>AC-Grenzleistung</strong> des Wechselrichters aus dem Schritt „Anlage &amp; Batterie" deckelt die Prognose — mehr als das Gerät liefert, wird nie prognostiziert.</p>
+<p>Pauschale Verluste in Prozent (Schmutz, Leitungen, Wechselrichter, Alterung). Richtwert: <strong>14 %</strong>. Neue, saubere Anlage eher 10 %, ältere oder schmutzige eher 18 %.</p>
+<p>Mehr als die <strong>AC-Grenzleistung</strong> aus dem Schritt „Anlage &amp; Batterie" wird nie prognostiziert.</p>
 <h3>4. Prognose berechnen</h3>
-<p>„Prognose berechnen" holt die Wetterdaten einmal und zeigt die Tagessummen der nächsten sieben Tage. So siehst du sofort, ob die Eingaben plausibel sind — ein Süddach mit 10 kWp liefert an einem klaren Septembertag um die 50 kWh, ein Ostdach deutlich weniger.</p>
-<div class="guide-alert note"><p>Die Prognose wird alle 30 Minuten aufgefrischt und überlebt Neustarts. Ist Open-Meteo einmal nicht erreichbar, rechnet der Fahrplan mit den zuletzt geholten Werten weiter; erst nach 48 Stunden ohne Abruf gibt es keinen Fahrplan mehr.</p></div>
+<p>„Prognose berechnen" zeigt die Tagessummen der nächsten sieben Tage. So siehst du gleich, ob die Eingaben passen: Ein Süddach mit 10 kWp liefert an einem klaren Septembertag um die 50 kWh, ein Ostdach deutlich weniger.</p>
+<div class="guide-alert note"><p>Die Prognose wird alle 30 Minuten aufgefrischt und bleibt bei einem Neustart erhalten. Ist Open-Meteo nicht erreichbar, rechnet der Fahrplan mit den letzten Werten weiter. Erst nach 48 Stunden ohne neue Daten gibt es keinen Fahrplan mehr.</p></div>
 
 <h3>Was das Modell kann und was nicht</h3>
-<p>Die Rechnung folgt dem PVWatts-Ansatz: Einstrahlung auf die Modulebene (von Open-Meteo aus Direkt- und Diffusstrahlung für deine Neigung und Ausrichtung berechnet, gemittelt über drei Wettermodelle: ICON vom Deutschen Wetterdienst, ECMWF und Météo-France — liegt ein Modell daneben, etwa mit Nebel, der nicht kommt, fällt es weniger ins Gewicht), Temperaturkorrektur der Zellen (−0,4 % je Kelvin), pauschale Verluste, Deckel auf die AC-Grenze.</p>
-<p>Was das Modell von sich aus <strong>nicht</strong> kennt: Verschattung durch Bäume, Nachbargebäude oder Gauben, den Horizont, und die Eigenheiten deines Standorts (etwa Dunst am Morgen in einem Becken). Das lernt die <strong>Kalibrierung</strong>: Sie vergleicht jeden Tag die Prognose mit dem, was deine Anlage wirklich erzeugt hat, und merkt sich je Sonnenstand einen Korrekturfaktor. Ein Baum im Südosten verschattet immer dieselbe Himmelsgegend, egal zu welcher Uhrzeit die Sonne dort steht.</p>
+<p>Gerechnet wird mit der Sonneneinstrahlung auf deine Module (Mittel aus drei Wettermodellen: ICON vom Deutschen Wetterdienst, ECMWF und Météo-France), einer Temperaturkorrektur (−0,4 % je Kelvin), den Verlusten und dem Deckel auf die AC-Grenze.</p>
+<p>Verschattung (Bäume, Nachbarhaus, Gauben), Horizont und örtliche Eigenheiten kennt das Modell nicht. Das lernt die <strong>Kalibrierung</strong>: Sie vergleicht jeden Tag Prognose und Messung und merkt sich je Sonnenstand einen Korrekturfaktor.</p>
 <ul>
-<li>Sie beginnt mit dem ersten gemessenen Tag und wird mit jedem weiteren Tag sicherer; einzelne Ausreißer ziehen sie nur ein Stück.</li>
-<li>Einen Sonnenstand, den sie noch nie gesehen hat (im Herbst zum Beispiel die tiefe Wintersonne), lässt sie unverändert. Ganz fertig ist sie nach einem Jahr.</li>
-<li>Tage mit ganz anderem Wetter als vorhergesagt und Zeiten, in denen die Anlage abgeregelt war (Einspeisegrenze erreicht, Wechselrichter am Anschlag), zählen nicht — sie sagen nichts über die Module.</li>
-<li>Änderst du Flächen, Verluste oder die AC-Grenze, beginnt sie von vorn — ebenso, wenn die Integration andere Wettermodelle verwendet.</li>
+<li>Sie beginnt mit dem ersten gemessenen Tag und wird mit jedem Tag sicherer. Einzelne Ausreißer ziehen sie nur ein Stück.</li>
+<li>Einen Sonnenstand, den sie noch nie gesehen hat (z.B. die tiefe Wintersonne im Herbst), lässt sie unverändert. Ganz fertig ist sie nach einem Jahr.</li>
+<li>Tage mit ganz anderem Wetter als vorhergesagt und Zeiten mit Abregelung (Einspeisegrenze erreicht, Wechselrichter am Anschlag) zählen nicht.</li>
+<li>Änderst du Flächen, Verluste oder AC-Grenze, beginnt sie von vorn — ebenso bei anderen Wettermodellen.</li>
 </ul>
-<p>Sie lernt immer, wenn die eigene Berechnung steuert. Wie weit sie ist, zeigt die Karte <strong>Prognosevergleich</strong> im Dashboard — die erscheint, wenn du den Prognosevergleich einschaltest. Ohne den Schalter lernt sie trotzdem, nur ist ihr Stand dann nirgends zu sehen.</p>
-<p>Schnee auf den Modulen und ein Ost-West-Dach an einem Wechselrichter mit einem einzigen MPP-Tracker kann auch die Kalibrierung nicht abbilden.</p>
-<p>Gegenüber Solcast fehlt der Satelliten-Nowcast für die nächsten Stunden — bei durchbrochener Bewölkung ist Solcast dort im Vorteil. Für den Fahrplan zählt aber vor allem, wie viel Energie heute noch und morgen kommt, und da sind Wettermodell-Prognosen gleichauf.</p>
+<p>Sie lernt immer, wenn die eigene Berechnung steuert. Ihren Stand siehst du in der Karte <strong>Prognosevergleich</strong> im Dashboard — die erscheint nur, wenn du den Prognosevergleich einschaltest.</p>
+<p>Schnee auf den Modulen und ein Ost-West-Dach an einem einzigen MPP-Tracker kann auch die Kalibrierung nicht abbilden.</p>
+<p>Solcast hat zusätzlich Satellitendaten für die nächsten Stunden und ist bei wechselnder Bewölkung dort im Vorteil. Für den Fahrplan zählt aber vor allem, wie viel heute noch und morgen kommt — da sind beide gleichauf.</p>
 <h3>Prognosevergleich: beide Quellen nebeneinander</h3>
-<p>Ob die eigene Berechnung auf deiner Anlage so gut ist wie Solcast, sagen nur Zahlen von deiner Anlage. Dafür gibt es den Schalter <strong>Prognosevergleich</strong> — im Assistenten beim Schritt „PV-Prognose“ und in den <strong>Einstellungen → Prognose</strong>:</p>
+<p>Ob die eigene Berechnung bei dir so gut ist wie Solcast, zeigt der Schalter <strong>Prognosevergleich</strong> — im Assistenten beim Schritt „PV-Prognose“ und unter <strong>Einstellungen → Prognose</strong>:</p>
 <ul>
-<li>Steuert <strong>Solcast</strong> (oder Forecast.Solar), läuft die eigene Berechnung mit — trage dafür in derselben Karte deine Flächen ein.</li>
-<li>Steuert die <strong>eigene Berechnung</strong>, wird Solcast bzw. Forecast.Solar mitgelesen; die Integration muss dafür installiert sein.</li>
+<li>Steuert <strong>Solcast</strong> (oder Forecast.Solar), läuft die eigene Berechnung mit — trag dafür in derselben Karte deine Flächen ein.</li>
+<li>Steuert die <strong>eigene Berechnung</strong>, läuft Solcast bzw. Forecast.Solar mit; die Integration muss installiert sein.</li>
 </ul>
-<p>Jeden Morgen ab 5 Uhr werden beide Prognosen für den Tag festgehalten, im Lauf des Tages kommt die gemessene PV-Leistung dazu. Die Karte <strong>Prognosevergleich</strong> im Dashboard zeigt für einen wählbaren Tag drei Linien — Fremdprognose, eigene Berechnung, Messung — und darunter die letzten Tage mit Tagessumme je Quelle, Abweichung und wer näher an der Messung lag. Aufgehoben wird gut ein Jahr, denn die Kalibrierung lernt aus diesen Tagen; Abweichung, Fehler und p10 rechnen über die letzten 30 Tage. Steuert die eigene Berechnung, wird auch ohne den Schalter aufgezeichnet — die Kalibrierung braucht die Tage.</p>
-<p>Lief Home Assistant am Morgen nicht, werden die Prognosen erst beim nächsten Start festgehalten. Nach 8 Uhr haben sie den halben Tag schon gesehen — solche Tage stehen mit † in der Tabelle, zählen aber nicht in die Zusammenfassung und nicht in den p10.</p>
-<p>Die steuernde Quelle selbst lässt sich in den Einstellungen im Tab <strong>Prognose</strong> wechseln; für Solcast und Forecast.Solar werden die Sensoren dabei vorbelegt und lassen sich dort auch ändern.</p>
+<p>Jeden Morgen ab 5 Uhr werden beide Prognosen für den Tag festgehalten, über den Tag kommt die gemessene PV-Leistung dazu. Die Karte <strong>Prognosevergleich</strong> zeigt für einen wählbaren Tag drei Linien — Fremdprognose, eigene Berechnung, Messung — und darunter die letzten Tage: Tagessumme je Quelle, Abweichung, wer näher lag. Aufgehoben wird gut ein Jahr (die Kalibrierung lernt daraus); Abweichung, Fehler und p10 rechnen über die letzten 30 Tage. Steuert die eigene Berechnung, wird auch ohne Schalter aufgezeichnet.</p>
+<p>Lief Home Assistant am Morgen nicht, werden die Prognosen erst beim Start festgehalten. Tage, an denen das nach 8 Uhr war, stehen mit † in der Tabelle und zählen nicht in Zusammenfassung und p10.</p>
+<p>Die steuernde Quelle wechselst du in den Einstellungen im Tab <strong>Prognose</strong>; die Sensoren für Solcast und Forecast.Solar werden dabei vorbelegt und lassen sich dort ändern.</p>
 <h4>Sensoren</h4>
-<p>Steuert die eigene Berechnung oder läuft sie als Vergleich mit, legt die Integration neun Sensoren an: <strong>Eigene PV-Prognose Leistung</strong> (kW, die laufende Viertelstunde, das Gegenstück zu „PV-Leistung“), <strong>verbleibend heute</strong>, <strong>heute</strong>, <strong>morgen</strong> und <strong>Tag 3</strong> bis <strong>Tag 7</strong> (kWh). Sie haben dieselbe Form wie die Tagessensoren von Solcast und lassen sich in jedem Home-Assistant-Diagramm neben Solcast und die gemessene PV legen. Mit eingeschaltetem Vergleich zeigt das Wochendiagramm im Dashboard außerdem je Tag einen dritten Balken für die mitlaufende Quelle.</p>
+<p>Steuert die eigene Berechnung oder läuft sie mit, gibt es neun Sensoren: <strong>Eigene PV-Prognose Leistung</strong> (kW, laufende Viertelstunde — das Gegenstück zu „PV-Leistung“), <strong>verbleibend heute</strong>, <strong>heute</strong>, <strong>morgen</strong> und <strong>Tag 3</strong> bis <strong>Tag 7</strong> (kWh). Sie sind gleich aufgebaut wie die Tagessensoren von Solcast, du kannst sie also in Diagrammen nebeneinander legen. Mit eingeschaltetem Vergleich zeigt das Wochendiagramm im Dashboard je Tag einen dritten Balken für die mitlaufende Quelle.</p>
 <h4>Der p10 der eigenen Prognose</h4>
-<p>Der Fahrplan hält eine Reserve für den Fall zurück, dass die PV schwächer kommt als erwartet, und rechnet dafür mit einem Worst-Case-Pfad. Solcast liefert dafür ein echtes 10-%-Perzentil, die eigene Berechnung nicht. Mit eingeschaltetem Vergleich holt sie sich eines:</p>
+<p>Der Fahrplan hält eine Reserve zurück, falls die PV schwächer kommt. Dafür braucht er einen vorsichtigen Wert, den <strong>p10</strong>: so viel PV kommt mit 90 % Sicherheit mindestens. Solcast liefert ihn, die eigene Berechnung nicht. Mit eingeschaltetem Vergleich holt sie ihn sich so:</p>
 <ol>
-<li><strong>Von Solcast geliehen</strong>: das Verhältnis p10 zu Erwartung je Halbstunde, angewendet auf die eigene Erwartung — ein Unsicherheitsmaß aus dem Wetter, keine erfundene Zahl.</li>
-<li><strong>Empirisch</strong>: ohne Solcast, sobald 14 vollständige Vergleichstage da sind, das 10-%-Quantil des Verhältnisses gemessen zu prognostiziert aus der eigenen Historie.</li>
-<li>Sonst rechnet die Reserve mit 60 % der Erwartung, genau wie bei Forecast.Solar.</li>
+<li><strong>Von Solcast geliehen</strong>: das Verhältnis p10 zu Erwartung je Halbstunde, angewendet auf die eigene Erwartung.</li>
+<li><strong>Aus der eigenen Messung</strong>: ohne Solcast, ab 14 vollständigen Vergleichstagen, aus dem Verhältnis Messung zu Prognose.</li>
+<li>Sonst rechnet die Reserve mit 60 % der Erwartung, wie bei Forecast.Solar.</li>
 </ol>
-<p>Welcher Weg gerade gilt, steht im Plan-Archiv in der Quelle der PV-Prognose.</p>
-<p><em>Open-Meteo ist für nichtkommerzielle Nutzung frei (Richtwert 10 000 Abrufe je Tag). Bei halbstündlichem Abruf sind das 48 je Fläche und Tag.</em></p>
+<p>Welcher Weg gilt, steht im Plan-Archiv bei der Quelle der PV-Prognose.</p>
+<p><em>Open-Meteo ist für nichtkommerzielle Nutzung frei (Richtwert 10 000 Abrufe am Tag). Bei halbstündlichem Abruf sind das 48 je Fläche und Tag.</em></p>

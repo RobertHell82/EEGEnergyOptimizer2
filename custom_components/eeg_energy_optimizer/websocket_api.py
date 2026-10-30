@@ -473,6 +473,7 @@ def async_register_websocket_commands(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_get_bilanz)
     websocket_api.async_register_command(hass, ws_get_einspeisung)
     websocket_api.async_register_command(hass, ws_get_bezug)
+    websocket_api.async_register_command(hass, ws_get_spitze)
     websocket_api.async_register_command(hass, ws_get_override)
     websocket_api.async_register_command(hass, ws_set_override)
     websocket_api.async_register_command(hass, ws_clear_override)
@@ -2341,6 +2342,134 @@ async def ws_get_bezug(
         connection.send_result(msg["id"], {"verfuegbar": False})
         return
     connection.send_result(msg["id"], {"verfuegbar": True, **ergebnis})
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "eeg_optimizer/get_spitze",
+        vol.Optional("monat"): vol.Match(r"^\d{4}-\d{2}$"),
+    }
+)
+@websocket_api.async_response
+async def ws_get_spitze(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict,
+) -> None:
+    """Karte „Bezugsspitze & Spitzenkappung": ein Monat auf einen Blick."""
+    entry, data = _get_entry_data(hass, connection, msg)
+    if entry is None:
+        return
+    spitze = data.get("leistungsspitze")
+    if spitze is None:
+        connection.send_result(msg["id"], {"verfuegbar": False})
+        return
+    try:
+        ergebnis = spitze_karte(data, msg.get("monat"))
+    except Exception:  # noqa: BLE001 - Anzeige darf nie den Zugriff kippen
+        _LOGGER.exception("Bezugsspitze: Karte nicht berechenbar")
+        connection.send_result(msg["id"], {"verfuegbar": False})
+        return
+    connection.send_result(msg["id"], {"verfuegbar": True, **ergebnis})
+
+
+def spitze_karte(data: dict, monat: str | None, jetzt: Any = None) -> dict[str, Any]:
+    """Alles, was die Karte zeigt — gerechnet, nicht zusammengesucht im Panel.
+
+    Laufender Monat: Spitze, laufende Viertelstunde, Schwelle, Stand der
+    Spitzenkappung (Batterie und Verbraucher). Vergangener Monat: seine
+    Spitze aus dem Verlauf und die Tagesspitzen aus dem Bilanzarchiv.
+    """
+    from datetime import datetime as _dt, timezone as _tz
+
+    from .leistungsspitze import (
+        LEISTUNGSPREIS_ANTEIL,
+        LEISTUNGSPREIS_QUELLE,
+        UMSTELLUNG,
+        monat_von,
+        netzkosten_monat,
+    )
+    from .schedule import _steuert_gerade
+    from .sensor import _kappung_batterie
+    from .spitzenkappung import CONF_SPITZENKAPPUNG_ENABLED, grenze_aus_config, schwelle_kw
+
+    spitze = data["leistungsspitze"]
+    jetzt = jetzt or _dt.now(_tz.utc)
+    # Der laufende Monat nach der Uhr: Die Leistungsspitze rollt erst mit
+    # der ersten abgeschlossenen Viertelstunde des neuen Monats weiter —
+    # bis dahin ist ihre Spitze die des Vormonats.
+    laufender = monat_von(jetzt)
+    verlauf = dict(spitze.verlauf)
+    if spitze.monat and spitze.monat != laufender and spitze.spitze:
+        verlauf.setdefault(spitze.monat, spitze.spitze)
+    aktuelle = spitze.spitze if spitze.monat == laufender else None
+    monat = monat or laufender
+    ist_laufend = monat == laufender
+    eintrag = aktuelle if ist_laufend else verlauf.get(monat)
+    monate = sorted(set(verlauf) | {laufender})
+    config = data.get("config") or {}
+
+    bilanz = data.get("bilanz")
+    tage = bilanz.tagesspitzen(monat) if bilanz is not None else []
+    if bilanz is not None:
+        archiv = sorted(getattr(bilanz, "_tage", {}) or {})
+        if archiv:
+            monate = sorted(set(monate) | {archiv[0][:7]})
+
+    ergebnis: dict[str, Any] = {
+        "monat": monat,
+        "laufend_monat": laufender,
+        "aeltester": monate[0],
+        "neuester": laufender,
+        "spitze": None if not eintrag else {
+            "kw": eintrag.get("kw"),
+            "start": eintrag.get("start"),
+            "vollstaendig": eintrag.get("vollstaendig"),
+        },
+        "netzkosten": netzkosten_monat(eintrag.get("kw") if eintrag else None),
+        "tage": tage,
+        "grenze_kw": grenze_aus_config(config),
+        # Ob überhaupt gekappt wird — ohne Funktion zeigt die Karte keine
+        # Grenze, sie wäre nur der Vorgabewert.
+        "kappung_an": bool(config.get(CONF_SPITZENKAPPUNG_ENABLED)),
+        # Termine und Aufteilung gelten unabhängig von einer Spitze.
+        "tarif": {
+            "umstellung": dict(UMSTELLUNG),
+            "anteil_pct": [{"ab": j, "pct": p} for j, p in LEISTUNGSPREIS_ANTEIL],
+            "quelle": LEISTUNGSPREIS_QUELLE,
+        },
+    }
+    if ist_laufend:
+        ergebnis["laufend"] = spitze.laufend(jetzt)
+        ergebnis["letzte"] = spitze.letzte_viertelstunde
+        ergebnis["schwelle_kw"] = schwelle_kw(
+            ergebnis["grenze_kw"], (eintrag or {}).get("kw")
+        )
+        kappung = data.get("spitzenkappung")
+        if kappung is not None and kappung.aktiv:
+            executor = data.get("executor")
+            aktion = getattr(executor, "last_action", None) if executor is not None else None
+            ergebnis["kappung"] = {
+                **kappung.status(),
+                "verbraucher": kappung.verbraucher_status(jetzt),
+                "batterie": _kappung_batterie(data),
+                # Modus Ein ohne Pause — sonst greift keine der beiden Stufen.
+                "steuert": _steuert_gerade(data),
+                # Was der Executor gerade fährt: Bei einer geplanten
+                # Einspeisung oder Netzladung ruht die Batterie-Stufe.
+                "plan_aktion": getattr(aktion, "kind", None),
+            }
+            soc = None
+            executor = data.get("executor")
+            if executor is not None:
+                try:
+                    soc = executor._batterie_soc_pct()
+                except Exception:  # noqa: BLE001
+                    soc = None
+            ergebnis["kappung"]["soc_pct"] = soc
+        else:
+            ergebnis["kappung"] = None
+    return ergebnis
 
 
 # ---------------------------------------------------------------------------

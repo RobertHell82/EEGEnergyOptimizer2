@@ -1,88 +1,94 @@
 # Kostal Plenticore einrichten
 
+Du brauchst zwei Verbindungen: die **Kostal-Integration** zum Lesen der Messwerte und **Modbus TCP** zum Steuern der Batterie.
+
+_**Modbus TCP** ist die Sprache, mit der Home Assistant im Heimnetz direkt mit dem Wechselrichter redet. Die **IP-Adresse** ist die Adresse des Geräts in deinem Heimnetz._
+
 ## 1. Kostal Plenticore Integration in Home Assistant
 
-Die native Kostal-Integration wird für das Lesen der Sensoren (PV, Batterie, SOC, Netz, Hausverbrauch) benötigt:
+Die eingebaute Kostal-Integration liest die Sensoren (PV, Batterie, SOC = Ladestand, Netz, Hausverbrauch).
 
 1. **Einstellungen → Geräte & Dienste → Integration hinzufügen → „Kostal Plenticore Solar Inverter"**
-2. IP-Adresse des Wechselrichters angeben
-3. Passwort: das **Anlagenbetreiber-Passwort** des Kostal-Webservers (dasselbe wie beim Login auf `http://<IP des Wechselrichters>`)
-4. Service Code: **leer lassen**<br>
-   _Das Feld ist optional und nur für den Installer-Modus der Integration gedacht. Der EEG Energy Optimizer benötigt die Integration nur lesend — Anlagenbetreiber-Passwort genügt._
+2. Gib die IP-Adresse des Wechselrichters an.
+3. Passwort: das **Anlagenbetreiber-Passwort** des Kostal-Webservers (dasselbe wie beim Login auf `http://<IP des Wechselrichters>`).
+4. Service Code: **leer lassen**.<br>
+   _Er ist nur für den Installer-Modus. Der Optimizer liest nur — das Anlagenbetreiber-Passwort genügt._
 
-_Bei mehreren Wechselrichtern (z.B. zweiter Plenticore ohne Batterie): die Integration für jedes Gerät separat hinzufügen — ein Config-Eintrag pro Wechselrichter. Die Auto-Erkennung wählt automatisch den Wechselrichter **mit Batterie** als Hauptgerät (SOC, Batterie, Netz) und trägt die PV-Leistung des zweiten Geräts als zweiten PV-Sensor ein, damit der berechnete Hausverbrauch die gesamte Erzeugung berücksichtigt._
+_**Mehrere Wechselrichter** (z. B. ein zweiter Plenticore ohne Batterie): Füge die Integration für jedes Gerät einzeln hinzu. Die Erkennung nimmt automatisch den Wechselrichter **mit Batterie** als Hauptgerät (SOC, Batterie, Netz). Die PV-Leistung des zweiten Geräts trägt sie als zweiten PV-Sensor ein, damit der Hausverbrauch die ganze Erzeugung enthält._
 
 ## 2. Modbus TCP am Wechselrichter aktivieren
 
-Der EEG Energy Optimizer steuert die Batterie über Modbus TCP. Modbus kann der Anlagenbetreiber selbst aktivieren:
+Das kannst du als Anlagenbetreiber selbst:
 
-1. Kostal-Webserver öffnen: `http://<IP des Wechselrichters>`, als **Anlagenbetreiber** anmelden
+1. Öffne den Kostal-Webserver (`http://<IP des Wechselrichters>`) und melde dich als **Anlagenbetreiber** an.
 2. **Einstellungen → Modbus / SunSpec (TCP)** → **Modbus aktivieren**
 3. Port: **1502** (Standard)
-4. Byte-Reihenfolge: **Little-endian (CDAB)** — Werksdefault, nicht ändern!
+4. Byte-Reihenfolge: **Little-endian (CDAB)** — Werkseinstellung, nicht ändern!
 
 ## 3. Batteriesteuerung auf „Extern über Protokoll" umstellen
 
-Damit der Optimizer die Batterie steuern darf, muss die Batteriesteuerung im Wechselrichter umgestellt werden:
+Damit der Optimizer die Batterie steuern darf:
 
 1. **Servicemenü → Batterieeinstellungen**
 2. Batteriesteuerung: **„Extern über Protokoll (Modbus TCP)"**
 3. Watchdog-Timeout: **60 Sekunden** (falls einstellbar)
 
 > [!CAUTION]
-> **Installateur-Zugang erforderlich:** Das Servicemenü ist nur mit Installateur-Login zugänglich (Master Key vom Typenschild + PARAKO-Servicecode, nur für Fachbetriebe). Bitte den Installateur / Solarteur kontaktieren — die Umstellung ist oft per Fernwartung möglich und dauert nur wenige Minuten.
+> **Nur mit Installateur-Zugang:** Ins Servicemenü kommt nur der Installateur (Master Key vom Typenschild + PARAKO-Servicecode, nur für Fachbetriebe). Frag deinen Installateur / Solarteur — oft geht das per Fernwartung in wenigen Minuten.
 
 > [!NOTE]
-> **Eingebauter Failsafe:** Kostal erwartet zyklische Steuerbefehle (Watchdog). Fällt der Optimizer oder Home Assistant aus, kehrt der Wechselrichter nach dem Timeout automatisch zur internen Batterie-Automatik zurück — die Anlage läuft also nie unkontrolliert weiter.
+> **Eingebauter Failsafe:** Kostal erwartet regelmäßig neue Steuerbefehle (Watchdog). Fallen Optimizer oder Home Assistant aus, kehrt der Wechselrichter nach Ablauf der Zeit von selbst zu seiner eigenen Batterie-Automatik zurück.
 
 > [!WARNING]
-> **Nur ein steuerndes System:** Es darf immer nur ein System die Batterie über Modbus steuern. Parallelbetrieb mit evcc-Batteriesteuerung oder anderen Modbus-Steuerungen ist nicht möglich. Lesende Zugriffe (z.B. die Kostal-Integration aus Schritt 1) sind unproblematisch.
+> **Nur ein steuerndes System:** Immer nur ein System darf die Batterie über Modbus steuern — also nicht zusätzlich evcc-Batteriesteuerung oder andere Modbus-Steuerungen. Nur lesen (z. B. die Kostal-Integration aus Schritt 1) ist kein Problem.
 
 ## 4. Firmware
 
-- **Plenticore G1:** mindestens UI 01.16.05025 / MC 01.44
-- **Plenticore G2 / G3:** aktuelle Firmware empfohlen
+| Gerät | Firmware |
+|---|---|
+| **Plenticore G1** | mindestens UI 01.16.05025 / MC 01.44 |
+| **Plenticore G2 / G3** | aktuelle Firmware empfohlen |
 
-_Die Firmware-Version ist im Kostal-Webserver unter „Info" sichtbar. Updates macht der Wechselrichter über das Webinterface._
+_Die Version steht im Kostal-Webserver unter „Info". Updates macht der Wechselrichter über das Webinterface._
 
 ## 5. Prüfen
 
-1. Unter **Einstellungen → Geräte & Dienste**: Kostal Plenticore zeigt **„geladen"** und listet Sensoren
-2. **Entwicklerwerkzeuge → Zustände**: Suche nach `battery_soc` / `ladezustand` und `home_power` — die Werte müssen plausibel sein
-3. Kehre in den Assistenten zurück — die Sensoren werden automatisch erkannt
+1. Unter **Einstellungen → Geräte & Dienste** zeigt Kostal Plenticore **„geladen"** und listet Sensoren.
+2. Unter **Entwicklerwerkzeuge → Zustände** suchst du `battery_soc` / `ladezustand` und `home_power`. Die Werte müssen plausibel sein.
+3. Kehre in den Assistenten zurück. Die Sensoren werden automatisch erkannt.
 
 ## Im Assistenten: Schritt „Wechselrichter“
 
-Hier bleibt man am häufigsten hängen: **„Weiter“** geht erst, wenn alles Folgende stimmt.
+**„Weiter“** geht erst, wenn alle Punkte stimmen:
 
-1. **Kostal Plenticore** wählen. Ohne die Kostal-Integration aus Schritt 1 geht es nicht weiter — sie liefert alle Messwerte, Modbus allein genügt nicht.
+1. Wähle **Kostal Plenticore**. Ohne die Kostal-Integration aus Schritt 1 geht es nicht weiter — Modbus allein genügt nicht.
 2. **Leistungssensoren** für PV, Batterie und Netz: werden automatisch erkannt, alle drei sind Pflicht.
-3. **Modbus IP-Adresse** (Pflicht): die IP des Wechselrichters **mit Batterie** — sie wird **nicht** vorbelegt, bitte eintragen. Port **1502** (nicht 502).
-4. Bei **„Weiter“** prüft der Assistent die Modbus-Verbindung (nur lesend). Schlägt sie fehl, geht es nicht weiter: Modbus aktiviert (Schritt 2)? Port 1502? IP richtig?
+3. **Modbus IP-Adresse** (Pflicht): die IP des Wechselrichters **mit Batterie**. Sie ist **nicht** vorausgefüllt — bitte eintragen. Port **1502** (nicht 502).
+4. Bei **„Weiter“** prüft der Assistent die Modbus-Verbindung (nur lesend). Klappt das nicht: Ist Modbus aktiviert (Schritt 2)? Port 1502? Stimmt die IP?
 
 ## Was der Optimizer am Gerät tut
 
-Der Fahrplan stellt den Plenticore über zwei Register, beide flüchtig (RAM) — zyklisches Schreiben nutzt den Speicher also nicht ab:
+Der Optimizer stellt zwei Register. Beide liegen im flüchtigen Speicher (RAM) — häufiges Schreiben nutzt also nichts ab.
 
 | Register | Wofür |
 |---|---|
-| **1038** Max. Ladeleistung | Der Fahrplan begrenzt das Laden auf die geplante Leistung. 0 W blockiert das Laden vollständig, das Entladen für den Hausverbrauch bleibt möglich |
+| **1038** Max. Ladeleistung | Begrenzt das Laden auf die geplante Leistung. 0 W sperrt das Laden ganz; Entladen für das Haus bleibt möglich |
 | **1034** Batterie-Sollwert | Erzwungene Entladung ins Netz — positiver Wert, in Watt |
 
-**Der Watchdog ist das Sicherheitsnetz:** Der Plenticore erwartet, dass der Sollwert zyklisch erneuert wird (empfohlene Zeitüberschreitung 60 Sekunden, Einstellung im Servicemenü). Der Treiber schreibt alle 25 Sekunden nach. Stürzt Home Assistant mitten in einer Entladung ab, fällt der Wechselrichter nach Ablauf der Zeit von selbst in sein internes Batteriemanagement zurück — er entlädt also nicht unbegrenzt weiter.
+**Sicherheitsnetz (Watchdog):** Der Sollwert muss regelmäßig erneuert werden (empfohlen: 60 Sekunden, Einstellung im Servicemenü). Der Optimizer schreibt alle 25 Sekunden nach. Stürzt Home Assistant während einer Entladung ab, fällt der Wechselrichter nach Ablauf der Zeit in sein eigenes Batteriemanagement zurück.
 
-Einen Ziel-Ladestand kennt die Kostal-Schnittstelle nicht. Stattdessen prüft der Optimizer den Ladestand alle 30 Sekunden selbst und beendet die Entladung; der Watchdog deckt nur den Absturzfall ab.
+Einen Ziel-Ladestand kennt Kostal nicht. Der Optimizer prüft den Ladestand alle 30 Sekunden selbst und beendet die Entladung.
 
-**Nach einer Entladung kann die Batterie bis zu 15 Minuten stehen.** Ein Entlade-Sollwert von 0 W hält am Plenticore, solange *irgendein* Steuerregister geschrieben wird. Deshalb schreibt der Treiber nach dem Ende einer Entladung so lange gar nichts, bis der Wechselrichter von selbst in sein internes Batteriemanagement zurückgefallen ist — erkennbar an der gemessenen Batterieleistung, höchstens 15 Minuten. Steht die Statuskarte in dieser Zeit auf „Normalbetrieb“, die Batterie aber still, ist das dieser Rückfall und kein Fehler.
+**Nach einer Entladung kann die Batterie bis zu 15 Minuten stillstehen.** Der Optimizer schreibt dann nichts, bis der Wechselrichter von selbst in sein eigenes Batteriemanagement zurückgefallen ist (höchstens 15 Minuten). Zeigt die Statuskarte in dieser Zeit „Normalbetrieb“ und die Batterie steht still, ist das kein Fehler.
 
-> **Teil-Ladelimits** (der Normalfall im Fahrplan) prüft der Treiber beim ersten Mal selbst nach: Weicht der zurückgelesene Wert stark vom geschriebenen ab, steht eine Warnung im Protokoll — dann meldet sich bitte mit der Firmware-Version.
+> **Teil-Ladelimits** (der Normalfall) prüft der Optimizer beim ersten Mal nach. Weicht der zurückgelesene Wert stark ab, steht eine Warnung im Protokoll — dann melde dich bitte mit der Firmware-Version.
 
 ## Häufige Probleme
 
 | Problem | Lösung |
 |---|---|
 | **Modbus Connection refused** | Modbus TCP nicht aktiviert oder falscher Port → Schritt 2 wiederholen (Port 1502, nicht 502) |
-| **Steuerbefehle ohne Wirkung** | Batteriesteuerung steht noch auf „Intern" → Schritt 3 (Installateur) durchführen |
-| **Keine Kostal-Sensoren in HA** | Falsches Passwort — es wird das Anlagenbetreiber-Passwort des Webservers benötigt, nicht der Master Key |
-| **Alle Werte 0 oder unsinnig** | Byte-Reihenfolge im Webserver verstellt → auf Little-endian (Werksdefault) zurücksetzen |
-| **Steuerung reagiert kurz nach Netzstörung nicht** | Nach Netz-Zuschaltung fährt der Wechselrichter ~10 Minuten eine Leistungsrampe (länderabhängig, z.B. Österreich) — in dieser Zeit sind Steuerbefehle gesperrt, der Optimizer wiederholt sie automatisch |
+| **Steuerbefehle ohne Wirkung** | Batteriesteuerung steht noch auf „Intern" → Schritt 3 (Installateur) |
+| **Keine Kostal-Sensoren in HA** | Falsches Passwort — gebraucht wird das Anlagenbetreiber-Passwort des Webservers, nicht der Master Key |
+| **Alle Werte 0 oder unsinnig** | Byte-Reihenfolge verstellt → auf Little-endian (Werkseinstellung) zurücksetzen |
+| **Steuerung reagiert kurz nach einer Netzstörung nicht** | Nach dem Wiederzuschalten fährt der Wechselrichter ca. 10 Minuten langsam hoch (länderabhängig, z. B. Österreich). In dieser Zeit sind Steuerbefehle gesperrt; der Optimizer wiederholt sie automatisch |

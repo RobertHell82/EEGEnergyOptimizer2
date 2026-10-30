@@ -1315,10 +1315,13 @@ def _kappung_batterie(data: dict) -> dict[str, Any] | None:
             "tage": plan.get("tage"),
             "statistik": plan.get("statistik"),
             "entlade_kw": plan.get("entlade_kw"),
+            # Wogegen die Reserve rechnet: Grenze oder höhere Monatsspitze.
+            "schwelle_kw": plan.get("grenze_kw"),
         })
     if isinstance(lauf, dict):
         ergebnis.update({
             "aktiv": lauf.get("aktiv"),
+            "basis_pct": lauf.get("basis_pct"),
             "reserve_pct": lauf.get("reserve_pct"),
             "schwelle_pct": lauf.get("schwelle_pct"),
             "deckel_kw": lauf.get("deckel_kw"),

@@ -63,6 +63,7 @@ SOLAX_ENTITY_DEFAULTS = {
     "remotecontrol_duration": "number.solax_inverter_remotecontrol_duration",
     "remotecontrol_trigger": "button.solax_inverter_remotecontrol_trigger",
     "battery_charge_max_current": "number.solax_inverter_battery_charge_max_current",
+    "battery_discharge_max_current": "number.solax_inverter_battery_discharge_max_current",
     "selfuse_discharge_min_soc": "number.solax_inverter_selfuse_discharge_min_soc",
 }
 
@@ -80,6 +81,7 @@ SOLAX_CONTROL_ENTITY_PATTERNS: dict[str, tuple[str, re.Pattern]] = {
     "remotecontrol_duration": ("number", re.compile(r"remotecontrol_duration(_mode_[0-9_]+)?$")),
     "remotecontrol_trigger": ("button", re.compile(r"remotecontrol_trigger(_mode_[0-9_]+)?$")),
     "battery_charge_max_current": ("number", re.compile(r"battery_charge_max_current$")),
+    "battery_discharge_max_current": ("number", re.compile(r"battery_discharge_max_current$")),
     "selfuse_discharge_min_soc": ("number", re.compile(r"selfuse_discharge_min_soc$")),
 }
 
@@ -157,6 +159,21 @@ class SolaXStateStore:
         if self._data.pop("selfuse_discharge_min_soc_original", None) is not None:
             if self._store is not None:
                 await self._store.async_save(self._data)
+
+    async def async_save_original_discharge_current(self, amps: float) -> None:
+        self._data["battery_discharge_max_current_original"] = float(amps)
+        if self._store is not None:
+            await self._store.async_save(self._data)
+
+    async def async_clear_original_discharge_current(self) -> None:
+        if self._data.pop("battery_discharge_max_current_original", None) is not None:
+            if self._store is not None:
+                await self._store.async_save(self._data)
+
+    @property
+    def original_discharge_current(self) -> float | None:
+        val = self._data.get("battery_discharge_max_current_original")
+        return float(val) if val is not None else None
 
     @property
     def original_discharge_floor(self) -> float | None:
@@ -436,6 +453,76 @@ class SolaXInverter(InverterBase):
     def supports_schedule_control(self) -> bool:
         """Der Fahrplan-Executor darf diesen Wechselrichter stellen."""
         return True
+
+    # ------------------------------------------------------------------
+    # Entladedeckel (Spitzenkappung)
+    # ------------------------------------------------------------------
+    @property
+    def supports_discharge_limit(self) -> bool:
+        """Über ``battery_discharge_max_current`` — das Gegenstück zum Ladelimit.
+
+        Wie beim Laden ein STROM in Ampere, umgerechnet mit der
+        Batteriespannung. Der Self-Use-Modus läuft weiter und deckt das Haus
+        bis zu diesem Strom; 0 A heißt, die Batterie gibt nichts ab. Am Gerät
+        noch nicht geprüft (Stand 29.10.2026) — bis dahin ist das der Weg,
+        den die Entität verspricht.
+        """
+        return True
+
+    def _read_discharge_current(self) -> tuple[float | None, float | None]:
+        """(aktueller Wert, Maximum) der Entladestrom-Entität in A."""
+        state = self._hass.states.get(self._resolve_entity("battery_discharge_max_current"))
+        if state is None:
+            return None, None
+        try:
+            wert = float(state.state)
+        except (TypeError, ValueError):
+            wert = None
+        try:
+            maximum = float(state.attributes.get("max"))
+        except (TypeError, ValueError):
+            maximum = None
+        return wert, maximum
+
+    async def async_set_discharge_limit(self, power_kw: float | None) -> bool:
+        """Entladestrom deckeln; ``None`` stellt den gesicherten Wert wieder her.
+
+        Der Originalwert wird beim ersten Deckel gesichert (Store, überlebt
+        einen Neustart) — ein bewusst niedriger eingestellter Entladestrom des
+        Betreibers bleibt so erhalten, statt beim Aufheben auf das Maximum zu
+        springen. Ein Wert von 0 beim Sichern ist schon unser eigener Deckel
+        (Neustart mitten im Halten) und wird nicht gesichert.
+        """
+        if power_kw is not None and self._nicht_endlich(power_kw):
+            return False
+        try:
+            await self._state_store.async_load()
+            aktuell, maximum = self._read_discharge_current()
+            if aktuell is None and maximum is None:
+                return self._fehler("Entladestrom-Entität nicht verfügbar")
+            if power_kw is None:
+                ziel = self._state_store.original_discharge_current
+                if ziel is None:
+                    ziel = maximum
+                if ziel is None:
+                    return self._fehler("Entladestrom: Maximum unbekannt")
+                await self._set_number("battery_discharge_max_current", ziel)
+                await self._state_store.async_clear_original_discharge_current()
+                return self._erfolg()
+            if (
+                self._state_store.original_discharge_current is None
+                and aktuell is not None
+                and aktuell > 0
+            ):
+                await self._state_store.async_save_original_discharge_current(aktuell)
+            amps = max(0.0, float(power_kw) * 1000.0 / self._read_battery_voltage_or_default())
+            if maximum is not None:
+                amps = min(amps, maximum)
+            await self._set_number("battery_discharge_max_current", round(amps, 1))
+            return self._erfolg()
+        except Exception as exc:
+            _LOGGER.exception("SolaX: Entladedeckel fehlgeschlagen")
+            return self._fehler(type(exc).__name__)
 
     async def async_get_charge_limit_kw(self) -> float | None:
         """Aktuell gesetztes Ladelimit in kW (Ampere × Batteriespannung).
