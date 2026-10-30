@@ -48,7 +48,7 @@ Was die Felder im Einrichtungsassistenten und in den Einstellungen bedeuten:
 
 - **[Anlage & Batterie](guides/anlage_batterie.md)** — Gerätedaten, Batterie-Leistungsgrenze, Mindest- und Maximum-Ladestand, Sicherheitspuffer auf die Prognose, Ladeziel am Abend, vormittags bevorzugt netzdienlich
 - **[Einspeisegrenze](guides/einspeisegrenze.md)** — wenn der Netzbetreiber die Einspeiseleistung begrenzt
-- **[Tarife & Gemeinschaft](guides/tarife.md)** — Standardvergütung, Arbeitspreis und Netzgebühr, Energiegemeinschaften mit PeakShare oder fester Abnahmequote, Batterie aus dem Netz laden (Beta, Huawei und Victron)
+- **[Tarife & Gemeinschaft](guides/tarife.md)** — Standardvergütung, Arbeitspreis und Netzgebühr, Energiegemeinschaften mit PeakShare oder fester Abnahmequote
 - **[Einstellungen & Expertenmodus](guides/einstellungen.md)** — die Tabs, was nur im Expertenmodus erscheint, EEG-Statistik, Verlauf vergangener Tage und Plan-Archiv
 
 ## 📊 Im Betrieb
@@ -57,6 +57,7 @@ Was die Felder im Einrichtungsassistenten und in den Einstellungen bedeuten:
 
 ## ⚡ Spitzenkappung (optional)
 
+- **[Batterie aus dem Netz laden](guides/netzladen.md)** (Beta, Huawei und Victron) — das Ladeziel mit günstigem Netzstrom erreichen, mit Bezug aus der Gemeinschaft dann, wenn sie Strom übrig hat
 - **[Spitzenkappung](guides/spitzenkappung.md)** — die Bezugsspitze des Monats niedrig halten: die Batterie hält eine aus dem Verbrauch berechnete Reserve für Spitzen (Huawei, Fronius, SMA), reicht sie nicht, werden Verbraucher abgeschaltet
 
 ## 🔥 Heizstab (optional)

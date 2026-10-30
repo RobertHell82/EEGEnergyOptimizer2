@@ -107,7 +107,7 @@ Der Ziel-Ladestand einer Entladung kommt aus dem Fahrplan. Das GX-Gerät kennt f
 
 - **Kein „External control“:** Der ESS-Modus 3 hätte eine Rückfallzeit, übergibt aber die ganze ESS-Regelung nach außen. Der Optimizer müsste dann auch den Eigenverbrauch regeln. Deshalb bleibt ESS in „Optimiert“, geschrieben werden nur Netzsollwert und Ladestrom.
 - **Spitzenkappung mit der Batterie** gibt es für Victron noch nicht. Verbraucher abschalten funktioniert wie bei jedem Wechselrichter.
-- **Batterie aus dem Netz laden** (Beta, Expertenmodus, Einstellungen → Tarife) funktioniert auch mit Victron, siehe Anleitung „Tarife & Gemeinschaft“. Mit Bezug aus der Gemeinschaft lädt der Fahrplan genau in den Viertelstunden, in denen die Gemeinschaft laut PeakShare Strom übrig hat. Damit ersetzt er das **Geplante Laden** am GX-Gerät, das für die Steuerung aus sein muss. Den Ziel-Ladestand überwacht der Optimizer wie bei der Entladung selbst.
+- **Batterie aus dem Netz laden** (Beta, Expertenmodus, Einstellungen → Netzladen) funktioniert auch mit Victron, siehe Anleitung „Batterie aus dem Netz laden“. Mit Bezug aus der Gemeinschaft lädt der Fahrplan genau in den Viertelstunden, in denen die Gemeinschaft laut PeakShare Strom übrig hat. Damit ersetzt er das **Geplante Laden** am GX-Gerät, das für die Steuerung aus sein muss. Den Ziel-Ladestand überwacht der Optimizer wie bei der Entladung selbst.
 
 ## Häufige Probleme
 

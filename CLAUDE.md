@@ -636,7 +636,13 @@ the event loop is long enough for HA to flag a blocking call.
   27./28.09.2026, −40 % in the morning). Open-Meteo is free for
   non-commercial use only.
 - **Minimum state of charge** is a **hard floor**, modelled as *missing
-  capacity* (`opt()` counts free room up to full, so a smaller capacity cuts
+  capacity*. **Below it the measured SOC is the floor** (`async_collect_inputs`,
+  `min_soc_einstellung_pct` carries the configured value for the chart): with
+  the configured floor `HAConfig` clamped the start to "empty at the floor",
+  the plan showed floor + rest and capped charging of a battery that was far
+  below it (30 % measured, 83 % planned, 30.10.2026). Nothing is discharged,
+  the full room up to the cap is visible, and the floor rises with the SOC
+  run by run (`opt()` counts free room up to full, so a smaller capacity cuts
   the bottom off). Capped at 20 percentage points below the maximum SOC
   (`schedule.py`), so a usable range is always left to carry a night. There is no separate blackout reserve — the minimum SOC
   *is* the safety reserve. The inverter's own backup SOC raises it when
@@ -964,10 +970,15 @@ sensors (assigned once), steps 4–6 are the parameters:
    Without it a fresh install stays on **Aus** (`select.py`) — the member guide
    promised steering that never happened
 
-Settings live in six tabs (Verbraucher only in expert mode): **Tarife**, **Anlage** and **Prognose** are exactly the
+Settings live in up to seven tabs (Verbraucher and Netzladen only in expert mode): **Tarife**, **Anlage** and **Prognose** are exactly the
 parameter wizard steps (same field renderers, `settings_` prefix); **Verbraucher**
-holds the *Heizstab* and *Wallbox* cards, expert mode only — **Spitzenkappung**
-(`_spitzenkappungFields`, for everyone: limit, minimum/maximum
+holds the *Heizstab* and *Wallbox* cards, expert mode only — **Netzladen**
+(badged Beta on the tab, expert mode and `NETZLADEN_TREIBER` only:
+`_netzladenFeld` + `_netzladenGemeinschaft`, i.e. the switch, supplier tariff,
+meter limit, minimum advantage and the purchase price per community, which
+moved out of the community card; guide `docs/guides/netzladen.md`) —
+**Spitzenkappung** (badged Beta on the tab,
+`_spitzenkappungFields`, for everyone: limit, minimum/maximum
 reserve only for `SPITZENKAPPUNG_BATTERIE_TREIBER`, consumer list with
 optional rated power; without a battery stage at least one consumer is
 mandatory) —

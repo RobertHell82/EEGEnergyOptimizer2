@@ -438,6 +438,7 @@ const DIALOG_CONTENT = {
   wallbox: { file: "wallbox.html" },
   einstellungen: { file: "einstellungen.html" },
   spitzenkappung: { file: "spitzenkappung.html" },
+  netzladen: { file: "netzladen.html" },
 };
 
 // Link auf einen Guide-Dialog — dieselbe Form wie die „Anleitung: …"-Links
@@ -809,7 +810,7 @@ class EegOptimizerPanel extends HTMLElement {
     this._statusViewVariant = "values";
     this._forecastOpen = this._loadPref("forecast_open", "1", ["0", "1"]) === "1";
     this._settingsTab = this._loadPref("settings_tab", "tarife",
-      ["tarife", "anlage", "prognose", "verbraucher", "spitzenkappung", "system",
+      ["tarife", "anlage", "prognose", "verbraucher", "spitzenkappung", "netzladen", "system",
        // Aliasse aus Vorversionen — werden in _renderSettings abgebildet
        "fahrplan", "wechselrichter", "batterie", "gemeinschaft", "advanced",
        "einspeisegrenze", "telemetry", "heizstab"]);
@@ -4351,7 +4352,7 @@ class EegOptimizerPanel extends HTMLElement {
     // Mit Spitzenkappung rechnet der Plan mit Mindest-Ladestand + Reserve;
     // als rote Linie steht der eingestellte Mindestwert, die Reserve kommt
     // darüber als eigene Kurve (sie fällt über die Nacht).
-    const minSoc = Number(d.min_soc_basis_pct ?? d.min_soc_pct ?? 0);
+    const minSoc = Number(d.min_soc_einstellung_pct ?? d.min_soc_basis_pct ?? d.min_soc_pct ?? 0);
     // Kopfzeile des Ladestandsfeldes. Am Handy steht der Mindestwert hier mit
     // drin — als Beschriftung im Bild lag er quer ueber der Kurve.
     const socTitel = (hist ? "Ladestand (%) — Plan und Ist" : "Geplanter Ladestand (%)")
@@ -7815,15 +7816,14 @@ class EegOptimizerPanel extends HTMLElement {
         <input type="number" data-field="${prefix}schedule_battery_cost" data-unit="ct"
                value="${ctAus(Number(d.schedule_battery_cost) > 0 ? d.schedule_battery_cost : 0.01)}" min="0.1" max="100" step="0.1">
         <div class="help-text">Was eine durchgesetzte Kilowattstunde die Batterie an Lebensdauer kostet. Höhere Werte machen die Optimierung zurückhaltender: sie speichert nur, wenn sich der Umweg lohnt. Ein leeres Feld gilt als 1 ct — ohne Alterungskosten lädt und entlädt die Optimierung ohne jede Zurückhaltung. Bei der Entladung in die Gemeinschaft ist der Wert die Schwelle: Sie kommt erst zustande, wenn der Nachtsatz über der Einspeisevergütung plus Alterungskosten liegt.</div>
-      </div>` : ""}
-      ${this._netzladenFeld(d, prefix)}`;
+      </div>` : ""}`;
   }
 
-  // „Batterie aus dem Netz laden" (Beta): nur in den Einstellungen, nur im
-  // Expertenmodus, nur für Huawei und Victron (schedule.py: CONF_SCHEDULE_NETZLADEN,
-  // InverterBase.supports_grid_charge). Erst mit dem Haken erscheinen die
-  // Bezugspreise, die ein billigeres Fenster sichtbar machen — der
-  // EEG-Bezugspreis steht bei der jeweiligen Gemeinschaft.
+  // „Batterie aus dem Netz laden" (Beta): eigener Reiter der Einstellungen,
+  // nur im Expertenmodus, nur für Huawei und Victron (schedule.py:
+  // CONF_SCHEDULE_NETZLADEN, InverterBase.supports_grid_charge). Erst mit dem
+  // Haken erscheinen die Bezugspreise, die ein billigeres Fenster sichtbar
+  // machen, samt dem Bezugspreis je Gemeinschaft (_netzladenGemeinschaft).
   _netzladenFeld(d, prefix) {
     if (!netzladenSichtbar(d, prefix)) return "";
     const an = !!d.schedule_netzladen;
@@ -7837,8 +7837,8 @@ class EegOptimizerPanel extends HTMLElement {
         <label style="display:flex;align-items:center;gap:12px;cursor:pointer">
           <input type="checkbox" data-field="${prefix}schedule_netzladen" ${an ? "checked" : ""}>
           <div>
-            <div style="font-weight:500">Batterie aus dem Netz laden${BETA_BADGE}</div>
-            <div class="help-text" style="margin-top:4px">Schafft die Sonne das Ladeziel bis zum Ende der PV-Zeit nicht, darf der Fahrplan Strom zukaufen — aber nur in Viertelstunden, in denen Netzstrom billiger ist als der Strom, den die Batterie danach in der Nacht ersetzt. Gerechnet wird je Kilowattstunde, nach den Verlusten beim Laden und Entladen. Was die Nacht nicht braucht, speist der Fahrplan später ein, wenn es sich lohnt; das kann Geld kosten und ist der Preis für eine abends volle Batterie. Nur Huawei und Victron, nur mit Ladeziel.</div>
+            <div style="font-weight:500">Batterie aus dem Netz laden</div>
+            <div class="help-text" style="margin-top:4px">Schafft die Sonne das Ladeziel bis zum Ende der PV-Zeit nicht, darf der Fahrplan Strom zukaufen — aber nur in Viertelstunden, in denen Netzstrom billiger ist als der Strom, den die Batterie danach in der Nacht ersetzt. Gerechnet wird je Kilowattstunde, nach den Verlusten beim Laden und Entladen. Was die Nacht nicht braucht, speist der Fahrplan später ein, wenn es sich lohnt; das kann Geld kosten und ist der Preis für eine abends volle Batterie. Nur mit Ladeziel (Reiter Anlage).</div>
           </div>
         </label>
       </div>
@@ -7876,7 +7876,48 @@ class EegOptimizerPanel extends HTMLElement {
                value="${ctAus(vorteil)}" min="0" max="20" step="0.5">
         <div class="help-text">Um so viel muss Netzstrom billiger sein als der Strom, den er später ersetzt. Vorgabe 2 ct. Die PV-Prognose ist unsicher: Ein Kauf um einen Zehntelcent Vorteil, den die Sonne dann doch geliefert hätte, ist ein Verlust.</div>
       </div>
-      <div class="help-text" style="margin-bottom:16px">Einen günstigeren Bezugspreis aus der Energiegemeinschaft trägst du bei der Gemeinschaft ein. Spot- und Gemeinschaftsbezug brauchen einen Netzbereich, sonst fehlt die Netzgebühr. Mit fester Abnahmequote statt PeakShare kennt der Fahrplan keinen Überschuss der Gemeinschaft und rechnet ohne Gemeinschaftsbezug.</div>` : ""}`;
+      <div class="help-text" style="margin-bottom:16px">Spot- und Gemeinschaftsbezug brauchen einen Netzbereich (Reiter Tarife), sonst fehlt die Netzgebühr.</div>` : ""}`;
+  }
+
+  // Bezug aus der Gemeinschaft je Gemeinschaft — gehört nur zum Netzladen,
+  // deshalb im Reiter Netzladen und nicht bei der Gemeinschaft (Tarife).
+  // Die Gemeinschaften selbst (Name, Anteil, Bedarfsquelle) bleiben dort.
+  _netzladenGemeinschaft(d, prefix) {
+    if (!netzladenSichtbar(d, prefix) || !d.schedule_netzladen) return "";
+    const quoten = (d.eeg_demand_source || "peakshare") === "quote";
+    const namen = [["", d.peakshare_community], ["_2", d.peakshare_community_2]]
+      .filter(([, name]) => name);
+    let inhalt;
+    if (d.enable_peakshare === false || namen.length === 0) {
+      inhalt = `<div class="help-text">Keine Energiegemeinschaft eingerichtet (Reiter Tarife).</div>`;
+    } else if (quoten) {
+      inhalt = `<div class="help-text">Mit fester Abnahmequote statt PeakShare kennt der Fahrplan keinen Überschuss der Gemeinschaft und rechnet ohne Gemeinschaftsbezug.</div>`;
+    } else {
+      inhalt = namen.map(([s, name]) => `
+        <div style="font-weight:500;margin:4px 0 8px">${this._escapeHtml(name)}</div>
+        <div style="display:flex;gap:12px;flex-wrap:wrap">
+          <div class="field-group" style="flex:1;min-width:140px">
+            <label>Bezugspreis aus der Gemeinschaft (ct/kWh)</label>
+            <input type="number" data-field="${prefix}peakshare_bezug_price${s}" data-unit="ct"
+                   value="${Number(d[`peakshare_bezug_price${s}`] ?? 0) > 0 ? ctAus(d[`peakshare_bezug_price${s}`]) : ""}"
+                   min="0" max="200" step="0.1" placeholder="leer = kein Bezug">
+          </div>
+          <div class="field-group" style="flex:1;min-width:140px">
+            <label>Gemeinschaft ist</label>
+            <select data-field="${prefix}peakshare_bezug_ebene${s}">
+              <option value="lokal" ${(d[`peakshare_bezug_ebene${s}`] || "lokal") === "lokal" ? "selected" : ""}>lokal (−57 % Netznutzung)</option>
+              <option value="regional" ${d[`peakshare_bezug_ebene${s}`] === "regional" ? "selected" : ""}>regional (−28 % Netznutzung)</option>
+              <option value="beg" ${d[`peakshare_bezug_ebene${s}`] === "beg" ? "selected" : ""}>Bürgerenergiegemeinschaft (volle Netzgebühr)</option>
+            </select>
+          </div>
+        </div>`).join("") + `
+        <div class="help-text">Der Energiepreis, den die Gemeinschaft für bezogenen Strom verrechnet, inklusive Mehrwertsteuer. Die Netzgebühr rechnet der Fahrplan selbst dazu, ohne SNAP und WiNAP, die für Gemeinschaftsmengen nicht gelten: bei einer EEG das verringerte Netznutzungsentgelt plus Netzverlust (Elektrizitätsabgabe und Erneuerbaren-Förderbeitrag entfallen), bei einer Bürgerenergiegemeinschaft die volle Netzgebühr. Wie bei der Einspeisung kommt aus der Gemeinschaft höchstens dein Anteil, und nur so viel, wie sie laut PeakShare in der Viertelstunde übrig hat; der Rest kostet den Preis deines Lieferanten. Leer = diese Gemeinschaft zählt für das Netzladen nicht.</div>`;
+    }
+    return `
+      <div class="card" style="margin-bottom:16px">
+        <h3 class="settings-karte-titel" style="margin:0 0 16px">Bezug aus der Gemeinschaft</h3>
+        ${inhalt}
+      </div>`;
   }
 
   // Boden und Deckel des Ladestands — genau die Regeln aus dem Backend
@@ -8234,24 +8275,6 @@ class EegOptimizerPanel extends HTMLElement {
             </div>
           </div>
           <div class="help-text" style="margin-bottom:8px">Welcher Teil deiner angebotenen Einspeisung erfahrungsgemäß in der Gemeinschaft landet — steht in der EEG-Monatsabrechnung als Anteil der Einspeisung, der in der Gemeinschaft verbraucht wurde. Mittags im Sommer ist die Quote niedrig, weil alle einspeisen; nachts liegt sie nahe 100 %, solange die Gemeinschaft nachts mehr verbraucht, als eingespeist wird.</div>` : ""}
-          ${netzladenSichtbar(d, prefix) && d.schedule_netzladen && !quoten ? `
-          <div style="display:flex;gap:12px;flex-wrap:wrap">
-            <div class="field-group" style="flex:1;min-width:140px">
-              <label>Bezugspreis aus der Gemeinschaft (ct/kWh)</label>
-              <input type="number" data-field="${prefix}peakshare_bezug_price${s}" data-unit="ct"
-                     value="${Number(d[`peakshare_bezug_price${s}`] ?? 0) > 0 ? ctAus(d[`peakshare_bezug_price${s}`]) : ""}"
-                     min="0" max="200" step="0.1" placeholder="leer = kein Bezug">
-            </div>
-            <div class="field-group" style="flex:1;min-width:140px">
-              <label>Gemeinschaft ist</label>
-              <select data-field="${prefix}peakshare_bezug_ebene${s}">
-                <option value="lokal" ${(d[`peakshare_bezug_ebene${s}`] || "lokal") === "lokal" ? "selected" : ""}>lokal (−57 % Netznutzung)</option>
-                <option value="regional" ${d[`peakshare_bezug_ebene${s}`] === "regional" ? "selected" : ""}>regional (−28 % Netznutzung)</option>
-                <option value="beg" ${d[`peakshare_bezug_ebene${s}`] === "beg" ? "selected" : ""}>Bürgerenergiegemeinschaft (volle Netzgebühr)</option>
-              </select>
-            </div>
-          </div>
-          <div class="help-text" style="margin-bottom:8px">Für „Batterie aus dem Netz laden": der Energiepreis, den die Gemeinschaft für bezogenen Strom verrechnet, inklusive Mehrwertsteuer. Die Netzgebühr rechnet der Fahrplan selbst dazu, ohne SNAP und WiNAP, die für Gemeinschaftsmengen nicht gelten: bei einer EEG das verringerte Netznutzungsentgelt plus Netzverlust (Elektrizitätsabgabe und Erneuerbaren-Förderbeitrag entfallen), bei einer Bürgerenergiegemeinschaft die volle Netzgebühr. Wie bei der Einspeisung kommt aus der Gemeinschaft höchstens dein Anteil, und nur so viel, wie sie laut PeakShare in der Viertelstunde übrig hat; der Rest kostet den Preis deines Lieferanten. Leer = diese Gemeinschaft zählt für das Netzladen nicht.</div>` : ""}
           <div class="help-text" style="margin-bottom:8px">${wirkung}</div>
         </div>`;
     };
@@ -9485,6 +9508,8 @@ class EegOptimizerPanel extends HTMLElement {
     // Den Expertenmodus abzuschalten, während man im Verbraucher-Tab steht,
     // ließe sonst einen Inhalt ohne Reiter stehen.
     if (activeTab === "verbraucher" && !isExpert) activeTab = "tarife";
+    const netzladenReiter = netzladenSichtbar(d, "settings_");
+    if (activeTab === "netzladen" && !netzladenReiter) activeTab = "tarife";
 
     const tabBar = `
       <div class="settings-tabs" role="tablist">
@@ -9503,12 +9528,17 @@ class EegOptimizerPanel extends HTMLElement {
         ${isExpert ? `
         <button class="settings-tab ${activeTab === "verbraucher" ? "active" : ""}" data-action="set-settings-tab" data-tab="verbraucher" role="tab">
           <ha-icon icon="mdi:power-plug-outline" style="--mdc-icon-size:18px"></ha-icon>
-          <span>Verbraucher</span>
+          <span>Verbrau&shy;cher</span>
         </button>` : ""}
         <button class="settings-tab ${activeTab === "spitzenkappung" ? "active" : ""}" data-action="set-settings-tab" data-tab="spitzenkappung" role="tab">
           <ha-icon icon="mdi:transmission-tower-import" style="--mdc-icon-size:18px"></ha-icon>
-          <span>Spitzenkappung</span><sup class="tab-beta">Beta</sup>
+          <span>Spitzen&shy;kappung</span><sup class="tab-beta">Beta</sup>
         </button>
+        ${netzladenReiter ? `
+        <button class="settings-tab ${activeTab === "netzladen" ? "active" : ""}" data-action="set-settings-tab" data-tab="netzladen" role="tab">
+          <ha-icon icon="mdi:transmission-tower-export" style="--mdc-icon-size:18px"></ha-icon>
+          <span>Netzladen</span><sup class="tab-beta">Beta</sup>
+        </button>` : ""}
         <button class="settings-tab ${activeTab === "system" ? "active" : ""}" data-action="set-settings-tab" data-tab="system" role="tab">
           <ha-icon icon="mdi:tune" style="--mdc-icon-size:18px"></ha-icon>
           <span>System</span>
@@ -9572,6 +9602,15 @@ class EegOptimizerPanel extends HTMLElement {
         ${this._spitzenkappungFields(d, "settings_")}
       </div>`;
 
+    // --- Tab: Netzladen (Beta, Expertenmodus, Huawei und Victron) ---
+    const netzladenTab = netzladenReiter ? `
+      <div class="card" style="margin-bottom:16px">
+        <h3 class="settings-karte-titel" style="margin:0 0 4px">Batterie aus dem Netz laden</h3>
+        <div class="help-text" style="margin-bottom:12px">${anleitungLink("netzladen", "Batterie aus dem Netz laden")}</div>
+        ${this._netzladenFeld(d, "settings_")}
+      </div>
+      ${this._netzladenGemeinschaft(d, "settings_")}` : "";
+
     // --- Tab: Prognose (== Wizard-Schritt PV-Prognose) ---
     // Steuernde Quelle mit ihren Sensoren, Prognosevergleich und — wenn die
     // eigene Berechnung steuert oder mitläuft — die Flächen der Anlage.
@@ -9627,6 +9666,7 @@ class EegOptimizerPanel extends HTMLElement {
       case "prognose": tabContent = prognoseTab; break;
       case "verbraucher": tabContent = verbraucherTab; break;
       case "spitzenkappung": tabContent = spitzenkappungTab; break;
+      case "netzladen": tabContent = netzladenTab; break;
       case "system":  tabContent = systemTab; break;
       case "tarife":
       default:        tabContent = tarifeTab; break;
@@ -12479,9 +12519,22 @@ class EegOptimizerPanel extends HTMLElement {
           color: var(--primary-color, #03a9f4);
           box-shadow: 0 1px 3px rgba(0,0,0,0.1);
         }
+        /* Handy: bis zu sieben Reiter passen nicht in eine Zeile, und Icons
+           allein sagen nicht, was dahinter liegt. Deshalb ein Raster mit
+           vier Spalten, Icon über kurzer Beschriftung (lange Wörter trennen
+           am &shy;), Beta als Ecke. */
         @media (max-width: 540px) {
-          .settings-tab span { display: none; }
-          .settings-tab { flex: 1 1 0; padding: 10px 8px; }
+          .settings-tabs {
+            display: grid; grid-template-columns: repeat(4, minmax(0, 1fr));
+            overflow-x: visible;
+          }
+          .settings-tab {
+            position: relative; min-width: 0; flex-direction: column; gap: 2px;
+            padding: 8px 2px; font-size: 11px; line-height: 1.2;
+            white-space: normal; text-align: center; hyphens: manual;
+          }
+          .settings-tab span { overflow-wrap: anywhere; }
+          .tab-beta { position: absolute; top: 2px; right: 2px; font-size: 8px; line-height: 12px; padding: 0 4px; }
         }
         /* Karten-Überschriften der Einstellungen: im EEG-Grün und etwas
            größer, damit die Abschnitte beim Scrollen Halt geben. */
