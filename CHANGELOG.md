@@ -26,6 +26,34 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 - **Die Reiter der Einstellungen sind am Handy beschriftet.** Bisher zeigte die schmale Ansicht nur Symbole in einer Zeile. Jetzt stehen bis zu sieben Reiter in einem Raster mit vier Spalten, Symbol über Beschriftung, die Beta-Kennzeichnung in der Ecke.
 - **Anleitungen** „Victron einrichten“ (auch im Assistenten) und „Victron vorbereiten“, mit der Einrichtung der Integration je Sicherheitsprofil. „Ungültige Authentifizierung“ heißt: Das GX-Gerät lehnt das Passwort ab, der Benutzername spielt keine Rolle.
 
+## [2.1.53] - 2026-10-29
+
+### Geändert
+
+- **Karte „Bezugsspitze & Spitzenkappung“ sagt, wogegen die Reserve rechnet.** „Keine Reserve nötig“ nennt jetzt den Maßstab mit Wert: die aktuelle Monatsspitze, wenn sie schon über der Grenze liegt, sonst die Grenze. In Grünbach stand dort „keine Spitze über die Schwelle“, gemeint waren 7,43 kW Oktoberspitze, gelesen wurden die eingestellten 2 kW. Der Ladestand-Balken zeigt „Reserve bis x %“ statt „Schwelle x %“ und bei Reserve 0 nur den Mindest-Ladestand; vorher stand derselbe Wert (20 %) unter zwei Namen da.
+- **Anwender-Doku kürzer und einfacher**, Fakten und Zahlen unverändert. Neu ist eine Grafik in der Anleitung „Spitzenkappung“, die zeigt, wie die Reserve aus den letzten vier Wochen entsteht und über die Nacht fällt.
+- **Batterie-Stufe der Spitzenkappung an einem Fronius geprüft** (Grünbach, 29.10.2026): Reserve gesetzt → Entladelimit 0 am Gerät, Haus aus dem Netz; 6,4 kW Last unter der Schwelle → Batterie hält weiter; Reserve zurück → Automatik, Batterie übernimmt das Haus nach rund 40 Sekunden.
+- **„Batterie aus dem Netz laden“ bleibt den Betas vorbehalten**, im Release ausgeblendet und ohne Wirkung.
+
+## [2.1.53-beta.1] - 2026-10-29
+
+### Geändert
+
+- **„Batterie aus dem Netz laden“ ist in der Beta wieder an.** Inhaltlich entspricht diese Beta dem Release 2.1.52 mit der Karte „Bezugsspitze & Spitzenkappung“ und der Spitzenkappung für SolaX. Dazu kommt die Option in den Einstellungen (Tab Tarife, Expertenmodus, nur Huawei), samt Beschreibung in der Tarife-Anleitung.
+
+## [2.1.52] - 2026-10-29
+
+### Hinzugefügt
+
+- **Spitzenkappung mit der Batterie jetzt auch bei SolaX.** Die Batterie hält ihre Reserve über den maximalen Entladestrom (`battery_discharge_max_current`), das Gegenstück zum Ladelimit, das der Treiber schon nutzt. Der eingestellte Wert wird gesichert und beim Aufheben wiederhergestellt. Am Gerät noch nicht geprüft.
+- **Karte „Bezugsspitze & Spitzenkappung".** Die Angaben, die bisher in einer Zeile der Statuskarte und einem langen ⓘ-Text steckten, haben eine eigene Karte: Monatsspitze, laufende Viertelstunde als Balken gegen die Schwelle, Leistungspreis je Monat, die Tagesspitzen des Monats als Diagramm mit Grenze und Monatsspitze, und im laufenden Monat, was die Spitzenkappung gerade tut, getrennt nach Batterie (Ladestand, Schwelle, Reserve) und Verbrauchern (an, aus, abgeschaltet bis wann). Frühere Monate lassen sich durchblättern. Die Zeile in der Statuskarte zeigt nur noch Wert und Hinweis und springt per Tipp zur Karte.
+
+### Geändert
+
+- **Leistungspreis: Stand der Grundsatzverordnung.** Der gemessene Leistungspreis gilt für Haushalte erst ab der Umstellung des Netzbereichs: frühestens 1.1.2027, ohne Meldung des Netzbetreibers 1.12.2027, spätestens 1.7.2028; bis dahin gilt eine Pauschale. Der Anteil am Netznutzungsentgelt liegt 2027 und 2028 bei 40 %, ab 2029 bei 50 % (E-Control, 14.10.2026). Die Beträge bleiben Richtwerte, bis die Tarifverordnung im Dezember erscheint.
+- **„Reserve 0 %" heißt jetzt, was es ist:** keine Reserve nötig, die Batterie arbeitet normal und hält erst am Mindest-Ladestand.
+- **„Batterie aus dem Netz laden“ bleibt den Betas vorbehalten**, im Release ausgeblendet und ohne Wirkung.
+
 ## [2.1.52-beta.1] - 2026-10-29
 
 ### Geändert
