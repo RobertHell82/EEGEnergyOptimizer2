@@ -16,7 +16,7 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 
 ### Hinzugefügt
 
-- **Tarife der Energiegemeinschaft kommen automatisch vom Verein.** Für die Gemeinschaften der Energiewende Ansfelden (BEG, Pucking, Wegscheid, FHW) stehen die Sätze des Tarifblatts jetzt am Server. Die Integration übernimmt Einspeisung Tag und Nacht, das Nachtfenster und den Bezugspreis fürs Netzladen. Ein neues Quartal greift am Stichtag von selbst, auch wenn es vorab eingetragen wird. Seit Q4/2026: 9,80 ct für PV, 10,80 ct für Speicherstrom nach Sonnenuntergang, Bezug 13,70 ct brutto. Das Nachtfenster „nach Sonnenuntergang“ rechnet der Fahrplan jeden Tag aus dem Sonnenstand. Geholt wird die ganze Liste ohne Kennung, unabhängig von der Telemetrie; mit **Eigene Werte verwenden** gelten wieder die eingetippten Zahlen.
+- **Tarife der Energiegemeinschaft kommen automatisch vom Verein.** Für alle Gemeinschaften der Energiewende Ansfelden in PeakShare stehen die Sätze des Tarifblatts jetzt am Server. Die Integration übernimmt Einspeisung Tag und Nacht, das Nachtfenster und den Bezugspreis fürs Netzladen. Ein neues Quartal greift am Stichtag von selbst, auch wenn es vorab eingetragen wird. Seit Q4/2026: 9,80 ct für PV, 10,80 ct für Speicherstrom nach Sonnenuntergang, Bezug 13,70 ct brutto. Das Nachtfenster „nach Sonnenuntergang“ rechnet der Fahrplan jeden Tag aus dem Sonnenstand. Geholt wird die ganze Liste ohne Kennung, unabhängig von der Telemetrie; mit **Eigene Werte verwenden** gelten wieder die eingetippten Zahlen.
 
 ## [2.1.55] - 2026-10-30
 
