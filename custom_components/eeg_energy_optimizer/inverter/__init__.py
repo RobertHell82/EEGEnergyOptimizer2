@@ -11,6 +11,7 @@ from .fronius import FroniusInverter
 from .kostal import KostalInverter
 from .sma import SMAInverter
 from .sigenergy import SigenergyInverter
+from .victron import VictronInverter
 
 INVERTER_TYPES: dict[str, type[InverterBase]] = {
     "huawei_sun2000": HuaweiInverter,
@@ -19,6 +20,7 @@ INVERTER_TYPES: dict[str, type[InverterBase]] = {
     "kostal_plenticore": KostalInverter,
     "sma_smart_energy": SMAInverter,
     "sigenergy_sigenstor": SigenergyInverter,
+    "victron_ess": VictronInverter,
 }
 
 

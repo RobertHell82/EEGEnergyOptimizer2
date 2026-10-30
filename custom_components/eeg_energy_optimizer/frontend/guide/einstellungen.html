@@ -25,8 +25,12 @@
 <td>Steuernde Quelle der PV-Prognose mit Sensoren, Schalter <strong>Prognosevergleich</strong> und – wenn die eigene Berechnung steuert oder mitläuft – die Flächentabelle. Wie der Assistentenschritt „PV-Prognose“</td>
 </tr>
 <tr>
-<td><strong>Spitzenkappung</strong></td>
+<td><strong>Spitzenkappung</strong> (Beta)</td>
 <td>Bezugsspitzen kappen: Grenzwert, Mindest- und Maximalreserve der Batterie (Huawei, Fronius, SMA, SolaX) und Verbraucher, die abgeschaltet werden dürfen (siehe Anleitung „Spitzenkappung“)</td>
+</tr>
+<tr>
+<td><strong>Netzladen</strong> (Beta)</td>
+<td><em>Batterie aus dem Netz laden</em>: Schalter, Bezugstarif des Lieferanten, Grenze am Zähler, Mindestvorteil und Bezugspreis je Gemeinschaft (siehe Anleitung „Batterie aus dem Netz laden“). <strong>Nur im Expertenmodus</strong> und nur bei Huawei und Victron</td>
 </tr>
 <tr>
 <td><strong>Verbraucher</strong></td>
@@ -43,6 +47,7 @@
 <p>Zusätzlich sichtbar werden:</p>
 <ul>
 <li><strong>Tab Tarife:</strong> <em>Alterungskosten der Batterie (ct/kWh)</em></li>
+<li><strong>Tab Netzladen</strong> als Ganzes, bei Huawei und Victron (Beta, siehe Anleitung „Batterie aus dem Netz laden“)</li>
 <li><strong>Tab Anlage:</strong> die Gerätedaten <em>AC-Grenzleistung des Wechselrichters</em>, <em>PV-Spitzenleistung</em> und <em>Batterie-Leistungsgrenze</em>, dazu <em>Sicherheitspuffer auf die Prognose (%)</em>, <em>Ladeziel am Abend (%)</em> und <em>Vormittags bevorzugt netzdienlich</em> (siehe Anleitung „Anlage &amp; Batterie“)</li>
 <li><strong>Tab Prognose:</strong> bei Solcast die <em>Weiteren Prognose-Sensoren</em> (PV-Prognose heute gesamt, Tag 3 bis Tag 7)</li>
 <li><strong>Tab Verbraucher</strong> als Ganzes, mit Heizstab und Wallbox</li>
@@ -60,7 +65,8 @@
 <p>Der Knopf <strong>Speichern</strong> unter den Tabs übernimmt die Änderungen aus <strong>allen</strong> Tabs auf einmal. Danach bist du wieder im Dashboard. Fehlt ein Pflichtwert oder passt etwas nicht zusammen, wird nichts gespeichert; über dem Knopf steht dann, was fehlt. Geprüft werden:</p>
 <ul>
 <li><strong>Anlage:</strong> AC-Grenzleistung, PV-Spitzenleistung, Batterie-Leistungsgrenze, Höhe der Einspeisegrenze (wenn eingeschaltet)</li>
-<li><strong>Tarife:</strong> Standardvergütung (bei „Fester Wert“), Arbeitspreis, Netzbereich (wenn Sommer-Nieder- oder Winter-Nieder-Arbeitspreis eingeschaltet ist), das Nachtfenster, sobald ein Nachtsatz eingetragen ist (Standardvergütung und je Gemeinschaft), die Anteile der Gemeinschaften (zusammen höchstens 100 %) und im Quotenmodus die Tages-Abnahmequote</li>
+<li><strong>Tarife:</strong> Standardvergütung (bei „Fester Wert“), Arbeitspreis, Netzbereich (wenn Sommer-Nieder- oder Winter-Nieder-Arbeitspreis eingeschaltet ist), das Nachtfenster, sobald ein Nachtsatz eingetragen ist (Standardvergütung und je Gemeinschaft), die Anteile der Gemeinschaften (zusammen höchstens 100 %), im Quotenmodus die Tages-Abnahmequote</li>
+<li><strong>Netzladen</strong> (wenn eingeschaltet): ein Bezugspreis, der billiger sein kann als die Nacht (Spot-Tarif, Bezugspreis einer Gemeinschaft oder zeitvariable Netzentgelte), bei Spot- oder Gemeinschaftsbezug außerdem der Netzbereich im Reiter Tarife</li>
 <li><strong>Prognose:</strong> die Sensoren einer fremden Prognosequelle, gültige PV-Flächen</li>
 <li><strong>Verbraucher:</strong> Adresse, Leistung und Maximaltemperatur des Heizstabs, Adresse der Ambibox</li>
 <li><strong>Spitzenkappung</strong> (wenn eingeschaltet): Grenzwert zwischen 2 und 20 kW, Mindest- und Maximalreserve zwischen 0 und 80 % (die Mindestreserve nicht über der maximalen), je Verbraucher Leistungssensor und Schalter, und ohne Batterie-Stufe mindestens ein Verbraucher</li>

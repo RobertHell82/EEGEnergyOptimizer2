@@ -70,6 +70,7 @@ from .const import (
     INVERTER_TYPE_FRONIUS,
     INVERTER_TYPE_KOSTAL,
     INVERTER_TYPE_SMA,
+    INVERTER_TYPE_VICTRON,
 )
 from .energie_ag import ABSCHLAG_MAX_EUR as ENERGIE_AG_ABSCHLAG_MAX_EUR
 from .inverter.sigenergy import (
@@ -77,6 +78,11 @@ from .inverter.sigenergy import (
     SIGEN_REQUIRED_CONTROLS,
     find_sigen_control_entity,
     sigen_control_entity_status,
+)
+from .inverter.victron import (
+    VICTRON_DOMAIN,
+    victron_pruefung,
+    victron_sensoren,
 )
 from .inverter.solax import (
     SOLAX_CONTROL_ENTITY_PATTERNS,
@@ -1013,7 +1019,7 @@ async def ws_check_prerequisites(
     msg: dict,
 ) -> None:
     """Check which prerequisite integrations are installed and loaded."""
-    check_domains = ["huawei_solar", "solax_modbus", "fronius", "kostal_plenticore", "sma", "sigen", "solcast_solar", "forecast_solar"]
+    check_domains = ["huawei_solar", "solax_modbus", "fronius", "kostal_plenticore", "sma", "sigen", "victron_gx", "solcast_solar", "forecast_solar"]
     result = {}
 
     for domain in check_domains:
@@ -1043,6 +1049,19 @@ def _source_entry_host(entry) -> str | None:
     return host.rstrip("/") or None
 
 
+def _victron_erkennung(hass: HomeAssistant) -> dict | None:
+    """Erkennungsergebnis für Victron, None ohne geladene Integration."""
+    entries = hass.config_entries.async_entries(VICTRON_DOMAIN)
+    if not any(e.state.value == "loaded" for e in entries):
+        return None
+    return {
+        CONF_INVERTER_TYPE: INVERTER_TYPE_VICTRON,
+        "detected": True,
+        "sensors": victron_sensoren(hass),
+        "victron_pruefung": victron_pruefung(hass),
+    }
+
+
 def _first_loaded_entry_host(entries) -> str | None:
     """Host des ersten geladenen Config-Entries (Fallback: erster Entry)."""
     for entry in entries:
@@ -1055,6 +1074,10 @@ def _first_loaded_entry_host(entries) -> str | None:
 @websocket_api.websocket_command(
     {
         vol.Required("type"): "eeg_optimizer/detect_sensors",
+        # Der im Assistenten gewählte Typ. Bisher nur für Victron gelesen:
+        # dessen Erkennung steht sonst hinter Huawei/SolaX/Sigenergy und
+        # käme bei einer zweiten geladenen Integration nie zum Zug.
+        vol.Optional(CONF_INVERTER_TYPE): str,
     }
 )
 @websocket_api.async_response
@@ -1064,6 +1087,11 @@ async def ws_detect_sensors(
     msg: dict,
 ) -> None:
     """Auto-detect inverter sensors (Huawei or SolaX)."""
+    if msg.get(CONF_INVERTER_TYPE) == INVERTER_TYPE_VICTRON:
+        ergebnis = _victron_erkennung(hass)
+        if ergebnis is not None:
+            connection.send_result(msg["id"], ergebnis)
+            return
     # Check if Huawei Solar integration is loaded
     huawei_entries = hass.config_entries.async_entries("huawei_solar")
     huawei_loaded = any(e.state.value == "loaded" for e in huawei_entries)
@@ -1225,6 +1253,16 @@ async def ws_detect_sensors(
             if k in status and status[k].get("enabled") is not True
         ]
         connection.send_result(msg["id"], result)
+        return
+
+    # Victron (eingebaute HA-Integration „victron_gx“, MQTT). Sensoren und
+    # Stellgrößen kommen aus der Entity-Registry über die unique_id der
+    # Metrik — die Entity-IDs hängen am Gerätenamen und an der Sprache.
+    # Kapazität gibt es nur in Ah, sie wird im Assistenten von Hand
+    # eingetragen. Das Panel zeigt, was am GX-Gerät noch nicht passt.
+    ergebnis = _victron_erkennung(hass)
+    if ergebnis is not None:
+        connection.send_result(msg["id"], ergebnis)
         return
 
     # Check if Fronius native integration is loaded
@@ -1497,7 +1535,7 @@ async def ws_detect_sensors(
         connection.send_result(msg["id"], result)
         return
 
-    # Neither Huawei, SolaX, Sigenergy, Fronius, Kostal, nor SMA detected
+    # Neither Huawei, SolaX, Sigenergy, Victron, Fronius, Kostal, nor SMA detected
     connection.send_result(msg["id"], {"detected": False, "sensors": {}})
 
 

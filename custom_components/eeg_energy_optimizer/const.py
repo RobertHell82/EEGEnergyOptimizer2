@@ -43,6 +43,7 @@ INVERTER_TYPE_FRONIUS = "fronius_gen24"
 INVERTER_TYPE_KOSTAL = "kostal_plenticore"
 INVERTER_TYPE_SMA = "sma_smart_energy"
 INVERTER_TYPE_SIGENERGY = "sigenergy_sigenstor"
+INVERTER_TYPE_VICTRON = "victron_ess"
 
 # Sign conventions per inverter type for battery and grid power sensors.
 # battery_sign: +1 = positive means charging (Huawei), -1 = positive means discharging (SolaX)
@@ -71,6 +72,11 @@ INVERTER_SIGN_CONVENTIONS = {
     # Netz-Vorzeichen gedreht. Am Gerät bei Einspeisung gegenprüfen
     # (binary_sensor …exporting_to_grid muss dann „on" sein).
     "sigenergy_sigenstor": {"battery_sign": 1, "grid_sign": -1},
+    # Victron (HA-Integration `victron_gx`, MQTT): Venus-OS-D-Bus-Werte in W,
+    # roh durchgereicht. Dc/Battery/Power positiv = laden (wie bei uns),
+    # Netzleistung (Netzzähler Ac/Power bzw. Ac/Grid/L1/Power) positiv =
+    # BEZUG → Netz-Vorzeichen gedreht. Am Gerät bei Einspeisung gegenprüfen.
+    "victron_ess": {"battery_sign": 1, "grid_sign": -1},
 }
 
 # Huawei EMMA-Energiemanagement: Die Einspeiseleistung des EMMA-Geräts

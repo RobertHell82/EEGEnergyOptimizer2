@@ -74,7 +74,7 @@
 </tr>
 </tbody>
 </table>
-<p><strong>Der Unterschied zu anderen Wechselrichtern:</strong> Fronius, Huawei, Kostal, Sigenergy und SolaX bekommen gesagt, wie viel die <em>Batterie</em> entladen soll — zuerst fürs Haus, der Rest geht ins Netz. Der SMA bekommt gesagt, wie viel <em>ins Netz</em> gehen soll, und deckt das Haus selbst dazu. Der Optimizer gibt ihm daher direkt die geplante Einspeisung vor. Reicht die Batterie nicht für Haus plus Einspeisung, senkt er den Sollwert um das Fehlende.</p>
+<p><strong>Der Unterschied zu anderen Wechselrichtern:</strong> Fronius, Huawei, Kostal, Sigenergy und SolaX bekommen gesagt, wie viel die <em>Batterie</em> entladen soll — zuerst fürs Haus, der Rest geht ins Netz. Der SMA bekommt gesagt, wie viel <em>ins Netz</em> gehen soll, und deckt das Haus selbst dazu. Der Optimizer gibt ihm daher direkt die geplante Einspeisung vor. Victron arbeitet genauso (ESS-Netzsollwert). Reicht die Batterie nicht für Haus plus Einspeisung, senkt er den Sollwert um das Fehlende.</p>
 <p><strong>Sicherheitsnetz (Watchdog):</strong> Der Block muss spätestens alle 300 Sekunden erneuert werden, sonst fällt der Wechselrichter in sein eigenes Batteriemanagement zurück. Der Optimizer schreibt alle 60 Sekunden nach. Stürzt Home Assistant während einer Einspeisung ab, endet sie also von selbst.</p>
 <p>Einen Ziel-Ladestand kennt SMA nicht. Der Optimizer prüft den Ladestand alle 30 Sekunden selbst und beendet die Einspeisung.</p>
 <blockquote>

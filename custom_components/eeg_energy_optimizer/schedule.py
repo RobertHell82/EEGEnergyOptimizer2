@@ -261,7 +261,7 @@ MAX_NETZDIENLICH_BONUS = 0.20
 # Batterie, und Bonus und Ziel ringen Minute für Minute um den Vormittag.
 NETZDIENLICH_UEBERSCHUSS_FAKTOR = 1.2
 
-# „Batterie aus dem Netz laden" (Beta, nur Huawei, Expertenmodus): Bringt die
+# „Batterie aus dem Netz laden" (Beta, Huawei und Victron, Expertenmodus): Bringt die
 # PV die Batterie bis zum Ende der PV-Zeit nicht aufs Ladeziel, darf der Plan
 # zukaufen — aber nur in Slots, in denen Netzstrom billiger ist als der Strom,
 # den die Batterie danach ersetzt (die Nacht bis zur nächsten PV-Zeit). Der
@@ -275,11 +275,11 @@ NETZDIENLICH_UEBERSCHUSS_FAKTOR = 1.2
 # EEG-Bezug je Gemeinschaft (Energiepreis + um den Ortstarif verringertes
 # Netznutzungsentgelt, gewichtet mit dem Überschuss der Gemeinschaft).
 CONF_SCHEDULE_NETZLADEN = "schedule_netzladen"
-# Schalter für das ganze Netzladen, zusammen mit NETZLADEN_SICHTBAR im
-# Panel: in Releases aus, in Betas an. Immer beide gemeinsam umlegen — nur
-# ausgeblendet, aber wirksam, ließe sich ein in der Beta gesetzter Haken
-# nicht mehr abschalten.
-NETZLADEN_FREIGEGEBEN = False
+# Notschalter für das ganze Netzladen, zusammen mit NETZLADEN_SICHTBAR im
+# Panel. Seit 30.10.2026 auch in Releases an (docs/DEVELOPMENT.md). Immer
+# beide gemeinsam umlegen — nur ausgeblendet, aber wirksam, ließe sich ein
+# gesetzter Haken nicht mehr abschalten.
+NETZLADEN_FREIGEGEBEN = True
 # Höchste Netzbezugsleistung, die in die Batterie gehen darf (kW, AC). 0 oder
 # leer = die Batterieleistung. Eigene Grenze, weil ab 2027 die Bezugsspitze
 # des Monats Geld kostet (leistungsspitze.py) — das LP bewertet sie nicht.
@@ -503,6 +503,10 @@ class ScheduleInputs:
     # Executor die Reserve hält, ist dieser Wert plus die Reservekurve.
     # None = keine Spitzenreserve, dann gilt ``min_soc_pct``.
     min_soc_basis_pct: float | None = None
+    # Eingestellter Mindest-Ladestand (inkl. Backup des Geräts), wenn der
+    # gemessene Ladestand darunter liegt und der Plan deshalb vom Ladestand
+    # aus rechnet (siehe async_collect_inputs). None = nicht unterschritten.
+    min_soc_einstellung_pct: float | None = None
     # Spitzenreserve für Anzeige und Executor: Grenze, Kurve je Viertel-
     # stunde, Plan-Anteil, Mindest-/Maximalreserve, genutzte Tage. None = aus.
     spitzenreserve: dict | None = None
@@ -1495,7 +1499,7 @@ def netzladen_max_kw(config: dict, inverter: Any = None) -> float:
     """Netzbezugsleistung in die Batterie (kW) — 0 heißt „aus dem Netz laden" aus.
 
     Nur mit dem Schalter und nur, wenn der Treiber Netzladen kann
-    (``supports_grid_charge``, derzeit Huawei). Das ist die Batterieleistung;
+    (``supports_grid_charge``, derzeit Huawei und Victron). Das ist die Batterieleistung;
     die Grenze am Zähler ist ``netzladen_netzgrenze_kw``.
     """
     if not NETZLADEN_FREIGEGEBEN or not config.get(CONF_SCHEDULE_NETZLADEN):
@@ -2756,6 +2760,19 @@ async def async_collect_inputs(
         except Exception:
             _LOGGER.debug("Backup-Ladestand des Geräts nicht lesbar", exc_info=True)
 
+    # Liegt der Ladestand UNTER dem Boden, rechnete opt() von „leer am Boden"
+    # aus (HAConfig klemmt battery_free): Der Plan zeigte dann Boden + Rest
+    # statt des wirklichen Ladestands, sah nur den Platz zwischen Boden und
+    # Deckel und begrenzte das Laden — eine Batterie bei 30 % bekam „Laden
+    # begrenzt", weil der Plan sie bei 83 % wähnte (Boden 80 %, 30.10.2026).
+    # Deshalb gilt dann der Ladestand als Boden: nichts wird entladen, der
+    # ganze Platz bis zum Deckel ist sichtbar, und mit jedem Planlauf steigt
+    # der Boden mit dem Ladestand, bis er den eingestellten Wert wieder hat.
+    min_soc_einstellung = None
+    if soc is not None and math.isfinite(float(soc)) and float(soc) < min_soc:
+        min_soc_einstellung = min_soc
+        min_soc = max(0.0, float(soc))
+
     # Spitzenkappung: die Reserve, die die Batterie für Spitzen hält, hebt
     # den Boden des Plans — als Parameter, Haralds Modell bleibt unberührt.
     min_soc_basis = min_soc
@@ -2785,7 +2802,8 @@ async def async_collect_inputs(
             # Garantien des Ladeziels (nie ein Zukauf, nie ohne Lösung).
             abend = min(
                 _max_soc_pct(config),
-                min_soc_basis + float(spitzenreserve_info["plan_pct"]),
+                (min_soc_einstellung if min_soc_einstellung is not None else min_soc_basis)
+                + float(spitzenreserve_info["plan_pct"]),
             )
             if abend > ladeziel:
                 ladeziel = abend
@@ -3064,6 +3082,7 @@ async def async_collect_inputs(
         ),
         min_soc_pct=min_soc,
         min_soc_basis_pct=min_soc_basis if spitzenreserve_info is not None else None,
+        min_soc_einstellung_pct=min_soc_einstellung,
         spitzenreserve=spitzenreserve_info,
         max_soc_pct=_max_soc_pct(config),
         ladeziel_pct=ladeziel,
@@ -3313,6 +3332,8 @@ def solve(inputs: ScheduleInputs) -> dict[str, Any]:
     if inputs.spitzenreserve is not None:
         result["spitzenreserve"] = inputs.spitzenreserve
         result["min_soc_basis_pct"] = inputs.min_soc_basis_pct
+    if inputs.min_soc_einstellung_pct is not None:
+        result["min_soc_einstellung_pct"] = inputs.min_soc_einstellung_pct
     ladeziel = _ladeziel_termine(config, table, slots, inputs)
     if ladeziel is not None:
         result["ladeziel"] = ladeziel

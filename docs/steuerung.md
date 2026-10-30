@@ -54,7 +54,7 @@ Beides für Anwender: [Anlage & Batterie](guides/anlage_batterie.md).
 ## Ein Steuerungslauf (alle 30 Sekunden)
 
 Jeder Lauf ist eine Prüfkette, an deren Ende **eine Absicht** steht: Laden
-begrenzen, Entladen, aus dem Netz laden (Beta, nur Huawei) oder Freigeben. Um
+begrenzen, Entladen, aus dem Netz laden (Beta, Huawei und Victron) oder Freigeben. Um
 sie umzusetzen, können mehrere Schreibvorgänge nötig sein — etwa beim Wechsel
 von einer Entladung auf ein Ladelimit erst das Stoppen der Entladung, dann das
 Limit; ebenso stoppt jede andere Absicht eine laufende Netzladung zuerst
@@ -64,7 +64,7 @@ im Modus **Aus** bestimmt (fürs Dashboard) — geschrieben wird nur im Modus
 
 ```mermaid
 flowchart TD
-    START(["⏱️ Alle 30 Sekunden"]) --> SUP{"Treiber steuerbar?<br/><i>(alle sechs unterstützten)</i>"}
+    START(["⏱️ Alle 30 Sekunden"]) --> SUP{"Treiber steuerbar?<br/><i>(alle sieben unterstützten)</i>"}
     SUP -- "nein" --> E1["Ende — Fahrplan nur Anzeige"]
     SUP -- "ja" --> WECHSEL{"Moduswechsel<br/>Ein → Aus?"}
     WECHSEL -- "ja" --> REL["Wechselrichter einmalig freigeben"] --> FRISCH
@@ -86,7 +86,7 @@ flowchart TD
     AKTION -- "Freigabe" --> AF["✅ Automatikmodus<br/><i>(Eigenverbrauch)</i>"]
     AKTION -- "Ladelimit" --> AL["🔋 Ladelimit setzen<br/>+ <b>Ladelimit-Nachführung</b>"]
     AKTION -- "Entladung" --> AE["⚡ Entladung setzen<br/>+ <b>Entlade-Nachführung</b><br/>+ <b>Wirkungskontrolle</b>"]
-    AKTION -- "Netzladung" --> AN["🔌 Zwangsladung aus PV + Netz<br/>bis zum Ladestand am Slotende<br/><i>(Beta, nur Huawei)</i>"]
+    AKTION -- "Netzladung" --> AN["🔌 Zwangsladung aus PV + Netz<br/>bis zum Ladestand am Slotende<br/><i>(Beta, Huawei und Victron)</i>"]
 
     style NA fill:#ffcdd2,color:#000
     style FS fill:#ffe0b2,color:#000
@@ -104,7 +104,7 @@ Die Zeilen werden von oben nach unten geprüft, die erste passende gilt.
 
 | Slot plant … | Absicht | Warum |
 |---|---|---|
-| **Laden aus dem Netz** (Spalte `netzladung` ≥ 0,1 kW; Beta, nur Huawei) | Netzladung „Netzladung x kW bis y %“ | Der Slot lädt mehr, als die PV liefert. Der Automatikmodus nähme nur den Überschuss, es braucht einen Ladebefehl mit der ganzen geplanten Ladeleistung bis zum Ladestand am Slotende; den Rest holt das Gerät aus dem Netz. Mit Netzgrenze wird die Leistung an gemessener Hauslast und PV nachgeführt. Ein Treiber ohne Netzladen bekommt stattdessen das Ladelimit. |
+| **Laden aus dem Netz** (Spalte `netzladung` ≥ 0,1 kW; Beta, Huawei und Victron) | Netzladung „Netzladung x kW bis y %“ | Der Slot lädt mehr, als die PV liefert. Der Automatikmodus nähme nur den Überschuss, es braucht einen Ladebefehl mit der ganzen geplanten Ladeleistung bis zum Ladestand am Slotende; den Rest holt das Gerät aus dem Netz. Mit Netzgrenze wird die Leistung an gemessener Hauslast und PV nachgeführt. Ein Treiber ohne Netzladen bekommt stattdessen das Ladelimit. |
 | **Laden**, dazu Einspeisung (> 0,05 kW), Wärme oder Abregelung — oder Maximum-Ladestand unter 100 % | Ladelimit = Planleistung | Die Batterie darf höchstens so schnell laden, wie der Plan vorsieht — der Rest der PV geht ins Netz bzw. in den Heizstab. Unter einem Ladedeckel lüde der Automatikmodus sonst darüber hinaus. |
 | **Laden**, keine Einspeisung (≤ 0,05 kW), keine Wärme, keine Abregelung, Maximum-Ladestand 100 % | Freigabe „Normalbetrieb (Plan lädt den ganzen Überschuss)“ | Der Plan will allen Überschuss in der Batterie — genau das tut der Automatikmodus. Ein Ladelimit auf die Planleistung schickte dagegen jedes kW über der Prognose ins Netz, und die Ladelimit-Nachführung hebt es nur an der Einspeisegrenze an, die ein Herbsttag nie erreicht (Winterthur, 09.10.2026). Denselben Mechanismus zeigte Linz am 26.10.2026: Der Plan sah dort eine kleine Einspeisung vor (Ursache war die Erreichbarkeitsschranke, `chamo/README.md` § 2c), also blieb es beim Ladelimit, und bei wechselhafter Sonne gingen 1,9 statt 0,36 kWh ins Netz. |
 | **Einspeisen aus der Batterie** | Erzwungene Entladung | Energie soll aktiv in die Energiegemeinschaft. |
@@ -224,7 +224,9 @@ interne Automatik des Wechselrichters. Bei SolaX wird Mode 1 beendet
 („Disabled“), der Ladestrom auf den gesicherten Vorwert zurückgeschrieben
 (ohne gesicherten Wert: das Maximum der Entität) und ein abgesenkter
 Entladeboden wiederhergestellt. Bei Sigenergy geht der Modus zurück auf
-„Maximum Self Consumption“, danach wird Remote EMS ausgeschaltet.
+„Maximum Self Consumption“, danach wird Remote EMS ausgeschaltet. Bei Victron
+werden ESS-Netzsollwert und DVCC-Ladestrom auf die Werte zurückgeschrieben,
+die vor dem ersten Eingriff am GX-Gerät standen.
 
 Deshalb gilt: **Wir greifen nur ein, wenn der Fahrplan einen konkreten Wert
 vorgibt.** Sonst stehen die Werte des Geräts.
@@ -238,7 +240,7 @@ Der Schalter oben im Dashboard (`select.eeg_energy_optimizer_optimizer`):
 
 | Modus | Rechnen | Schreiben |
 |---|---|---|
-| **Ein** | jede Minute | Ladelimit, Entladung und Netzladung (Beta, nur Huawei) werden gesetzt |
+| **Ein** | jede Minute | Ladelimit, Entladung und Netzladung (Beta, Huawei und Victron) werden gesetzt |
 | **Aus** | jede Minute | nichts — der Fahrplan wird nur angezeigt |
 
 **Aus** nimmt gesetzte Steuerwerte zurück: Der Wechselrichter wird freigegeben

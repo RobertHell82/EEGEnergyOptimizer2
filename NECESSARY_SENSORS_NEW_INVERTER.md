@@ -5,8 +5,8 @@ Ein Treiber ist eine Unterklasse von `InverterBase`
 nur; gelesen wird über Sensoren, die der Nutzer im Assistenten zuordnet. Der
 einzige Aufrufer der Schreibmethoden ist der `ScheduleExecutor`
 (`schedule_executor.py`, alle 30 s). Vorlagen: `fronius.py`, `kostal.py`,
-`sma.py` (direkt per Modbus TCP), `huawei.py`, `solax.py`, `sigenergy.py`
-(über die HA-Integration des Herstellers).
+`sma.py` (direkt per Modbus TCP), `huawei.py`, `solax.py`, `sigenergy.py`,
+`victron.py` (über die HA-Integration des Herstellers).
 
 Freigabe und Feldtest-Checkliste: [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md),
 Abschnitt „Einen Wechselrichter freigeben“.
@@ -34,8 +34,8 @@ gilt als Wh bei Einheit `Wh` oder ohne Einheit über 1000
 **Vorzeichen:** intern Batterie + = Laden, Netz + = Einspeisung. Weicht der
 Sensor ab, trägt der Typ es in `INVERTER_SIGN_CONVENTIONS` (`const.py`) ein
 (`battery_sign` / `grid_sign` = ±1). Angewandt wird das nur in
-`power_readings.resolve_sign`. Am Gerät prüfen: Kostal und Sigenergy drehen
-das Netz-Vorzeichen, SolaX beide.
+`power_readings.resolve_sign`. Am Gerät prüfen: Kostal, Sigenergy und Victron
+drehen das Netz-Vorzeichen, SolaX beide.
 
 **Richtungspaare:** Liefert die Quelle nur positive Teilwerte (Fronius, SMA),
 werden `battery_power_charge_sensor` / `battery_power_discharge_sensor` und
@@ -65,7 +65,7 @@ fehlender Messwert.
 | Methode | Bedeutung |
 |---|---|
 | `async_set_charge_limit(power_kw) → bool` | Ladeleistung der Batterie begrenzen; `0` = Laden gesperrt. Der Rest des Überschusses geht ins Netz. |
-| `async_set_discharge(power_kw, target_soc) → bool` | Erzwungene Entladung. `power_kw` ist Batterieleistung, außer bei `discharge_is_grid_setpoint` (dann Netz-Export). `target_soc` = Slot-End-SOC aus dem Plan; ohne Register dafür (Kostal, SMA) nur angenommen — der Plan rechnet jede Minute mit dem gemessenen SOC neu. |
+| `async_set_discharge(power_kw, target_soc) → bool` | Erzwungene Entladung. `power_kw` ist Batterieleistung, außer bei `discharge_is_grid_setpoint` (dann Netz-Export). `target_soc` = Slot-End-SOC aus dem Plan; ohne Register dafür (Kostal, SMA) nur angenommen — der Plan rechnet jede Minute mit dem gemessenen SOC neu. Victron überwacht ihn selbst am SOC-Sensor, weil sein Netzsollwert sonst bis zum ESS-Mindest-SOC weiterliefe. |
 | `async_stop_forcible() → bool` | Alles zurück in den Automatikmodus des Geräts — auch das Ladelimit. Wird bei Modus Aus, Failsafe, Not-Aus, Guard 3 und beim Start aufgerufen. |
 | `is_available` (Property) | Steuerweg grundsätzlich da? HA-Treiber: Config-Entry der Quell-Integration `loaded`; Modbus-Treiber: Host konfiguriert (verbunden wird erst beim Schreiben). |
 
@@ -91,7 +91,7 @@ Ohne `supports_schedule_control = True` rechnet und zeigt der Fahrplan nur
 | `get_charge_limit_max_kw()` | `None` | Obergrenze für Guard 1; `None` → ungeklemmt |
 | `get_max_discharge_power_kw()` | `None` | Obergrenze für Guard 2; `None` → `discharge_power_kw` aus der Konfiguration |
 | `get_backup_reserve_soc_pct()` | `None` | Notstrom-SOC des Geräts; hebt den Mindest-Ladestand im Plan, sonst plant er Entladungen, die das Gerät verweigert |
-| `discharge_is_grid_setpoint` | `False` | `True`, wenn das Gerät „speise X kW ein“ statt „entlade mit X kW“ nimmt (SMA, `GridWSpt`): Guard 2 gibt dann den Export vor statt Export + Hauslast − PV, Guard 3 misst am Netzzähler |
+| `discharge_is_grid_setpoint` | `False` | `True`, wenn das Gerät „speise X kW ein“ statt „entlade mit X kW“ nimmt (SMA `GridWSpt`, Victron ESS-Netzsollwert): Guard 2 gibt dann den Export vor statt Export + Hauslast − PV, Guard 3 misst am Netzzähler |
 | `supports_grid_charge` / `async_set_grid_charge(kw, target_soc)` | `False` / Fehler | Beta „Batterie aus dem Netz laden“: PV zuerst, Rest aus dem Netz, bis `target_soc`; beendet mit `async_stop_forcible()`. Derzeit nur Huawei (`forcible_charge_soc`) |
 | `get_control_entities()` | `[]` | Stellgrößen als HA-Entitäten (`label`, `entity_id`, `role`) für `get_control_state` |
 | `async_get_control_values()` | `[]` | dasselbe für Treiber ohne Entitäten (Modbus): `label`, `value`, `unit`, `role` |

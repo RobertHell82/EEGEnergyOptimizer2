@@ -58,7 +58,7 @@ Auch der Fahrplan rechnet die Reserve mit ein:
 - Im Modus **Aus** und während einer **Pause** rechnet der Plan ohne Reserve.
 
 > [!NOTE]
-> Hast du das Ladeziel ausgeschaltet, erscheint tagsüber trotzdem eine Ladeziel-Marke im Ladestandsdiagramm: Das ist die Abendreserve.
+> Hast du das Ladeziel ausgeschaltet, erscheint tagsüber trotzdem eine Ladeziel-Marke im Ladestandsdiagramm: Das ist die Abendreserve. Mit **Batterie aus dem Netz laden** (Beta, Huawei und Victron) darf der Plan sie auch mit günstigem Netzstrom erreichen, wie jedes andere Ladeziel.
 
 ### Verbraucher abschalten
 

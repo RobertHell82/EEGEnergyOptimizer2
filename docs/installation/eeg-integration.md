@@ -48,9 +48,10 @@ Bei Wechselrichter, PV-Prognose, Anlage & Batterie und Tarife & Gemeinschaft (be
 ## Voraussetzungen für den Betrieb
 
 - Home Assistant **2025.1.0** oder neuer
-- Einer der sechs unterstützten **Wechselrichter mit Batteriespeicher** — welche und wie gut erprobt, steht im [Stand der Unterstützung](../wechselrichter-status.md). Jeder braucht seine Integration in Home Assistant, eingerichtet und funktionsfähig (siehe die Guides dort):
+- Einer der sieben unterstützten **Wechselrichter mit Batteriespeicher** — welche und wie gut erprobt, steht im [Stand der Unterstützung](../wechselrichter-status.md). Jeder braucht seine Integration in Home Assistant, eingerichtet und funktionsfähig (siehe die Guides dort):
   - **Fronius, Kostal Plenticore, SMA Solar:** in Home Assistant eingebaut, liefern die Messwerte. Gesteuert werden sie direkt per Modbus TCP — das muss am Wechselrichter eingeschaltet sein.
   - **Huawei Solar, Sigenergy, SolaX Modbus:** kommen über HACS und übernehmen Messen und Steuern.
+  - **Victron GX:** in Home Assistant eingebaut (ab 2026.5), braucht MQTT am GX-Gerät und übernimmt Messen und Steuern — siehe [Victron vorbereiten](victron.md).
 - Eine **PV-Prognose**, eine von drei:
   - [Solcast Solar](../guides/solcast.md) — kostenloses Konto nötig, am genauesten
   - [Forecast.Solar](../guides/forecast_solar.md) — ohne Registrierung

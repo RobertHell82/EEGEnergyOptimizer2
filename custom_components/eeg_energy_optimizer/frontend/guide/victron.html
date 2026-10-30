@@ -1,0 +1,254 @@
+<!-- GENERATED FILE - DO NOT EDIT.
+     Quelle: docs/guides/victron.md
+     Neu generieren mit: python scripts/build_guides.py -->
+<h2 class="guide-title">Victron einrichten</h2>
+<div class="guide-alert caution"><p><strong>Feldtest.</strong> Der Victron-Treiber ist neu und läuft an der ersten Anlage im Feldtest. Was dort schon nachgewiesen ist und was noch offen ist, steht in der Doku unter „Stand der Unterstützung“.</p></div>
+
+<h3>1. Unterstützte Geräte</h3>
+<p><strong>Victron ESS</strong> mit einem <strong>GX-Gerät</strong> (Cerbo GX, Cerbo GX MK2, Venus GX, Ekrano GX) und einem oder mehreren <strong>Multiplus-II</strong> oder <strong>Quattro</strong>, einphasig oder dreiphasig. Die PV darf an Victron-Ladereglern hängen (MPPT, Gleichstrom) oder an einem eigenen PV-Wechselrichter am Wechselstrom.</p>
+<p>Angebunden wird über die in Home Assistant <strong>eingebaute</strong> Integration <strong>Victron GX</strong>. Sie spricht im Heimnetz direkt mit dem GX-Gerät (MQTT), ohne VRM-Cloud. Dieselbe Integration liefert die Messwerte und nimmt die Steuerbefehle an; eine HACS-Integration oder ein eigenes Modbus braucht es nicht.</p>
+<p>Voraussetzungen:</p>
+<ul>
+<li><strong>Home Assistant 2026.5 oder neuer</strong> (<em>Einstellungen → Info</em>)</li>
+<li><strong>Venus OS 3.31 oder neuer</strong> am GX-Gerät empfohlen (<em>Einstellungen → Firmware</em>). Mit älteren Ständen wurden Probleme bei der MQTT-Anmeldung berichtet.</li>
+<li>Ein <strong>Netzzähler</strong> am GX-Gerät (z. B. Carlo Gavazzi ET340 / EM24), wie ihn ESS ohnehin braucht</li>
+</ul>
+<p><em>Geprüft mit drei Multiplus-II 48/5000 (dreiphasig), Cerbo GX MK2, drei SmartSolar-MPPT und Pytes-Batterie.</em></p>
+<h3>2. MQTT am GX-Gerät einschalten</h3>
+<p>Öffne die Oberfläche des GX-Geräts, am Display oder über <strong>VRM → Remote Console</strong>:</p>
+<ol>
+<li><strong>Einstellungen → Integrationen → MQTT-Zugriff</strong> einschalten <em>(ältere Firmware: Einstellungen → Dienste → MQTT)</em></li>
+<li>Unter <strong>Einstellungen → Allgemein → Sicherheitsprofil lokales Netzwerk</strong> nachsehen, welches Profil eingestellt ist. Davon hängt ab, was du in Abschnitt 3 einträgst.</li>
+<li>Dem GX-Gerät im Router eine <strong>feste IP-Adresse</strong> geben (z. B. FRITZ!Box: <em>Heimnetz → Netzwerk → Gerät → „Immer die gleiche IPv4-Adresse zuweisen“</em>). Sonst verliert Home Assistant die Verbindung, sobald der Router eine neue Adresse vergibt.</li>
+</ol>
+<div class="guide-alert note"><p>MQTT einzuschalten ändert nichts am Betrieb der Anlage. Es öffnet nur einen Zugang im Heimnetz.</p></div>
+
+<h3>3. Integration „Victron GX“ einrichten</h3>
+<p>Oft hat Home Assistant das GX-Gerät schon selbst gefunden: Unter <strong>Einstellungen → Geräte &amp; Dienste</strong> steht es dann oben bei <strong>„Gefunden“</strong> (z. B. „Cerbo GX (…)“). Klicke dort auf <strong>Konfigurieren</strong>. Sonst: <strong>„+ Integration hinzufügen“</strong> → nach <strong>„Victron GX“</strong> suchen.</p>
+<div class="guide-alert note"><p>Unter „Victron“ zeigt Home Assistant mehrere Einträge. Gemeint ist <strong>„Victron GX“</strong>, nicht „Victron Remote Monitoring“ (die VRM-Cloud) und nicht „Victron BLE“.</p></div>
+
+<p>Trage ein, passend zum Sicherheitsprofil:</p>
+<table>
+<thead>
+<tr>
+<th>Feld</th>
+<th>Profil „Unsicher“</th>
+<th>Profil „Schwach“</th>
+<th>Profil „Gesichert“</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Host</strong></td>
+<td>IP-Adresse des GX-Geräts</td>
+<td>IP-Adresse des GX-Geräts</td>
+<td>IP-Adresse des GX-Geräts</td>
+</tr>
+<tr>
+<td><strong>Port</strong></td>
+<td><strong>1883</strong></td>
+<td><strong>1883</strong> (oder 8883 mit SSL)</td>
+<td><strong>8883</strong></td>
+</tr>
+<tr>
+<td><strong>Benutzername</strong></td>
+<td>leer</td>
+<td>leer</td>
+<td>leer</td>
+</tr>
+<tr>
+<td><strong>Passwort</strong></td>
+<td>leer</td>
+<td>Passwort des Profils</td>
+<td>Passwort des Profils</td>
+</tr>
+<tr>
+<td><strong>SSL</strong></td>
+<td>aus</td>
+<td>aus (an bei 8883)</td>
+<td><strong>an</strong></td>
+</tr>
+</tbody>
+</table>
+<p>Das Passwort ist das, das am GX-Gerät für das Sicherheitsprofil gesetzt ist, nicht das VRM-Passwort.</p>
+<p>Fragt Home Assistant nach einer <strong>Kopplung</strong>: am GX-Gerät <strong>Einstellungen → Integrationen → MQTT-Geräte → Kopplungsmodus</strong> öffnen und innerhalb von <strong>120 Sekunden</strong> in Home Assistant auf <strong>Absenden</strong> klicken.</p>
+<p>Danach erscheinen unter <strong>Einstellungen → Geräte &amp; Dienste → Victron GX</strong> mehrere Geräte, typischerweise <strong>GX Device</strong> (die Anlage), <strong>ESS</strong>, der Multiplus (VE.Bus), die <strong>Batterie</strong>, der <strong>Netzzähler</strong> und je Laderegler ein <strong>Solarcharger</strong>.</p>
+<div class="guide-alert warning"><p><strong>Nicht parallel eingreifen.</strong> Die Integration legt auch Entitäten an, mit denen man die Anlage verstellen kann (Netzsollwert, Ladestrom, ESS-Modus …). Zwei davon schreibt der Optimizer selbst (siehe unten). Wer sie gleichzeitig in Home Assistant, der Remote Console oder per Node-RED ändert, überschreibt den Optimizer, oder umgekehrt.</p></div>
+
+<h3>4. Einstellungen am GX-Gerät</h3>
+<p>Der Einrichtungsassistent liest diese Einstellungen über die Integration und zeigt sie im Schritt „Wechselrichter“ an. Steht dort ein <strong>Problem</strong>, lässt er dich nicht weiter, bis es am GX-Gerät behoben ist; danach den Wechselrichter im Assistenten erneut anklicken.</p>
+<table>
+<thead>
+<tr>
+<th>Einstellung</th>
+<th>Wo am GX-Gerät</th>
+<th>Soll</th>
+<th>Ohne das</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>ESS-Modus</strong></td>
+<td>Einstellungen → ESS → Modus</td>
+<td><strong>Optimiert</strong> (mit oder ohne BatteryLife)</td>
+<td>Der Netzsollwert wirkt nicht</td>
+</tr>
+<tr>
+<td><strong>Dynamic ESS</strong></td>
+<td>Einstellungen → Dynamic ESS</td>
+<td><strong>Aus</strong></td>
+<td>Dynamic ESS überschreibt den Netzsollwert</td>
+</tr>
+<tr>
+<td><strong>Geplantes Laden</strong></td>
+<td>Einstellungen → ESS → Geplantes Laden</td>
+<td>alle Zeitfenster <strong>aus</strong></td>
+<td>Lädt zu festen Zeiten aus dem Netz und hält die Batterie dort gegen jede Entladung; der Fahrplan weiß davon nichts</td>
+</tr>
+<tr>
+<td><strong>DVCC</strong></td>
+<td>Einstellungen → DVCC</td>
+<td><strong>An</strong></td>
+<td>Das Ladelimit wirkt nicht</td>
+</tr>
+<tr>
+<td><strong>Einspeisung begrenzen</strong></td>
+<td>Einstellungen → ESS → Netzeinspeisung</td>
+<td>nicht begrenzt oder mindestens 100 W</td>
+<td>Einspeisen aus der Batterie ist gesperrt</td>
+</tr>
+<tr>
+<td><strong>DC-gekoppelte PV – Überschuss einspeisen</strong></td>
+<td>Einstellungen → ESS → Netzeinspeisung</td>
+<td><strong>An</strong> (empfohlen)</td>
+<td>Ein Ladelimit regelt die Laderegler ab, statt den Überschuss ins Netz zu geben. Nur ein Hinweis, kein Hindernis, und nur bei Ladereglern (MPPT)</td>
+</tr>
+</tbody>
+</table>
+<p>Der <strong>Mindest-Ladestand</strong> unter <em>Einstellungen → ESS</em> bleibt deine Einstellung. Der Optimizer liest ihn und plant nie darunter (bei BatteryLife zählt die höhere, gerade aktive Grenze).</p>
+<h3>5. Sensoren</h3>
+<p>Der Optimizer erkennt die Messwerte automatisch über ihre Kennung in der Integration, auch wenn Geräte umbenannt oder auf Deutsch angelegt sind:</p>
+<table>
+<thead>
+<tr>
+<th>Größe</th>
+<th>Quelle</th>
+<th>Hinweis</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Ladestand</td>
+<td>GX Device → DC-Batterie Ladestand</td>
+<td></td>
+</tr>
+<tr>
+<td>PV-Leistung</td>
+<td>GX Device → PV-Leistung</td>
+<td>Summe aller Laderegler (DC)</td>
+</tr>
+<tr>
+<td>PV-Leistung 2 (optional)</td>
+<td><strong>selbst wählen</strong></td>
+<td>Nur mit PV-Wechselrichter am Wechselstrom: ein Sensor mit seiner <strong>gesamten</strong> Leistung über alle Phasen, etwa aus seiner eigenen Integration. Das GX-Gerät meldet AC-PV nur je Phase, deshalb erkennt der Assistent ihn nicht. Wird zur DC-PV addiert</td>
+</tr>
+<tr>
+<td>Netzleistung</td>
+<td>Netzzähler → Leistung</td>
+<td>Summe aller Phasen; positiv = Bezug, wird automatisch umgerechnet</td>
+</tr>
+<tr>
+<td>Batterieleistung</td>
+<td>GX Device → DC-Batterie Leistung</td>
+<td>positiv = Laden</td>
+</tr>
+<tr>
+<td>Kapazität</td>
+<td><strong>von Hand</strong></td>
+<td>Victron liefert die Kapazität nur in Ah. Trage die nutzbare Kapazität in kWh ein, z. B. 4 × Pytes V5 (je 5,12 kWh) = <strong>20,48 kWh</strong></td>
+</tr>
+</tbody>
+</table>
+<div class="guide-alert note"><p><strong>Netzleistung immer vom Netzzähler.</strong> Eine einzelne Phase (etwa „Netzleistung L1“ am GX Device) reicht bei einer dreiphasigen Anlage nicht: Mit Phasenausgleich kann L1 1,4 kW Bezug zeigen, während der Zähler insgesamt fast null misst. Ohne Netzzähler erkennt der Assistent die Netzleistung nicht, dann wählst du den Sensor selbst aus.</p></div>
+
+<p>Der Hausverbrauch wird aus PV, Batterie und Netz berechnet. Er enthält damit die Wandlerverluste des Multiplus. Bei hoher Entladeleistung sind das einige hundert Watt.</p>
+<h3>Was der Optimizer am Gerät tut</h3>
+<table>
+<thead>
+<tr>
+<th>Absicht des Fahrplans</th>
+<th>Am Gerät</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Laden begrenzen</strong> (auch 0 kW = Laden sperren)</td>
+<td>DVCC <strong>Max. Ladestrom</strong> = Leistung ÷ Batteriespannung. Gilt für das ganze System, Multiplus und Laderegler zusammen</td>
+</tr>
+<tr>
+<td><strong>Einspeisen ins Netz</strong></td>
+<td>ESS <strong>Netzsollwert</strong> = −geplante Einspeisung (negativ = Einspeisung). Den Hausverbrauch legt der Multiplus selbst obendrauf</td>
+</tr>
+<tr>
+<td><strong>Aus dem Netz laden</strong> (Beta)</td>
+<td>DVCC <strong>Max. Ladestrom</strong> = geplante Ladeleistung ÷ Batteriespannung, dazu ein <strong>positiver Netzsollwert</strong> (Bezug). Den Sollwert führt der Optimizer alle 30 Sekunden an der Messung nach, so dass die Batterie knapp (0,2 kW) unter der geplanten Leistung lädt. Ziel: Die PV hat Vorrang und wird nicht zugunsten des Netzbezugs abgeregelt. Nimmt die Batterie weniger auf (gegen Ende der Ladung), wird der Bezug zurückgenommen statt erhöht. Am Gerät noch nicht erprobt</td>
+</tr>
+<tr>
+<td><strong>Freigabe</strong> (Normalbetrieb)</td>
+<td>Netzsollwert und Ladestrom zurück auf deine Werte von vorher</td>
+</tr>
+</tbody>
+</table>
+<p>Beide Stellgrößen sind deine gespeicherten Einstellungen am GX-Gerät (Netzsollwert oft 0 oder +50 W, Ladestrom oft eine Schutzgrenze). Der Optimizer merkt sich den Wert vor seinem <strong>ersten</strong> Eingriff, auch über einen Neustart von Home Assistant hinweg, und schreibt ihn bei der Freigabe zurück. Steht der Ladestrom auf −1 („nicht begrenzen“), wird auch −1 zurückgeschrieben. Ältere Stände der Integration lassen −1 nicht zu. Dann meldet der Assistent ein Problem: Trag am GX-Gerät unter <em>DVCC</em> einen festen Höchststrom ein (etwa den Ladestrom des BMS) oder aktualisiere Home Assistant. Sonst stünde nach der ersten Freigabe still das Maximum der Entität statt −1.</p>
+<p>Der Ziel-Ladestand einer Entladung kommt aus dem Fahrplan. Das GX-Gerät kennt für einen Netzsollwert keinen Ziel-Ladestand. Deshalb beobachtet der Optimizer den Ladestand selbst und nimmt den Sollwert zurück, sobald das Ziel erreicht ist. Fehlt im Plan ein Ziel, gilt die Reserve des Geräts (ESS-Mindest-Ladestand bzw. die aktive BatteryLife-Grenze). Ist der aktuelle Wert einer Stellgröße beim ersten Eingriff nicht lesbar (Verbindung kurz weg), greift der Optimizer gar nicht ein: Ohne gemerkten Wert könnte er ihn später nicht zurückstellen.</p>
+<div class="guide-alert warning"><p><strong>Kein geräteseitiges Sicherheitsnetz.</strong> Victron kennt für diese Einstellungen keine Rückfallzeit: Ein gesetzter Netzsollwert gilt weiter, bis er zurückgenommen wird. Der Optimizer gibt beim Umschalten auf „Aus“, bei fehlendem Plan und nach jedem Neustart aktiv frei. Stürzt Home Assistant <strong>hart</strong> ab (Stromausfall, eingefrorenes System), regelt das GX-Gerät auf den letzten Sollwert weiter, bis zum ESS-Mindest-Ladestand. Dann am GX-Gerät unter <strong>Einstellungen → ESS → Netzsollwert</strong> den gewohnten Wert (meist 0 oder 50 W) eintragen und unter <strong>Einstellungen → DVCC</strong> den Ladestrom prüfen.</p></div>
+
+<h3>Zu beachten</h3>
+<ul>
+<li><strong>Kein „External control“:</strong> Der ESS-Modus 3 hätte eine Rückfallzeit, übergibt aber die ganze ESS-Regelung nach außen. Der Optimizer müsste dann auch den Eigenverbrauch regeln. Deshalb bleibt ESS in „Optimiert“, geschrieben werden nur Netzsollwert und Ladestrom.</li>
+<li><strong>Spitzenkappung mit der Batterie</strong> gibt es für Victron noch nicht. Verbraucher abschalten funktioniert wie bei jedem Wechselrichter.</li>
+<li><strong>Batterie aus dem Netz laden</strong> (Beta, Expertenmodus, Einstellungen → Netzladen) funktioniert auch mit Victron, siehe Anleitung „Batterie aus dem Netz laden“. Mit Bezug aus der Gemeinschaft lädt der Fahrplan genau in den Viertelstunden, in denen die Gemeinschaft laut PeakShare Strom übrig hat. Damit ersetzt er das <strong>Geplante Laden</strong> am GX-Gerät, das für die Steuerung aus sein muss. Den Ziel-Ladestand überwacht der Optimizer wie bei der Entladung selbst.</li>
+</ul>
+<h3>Häufige Probleme</h3>
+<table>
+<thead>
+<tr>
+<th>Problem</th>
+<th>Lösung</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>„Verbindung fehlgeschlagen“</strong></td>
+<td>MQTT am GX-Gerät aus (→ Abschnitt 2), IP falsch, oder Port passt nicht zum Profil: „Gesichert“ braucht 8883 mit SSL</td>
+</tr>
+<tr>
+<td><strong>„Ungültige Authentifizierung“</strong></td>
+<td>Das GX-Gerät lehnt das <strong>Passwort</strong> ab, der Benutzername spielt keine Rolle. Passwort am GX-Gerät neu setzen (<em>Einstellungen → Allgemein → Sicherheitsprofil lokales Netzwerk → Passwort ändern</em>), zum Testen ohne Sonderzeichen, und erneut eintragen. Oder über <strong>Kopplung</strong> einrichten (Abschnitt 3)</td>
+</tr>
+<tr>
+<td><strong>Assistent meldet „In Home Assistant deaktiviert“</strong></td>
+<td>Die Entität (Netzsollwert, DVCC-Ladestrom oder Batteriespannung) gibt es, sie ist aber abgeschaltet. Unter <em>Einstellungen → Geräte &amp; Dienste → Victron GX → Entitäten</em> aktivieren, dann den Wechselrichter im Assistenten erneut anklicken</td>
+</tr>
+<tr>
+<td><strong>Assistent meldet „Stellgrößen fehlen“</strong></td>
+<td>Die Integration bietet Netzsollwert oder DVCC-Ladestrom nicht an. ESS am GX-Gerät einrichten (Einstellungen → ESS), in Home Assistant prüfen, ob die Entitäten der Victron-GX-Integration aktiviert sind, dann den Wechselrichter im Assistenten erneut anklicken</td>
+</tr>
+<tr>
+<td><strong>Assistent zeigt ein Problem</strong></td>
+<td>Abschnitt 4: Einstellung am GX-Gerät ändern, dann den Wechselrichter im Assistenten erneut anklicken</td>
+</tr>
+<tr>
+<td><strong>Netzleistung nicht erkannt</strong></td>
+<td>Kein Netzzähler am GX-Gerät. Netzsensor im Assistenten selbst wählen, nie eine einzelne Phase einer dreiphasigen Anlage</td>
+</tr>
+<tr>
+<td><strong>Ladelimit ohne Wirkung</strong></td>
+<td>DVCC an? „DC-gekoppelte PV – Überschuss einspeisen“ an? Läuft daneben Node-RED oder Dynamic ESS?</td>
+</tr>
+<tr>
+<td><strong>Nach HA-Absturz speist die Batterie weiter ein</strong></td>
+<td>Netzsollwert am GX-Gerät auf den gewohnten Wert zurücksetzen (siehe Warnung oben)</td>
+</tr>
+</tbody>
+</table>

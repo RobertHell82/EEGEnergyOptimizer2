@@ -168,8 +168,9 @@ class InverterBase(ABC):
         """Kann der Treiber die Batterie aus dem Netz laden (Beta)?
 
         Nur dann bietet der Fahrplan „Batterie aus dem Netz laden" an
-        (``schedule.netzladen_max_kw``). Default False — derzeit kann es nur
-        Huawei (``forcible_charge_soc``).
+        (``schedule.netzladen_max_kw``). Default False — derzeit können es
+        Huawei (``forcible_charge_soc``) und Victron (DVCC-Ladestrom +
+        positiver Netzsollwert).
         """
         return False
 

@@ -15,7 +15,7 @@ So geht möglichst viel in die Energiegemeinschaft, möglichst nichts wird abger
 - Eine **PV-Prognose** (Solcast, Forecast.Solar oder die eigene Berechnung)
 - Die hier eingetragene Grenze muss dem Wert **im Wechselrichter** entsprechen
 
-Die Grenze fließt bei **allen Wechselrichtern** in den Fahrplan ein. Bei allen sechs unterstützten Geräten führt die Steuerung außerdem das Ladelimit nach.
+Die Grenze fließt bei **allen Wechselrichtern** in den Fahrplan ein. Bei allen sieben unterstützten Geräten führt die Steuerung außerdem das Ladelimit nach.
 
 ## So funktioniert es
 

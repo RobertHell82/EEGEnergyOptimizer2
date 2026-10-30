@@ -6,10 +6,10 @@ Geräte nur mit dem Link auf ihre Anleitung und verweist für den Stand hierher.
 
 > [!IMPORTANT]
 > **Unterstützt werden Fronius Gen24, Huawei SUN2000, Kostal Plenticore,
-> Sigenergy SigenStor, SMA Smart Energy und SolaX Gen4+.** Alle sechs stehen
-> im Einrichtungsassistenten zur Auswahl, und bei allen sechs setzt die
-> Steuerung den Fahrplan am Gerät durch (Ladelimit und erzwungene
-> Entladung) — keiner wird nur ausgelesen.
+> Sigenergy SigenStor, SMA Smart Energy und SolaX Gen4+, dazu Victron ESS im
+> Feldtest.** Alle sieben stehen im Einrichtungsassistenten zur Auswahl, und
+> bei allen sieben setzt die Steuerung den Fahrplan am Gerät durch
+> (Ladelimit und erzwungene Entladung) — keiner wird nur ausgelesen.
 
 ## Übersicht
 
@@ -21,16 +21,19 @@ Geräte nur mit dem Link auf ihre Anleitung und verweist für den Stand hierher.
 | **Sigenergy SigenStor** | Sigenergy-Local-Modbus-Integration | **freigegeben** |
 | **SMA Smart Energy** | direkt per Modbus TCP | **freigegeben** |
 | **SolaX Gen4+** | SolaX-Modbus-Integration | **freigegeben** |
+| **Victron ESS** | eingebaute Integration Victron GX (MQTT) | **Feldtest** |
 
 **Freigegeben** heißt: im Dauerbetrieb an echten Anlagen erprobt —
 Ladelimit, Entladung und Freigabe wirken am Gerät, die Sicherheitsnetze der
 Steuerung (Not-Aus, Failsafe, Freigabe bei Aus und beim Entladen der
-Integration) greifen. Das gilt für alle sechs. Die Rückfallzeit *im Gerät*
+Integration) greifen. Das gilt für alle außer Victron. Die Rückfallzeit *im Gerät*
 (Watchdog nach einem Ausfall von Home Assistant) ist damit nicht bei jedem
 nachgewiesen: Was je Gerät noch offen ist oder fehlt, steht unten.
 
-_Ein neu hinzukommender Wechselrichter läuft zunächst als **Feldtest**, bis er
-diese Prüfungen bestanden hat (siehe `docs/DEVELOPMENT.md`)._
+**Feldtest** heißt: Der Treiber ist fertig und steht im Assistenten zur
+Auswahl, läuft aber erst an einer Anlage und wird dort begleitet. Ein neu
+hinzukommender Wechselrichter läuft zunächst so, bis er die Prüfungen oben
+bestanden hat (siehe `docs/DEVELOPMENT.md`).
 
 ## Was je Wechselrichter noch zu klären ist
 
@@ -62,7 +65,7 @@ Steuerung über die [Huawei Solar](https://github.com/wlcrs/huawei_solar)
 Integration. Direkte Anbindung an Wechselrichter/Dongle oder über das
 EMMA-Energiemanagement (`sensor.emma_*`-Sensoren, Netz-Vorzeichen wird
 automatisch korrigiert).
-**Beta: Batterie aus dem Netz laden** (nur Huawei; nur in den Beta-Versionen, in den Releases ausgeblendet und ohne Wirkung):
+**Beta: Batterie aus dem Netz laden** (Huawei und Victron, Expertenmodus):
 Zwangsladung über `forcible_charge_soc` mit Leistung und Ziel-Ladestand aus
 dem Fahrplan. Am Gerät geprüft (Traun, 12.10.2026): lädt auch mit
 ausgeschaltetem „Laden aus dem Netz“, 3 s nach dem Befehl. Beschreibung: [tarife.md](guides/tarife.md).
@@ -173,3 +176,69 @@ Fahrplan rechnet in Leistung. Umgerechnet wird über die Batteriespannung
 Spannung ist das Limit entsprechend ungenau.
 
 Guide: [solax.md](guides/solax.md)
+
+### Victron ESS
+
+**Feldtest** (seit Oktober 2026, eine Anlage: drei Multiplus-II 48/5000
+dreiphasig, Cerbo GX MK2, drei MPPT-Laderegler, Pytes-Batterie,
+Netzzähler). Steuerung und Messwerte über die in Home Assistant eingebaute
+Integration [Victron GX](https://www.home-assistant.io/integrations/victron_gx/)
+(Domain `victron_gx`, MQTT im Heimnetz, ab Home Assistant 2026.5) — keine
+HACS-Integration, kein eigenes Modbus. Am GX-Gerät muss MQTT eingeschaltet
+sein; Venus OS ab 3.31 empfohlen.
+
+Ladelimit = DVCC „Max. Ladestrom“ (Leistung ÷ Batteriespannung, gilt für
+Multiplus und Laderegler zusammen), Entladung = ESS-Netzsollwert negativ.
+Wie bei SMA ist die Entladung ein **Netz-Sollwert** — der Multiplus legt die
+Hauslast selbst obendrauf, die Steuerung gibt die geplante Einspeisung vor
+(`discharge_is_grid_setpoint`). Beide Werte sind gespeicherte Einstellungen
+des GX-Geräts: Der Wert vor dem ersten Eingriff wird gesichert und bei der
+Freigabe zurückgeschrieben, auch über einen Neustart hinweg.
+
+Der Einrichtungsassistent prüft die GX-Einstellungen über die Integration
+und lässt erst weiter, wenn ESS-Modus „Optimiert“, Dynamic ESS aus,
+**Geplantes Laden aus**, DVCC an und die Einspeisegrenze nicht begrenzt oder mindestens 100 W ist,
+Netzsollwert, DVCC-Ladestrom und Batteriespannung in Home Assistant aktiv sind und der
+Ladestrom nicht auf −1 steht, wo die Integration −1 nicht zurückschreiben kann
+(ältere Stände, Bereich 0–100 A).
+
+> [!WARNING]
+> **Kein geräteseitiges Failsafe.** Netzsollwert und Ladestrom haben am
+> GX-Gerät keine Rückfallzeit. Nach einem harten Absturz von Home Assistant
+> regelt das GX-Gerät auf den letzten Sollwert weiter, bis zum
+> ESS-Mindest-Ladestand. Den Ziel-Ladestand einer Entladung überwacht der
+> Treiber deshalb selbst, und die Steuerung gibt bei „Aus“, fehlendem Plan
+> und nach jedem Start aktiv frei.
+
+Am Gerät nachgewiesen (29.10.2026, nur gelesen): Vorzeichen — Batterie
+positiv = Laden, Netzzähler positiv = Bezug (wird gedreht); alle Stell- und
+Lesewerte werden über ihre Kennung gefunden. Die Netzleistung kommt nur vom
+Netzzähler: Eine einzelne Phase zeigte mit Phasenausgleich 1,4 kW Bezug,
+wo der Zähler fast null maß. Aus demselben Grund wird PV an einem AC-Wechselrichter
+nicht erkannt (das GX meldet sie nur je Phase), sie wird im Assistenten von
+Hand gewählt.
+
+Offen:
+
+- Begrenzt DVCC-Ladestrom 0 A das Laden vollständig, und speisen die
+  Laderegler den Überschuss dann ein („DC-gekoppelte PV – Überschuss
+  einspeisen“)?
+- Folgt der Multiplus einem negativen Netzsollwert mit voller Leistung,
+  auch dreiphasig mit Phasenausgleich?
+- Wie schnell kommen Messwerte und Befehle über MQTT an?
+- Die Feldtest-Anlage hat „Geplantes Laden“ eingeschaltet (drei
+  Zeitfenster täglich). Es muss für die Steuerung aus sein; zu klären, ob
+  der Betreiber es dafür aufgibt.
+- Freigabe beim Start, Failsafe, Not-Aus und Wirkungskontrolle am Gerät
+  (Checkliste in `docs/DEVELOPMENT.md`).
+- Netzladung (Beta): Lädt die Batterie mit DVCC-Deckel und positivem
+  Netzsollwert PV zuerst, und hält die Nachführung (alle 30 s, Batterie
+  0,2 kW unter dem Deckel) den Bezug so, dass die PV nicht abgeregelt wird?
+
+Spitzenkappung mit der Batterie gibt es für Victron noch nicht. Batterie
+aus dem Netz laden (Beta) geht wie bei Huawei: DVCC-Ladestrom als
+Ladeleistung, dazu ein positiver Netzsollwert, den der Treiber an der
+Messung nachführt. Die Kapazität liefert Victron nur
+in Ah, sie wird im Assistenten in kWh von Hand eingetragen.
+Guide: [victron.md](guides/victron.md) · Vorbereitung:
+[installation/victron.md](installation/victron.md)

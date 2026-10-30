@@ -70,7 +70,7 @@ Der Optimizer steuert den SMA über das **externe Batteriemanagement** (CmpBMS, 
 | **40795** Max. Ladeleistung | Begrenzt das Laden auf die geplante Leistung. 0 W sperrt das Laden; Entladen für das Haus bleibt möglich |
 | **40801** Netz-Sollwert | Erzwungene Einspeisung: positiver Wert in Watt **am Netzanschluss** |
 
-**Der Unterschied zu anderen Wechselrichtern:** Fronius, Huawei, Kostal, Sigenergy und SolaX bekommen gesagt, wie viel die *Batterie* entladen soll — zuerst fürs Haus, der Rest geht ins Netz. Der SMA bekommt gesagt, wie viel *ins Netz* gehen soll, und deckt das Haus selbst dazu. Der Optimizer gibt ihm daher direkt die geplante Einspeisung vor. Reicht die Batterie nicht für Haus plus Einspeisung, senkt er den Sollwert um das Fehlende.
+**Der Unterschied zu anderen Wechselrichtern:** Fronius, Huawei, Kostal, Sigenergy und SolaX bekommen gesagt, wie viel die *Batterie* entladen soll — zuerst fürs Haus, der Rest geht ins Netz. Der SMA bekommt gesagt, wie viel *ins Netz* gehen soll, und deckt das Haus selbst dazu. Der Optimizer gibt ihm daher direkt die geplante Einspeisung vor. Victron arbeitet genauso (ESS-Netzsollwert). Reicht die Batterie nicht für Haus plus Einspeisung, senkt er den Sollwert um das Fehlende.
 
 **Sicherheitsnetz (Watchdog):** Der Block muss spätestens alle 300 Sekunden erneuert werden, sonst fällt der Wechselrichter in sein eigenes Batteriemanagement zurück. Der Optimizer schreibt alle 60 Sekunden nach. Stürzt Home Assistant während einer Einspeisung ab, endet sie also von selbst.
 

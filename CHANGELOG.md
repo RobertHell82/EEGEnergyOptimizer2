@@ -12,6 +12,20 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+### Behoben
+
+- **Liegt der Ladestand unter dem Mindest-Ladestand, rechnet der Plan jetzt vom gemessenen Ladestand aus.** Bisher sah das Optimierungsmodell die Batterie dann „leer am Mindest-Ladestand“: Bei einem Boden von 80 % und gemessenen 30 % zeigte der Plan 83 %, sah kaum Platz und begrenzte das Laden, sodass die Sonne ins Netz ging statt in die Batterie. Jetzt gilt unterhalb des eingestellten Werts der Ladestand selbst als Boden. Es wird nichts entladen, der Plan sieht den ganzen freien Platz und lädt nach. Die rote Linie im Diagramm zeigt weiter den eingestellten Wert.
+
+### Hinzugefügt
+
+- **Victron ESS als siebter Wechselrichter (Feldtest).** Multiplus oder Quattro mit GX-Gerät (Cerbo GX, Venus GX, Ekrano GX), ein- oder dreiphasig, über die in Home Assistant eingebaute Integration **Victron GX** (MQTT im Heimnetz, ab Home Assistant 2026.5). Messwerte und Steuerung laufen über dieselbe Integration, ohne HACS und ohne eigenes Modbus. Das Ladelimit setzt den DVCC-Ladestrom, die Einspeisung den ESS-Netzsollwert. Die Freigabe schreibt die Werte zurück, die vorher am GX-Gerät standen, auch nach einem Neustart. Den Ziel-Ladestand einer Entladung überwacht die Integration selbst, weil das GX-Gerät für den Netzsollwert keinen kennt.
+- **Der Einrichtungsassistent prüft die Einstellungen am GX-Gerät.** Er lässt erst weiter, wenn der ESS-Modus „Optimiert“ ist, Dynamic ESS und „Geplantes Laden“ aus sind, DVCC an ist und die Einspeisung nicht unter 100 W begrenzt ist. Die Messwerte erkennt er selbst, die Netzleistung immer vom Netzzähler: Eine einzelne Phase lag an einer dreiphasigen Anlage um 1,4 kW daneben.
+- **Batterie aus dem Netz laden (Beta) auch mit Victron.** Der Fahrplan lädt dann mit dem DVCC-Ladestrom als Ladeleistung und einem positiven Netzsollwert, PV zuerst, den Rest aus dem Netz, bis zum geplanten Ladestand. Den Sollwert führt die Integration alle 30 Sekunden an der Messung nach und hält die Batterie dabei knapp unter der geplanten Leistung: Ein zu hoher Sollwert ließe das GX-Gerät die PV abregeln, um den Bezug zu halten. Nimmt die Batterie gegen Ende der Ladung weniger auf, wird der Bezug deshalb zurückgenommen statt erhöht. Am Gerät ist das noch nicht erprobt. Mit Bezug aus der Energiegemeinschaft lädt der Plan genau dann, wenn die Gemeinschaft laut PeakShare Strom übrig hat, und ersetzt so feste Zeitfenster („Geplantes Laden“).
+- **„Batterie aus dem Netz laden“ gibt es jetzt auch in den Releases**, nicht mehr nur in den Betas. In den Einstellungen bleibt die Option als Beta gekennzeichnet.
+- **„Batterie aus dem Netz laden“ hat einen eigenen Reiter „Netzladen“** (Expertenmodus, Huawei und Victron), gekennzeichnet als Beta wie der Reiter „Spitzenkappung“. Dort stehen alle Felder, die nur das Netzladen betreffen, auch der Bezugspreis aus der Gemeinschaft, der bisher bei der Gemeinschaft stand. Dazu gibt es eine eigene Anleitung „Batterie aus dem Netz laden“.
+- **Die Reiter der Einstellungen sind am Handy beschriftet.** Bisher zeigte die schmale Ansicht nur Symbole in einer Zeile. Jetzt stehen bis zu sieben Reiter in einem Raster mit vier Spalten, Symbol über Beschriftung, die Beta-Kennzeichnung in der Ecke.
+- **Anleitungen** „Victron einrichten“ (auch im Assistenten) und „Victron vorbereiten“, mit der Einrichtung der Integration je Sicherheitsprofil. „Ungültige Authentifizierung“ heißt: Das GX-Gerät lehnt das Passwort ab, der Benutzername spielt keine Rolle.
+
 ## [2.1.53] - 2026-10-29
 
 ### Geändert

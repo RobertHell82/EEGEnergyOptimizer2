@@ -88,6 +88,10 @@ Zeiten und Rabatt sind von der Verordnung fest vorgegeben. Gesenkt wird nur das 
 
 Nur sichtbar, wenn im Tab **System** der Expertenmodus eingeschaltet ist. **Alterungskosten der Batterie (ct/kWh)** ist, was eine durchgesetzte Kilowattstunde die Batterie an Lebensdauer kostet. Höhere Werte machen die Optimierung zurückhaltender: Sie speichert nur, wenn sich der Umweg lohnt. Leer gilt 1 ct. Bei der Entladung in die Gemeinschaft ist der Wert die Schwelle — sie kommt erst zustande, wenn der Nachtsatz über der Einspeisevergütung plus Alterungskosten liegt.
 
+### Batterie aus dem Netz laden
+
+Die Felder dafür stehen im eigenen Reiter **Netzladen** (Beta, Expertenmodus, Huawei und Victron), auch der Bezugspreis aus der Gemeinschaft. Siehe Anleitung „Batterie aus dem Netz laden“.
+
 ## Nachtsatz und Nachtfenster
 
 Es gibt zwei Nachtfenster, weil ein Gemeinschaftsvertrag andere Zeiten haben kann als dein Einspeisevertrag:

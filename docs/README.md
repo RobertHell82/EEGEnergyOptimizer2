@@ -19,7 +19,7 @@ Am besten in dieser Reihenfolge:
 
 ## 🔌 Wechselrichter anbinden
 
-Unterstützt werden **Fronius Gen24, Huawei SUN2000, Kostal Plenticore, Sigenergy SigenStor, SMA Smart Energy und SolaX Gen4+**. Alle sechs werden vom Fahrplan gesteuert. Wie weit jedes Gerät erprobt ist, steht im **[Stand der Unterstützung](wechselrichter-status.md)**.
+Unterstützt werden **Fronius Gen24, Huawei SUN2000, Kostal Plenticore, Sigenergy SigenStor, SMA Smart Energy und SolaX Gen4+**, dazu **Victron ESS** im Feldtest. Alle sieben werden vom Fahrplan gesteuert. Wie weit jedes Gerät erprobt ist, steht im **[Stand der Unterstützung](wechselrichter-status.md)**.
 
 | Wechselrichter | Anleitung |
 |---|---|
@@ -30,6 +30,7 @@ Unterstützt werden **Fronius Gen24, Huawei SUN2000, Kostal Plenticore, Sigenerg
 | **Sigenergy SigenStor** | [Sigenergy einrichten](guides/sigenergy.md) |
 | **SMA Smart Energy** | [SMA einrichten](guides/sma.md) |
 | **SolaX Gen4+** | [SolaX Modbus einrichten](guides/solax.md) |
+| **Victron ESS** (Feldtest) | [Victron vorbereiten](installation/victron.md) · [Victron einrichten](guides/victron.md) |
 
 ## ☀️ PV-Prognose einrichten
 
@@ -58,6 +59,7 @@ Was die Felder im Einrichtungsassistenten und in den Einstellungen bedeuten:
 
 ## ⚡ Spitzenkappung (optional)
 
+- **[Batterie aus dem Netz laden](guides/netzladen.md)** (Beta, Huawei und Victron) — erreicht das Ladeziel mit günstigem Netzstrom, mit Bezug aus der Gemeinschaft dann, wenn sie Strom übrig hat.
 - **[Spitzenkappung](guides/spitzenkappung.md)** — hält die Bezugsspitze des Monats niedrig. Die Batterie hält eine Reserve für Spitzen zurück, berechnet aus deinem Verbrauch (Huawei, Fronius, SMA, SolaX). Reicht sie nicht, werden Verbraucher abgeschaltet.
 
 ## 🔥 Heizstab (optional)

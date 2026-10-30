@@ -17,6 +17,7 @@ HACS-kompatible Home Assistant Integration für vorausschauendes Batteriemanagem
 - **Prognosevergleich** — die zweite Quelle läuft mit, ohne zu steuern; jeden Morgen werden beide Prognosen festgehalten und im Dashboard gegen die Messung gestellt (Diagramm je Tag, Abweichung der letzten 30 Tage)
 - **Verbrauchsprofil** — lernt den stündlichen Verbrauch aus den HA-Recorder-Daten, getrennt nach Werktag und Wochenende/Feiertag
 - **Live-Dashboard** — Sidebar-Panel mit Energiefluss, Fahrplan und Ist-Verlauf, PeakShare-Bedarfskurve, Geldbilanz, Einspeise-Karte (was ins Netz ging, wie viel davon aus der Batterie, wie viel die Gemeinschaft genommen hat), Bezug-Karte (Netzbezug, Kosten zum Bezugspreis der Viertelstunde, höchste Viertelstunde) — beide je Tag, Monat, Jahr oder gesamt, mit Blättern in vergangene Zeiträume — und Aktivitätsprotokoll. Die Steuerung lässt sich pausieren — für eine Dauer oder bis die Batterie einen Ladestand erreicht hat
+- **Batterie aus dem Netz laden** (Beta, Huawei und Victron, Expertenmodus) — schafft die Sonne das Ladeziel nicht, darf der Fahrplan Netzstrom zukaufen, aber nur in Viertelstunden, in denen er billiger ist als der Strom, den die Batterie danach in der Nacht ersetzt (Spot-Bezug, Bezug aus der Gemeinschaft oder zeitvariable Netzentgelte)
 - **Bezugsspitze** — misst den Netzbezug je Viertelstunde und die Monatsspitze, nach der sich ab 2027 der Leistungspreis des Netzentgelts richtet, samt Richtwert der Netzkosten (misst nur, steuert nicht)
 - **Einrichtungsassistent** — schrittweises Onboarding mit automatischer Sensorerkennung
 
@@ -51,7 +52,7 @@ Pro Anlage wird einmalig eine zufällige **UUIDv4** + ein **API-Key** erzeugt un
 
 ## Unterstützte Wechselrichter
 
-Alle sechs werden vom Fahrplan **gesteuert** (Ladelimit und erzwungene Entladung), nicht nur ausgelesen:
+Alle sieben werden vom Fahrplan **gesteuert** (Ladelimit und erzwungene Entladung), nicht nur ausgelesen. Victron läuft noch als Feldtest:
 
 | Wechselrichter | Anbindung | Guide |
 |---|---|---|
@@ -61,6 +62,7 @@ Alle sechs werden vom Fahrplan **gesteuert** (Ladelimit und erzwungene Entladung
 | **Sigenergy SigenStor** | via [Sigenergy-Integration](https://github.com/TypQxQ/Sigenergy-Local-Modbus) | [Guide](docs/guides/sigenergy.md) |
 | **SMA Smart Energy** | direkt per Modbus TCP (externes Batteriemanagement) | [Guide](docs/guides/sma.md) |
 | **SolaX Gen4+** | via [solax_modbus](https://github.com/wills106/homeassistant-solax-modbus) | [Guide](docs/guides/solax.md) |
+| **Victron ESS** (Feldtest) | via eingebaute Integration [Victron GX](https://www.home-assistant.io/integrations/victron_gx/) (MQTT); Multiplus/Quattro mit GX-Gerät, ein- oder dreiphasig | [Guide](docs/guides/victron.md) |
 
 Wie weit jedes Gerät erprobt ist und was noch offen ist, steht in [docs/wechselrichter-status.md](docs/wechselrichter-status.md).
 
@@ -147,6 +149,7 @@ Alle 30 Sekunden hält die **Steuerung** den zuletzt gerechneten Fahrplan gegen 
 - **Plant der Slot Einspeisung aus der Batterie**, wird eine erzwungene Entladung gestartet. Die **Entlade-Nachführung** rechnet die gemessene Hauslast auf die geplante Netzleistung auf, damit die geplante Einspeisung tatsächlich am Netzanschluss ankommt.
 - **Plant der Slot nur Entladung für das Haus**, wird der Wechselrichter freigegeben — das erledigt sein Automatikmodus selbst.
 - **Plant der Slot nichts**, kommt es auf die Sonne an: Erwartet er keinen PV-Überschuss (Nacht, trüber Nachmittag), wird freigegeben — ein Ladelimit hielte nichts frei und sperrte nur fremdes Laden („Normalbetrieb (kein PV-Überschuss)“). Mit Überschuss und Platz in der Batterie bleibt das Laden blockiert (Ladelimit 0) — sonst würde der Automatikmodus Überschuss laden, den der Plan einspeisen will. Ist die Batterie voll, wird gar nicht eingegriffen.
+- **Plant der Slot Laden aus dem Netz** (Beta, Huawei und Victron), lädt der Wechselrichter mit der geplanten Leistung bis zum geplanten Ladestand, PV zuerst, den Rest aus dem Netz („Netzladung x kW bis y %“).
 - **Ist ein Heizstab eingerichtet**, führt die Steuerung ihn im selben Takt nach: geregelt auf „Einspeisung ≈ 0“, gedeckelt auf die geplante Wärme. Der Sollwert geht alle 20 Sekunden an den Ohmpilot, weil dessen Watchdog nach 50 Sekunden abschaltet.
 
 Sicherheitsnetze:
@@ -179,7 +182,7 @@ Viele Netzbetreiber begrenzen die maximale Einspeiseleistung (z. B. 4 kW). Kennt
 ## Voraussetzungen
 
 - Home Assistant 2025.1.0 oder neuer
-- Einer der oben genannten **Wechselrichter mit Batteriespeicher**. Jeder braucht die passende Integration in Home Assistant: Fronius, Kostal Plenticore und SMA Solar sind eingebaut und liefern die Messwerte, gesteuert wird bei diesen drei zusätzlich direkt per Modbus TCP (am Wechselrichter zu aktivieren). Huawei Solar, Sigenergy und SolaX Modbus kommen über HACS
+- Einer der oben genannten **Wechselrichter mit Batteriespeicher**. Jeder braucht die passende Integration in Home Assistant: Fronius, Kostal Plenticore und SMA Solar sind eingebaut und liefern die Messwerte, gesteuert wird bei diesen drei zusätzlich direkt per Modbus TCP (am Wechselrichter zu aktivieren). Huawei Solar, Sigenergy und SolaX Modbus kommen über HACS. Victron GX ist eingebaut (ab Home Assistant 2026.5) und übernimmt Messen und Steuern
 - Eine PV-Prognose: Solcast Solar, Forecast.Solar oder die eigene Berechnung der Integration (braucht nur den Standort in Home Assistant)
 
 ## Lizenz

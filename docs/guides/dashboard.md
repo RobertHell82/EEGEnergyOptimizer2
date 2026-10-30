@@ -162,7 +162,7 @@ Gemessen wird wie beim Netzbetreiber: Bezug je fester Viertelstunde (:00, :15, :
 
 **Not-Aus.** Bezieht das Haus während einer Entladung in drei Läufen hintereinander (rund eineinhalb Minuten) mehr als 1 kW aus dem Netz, stoppt der Optimizer die Entladung: „Not-Aus: anhaltender Netzbezug während der Entladung — gesperrt bis zum nächsten Slot." Mit der nächsten Viertelstunde ist die Sperre aufgehoben. Passiert das oft, prüf die Statuskarte: Zeigt sie beim Einspeisen einen negativen Netzwert und beim Bezug einen positiven, ist der Netzsensor falsch zugeordnet — dann den Assistenten erneut durchlaufen.
 
-**Treiber wird nicht gesteuert.** „Nur Anzeige“ und der blaue Hinweis „Dieser Wechselrichter wird nicht gesteuert" heißen: Für dein Gerät ist keine Steuerung freigegeben. Bei den sechs unterstützten Wechselrichtern kommt das nicht vor (siehe „Stand der Unterstützung“ in der Doku). Der Plan wird trotzdem gerechnet und angezeigt; am Wechselrichter ändert sich nichts, auch nicht im Modus Ein.
+**Treiber wird nicht gesteuert.** „Nur Anzeige“ und der blaue Hinweis „Dieser Wechselrichter wird nicht gesteuert" heißen: Für dein Gerät ist keine Steuerung freigegeben. Bei den sieben unterstützten Wechselrichtern kommt das nicht vor (siehe „Stand der Unterstützung“ in der Doku). Der Plan wird trotzdem gerechnet und angezeigt; am Wechselrichter ändert sich nichts, auch nicht im Modus Ein.
 
 > [!NOTE]
 > **Ein fehlgeschlagener Steuerbefehl wird nicht in jedem Lauf wiederholt.** Die Statuskarte meldet ihn orange als „Letzter Steuerbefehl fehlgeschlagen", und der Optimizer wartet zwischen zwei Versuchen immer länger. Hält das an, hilft das Fahrplan-Archiv (Einstellungen → System) bei der Fehlersuche.

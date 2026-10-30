@@ -39,6 +39,7 @@ Der Mindest-Ladestand muss **mindestens 20 Prozentpunkte unter dem Maximum-Lades
 > - **Fronius:** die Mindestreserve der Batterie (im Fronius-Webinterface). Eine Änderung dort wirkt erst am nächsten Tag oder nach einem Neustart von Home Assistant.
 > - **Huawei:** der Backup-Ladestand (Notstrom). Bei mehreren Batterien zählt der höchste Wert.
 > - **Sigenergy:** der höhere Wert aus Backup-Ladestand und Entlade-Abschaltgrenze. Beide Entitäten sind in der Sigenergy-Integration ab Werk deaktiviert — solange sie aus sind, gilt nur dein Mindest-Ladestand.
+> - **Victron:** der höhere Wert aus ESS-Mindest-Ladestand und der gerade aktiven Grenze von BatteryLife.
 > - **SolaX:** der Entladeboden im Eigenverbrauchsmodus. Dort stoppt der Wechselrichter jede Entladung. Während einer geplanten Entladung senkt die Integration ihn deshalb auf 5 Prozentpunkte unter das Ziel und stellt danach deinen Wert wieder her. Geplant wird immer mit deinem Wert.
 >
 > Soll die Batterie tiefer entladen werden, musst du die Reserve im Gerät senken.
@@ -72,7 +73,7 @@ Mit Ladeziel soll die Batterie jeden Tag **am Ende der PV-Zeit** (wenn die PV un
 
 Damit das Ziel nicht an einer zu guten Prognose scheitert, rechnet der Fahrplan vorsichtig: Nachts und am Vormittag gibt die Batterie nur so viel ins Netz ab, wie sie auch an einem schwächeren Tag als vorhergesagt wieder hereinbekommt. Dafür nimmt er das untere Band der Prognose (bei Solcast den p10-Wert, sonst 60 % der Erwartung). An klaren Tagen ändert das wenig. Ist der Tag unsicher, bleibt mehr in der Batterie.
 
-Das Ziel holt nie Strom aus dem Netz. An einem trüben Tag wird daraus, was die PV schafft. Im Diagramm des Fahrplans steht das Ziel als kleiner Kreis, und bleibt die Kurve darunter, sagt der Kreis beim Darüberfahren, warum. Es kostet etwas Einspeisung oder Wärme im Heizstab, die sonst aus demselben Überschuss gekommen wäre.
+Das Ziel holt keinen Strom aus dem Netz, außer du hast „Batterie aus dem Netz laden“ eingeschaltet (Beta, Huawei und Victron, siehe Anleitung „Batterie aus dem Netz laden“). An einem trüben Tag wird daraus sonst, was die PV schafft. Im Diagramm des Fahrplans steht das Ziel als kleiner Kreis, und bleibt die Kurve darunter, sagt der Kreis beim Darüberfahren, warum. Es kostet etwas Einspeisung oder Wärme im Heizstab, die sonst aus demselben Überschuss gekommen wäre.
 
 ### Vormittags bevorzugt netzdienlich
 

@@ -24,6 +24,7 @@
     "kostal_plenticore",
     "sma",
     "sigen",
+    "victron_gx",
     "solcast_solar",
     "forecast_solar"
   ],
