@@ -12,6 +12,8 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+## [2.1.54] - 2026-10-30
+
 ### Behoben
 
 - **Liegt der Ladestand unter dem Mindest-Ladestand, rechnet der Plan jetzt vom gemessenen Ladestand aus.** Bisher sah das Optimierungsmodell die Batterie dann „leer am Mindest-Ladestand“: Bei einem Boden von 80 % und gemessenen 30 % zeigte der Plan 83 %, sah kaum Platz und begrenzte das Laden, sodass die Sonne ins Netz ging statt in die Batterie. Jetzt gilt unterhalb des eingestellten Werts der Ladestand selbst als Boden. Es wird nichts entladen, der Plan sieht den ganzen freien Platz und lädt nach. Die rote Linie im Diagramm zeigt weiter den eingestellten Wert.
