@@ -10722,6 +10722,22 @@ class EegOptimizerPanel extends HTMLElement {
       warnings += warnRow("mdi:alert-outline", "#ff9800",
         `Letzter Steuerbefehl fehlgeschlagen (${a.schreibfehler} Schreibfehler seit Start).`);
     }
+    // Reserve im Wechselrichter über dem Mindest-Ladestand: Darunter entlädt
+    // das Gerät nicht, auch nicht fürs Haus. Beim Fronius steht MinRsvPct
+    // nicht im Webinterface — in Graz blieben dort 49 % aus der
+    // Vorgängerversion drei Wochen unbemerkt stehen (Oktober 2026).
+    if (a.geraete_reserve_pct != null && a.geraete_reserve_einstellung_pct != null) {
+      const fronius = this._config?.inverter_type === "fronius_gen24";
+      warnings += warnRow("mdi:battery-lock", "#ff9800",
+        `Der Wechselrichter hält <strong>${fmtDe(a.geraete_reserve_pct, 0)} %</strong> Reserve, `
+        + `eingestellt sind ${fmtDe(a.geraete_reserve_einstellung_pct, 0)} %. Darunter entlädt er die Batterie nicht, `
+        + "auch nicht fürs Haus — der Plan rechnet deshalb mit dem höheren Wert. "
+        + (fronius
+          ? "Beim Fronius ist das der Modbus-Wert MinRsvPct, der im Webinterface nicht angezeigt wird; "
+            + "eine ältere Version des Optimizers kann ihn angehoben zurückgelassen haben. "
+          : "")
+        + "Ist das nicht gewollt, die Reserve am Wechselrichter zurücksetzen.");
+    }
     if (!gesteuert) {
       warnings += warnRow("mdi:information-outline", "var(--info-color, #2196f3)",
         "Dieser Wechselrichter wird nicht gesteuert \u2014 der Optimierungsplan ist nur Anzeige (Steuerung derzeit nur Fronius, Huawei, Kostal, Sigenergy, SMA, SolaX und Victron).");

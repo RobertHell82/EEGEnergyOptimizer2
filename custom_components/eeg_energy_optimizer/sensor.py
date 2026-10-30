@@ -906,6 +906,12 @@ class FahrplanStatusSensor(SensorEntity):
             # unter der die Batterie ihre Reserve hält.
             "entladedeckel_kw": status.get("written_entladedeckel_kw"),
             "spitzenkappung": status.get("spitzenkappung"),
+            # Reserve des Wechselrichters über dem Mindest-Ladestand (sonst
+            # None) — die Statuskarte warnt damit.
+            "geraete_reserve_pct": (status.get("geraete_reserve") or {}).get("pct"),
+            "geraete_reserve_einstellung_pct": (
+                (status.get("geraete_reserve") or {}).get("einstellung_pct")
+            ),
         }
         heizstab = status.get("heizstab")
         if heizstab:

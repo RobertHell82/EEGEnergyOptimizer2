@@ -2166,3 +2166,28 @@ async def test_heizstab_fehler_im_schritt_setzt_null(mock_hass, mock_inverter):
     assert hz.sollwert_kw == 0.0
     assert hz.grund == "Regelung fehlgeschlagen"
     treiber.async_set_power.assert_awaited_with(0)
+
+
+# ---------------------------------------------------------------------------
+# Geräte-Reserve über dem Mindest-Ladestand (Warnung in der Statuskarte)
+# ---------------------------------------------------------------------------
+
+def test_geraete_reserve_ueber_mindest_ladestand_wird_gemeldet(mock_hass, mock_inverter):
+    """Graz, Oktober 2026: 49 % MinRsvPct gegen 20 % eingestellt — unsichtbar."""
+    mock_inverter.get_backup_reserve_soc_pct.return_value = 49.0
+    ex = _make_executor(mock_hass, mock_inverter, {**CFG_BASE, "schedule_min_soc_pct": 20})
+    assert ex.status()["geraete_reserve"] == {"pct": 49.0, "einstellung_pct": 20.0}
+
+
+@pytest.mark.parametrize("geraet", [None, 10.0, 20.0, 20.4, float("nan")])
+def test_geraete_reserve_ohne_warnung(mock_hass, mock_inverter, geraet):
+    """Gleich, darunter, Rundungsrauschen oder unbekannt: keine Warnung."""
+    mock_inverter.get_backup_reserve_soc_pct.return_value = geraet
+    ex = _make_executor(mock_hass, mock_inverter, {**CFG_BASE, "schedule_min_soc_pct": 20})
+    assert ex.status()["geraete_reserve"] is None
+
+
+def test_geraete_reserve_lesefehler_bricht_status_nicht(mock_hass, mock_inverter):
+    mock_inverter.get_backup_reserve_soc_pct.side_effect = RuntimeError("Modbus")
+    ex = _make_executor(mock_hass, mock_inverter, {**CFG_BASE, "schedule_min_soc_pct": 20})
+    assert ex.status()["geraete_reserve"] is None

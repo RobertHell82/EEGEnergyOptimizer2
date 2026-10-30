@@ -144,3 +144,18 @@ def test_fehlende_plan_action_bricht_nicht():
     )
     assert kurz == "Anzeige-Modus"
     assert sensor.extra_state_attributes["plan_aktion"] is None
+
+
+def test_geraete_reserve_in_den_attributen():
+    sensor = FahrplanStatusSensor("entry1")
+    sensor.update_from_executor(
+        _status(geraete_reserve={"pct": 49.0, "einstellung_pct": 20.0})
+    )
+    attrs = sensor.extra_state_attributes
+    assert attrs["geraete_reserve_pct"] == 49.0
+    assert attrs["geraete_reserve_einstellung_pct"] == 20.0
+
+    sensor.update_from_executor(_status())
+    attrs = sensor.extra_state_attributes
+    assert attrs["geraete_reserve_pct"] is None
+    assert attrs["geraete_reserve_einstellung_pct"] is None

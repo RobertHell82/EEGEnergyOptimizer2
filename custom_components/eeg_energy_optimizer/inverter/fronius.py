@@ -39,7 +39,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import date
+from datetime import datetime
 from typing import Any
 
 from .base import InverterBase
@@ -251,6 +251,11 @@ _WCHAMAX_SANITY_LIMIT = 25000
 _WCHAMAX_MIN_W = 500
 
 
+def _cache_stunde() -> str:
+    """Schlüssel des WChaMax-/MinRsvPct-Caches: die laufende Stunde."""
+    return datetime.now().strftime("%Y-%m-%dT%H")
+
+
 class FroniusStateStore:
     """Persistiert den Pre-Discharge-MinRsvPct über HA-Neustarts.
 
@@ -315,7 +320,7 @@ class FroniusInverter(InverterBase):
         self._model124_base: int | None = None
         self._model124_length: int | None = None
         self._wchamax: int | None = None
-        self._wchamax_date: str | None = None  # date string for daily cache
+        self._wchamax_date: str | None = None  # Stunde des Caches (_cache_stunde)
         self._slave_id: int = 1  # Fronius default Modbus unit ID
         # Scale factors, read from the device on first use (see
         # _read_scale_factors). Defaults keep the documented SunSpec
@@ -601,11 +606,15 @@ class FroniusInverter(InverterBase):
     async def _read_wchamax(self) -> int | None:
         """Read WChaMax (max battery power in W) from Model 124 offset +0.
 
-        Cached for the current day — only re-read once per day. The raw
+        Cached for the current hour — only re-read once per hour. The raw
         register is scaled by WChaMax_SF before any plausibility check, so
         the sanity limit always applies to real watts.
+
+        Stündlich, nicht täglich: Derselbe Block liefert MinRsvPct, und die
+        Statuskarte warnt vor einer zu hohen Reserve. Setzt jemand sie am
+        Gerät zurück, soll die Warnung nicht bis morgen stehen bleiben.
         """
-        today = date.today().isoformat()
+        today = _cache_stunde()
         if self._wchamax is not None and self._wchamax_date == today:
             return self._wchamax
 

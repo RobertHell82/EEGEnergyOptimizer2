@@ -37,6 +37,7 @@ Heizstab, oder der Heizstab wartet auf eine gesättigte Batterie.
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -89,6 +90,7 @@ from .power_readings import (
 )
 from .schedule import (
     DEFAULT_AC_LIMIT_KW,
+    _min_soc_pct,
     _now_local,
     netzladen_netzgrenze_kw,
     slot_for,
@@ -117,6 +119,9 @@ _ALLES_LADEN_EXPORT_KW = 0.05
 _MIN_DISCHARGE_KW = 0.05
 # Geplante Netzladung darunter ist LP-Rauschen — kein Ladebefehl dafür.
 _MIN_NETZLADUNG_KW = 0.1
+# Geräte-Reserve erst so weit über dem Mindest-Ladestand eine Warnung wert —
+# Rundung der Register (Fronius-Skalenfaktor, ganze Prozent bei SolaX).
+GERAETE_RESERVE_TOLERANZ_PCT = 0.5
 
 # Fehlgeschlagene Freigaben beim Start, nach denen der Fahrplan trotzdem
 # übernimmt (siehe ``_start_release_pending``).
@@ -1097,7 +1102,33 @@ class ScheduleExecutor:
             "heizstab": None if self._heizstab is None else self._heizstab.status(),
             "written_entladedeckel_kw": self._written_entladedeckel_kw,
             "spitzenkappung": self.spitzenkappung,
+            "geraete_reserve": self.geraete_reserve(),
         }
+
+    def geraete_reserve(self) -> dict[str, float] | None:
+        """Reserve des Wechselrichters, wenn sie über dem Mindest-Ladestand liegt.
+
+        Darunter entlädt das Gerät die Batterie nicht, auch nicht fürs Haus,
+        und der Plan übernimmt den höheren Wert als Boden. Sichtbar ist das
+        sonst nirgends — beim Fronius steht MinRsvPct nicht einmal im
+        Webinterface. Graz, 07.–30.10.2026: 49 % aus der Vorgängerversion
+        standen im Register, eingestellt waren 20 %, die Batterie blieb jede
+        Nacht bei 49 % stehen und das Haus kaufte Netzstrom.
+        """
+        getter = getattr(self._inverter, "get_backup_reserve_soc_pct", None)
+        if getter is None:
+            return None
+        try:
+            geraet = getter()
+            geraet = None if geraet is None else float(geraet)
+        except Exception:
+            return None
+        if geraet is None or not math.isfinite(geraet):
+            return None
+        einstellung = _min_soc_pct(self._config)
+        if geraet <= einstellung + GERAETE_RESERVE_TOLERANZ_PCT:
+            return None
+        return {"pct": round(geraet, 1), "einstellung_pct": round(einstellung, 1)}
 
     # ------------------------------------------------------------------
     # Spitzenkappung — Entladedeckel in der Reserve

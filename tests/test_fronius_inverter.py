@@ -1,6 +1,5 @@
 """Tests for Fronius Gen24 inverter implementation (SunSpec Model 124 Modbus TCP)."""
 
-from datetime import date
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -8,6 +7,7 @@ import pytest
 from custom_components.eeg_energy_optimizer.inverter.base import InverterBase
 from custom_components.eeg_energy_optimizer.inverter.fronius import (
     FroniusInverter,
+    _cache_stunde,
     _MINRSV_SAFETY_MARGIN_PCT,
     _OFFSET_INWRTE,
     _OFFSET_MINRSVPCT,
@@ -93,7 +93,7 @@ def inverter(mock_hass, fronius_config, mock_modbus_client):
     inv._client = mock_modbus_client
     inv._model124_base = 40070
     inv._wchamax = 5000  # 5 kW residential battery
-    inv._wchamax_date = date.today().isoformat()
+    inv._wchamax_date = _cache_stunde()
     _install_noop_store(inv)
     return inv
 
@@ -550,14 +550,14 @@ class TestWChaMaxSanityCheck:
         result = await inverter._read_wchamax()
         assert result == 4500
         assert inverter._wchamax == 4500
-        assert inverter._wchamax_date == date.today().isoformat()
+        assert inverter._wchamax_date == _cache_stunde()
 
     async def test_wchamax_cache_returns_without_io(
         self, inverter, mock_modbus_client
     ):
         """Cached WChaMax is reused on the same day — no Modbus reads issued."""
         inverter._wchamax = 4500
-        inverter._wchamax_date = date.today().isoformat()
+        inverter._wchamax_date = _cache_stunde()
         mock_modbus_client.read_holding_registers = AsyncMock()
         result = await inverter._read_wchamax()
         assert result == 4500

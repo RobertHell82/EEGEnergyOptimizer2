@@ -7,7 +7,6 @@ anderen Modus als eigenen Zustand führen (mit Watchdog-Keepalive bei den
 Modbus-Treibern) und ihn bei Freigabe und Zwangsentladung loswerden.
 """
 
-from datetime import date
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -16,6 +15,7 @@ import pytest
 from custom_components.eeg_energy_optimizer.inverter.base import InverterBase
 from custom_components.eeg_energy_optimizer.inverter.fronius import (
     FroniusInverter,
+    _cache_stunde,
     _OFFSET_INWRTE,
     _OFFSET_OUTWRTE,
     _OFFSET_STORCTL_MOD,
@@ -87,7 +87,7 @@ def fronius(mock_hass):
     inv._client = client
     inv._model124_base = 40070
     inv._wchamax = 5000
-    inv._wchamax_date = date.today().isoformat()
+    inv._wchamax_date = _cache_stunde()
     inv._state_store._store = _NoopStore()
     inv._state_store._data = {}
     inv._state_store._loaded = False
