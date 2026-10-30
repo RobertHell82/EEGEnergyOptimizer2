@@ -224,3 +224,37 @@ async def test_tagsueber_wird_die_abendreserve_zum_ladeziel():
     assert inputs.spitzenreserve["im_ueberschuss"] is True
     assert inputs.ladeziel_pct == pytest.approx(40.0)
     assert inputs.min_soc_pct == pytest.approx(30.0)
+
+
+async def test_unter_dem_mindest_ladestand_rechnet_der_plan_vom_ladestand():
+    """30.10.2026: Boden 80 %, Batterie bei 30 %. opt() rechnete von „leer am
+    Boden" — der Plan zeigte 83 % und begrenzte das Laden. Der Boden gilt
+    jetzt ab dem Ladestand; der eingestellte Wert geht für die Anzeige mit."""
+    cfg = {**CONFIG, "spitzenkappung_enabled": False, "schedule_min_soc_pct": 80,
+           "schedule_max_soc_pct": 100}
+    inputs, problem = await _sammeln(_hass(cfg, _inverter(), soc="30"))
+    assert problem is None
+    assert inputs.min_soc_pct == pytest.approx(30.0)
+    assert inputs.min_soc_einstellung_pct == pytest.approx(80.0)
+    result = sched.solve(inputs)
+    assert result["min_soc_einstellung_pct"] == pytest.approx(80.0)
+    assert result["slots"][0]["soc"] == pytest.approx(30.0, abs=3.0)
+    # Nie unter den Ladestand, und es wird geladen statt gehalten.
+    assert min(s["soc"] for s in result["slots"]) >= 30.0 - 0.5
+    assert max(s["soc"] for s in result["slots"]) > 50.0
+
+
+async def test_ueber_dem_mindest_ladestand_bleibt_alles_wie_es_war():
+    cfg = {**CONFIG, "spitzenkappung_enabled": False}
+    inputs, _ = await _sammeln(_hass(cfg, _inverter(), soc="60"))
+    assert inputs.min_soc_pct == 10.0
+    assert inputs.min_soc_einstellung_pct is None
+
+
+async def test_backup_ladestand_des_geraets_zaehlt_als_einstellung():
+    inv = _inverter()
+    inv.get_backup_reserve_soc_pct = lambda: 50.0
+    cfg = {**CONFIG, "spitzenkappung_enabled": False}
+    inputs, _ = await _sammeln(_hass(cfg, inv, soc="35"))
+    assert inputs.min_soc_pct == pytest.approx(35.0)
+    assert inputs.min_soc_einstellung_pct == pytest.approx(50.0)
