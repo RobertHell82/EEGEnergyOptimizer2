@@ -11107,7 +11107,9 @@ class EegOptimizerPanel extends HTMLElement {
     // Diagramm am Handy auf 45 % und mit ihm jede Schrift auf ~5 px.
     const width = this._cw("bar");
     const height = schmal ? 210 : 320;
-    const padding = { top: schmal ? 24 : 30, right: schmal ? 10 : 20,
+    // Oben reicht Platz für die Zahl über dem höchsten Balken — die
+    // Legende steht seit dem Umbau als HTML darüber.
+    const padding = { top: schmal ? 18 : 22, right: schmal ? 10 : 20,
                       bottom: schmal ? 26 : 40, left: schmal ? 32 : 50 };
     const chartW = width - padding.left - padding.right;
     const chartH = height - padding.top - padding.bottom;
@@ -11187,26 +11189,23 @@ class EegOptimizerPanel extends HTMLElement {
       yLines += `<text x="${padding.left - 5}" y="${y + 4}" text-anchor="end" font-size="${fsAxis}" fill="var(--secondary-text-color)">${val}</text>`;
     }
 
-    // Legend for grouped bars
+    // Legende als HTML über dem Diagramm statt im SVG. Im SVG standen die
+    // Einträge in festen Spalten — „Eigene Berechnung (Open-Meteo)“ lief
+    // dort in „Solcast“ hinein. So bricht sie bei Platzmangel einfach um.
     let legend = "";
     if (grouped) {
-      const spalte = schmal ? 78 : 118;
       const eintraege = [
-        ["var(--primary-color)", "", "Verbrauch"],
-        ["#FF9800", "", drei ? (pvLabels?.[0] || "PV-Prognose") : "PV-Prognose"],
+        ["background:var(--primary-color)", "Verbrauch"],
+        ["background:#FF9800", drei ? (pvLabels?.[0] || "PV-Prognose") : "PV-Prognose"],
       ];
-      if (drei) eintraege.push(["#FFCC80", "#FF9800", pvLabels?.[1] || "Vergleich"]);
-      const breite = spalte * eintraege.length;
-      const lx = Math.max(padding.left, width - padding.right - breite);
-      const ly = schmal ? 11 : 14;
-      eintraege.forEach(([farbe, rand, text], k) => {
-        const x = lx + spalte * k;
-        legend += `<rect x="${x}" y="${ly - 8}" width="9" height="9" fill="${farbe}"${rand ? ` stroke="${rand}"` : ""} rx="2"/>`;
-        legend += `<text x="${x + 13}" y="${ly}" font-size="${fsLegend}" fill="var(--primary-text-color)">${this._escapeHtml(text)}</text>`;
-      });
+      if (drei) eintraege.push(["background:#FFCC80;border:1px solid #FF9800;box-sizing:border-box", pvLabels?.[1] || "Vergleich"]);
+      legend = `<div style="display:flex;flex-wrap:wrap;justify-content:flex-end;gap:4px 16px;margin:4px 0 2px;font-size:${fsLegend}px;color:var(--primary-text-color)">
+        ${eintraege.map(([stil, text]) => `<span style="display:inline-flex;align-items:center;gap:6px;white-space:nowrap">
+          <span style="width:10px;height:10px;border-radius:2px;display:inline-block;flex-shrink:0;${stil}"></span>${this._escapeHtml(text)}</span>`).join("")}
+      </div>`;
     }
 
-    return `<svg data-cw="bar" viewBox="0 0 ${width} ${height}" style="width:100%;height:auto;">${yLines}${bars}${legend}</svg>`;
+    return `${legend}<svg data-cw="bar" viewBox="0 0 ${width} ${height}" style="width:100%;height:auto;">${yLines}${bars}</svg>`;
   }
 
   _renderEnergyFlow(pvKw, batKw, gridKw, hausKw, socVal, ids = {}, heiz = null, hausGeklemmt = false, tag = null) {
