@@ -64,7 +64,7 @@ Auch der Fahrplan rechnet die Reserve mit ein:
 
 Ohne diese Option holt die Batterie ihre Reserve nur aus der Sonne. Nach einem trüben Tag kann sie dann leer in eine Nacht mit Spitze gehen. Mit **Reserve notfalls aus dem Netz nachladen** lädt der Fahrplan nach, was zur Reserve fehlt, und zwar unabhängig vom Preis.
 
-- **Wann:** vor der ersten Viertelstunde, in der laut Statistik eine Spitze kommt, etwa vor der Wärmepumpe am Morgen. Bis dahin ist jede Viertelstunde gleich gut, und der Plan nimmt die **günstigste**. Steckt der Bezug aus der Gemeinschaft im Bezugspreis (Tab **Netzladen**), sind das die Viertelstunden, in denen die Gemeinschaft Strom übrig hat. Sonst gilt der Bezugstarif, etwa ein günstigeres Netzentgelt-Fenster oder bei Spot-Bezug die billigste Stunde.
+- **Wann:** vor der ersten Viertelstunde, in der laut Statistik eine Spitze kommt, etwa vor der Wärmepumpe am Morgen. Bis dahin ist jede Viertelstunde gleich gut, und der Plan nimmt die **günstigste**. Ist im Tab **Tarife** ein Bezug aus der Gemeinschaft eingerichtet, sind das die Viertelstunden, in denen die Gemeinschaft Strom übrig hat. Sonst gilt der Bezugstarif aus der Karte **Bezug**, etwa ein günstigeres Netzentgelt-Fenster oder bei Spot-Bezug die billigste Stunde. Das Netzladen selbst (Tab **Netzladen**) muss dafür nicht an sein.
 - **Wie viel:** nur, was zur Reserve fehlt und die Sonne bis dahin nicht bringt.
 - **Nie über der Grenze:** Haus und Ladung zusammen bleiben 0,3 kW unter dem Grenzwert. Sonst schüfe das Nachladen genau die Spitze, gegen die es vorsorgt.
 

@@ -978,9 +978,16 @@ Settings live in up to seven tabs (Verbraucher and Netzladen only in expert mode
 parameter wizard steps (same field renderers, `settings_` prefix); **Verbraucher**
 holds the *Heizstab* and *Wallbox* cards, expert mode only — **Netzladen**
 (badged Beta on the tab, expert mode and `NETZLADEN_TREIBER` only:
-`_netzladenFeld` + `_netzladenGemeinschaft`, i.e. the switch, supplier tariff,
-meter limit, minimum advantage and the purchase price per community, which
-moved out of the community card; guide `docs/guides/netzladen.md`) —
+`_netzladenFeld`, i.e. the switch, meter limit and minimum advantage; the
+switch cannot be turned on while `bezugTarifLuecken` finds no cheaper purchase
+price; guide `docs/guides/netzladen.md`) — the **purchase tariffs** live in tab
+**Tarife** since 2.1.59, which has three cards **Einspeisung**, **Bezug** and
+**Energiegemeinschaft**: `_bezugTarifFeld` (supplier fix/spot + markups, section
+„Beim Laden aus dem Netz“ at the end of card Bezug) and `_gemeinschaftBezug`
+(price + Ebene per community, below its feed-in fields), both for
+`bezugTarifeSichtbar` = settings + `NETZLADEN_TREIBER`, no expert mode, because
+the Spitzenkappung's grid reserve (for everyone) uses them too; sections are
+set apart by `tarifAbschnitt` —
 **Spitzenkappung** (badged Beta on the tab,
 `_spitzenkappungFields`, for everyone: limit, minimum/maximum
 reserve only for `SPITZENKAPPUNG_BATTERIE_TREIBER`, consumer list with

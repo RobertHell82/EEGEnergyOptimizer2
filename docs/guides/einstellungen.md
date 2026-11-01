@@ -6,11 +6,11 @@ Die Einstellungen öffnest du über das Zahnrad oben rechts im Dashboard. Die Ta
 
 | Tab | Inhalt |
 |---|---|
-| **Tarife** | Karten **Vergütung und Kosten** (Standardvergütung, Nachtsatz, Bezugspreis, Netzbereich) und **Energiegemeinschaft**. Wie der Assistentenschritt „Tarife & Gemeinschaft“ |
+| **Tarife** | Karten **Einspeisung** (Standardvergütung, Nachtsatz), **Bezug** (Arbeitspreis, Netzbereich, zeitvariable Netzentgelte; bei Huawei, Victron und Fronius der Bezugstarif **beim Laden aus dem Netz**) und **Energiegemeinschaft** (je Gemeinschaft Einspeisung und, bei Huawei, Victron und Fronius, Bezug). Wie der Assistentenschritt „Tarife & Gemeinschaft“, plus die Bezugsfelder fürs Laden aus dem Netz |
 | **Anlage** | Karten **Anlage** (Einspeisegrenze) und **Batterie** (Mindest- und Maximum-Ladestand). Wie der Assistentenschritt „Anlage & Batterie“ |
 | **Prognose** | Steuernde Quelle der PV-Prognose mit Sensoren, Schalter **Prognosevergleich** und – wenn die eigene Berechnung steuert oder mitläuft – die Flächentabelle. Wie der Assistentenschritt „PV-Prognose“ |
-| **Spitzenkappung** (Beta) | Bezugsspitzen kappen: Grenzwert, Mindest- und Maximalreserve der Batterie (Huawei, Fronius, SMA, SolaX) und Verbraucher, die abgeschaltet werden dürfen (siehe Anleitung „Spitzenkappung“) |
-| **Netzladen** (Beta) | *Batterie aus dem Netz laden*: Schalter, Bezugstarif des Lieferanten, Grenze am Zähler, Mindestvorteil und Bezugspreis je Gemeinschaft (siehe Anleitung „Batterie aus dem Netz laden“). **Nur im Expertenmodus** und nur bei Huawei, Victron und Fronius |
+| **Spitzenkappung** (Beta) | Bezugsspitzen kappen: Grenzwert, Mindest- und Maximalreserve der Batterie (Huawei, Fronius, SMA, SolaX), bei Huawei und Fronius *Reserve notfalls aus dem Netz nachladen*, und Verbraucher, die abgeschaltet werden dürfen (siehe Anleitung „Spitzenkappung“) |
+| **Netzladen** (Beta) | *Batterie aus dem Netz laden*: Schalter, Grenze am Zähler und Mindestvorteil (siehe Anleitung „Batterie aus dem Netz laden“). Die Bezugspreise dazu stehen im Tab **Tarife**; ohne einen günstigeren Bezugspreis lässt sich der Schalter nicht einschalten. **Nur im Expertenmodus** und nur bei Huawei, Victron und Fronius |
 | **Verbraucher** | Karten **Heizstab** (Fronius Ohmpilot, siehe Anleitung „Heizstab“) und **Wallbox** (siehe Anleitung „Wallbox“). **Nur im Expertenmodus**, nicht im Assistenten |
 | **System** | Karte **Dashboard** (Karten ausblenden), Übersicht über Anlage und Sensoren, EEG-Statistik, **Verlauf vergangener Tage**, Fahrplan-Archiv und ganz unten der Schalter **Expertenmodus** |
 
@@ -46,7 +46,7 @@ Der Knopf **Speichern** unter den Tabs übernimmt die Änderungen aus **allen** 
 
 - **Anlage:** AC-Grenzleistung, PV-Spitzenleistung, Batterie-Leistungsgrenze, Höhe der Einspeisegrenze (wenn eingeschaltet)
 - **Tarife:** Standardvergütung (bei „Fester Wert“), Arbeitspreis, Netzbereich (wenn Sommer-Nieder- oder Winter-Nieder-Arbeitspreis eingeschaltet ist), das Nachtfenster, sobald ein Nachtsatz eingetragen ist (Standardvergütung und je Gemeinschaft), die Anteile der Gemeinschaften (zusammen höchstens 100 %), im Quotenmodus die Tages-Abnahmequote
-- **Netzladen** (wenn eingeschaltet): ein Bezugspreis, der billiger sein kann als die Nacht (Spot-Tarif, Bezugspreis einer Gemeinschaft oder zeitvariable Netzentgelte), bei Spot- oder Gemeinschaftsbezug außerdem der Netzbereich im Reiter Tarife
+- **Netzladen** (wenn eingeschaltet): ein Bezugspreis im Tab **Tarife**, der billiger sein kann als die Nacht (Spot-Tarif, Bezugspreis einer Gemeinschaft oder zeitvariable Netzentgelte), bei Spot- oder Gemeinschaftsbezug außerdem der Netzbereich
 - **Prognose:** die Sensoren einer fremden Prognosequelle, gültige PV-Flächen
 - **Verbraucher:** Adresse, Leistung und Maximaltemperatur des Heizstabs, Adresse der Ambibox
 - **Spitzenkappung** (wenn eingeschaltet): Grenzwert zwischen 2 und 20 kW, Mindest- und Maximalreserve zwischen 0 und 80 % (die Mindestreserve nicht über der maximalen), je Verbraucher Leistungssensor und Schalter, und ohne Batterie-Stufe mindestens ein Verbraucher

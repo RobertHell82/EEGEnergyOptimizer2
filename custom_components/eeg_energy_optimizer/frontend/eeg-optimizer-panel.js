@@ -204,22 +204,51 @@ const NETZLADEN_TREIBER = ["huawei_sun2000", "victron_ess", "fronius_gen24"];
 const netzladenSichtbar = (d, prefix) =>
   NETZLADEN_SICHTBAR && !!prefix && !!d.expert_mode && NETZLADEN_TREIBER.includes(d.inverter_type);
 
-// Was mit eingeschaltetem Netzladen fehlt. Ohne einen Preis, der irgendwo
-// billiger ist als die Nacht, kauft der Fahrplan nie — der Haken wäre
-// wirkungslos. Spot- und Gemeinschaftsbezug brauchen die Netzgebühr.
-const netzladenLuecken = (d) => {
-  if (!NETZLADEN_SICHTBAR || !d.expert_mode || !NETZLADEN_TREIBER.includes(d.inverter_type) || !d.schedule_netzladen) return [];
+// Abschnitt „Einspeisung“ / „Bezug“ in den Tarifen — dieselbe Optik in der
+// Karte „Bezug“ und im Block jeder Gemeinschaft, damit die beiden Richtungen
+// nie ineinanderlaufen.
+const tarifAbschnitt = (art, titel) => {
+  const farbe = art === "bezug" ? "#ef6c00" : "var(--success-color,#43a047)";
+  const icon = art === "bezug" ? "mdi:transmission-tower-import" : "mdi:transmission-tower-export";
+  return `<div style="display:flex;align-items:center;gap:8px;margin:14px 0 8px;padding:4px 0 4px 10px;border-left:3px solid ${farbe};font-weight:500">
+    <ha-icon icon="${icon}" style="--mdc-icon-size:18px;color:${farbe}"></ha-icon>${titel}</div>`;
+};
+
+// Bezugstarife fürs Laden aus dem Netz (Spot-Bezug, Bezug aus der
+// Gemeinschaft): im Reiter Tarife, Karte „Bezug“ bzw. bei jeder Gemeinschaft.
+// Für jeden Treiber, der aus dem Netz laden kann — auch ohne Expertenmodus,
+// weil die Reserve der Spitzenkappung (für alle) sie ebenfalls nutzt.
+const bezugTarifeSichtbar = (d, prefix) =>
+  NETZLADEN_SICHTBAR && !!prefix && NETZLADEN_TREIBER.includes(d.inverter_type);
+
+// Was dem Netzladen an Bezugstarifen fehlt. Ohne einen Preis, der irgendwo
+// billiger ist als die Nacht, kauft der Fahrplan nie — der Schalter wäre
+// wirkungslos; deshalb lässt er sich ohne sie gar nicht erst einschalten.
+// Spot- und Gemeinschaftsbezug brauchen die Netzgebühr.
+// ``serverBezug(name)``: Bezugspreis aus dem Tarifblatt des Vereins (der
+// Fahrplan überlagert ihn, gemeinschaftstarif.ueberlagern) — sonst sähe eine
+// Ansfeldner Gemeinschaft mit leerem Feld wie „kein Bezug“ aus. Im
+// Quotenmodus gibt es keinen Gemeinschaftsbezug (kein Überschuss bekannt).
+const bezugTarifLuecken = (d, serverBezug = () => null) => {
   const spot = String(d.schedule_bezug_quelle || "fix") === "spot";
-  const eeg = [["", d.peakshare_community], ["_2", d.peakshare_community_2]]
-    .some(([sfx, name]) => name && Number(d[`peakshare_bezug_price${sfx}`] ?? 0) > 0);
+  const gemeinschaft = d.enable_peakshare !== false && (d.eeg_demand_source || "peakshare") !== "quote";
+  const eeg = gemeinschaft && [["", d.peakshare_community], ["_2", d.peakshare_community_2]]
+    .some(([sfx, name]) => name && (
+      Number(serverBezug(name) ?? 0) > 0 || Number(d[`peakshare_bezug_price${sfx}`] ?? 0) > 0));
   const fehlt = [];
   if (!spot && !eeg && !d.schedule_snap_enabled) {
-    fehlt.push("Bezugspreis fürs Laden aus dem Netz (Spot-Tarif, Bezugspreis der Gemeinschaft oder zeitvariable Netzentgelte)");
+    fehlt.push("ein günstigerer Bezugspreis im Reiter Tarife (Börsenpreis, Bezug aus der Gemeinschaft oder zeitvariable Netzentgelte)");
   }
   if ((spot || eeg) && !d.schedule_netzbereich) {
     fehlt.push("Netzbereich (Spot- und Gemeinschaftsbezug brauchen die Netzgebühr)");
   }
   return fehlt;
+};
+
+// Dieselben Lücken beim Speichern — nur, wenn das Netzladen an ist.
+const netzladenLuecken = (d, serverBezug) => {
+  if (!NETZLADEN_SICHTBAR || !d.expert_mode || !NETZLADEN_TREIBER.includes(d.inverter_type) || !d.schedule_netzladen) return [];
+  return bezugTarifLuecken(d, serverBezug);
 };
 
 // Auswaehlbar ist genau, was der Fahrplan auch steuern kann (Entscheid
@@ -1864,6 +1893,11 @@ class EegOptimizerPanel extends HTMLElement {
     return d.gemeinschaftstarif_auto === false ? null : this._gemTarifEintrag(name);
   }
 
+  // Bezugspreis je Gemeinschaftsname aus dem Tarifblatt (für bezugTarifLuecken).
+  _serverBezug(d) {
+    return (name) => this._gemTarifFuer(d, name)?.tarif?.bezug ?? null;
+  }
+
   // Kasten im Block der Gemeinschaft: was der Server sagt, und der Schalter.
   // Der Schalter ist einer für beide Gemeinschaften (gemeinschaftstarif_auto).
   _gemTarifInfo(g, aktiv, prefix) {
@@ -2268,6 +2302,15 @@ class EegOptimizerPanel extends HTMLElement {
       case "toggle-settings-feature": {
         const feat = dataset?.feature;
         if (feat) {
+          // Netzladen erst mit einem günstigeren Bezugspreis — sonst kauft
+          // der Fahrplan nie, und der Schalter stünde wirkungslos auf „Aktiv“.
+          if (feat === "schedule_netzladen" && dataset.on !== "1") {
+            const luecken = bezugTarifLuecken(this._settingsData, this._serverBezug(this._settingsData));
+            if (luecken.length) {
+              this._showValidationError(`Netzladen braucht zuerst ${luecken.join(" und ")}.`);
+              break;
+            }
+          }
           this._settingsData[feat] = dataset.on !== "1";
           // Vergleich eingeschaltet, aber noch keine Flächen: eine Zeile
           // vorbelegen, damit die Tabelle nicht leer dasteht — ohne Flächen
@@ -3498,7 +3541,7 @@ class EegOptimizerPanel extends HTMLElement {
       fehlt.push(`Anteile der Gemeinschaften (Summe ${fmtDe(anteile, 0)} % statt maximal 100 %)`);
     }
     for (const name of quoteLuecken(d)) fehlt.push(`Abnahmequote der Gemeinschaft ${name}`);
-    for (const luecke of netzladenLuecken(d)) fehlt.push(luecke);
+    for (const luecke of netzladenLuecken(d, this._serverBezug(d))) fehlt.push(luecke);
     return fehlt;
   }
 
@@ -8347,117 +8390,123 @@ class EegOptimizerPanel extends HTMLElement {
         <input type="number" data-field="${prefix}schedule_battery_cost" data-unit="ct"
                value="${ctAus(Number(d.schedule_battery_cost) > 0 ? d.schedule_battery_cost : 0.01)}" min="0.1" max="100" step="0.1">
         <div class="help-text">Was eine durchgesetzte Kilowattstunde die Batterie an Lebensdauer kostet. Höhere Werte machen die Optimierung zurückhaltender: sie speichert nur, wenn sich der Umweg lohnt. Ein leeres Feld gilt als 1 ct — ohne Alterungskosten lädt und entlädt die Optimierung ohne jede Zurückhaltung. Bei der Entladung in die Gemeinschaft ist der Wert die Schwelle: Sie kommt erst zustande, wenn der Nachtsatz über der Einspeisevergütung plus Alterungskosten liegt.</div>
-      </div>` : ""}`;
+      </div>` : ""}
+      ${this._bezugTarifFeld(d, prefix)}`;
   }
 
   // „Batterie aus dem Netz laden" (Beta): eigener Reiter der Einstellungen,
   // nur im Expertenmodus, nur für Huawei, Victron und Fronius (schedule.py:
-  // CONF_SCHEDULE_NETZLADEN, InverterBase.supports_grid_charge). Erst mit dem
-  // Haken erscheinen die Bezugspreise, die ein billigeres Fenster sichtbar
-  // machen, samt dem Bezugspreis je Gemeinschaft (_netzladenGemeinschaft).
+  // CONF_SCHEDULE_NETZLADEN, InverterBase.supports_grid_charge). Die
+  // Bezugspreise, die ein billigeres Fenster sichtbar machen, stehen im
+  // Reiter Tarife (_bezugTarifFeld, _gemeinschaftBezug) — ohne einen davon
+  // lässt sich der Schalter nicht einschalten (bezugTarifLuecken).
   _netzladenFeld(d, prefix) {
     if (!netzladenSichtbar(d, prefix)) return "";
     const an = !!d.schedule_netzladen;
-    const quelle = String(d.schedule_bezug_quelle || "fix");
     const vorteilRoh = d.schedule_netzladen_vorteil;
     const vorteil = (vorteilRoh === undefined || vorteilRoh === null || vorteilRoh === "") ? 0.02 : Number(vorteilRoh);
     const maxKw = Number(d.schedule_netzladen_max_kw) > 0 ? d.schedule_netzladen_max_kw : "";
     const batterieKw = Number(d.discharge_power_kw) > 0 ? fmtDe(Number(d.discharge_power_kw), 1) : "der Batterie";
-    const arbeitspreis = Number(d.schedule_energy_price) > 0 ? `${fmtDe(Number(d.schedule_energy_price) * 100, 2)} ct, ` : "";
-    // Gleiche Schalterkarte wie „Bezugsspitzen kappen“; die Felder stehen
-    // nur bei eingeschaltetem Netzladen im DOM, wie zuvor beim Haken.
+    // Ohne günstigeren Bezugspreis lässt sich der Schalter nicht einschalten
+    // (toggle-settings-feature) — hier steht, was dafür fehlt.
+    const luecken = an ? [] : bezugTarifLuecken(d, this._serverBezug(d));
+    const sperre = luecken.length ? `
+      <div class="help-text" style="margin:-4px 0 12px;padding:10px 12px;background:var(--warning-color,#ff9800)22;border-left:3px solid var(--warning-color,#ff9800);border-radius:4px">
+        Zum Einschalten fehlt noch ${luecken.map(l => this._escapeHtml(l)).join(" und ")}.
+      </div>` : "";
     return this._featureCard({
       on: an,
       action: prefix ? "toggle-settings-feature" : "toggle-feature",
       feature: "schedule_netzladen",
       icon: "mdi:battery-charging-high",
       titel: "Batterie aus dem Netz laden",
-      beschreibung: "Schafft die Sonne das Ladeziel bis zum Ende der PV-Zeit nicht, darf der Fahrplan Strom zukaufen — aber nur in Viertelstunden, in denen Netzstrom billiger ist als der Strom, den die Batterie danach in der Nacht ersetzt. Gerechnet wird je Kilowattstunde, nach den Verlusten beim Laden und Entladen. Was die Nacht nicht braucht, speist der Fahrplan später ein, wenn es sich lohnt; das kann Geld kosten und ist der Preis für eine abends volle Batterie. Nur mit Ladeziel (Reiter Anlage).",
+      beschreibung: "Schafft die Sonne das Ladeziel bis zum Ende der PV-Zeit nicht, darf der Fahrplan Strom zukaufen — aber nur in Viertelstunden, in denen Netzstrom billiger ist als der Strom, den die Batterie danach in der Nacht ersetzt. Gerechnet wird je Kilowattstunde, nach den Verlusten beim Laden und Entladen, mit den Bezugspreisen aus dem Reiter Tarife. Was die Nacht nicht braucht, speist der Fahrplan später ein, wenn es sich lohnt; das kann Geld kosten und ist der Preis für eine abends volle Batterie. Nur mit Ladeziel (Reiter Anlage).",
       params: `
-      <div class="field-group">
-        <label>Bezugstarif deines Lieferanten</label>
-        <select data-field="${prefix}schedule_bezug_quelle">
-          <option value="fix" ${quelle !== "spot" ? "selected" : ""}>Fester Arbeitspreis (${arbeitspreis}Reiter Tarife)</option>
-          <option value="spot" ${quelle === "spot" ? "selected" : ""}>Börsenpreis (Spot, stündlich)</option>
-        </select>
-        <div class="help-text">Mit einem Spot-Tarif ist der Strom in manchen Stunden deutlich billiger. Gekauft wird nur auf veröffentlichte Börsenpreise, nie auf eine Schätzung für morgen.</div>
-      </div>
-      ${quelle === "spot" ? `
-      <div class="field-group">
-        <label>Aufschlag auf den Börsenpreis (ct/kWh, netto)</label>
-        <input type="number" data-field="${prefix}spot_bezug_aufschlag" data-unit="ct"
-               value="${d.spot_bezug_aufschlag ? ctAus(d.spot_bezug_aufschlag) : ""}" min="-50" max="50" step="0.01" placeholder="z. B. 1,5">
-        <div class="help-text">Der feste Aufschlag deines Lieferanten je Kilowattstunde, ohne Mehrwertsteuer, so wie er im Preisblatt steht.</div>
-      </div>
-      <div class="field-group">
-        <label>Aufschlag in Prozent vom Börsenpreis</label>
-        <input type="number" data-field="${prefix}spot_bezug_aufschlag_pct"
-               value="${d.spot_bezug_aufschlag_pct ? d.spot_bezug_aufschlag_pct : ""}" min="0" max="100" step="0.1" placeholder="z. B. 3">
-        <div class="help-text">Vom Betrag des Börsenpreises, auch bei negativen Preisen. Danach kommen Mehrwertsteuer und die Netzgebühr (Reiter Tarife) dazu.</div>
-      </div>` : ""}
       <div class="field-group">
         <label>Höchster Netzbezug beim Laden aus dem Netz (kW)</label>
         <input type="number" data-field="${prefix}schedule_netzladen_max_kw"
                value="${maxKw}" min="0" max="100" step="0.1" placeholder="keine Grenze">
-        <div class="help-text">Gilt am Zähler, für Haus und Batterie zusammen. Der Fahrplan rechnet dafür mit Hausverbrauch und PV-Prognose, die Steuerung führt die Ladeleistung alle 30 Sekunden an den Messwerten nach: Läuft der Herd oder kommt weniger Sonne, lädt die Batterie langsamer. Das Haus selbst wird nie begrenzt. Leer heißt: keine eigene Grenze — die Batterie lädt mit bis zu ${batterieKw} kW, das Haus kommt dazu. Mit der neuen Tarifstruktur (je nach Netzbereich ab 2027 oder 2028) kostet die höchste Viertelstunde Netzbezug im Monat Geld — eine Grenze hält diese Spitze niedrig.</div>
+        <div class="help-text">Gilt am Zähler, für Haus und Batterie zusammen. Der Fahrplan rechnet dafür mit Hausverbrauch und PV-Prognose, die Steuerung führt die Ladeleistung alle 30 Sekunden an den Messwerten nach: Läuft der Herd oder kommt weniger Sonne, lädt die Batterie langsamer. Das Haus selbst wird nie begrenzt. Leer heißt: keine eigene Grenze — die Batterie lädt mit bis zu ${batterieKw} kW, das Haus kommt dazu. Ist die Spitzenkappung an, bleibt die Ladung ohnehin unter deren Grenzwert.</div>
       </div>
       <div class="field-group">
         <label>Mindestvorteil (ct/kWh)</label>
         <input type="number" data-field="${prefix}schedule_netzladen_vorteil" data-unit="ct"
                value="${ctAus(vorteil)}" min="0" max="20" step="0.5">
         <div class="help-text">Um so viel muss Netzstrom billiger sein als der Strom, den er später ersetzt. Vorgabe 2 ct. Die PV-Prognose ist unsicher: Ein Kauf um einen Zehntelcent Vorteil, den die Sonne dann doch geliefert hätte, ist ein Verlust.</div>
-      </div>
-      <div class="help-text">Spot- und Gemeinschaftsbezug brauchen einen Netzbereich (Reiter Tarife), sonst fehlt die Netzgebühr.</div>`,
-    });
+      </div>`,
+    }) + sperre;
   }
 
-  // Bezug aus der Gemeinschaft je Gemeinschaft — gehört nur zum Netzladen,
-  // deshalb im Reiter Netzladen und nicht bei der Gemeinschaft (Tarife).
-  // Die Gemeinschaften selbst (Name, Anteil, Bedarfsquelle) bleiben dort.
-  _netzladenGemeinschaft(d, prefix) {
-    if (!netzladenSichtbar(d, prefix) || !d.schedule_netzladen) return "";
-    const quoten = (d.eeg_demand_source || "peakshare") === "quote";
-    const namen = [["", d.peakshare_community], ["_2", d.peakshare_community_2]]
-      .filter(([, name]) => name);
-    let inhalt;
-    if (d.enable_peakshare === false || namen.length === 0) {
-      inhalt = `<div class="help-text">Keine Energiegemeinschaft eingerichtet (Reiter Tarife).</div>`;
-    } else if (quoten) {
-      inhalt = `<div class="help-text">Mit fester Abnahmequote statt PeakShare kennt der Fahrplan keinen Überschuss der Gemeinschaft und rechnet ohne Gemeinschaftsbezug.</div>`;
-    } else {
-      this._ensureGemTarif(d);
-      inhalt = namen.map(([s, name]) => {
-        // Bezugspreis aus dem Tarifblatt, wenn der Server ihn kennt.
-        const server = this._gemTarifFuer(d, name)?.tarif;
-        const bezug = server && server.bezug != null ? server.bezug : d[`peakshare_bezug_price${s}`];
-        return `
-        <div style="font-weight:500;margin:4px 0 8px">${this._escapeHtml(name)}</div>
-        <div style="display:flex;gap:12px;flex-wrap:wrap">
-          <div class="field-group" style="flex:1;min-width:140px">
-            <label>Bezugspreis aus der Gemeinschaft (ct/kWh)</label>
-            <input type="number" data-field="${prefix}peakshare_bezug_price${s}" data-unit="ct"
-                   value="${Number(bezug ?? 0) > 0 ? ctAus(bezug) : ""}"
-                   min="0" max="200" step="0.1" placeholder="leer = kein Bezug"
-                   ${server && server.bezug != null ? "disabled" : ""}>
-            ${server && server.bezug != null ? `<div class="help-text">Aus dem Tarifblatt (Reiter Tarife, Gemeinschaft).</div>` : ""}
-          </div>
-          <div class="field-group" style="flex:1;min-width:140px">
-            <label>Gemeinschaft ist</label>
-            <select data-field="${prefix}peakshare_bezug_ebene${s}">
-              <option value="lokal" ${(d[`peakshare_bezug_ebene${s}`] || "lokal") === "lokal" ? "selected" : ""}>lokal (−57 % Netznutzung)</option>
-              <option value="regional" ${d[`peakshare_bezug_ebene${s}`] === "regional" ? "selected" : ""}>regional (−28 % Netznutzung)</option>
-              <option value="beg" ${d[`peakshare_bezug_ebene${s}`] === "beg" ? "selected" : ""}>Bürgerenergiegemeinschaft (volle Netzgebühr)</option>
-            </select>
-          </div>
-        </div>`;
-      }).join("") + `
-        <div class="help-text">Der Energiepreis, den die Gemeinschaft für bezogenen Strom verrechnet, inklusive Mehrwertsteuer. Die Netzgebühr rechnet der Fahrplan selbst dazu, ohne SNAP und WiNAP, die für Gemeinschaftsmengen nicht gelten: bei einer EEG das verringerte Netznutzungsentgelt plus Netzverlust (Elektrizitätsabgabe und Erneuerbaren-Förderbeitrag entfallen), bei einer Bürgerenergiegemeinschaft die volle Netzgebühr. Wie bei der Einspeisung kommt aus der Gemeinschaft höchstens dein Anteil, und nur so viel, wie sie laut PeakShare in der Viertelstunde übrig hat; der Rest kostet den Preis deines Lieferanten. Leer = diese Gemeinschaft zählt für das Netzladen nicht.</div>`;
-    }
+  // Bezugstarif des Lieferanten fürs Laden aus dem Netz — Karte „Bezug“
+  // im Reiter Tarife, unter den festen Kosten. Wirkt nur, wenn aus dem Netz
+  // geladen wird (Netzladen oder Reserve der Spitzenkappung).
+  _bezugTarifFeld(d, prefix) {
+    if (!bezugTarifeSichtbar(d, prefix)) return "";
+    const quelle = String(d.schedule_bezug_quelle || "fix");
+    const arbeitspreis = Number(d.schedule_energy_price) > 0 ? `${fmtDe(Number(d.schedule_energy_price) * 100, 2)} ct` : "oben";
     return `
-      <div class="card" style="margin-bottom:16px">
-        <h3 class="settings-karte-titel" style="margin:0 0 16px">Bezug aus der Gemeinschaft</h3>
-        ${inhalt}
-      </div>`;
+      ${tarifAbschnitt("bezug", "Beim Laden aus dem Netz")}
+      <div class="field-group">
+        <label>Bezugstarif deines Lieferanten</label>
+        <select data-field="${prefix}schedule_bezug_quelle">
+          <option value="fix" ${quelle !== "spot" ? "selected" : ""}>Fester Arbeitspreis (${arbeitspreis})</option>
+          <option value="spot" ${quelle === "spot" ? "selected" : ""}>Börsenpreis (Spot, stündlich)</option>
+        </select>
+        <div class="help-text">Zählt nur, wenn die Batterie aus dem Netz lädt — mit „Batterie aus dem Netz laden“ (Reiter Netzladen) oder der Reserve der Spitzenkappung. Mit einem Spot-Tarif ist der Strom in manchen Stunden deutlich billiger. Gekauft wird nur auf veröffentlichte Börsenpreise, nie auf eine Schätzung für morgen. Spot- und Gemeinschaftsbezug brauchen den Netzbereich oben.</div>
+      </div>
+      ${quelle === "spot" ? `
+      <div style="display:flex;gap:12px;flex-wrap:wrap">
+        <div class="field-group" style="flex:1;min-width:160px">
+          <label>Aufschlag auf den Börsenpreis (ct/kWh, netto)</label>
+          <input type="number" data-field="${prefix}spot_bezug_aufschlag" data-unit="ct"
+                 value="${d.spot_bezug_aufschlag ? ctAus(d.spot_bezug_aufschlag) : ""}" min="-50" max="50" step="0.01" placeholder="z. B. 1,5">
+          <div class="help-text">Der feste Aufschlag deines Lieferanten je Kilowattstunde, ohne Mehrwertsteuer, so wie er im Preisblatt steht.</div>
+        </div>
+        <div class="field-group" style="flex:1;min-width:160px">
+          <label>Aufschlag in Prozent vom Börsenpreis</label>
+          <input type="number" data-field="${prefix}spot_bezug_aufschlag_pct"
+                 value="${d.spot_bezug_aufschlag_pct ? d.spot_bezug_aufschlag_pct : ""}" min="0" max="100" step="0.1" placeholder="z. B. 3">
+          <div class="help-text">Vom Betrag des Börsenpreises, auch bei negativen Preisen. Danach kommen Mehrwertsteuer und die Netzgebühr dazu.</div>
+        </div>
+      </div>` : ""}`;
+  }
+
+  // Bezug aus einer Gemeinschaft — im Block der Gemeinschaft (Reiter
+  // Tarife), getrennt von ihrer Einspeisung. Nur mit PeakShare: im
+  // Quotenmodus kennt der Fahrplan keinen Überschuss der Gemeinschaft.
+  _gemeinschaftBezug(d, prefix, s, name) {
+    if (!bezugTarifeSichtbar(d, prefix) || !name) return "";
+    if ((d.eeg_demand_source || "peakshare") === "quote") {
+      return `
+          ${tarifAbschnitt("bezug", "Bezug aus der Gemeinschaft")}
+          <div class="help-text" style="margin-bottom:8px">Mit fester Abnahmequote statt PeakShare kennt der Fahrplan keinen Überschuss der Gemeinschaft und rechnet beim Laden aus dem Netz ohne Gemeinschaftsbezug.</div>`;
+    }
+    // Bezugspreis aus dem Tarifblatt, wenn der Server ihn kennt.
+    const server = this._gemTarifFuer(d, name)?.tarif;
+    const vomServer = server && server.bezug != null;
+    const bezug = vomServer ? server.bezug : d[`peakshare_bezug_price${s}`];
+    const ebene = d[`peakshare_bezug_ebene${s}`] || "lokal";
+    return `
+          ${tarifAbschnitt("bezug", "Bezug aus der Gemeinschaft")}
+          <div style="display:flex;gap:12px;flex-wrap:wrap">
+            <div class="field-group" style="flex:1;min-width:140px">
+              <label>Bezugspreis (ct/kWh)</label>
+              <input type="number" data-field="${prefix}peakshare_bezug_price${s}" data-unit="ct"
+                     value="${Number(bezug ?? 0) > 0 ? ctAus(bezug) : ""}"
+                     min="0" max="200" step="0.1" placeholder="leer = kein Bezug"
+                     ${vomServer ? "disabled" : ""}>
+              ${vomServer ? `<div class="help-text">Aus dem Tarifblatt der Gemeinschaft.</div>` : ""}
+            </div>
+            <div class="field-group" style="flex:1;min-width:140px">
+              <label>Gemeinschaft ist</label>
+              <select data-field="${prefix}peakshare_bezug_ebene${s}">
+                <option value="lokal" ${ebene === "lokal" ? "selected" : ""}>lokal (−57 % Netznutzung)</option>
+                <option value="regional" ${ebene === "regional" ? "selected" : ""}>regional (−28 % Netznutzung)</option>
+                <option value="beg" ${ebene === "beg" ? "selected" : ""}>Bürgerenergiegemeinschaft (volle Netzgebühr)</option>
+              </select>
+            </div>
+          </div>
+          <div class="help-text" style="margin-bottom:8px">Zählt nur, wenn die Batterie aus dem Netz lädt. Energiepreis der Gemeinschaft inklusive Mehrwertsteuer; die Netzgebühr rechnet der Fahrplan selbst dazu, ohne SNAP und WiNAP. Aus der Gemeinschaft kommt höchstens dein Anteil, und nur so viel, wie sie laut PeakShare übrig hat — der Rest kostet den Preis deines Lieferanten. Leer = kein Bezug aus dieser Gemeinschaft.</div>`;
   }
 
   // Boden und Deckel des Ladestands — genau die Regeln aus dem Backend
@@ -8785,12 +8834,14 @@ class EegOptimizerPanel extends HTMLElement {
             <label>Gemeinschaft</label>
             ${auswahl}
           </div>
+          <div class="field-group">
+            <label>Anteil (%)</label>
+            <input type="number" data-field="${prefix}peakshare_share_pct${s}"
+                   value="${pct}" min="0" max="100" step="1">
+            <div class="help-text">Dein Aufteilungsschlüssel — gilt für Einspeisung und Bezug.</div>
+          </div>
+          ${this._gemeinschaftBezug(d, prefix, s, name) ? tarifAbschnitt("einspeisung", "Einspeisung in die Gemeinschaft") : ""}
           <div style="display:flex;gap:12px;flex-wrap:wrap">
-            <div class="field-group" style="flex:1;min-width:100px">
-              <label>Anteil (%)</label>
-              <input type="number" data-field="${prefix}peakshare_share_pct${s}"
-                     value="${pct}" min="0" max="100" step="1">
-            </div>
             <div class="field-group" style="flex:1;min-width:120px">
               <label>Vergütung Tag (ct/kWh)</label>
               <input type="number" data-field="${prefix}peakshare_price${s}" data-unit="ct"
@@ -8826,8 +8877,9 @@ class EegOptimizerPanel extends HTMLElement {
             </div>
           </div>
           <div class="help-text" style="margin-bottom:8px">Welcher Teil deiner angebotenen Einspeisung erfahrungsgemäß in der Gemeinschaft landet — steht in der EEG-Monatsabrechnung als Anteil der Einspeisung, der in der Gemeinschaft verbraucht wurde. Mittags im Sommer ist die Quote niedrig, weil alle einspeisen; nachts liegt sie nahe 100 %, solange die Gemeinschaft nachts mehr verbraucht, als eingespeist wird.</div>` : ""}
-          ${eintrag ? this._gemTarifInfo(eintrag, !!server, prefix) : ""}
           <div class="help-text" style="margin-bottom:8px">${wirkung}</div>
+          ${this._gemeinschaftBezug(d, prefix, s, name)}
+          ${eintrag ? this._gemTarifInfo(eintrag, !!server, prefix) : ""}
         </div>`;
     };
 
@@ -9741,7 +9793,7 @@ class EegOptimizerPanel extends HTMLElement {
             <input type="checkbox" data-field="${prefix}spitzenkappung_reserve_netz" ${d.spitzenkappung_reserve_netz ? "checked" : ""}>
             <div>
               <div style="font-weight:500">Reserve notfalls aus dem Netz nachladen <span style="display:inline-block;margin-left:4px;padding:1px 6px;border-radius:8px;font-size:11px;font-weight:600;color:#fff;background:var(--warning-color,#ff9800)">BETA</span></div>
-              <div class="help-text" style="margin-top:4px">Reicht die Sonne nicht, lädt der Fahrplan die Reserve vor der nächsten erwarteten Spitze aus dem Netz nach, unabhängig vom Preis, aber in den günstigsten Viertelstunden davor. Mit Bezug aus der Gemeinschaft (Reiter Netzladen) sind das die Viertelstunden, in denen sie Strom übrig hat. Das Nachladen selbst bleibt unter dem Grenzwert. Es kostet die Lade- und Entladeverluste und Strom, der auch dann gekauft ist, wenn die Spitze ausbleibt.</div>
+              <div class="help-text" style="margin-top:4px">Reicht die Sonne nicht, lädt der Fahrplan die Reserve vor der nächsten erwarteten Spitze aus dem Netz nach, unabhängig vom Preis, aber in den günstigsten Viertelstunden davor. Mit Bezug aus der Gemeinschaft oder Börsenpreis (Reiter Tarife, Bezug) sind das die Viertelstunden, in denen sie Strom übrig hat bzw. die billigsten. Das Nachladen selbst bleibt unter dem Grenzwert. Es kostet die Lade- und Entladeverluste und Strom, der auch dann gekauft ist, wenn die Spitze ausbleibt.</div>
             </div>
           </label>
         </div>` : ""}` : ""}
@@ -9869,9 +9921,9 @@ class EegOptimizerPanel extends HTMLElement {
         ${anleitungLink("tarife", "Tarife & Gemeinschaft")}
       </p>
       ${this._controlHint(d.inverter_type)}
-      <h3 style="margin:4px 0 12px;font-size:16px">Vergütung</h3>
+      <h3 style="margin:4px 0 12px;font-size:16px">Einspeisung</h3>
       ${this._verguetungFields(d, "")}
-      <h3 style="margin:24px 0 12px;font-size:16px">Kosten</h3>
+      <h3 style="margin:24px 0 12px;font-size:16px">Bezug</h3>
       ${this._kostenFields(d, "")}
       <h3 style="margin:24px 0 12px;font-size:16px">Energiegemeinschaft</h3>
       ${this._gemeinschaftFields(d, "")}`;
@@ -10132,7 +10184,7 @@ class EegOptimizerPanel extends HTMLElement {
     // --- Tab: Tarife & Gemeinschaft (== Wizard-Schritt) ---
     const tarifeTab = `
       <div class="card" style="margin-bottom:16px">
-        <h3 class="settings-karte-titel" style="margin:0 0 4px">Vergütung und Kosten</h3>
+        <h3 class="settings-karte-titel" style="margin:0 0 4px">Einspeisung</h3>
         <div class="help-text" style="margin-bottom:16px">
           Die Optimierung rechnet laufend den wirtschaftlich besten Lade- und
           Entladeplan. Diese Preise sind ihre Grundlage.
@@ -10140,6 +10192,9 @@ class EegOptimizerPanel extends HTMLElement {
         </div>
         ${this._controlHint(d.inverter_type)}
         ${this._verguetungFields(d, "settings_")}
+      </div>
+      <div class="card" style="margin-bottom:16px">
+        <h3 class="settings-karte-titel" style="margin:0 0 16px">Bezug</h3>
         ${this._kostenFields(d, "settings_")}
       </div>
       <div class="card" style="margin-bottom:16px">
@@ -10192,8 +10247,7 @@ class EegOptimizerPanel extends HTMLElement {
         <h3 class="settings-karte-titel" style="margin:0 0 4px">Batterie aus dem Netz laden</h3>
         <div class="help-text" style="margin-bottom:12px">${anleitungLink("netzladen", "Batterie aus dem Netz laden")}</div>
         ${this._netzladenFeld(d, "settings_")}
-      </div>
-      ${this._netzladenGemeinschaft(d, "settings_")}` : "";
+      </div>` : "";
 
     // --- Tab: Prognose (== Wizard-Schritt PV-Prognose) ---
     // Steuernde Quelle mit ihren Sensoren, Prognosevergleich und — wenn die

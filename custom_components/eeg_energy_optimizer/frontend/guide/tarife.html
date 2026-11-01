@@ -2,7 +2,7 @@
      Quelle: docs/guides/tarife.md
      Neu generieren mit: python scripts/build_guides.py -->
 <h2 class="guide-title">Tarife &amp; Gemeinschaft</h2>
-<p>Der Fahrplan kennt keine festen Zeitfenster wie „abends entladen“ — er kennt nur einen <strong>Preis je Viertelstunde</strong>. Hier legst du fest, woraus dieser Preis entsteht: was eine eingespeiste Kilowattstunde bringt, was eine gekaufte kostet und was deine Energiegemeinschaft beiträgt.</p>
+<p>Der Fahrplan kennt keine festen Zeitfenster wie „abends entladen“ — er kennt nur einen <strong>Preis je Viertelstunde</strong>. Hier legst du fest, woraus dieser Preis entsteht: was eine eingespeiste Kilowattstunde bringt (Karte <strong>Einspeisung</strong>), was eine gekaufte kostet (Karte <strong>Bezug</strong>) und was deine Energiegemeinschaft beiträgt (Karte <strong>Energiegemeinschaft</strong>, je Gemeinschaft wieder getrennt nach Einspeisung und Bezug).</p>
 <h3>Das Prinzip</h3>
 <p>Der Einspeisepreis jeder Viertelstunde hat zwei Teile:</p>
 <ol>
@@ -12,8 +12,8 @@
 <p>Es zählt nur die <strong>Differenz</strong> zwischen Gemeinschafts- und Standardvergütung: Eine Kilowattstunde ist das eine oder das andere wert, nie beides. Diesen Preis vergleicht der Fahrplan mit dem Bezugspreis und entscheidet: ins Netz, in die Batterie oder im Haus verbrauchen.</p>
 <div class="guide-alert note"><p><strong>Ohne Preisunterschied passiert nichts.</strong> Ist eine Kilowattstunde nachts nicht mehr wert als tagsüber, wird nachts nicht eingespeist. Wichtig ist der zeitliche Verlauf der Preise, kaum ihre Höhe.</p></div>
 
-<h3>Vergütung</h3>
-<p>Unter <strong>Standardvergütung — Quelle</strong> wählst du, woher der Basistarif kommt. Außer beim festen Wert holt die Integration ihn selbst. Darunter steht, wie alt der Wert ist und ob der letzte Abruf geklappt hat; <strong>Jetzt holen</strong> ruft sofort ab. Antwortet eine Quelle nicht, bleibt der letzte Wert; gab es nie einen, gilt der fest eingetragene.</p>
+<h3>Einspeisung</h3>
+<p>Karte <strong>Einspeisung</strong>. Unter <strong>Standardvergütung — Quelle</strong> wählst du, woher der Basistarif kommt. Außer beim festen Wert holt die Integration ihn selbst. Darunter steht, wie alt der Wert ist und ob der letzte Abruf geklappt hat; <strong>Jetzt holen</strong> ruft sofort ab. Antwortet eine Quelle nicht, bleibt der letzte Wert; gab es nie einen, gilt der fest eingetragene.</p>
 <table>
 <thead>
 <tr>
@@ -105,7 +105,8 @@
 </tr>
 </tbody>
 </table>
-<h3>Kosten</h3>
+<h3>Bezug</h3>
+<p>Karte <strong>Bezug</strong>.</p>
 <table>
 <thead>
 <tr>
@@ -141,8 +142,31 @@
 
 <h4>Alterungskosten der Batterie (Expertenmodus)</h4>
 <p>Nur sichtbar, wenn im Tab <strong>System</strong> der Expertenmodus eingeschaltet ist. <strong>Alterungskosten der Batterie (ct/kWh)</strong> ist, was eine durchgesetzte Kilowattstunde die Batterie an Lebensdauer kostet. Höhere Werte machen die Optimierung zurückhaltender: Sie speichert nur, wenn sich der Umweg lohnt. Leer gilt 1 ct. Bei der Entladung in die Gemeinschaft ist der Wert die Schwelle — sie kommt erst zustande, wenn der Nachtsatz über der Einspeisevergütung plus Alterungskosten liegt.</p>
-<h4>Batterie aus dem Netz laden</h4>
-<p>Die Felder dafür stehen im eigenen Reiter <strong>Netzladen</strong> (Beta, Expertenmodus, Huawei, Victron und Fronius), auch der Bezugspreis aus der Gemeinschaft. Siehe Anleitung „Batterie aus dem Netz laden“.</p>
+<h4>Beim Laden aus dem Netz</h4>
+<p>Nur bei Wechselrichtern, die aus dem Netz laden können (Huawei, Victron und Fronius), steht am Ende der Karte <strong>Bezug</strong> ein eigener Abschnitt. Er zählt nur, wenn die Batterie tatsächlich aus dem Netz lädt: mit <strong>Batterie aus dem Netz laden</strong> (Reiter <strong>Netzladen</strong>) oder mit <strong>Reserve notfalls aus dem Netz nachladen</strong> (Reiter <strong>Spitzenkappung</strong>). Sonst rechnet der Fahrplan mit dem Bezugspreis oben.</p>
+<table>
+<thead>
+<tr>
+<th>Feld</th>
+<th>Bedeutung</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Bezugstarif deines Lieferanten</strong></td>
+<td><strong>Fester Arbeitspreis</strong> (der Wert oben) oder <strong>Börsenpreis (Spot, stündlich)</strong></td>
+</tr>
+<tr>
+<td><strong>Aufschlag auf den Börsenpreis (ct/kWh, netto)</strong></td>
+<td>Nur bei Spot. Der feste Aufschlag deines Lieferanten, ohne Mehrwertsteuer, wie im Preisblatt</td>
+</tr>
+<tr>
+<td><strong>Aufschlag in Prozent vom Börsenpreis</strong></td>
+<td>Nur bei Spot. Vom Betrag des Börsenpreises, auch bei negativen Preisen</td>
+</tr>
+</tbody>
+</table>
+<p>Mit Spot ist der Bezugspreis jeder Stunde: (Börsenpreis + Aufschlag + Prozentaufschlag) × Mehrwertsteuer + Netzgebühr der Viertelstunde. Gekauft wird nur zu veröffentlichten Börsenpreisen, nie zu geschätzten. Spot braucht einen <strong>Netzbereich</strong>, sonst fehlt die Netzgebühr und der Netzstrom sähe zu billig aus.</p>
 <h3>Nachtsatz und Nachtfenster</h3>
 <p>Es gibt zwei Nachtfenster, weil ein Gemeinschaftsvertrag andere Zeiten haben kann als dein Einspeisevertrag:</p>
 <ul>
@@ -191,7 +215,27 @@
 </tr>
 </tbody>
 </table>
-<p><strong>Tarif automatisch vom Verein.</strong> Hinterlegt der Verein deiner Gemeinschaft seine Sätze zentral (derzeit die Energiewende Ansfelden mit allen ihren Gemeinschaften in PeakShare), steht im Block der Gemeinschaft ein Kasten <strong>Tarif von …</strong> mit Gültigkeit und Link zum Tarifblatt. Die Felder <strong>Vergütung Tag</strong>, <strong>Vergütung Nacht</strong>, das <strong>Nachtfenster der Gemeinschaften</strong> und der Bezugspreis fürs Netzladen folgen dann dem Tarifblatt und sind gesperrt. Ein neues Quartal übernimmt die Integration am Stichtag von selbst. Gilt die Nachtvergütung „nach Sonnenuntergang“, rechnet der Fahrplan das Fenster jeden Tag aus dem Sonnenstand, auf volle Stunden nach innen gerundet. Anteil, Gewichtung und Abnahmequote bleiben deine Sache. Mit <strong>Eigene Werte verwenden</strong> gelten wieder die eingetippten Zahlen.</p>
+<p>Gemeinschaft und <strong>Anteil</strong> stehen oben im Block, darunter zwei getrennte Abschnitte: <strong>Einspeisung in die Gemeinschaft</strong> (Vergütung, Gewichtung, Abnahmequote) und, bei Huawei, Victron und Fronius, <strong>Bezug aus der Gemeinschaft</strong>:</p>
+<table>
+<thead>
+<tr>
+<th>Feld</th>
+<th>Bedeutung</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Bezugspreis (ct/kWh)</strong></td>
+<td>Der Energiepreis, den die Gemeinschaft für bezogenen Strom verrechnet, inklusive Mehrwertsteuer. Leer = kein Bezug aus dieser Gemeinschaft</td>
+</tr>
+<tr>
+<td><strong>Gemeinschaft ist</strong></td>
+<td><strong>lokal</strong> oder <strong>regional</strong> (EEG) oder <strong>Bürgerenergiegemeinschaft</strong></td>
+</tr>
+</tbody>
+</table>
+<p>Auch der Bezug zählt nur, wenn die Batterie aus dem Netz lädt. Die Netzgebühr rechnet der Fahrplan selbst dazu: bei einer EEG das um 57 % (lokal) bzw. 28 % (regional) verringerte Netznutzungsentgelt plus das volle Netzverlustentgelt; Elektrizitätsabgabe und Erneuerbaren-Förderbeitrag entfallen (§ 75 Abs. 5 EAG, § 2 Abs. 1 Z 4 ElAbgG). Bei einer Bürgerenergiegemeinschaft gilt die volle Netzgebühr, billiger kann dort nur der Energiepreis sein. SNAP und WiNAP gelten für Gemeinschaftsstrom nicht. Zugeteilt wird wie bei der Einspeisung: Aus einer Gemeinschaft kommt höchstens dein <strong>Anteil</strong>, und nur so viel, wie sie laut PeakShare in der Viertelstunde übrig hat; der Rest kostet den Preis deines Lieferanten. Im Quotenmodus gibt es keinen Gemeinschaftsbezug, weil kein Überschuss bekannt ist. Gemeinschaftsbezug braucht einen <strong>Netzbereich</strong> (Karte <strong>Bezug</strong>).</p>
+<p><strong>Tarif automatisch vom Verein.</strong> Hinterlegt der Verein deiner Gemeinschaft seine Sätze zentral (derzeit die Energiewende Ansfelden mit allen ihren Gemeinschaften in PeakShare), steht im Block der Gemeinschaft ein Kasten <strong>Tarif von …</strong> mit Gültigkeit und Link zum Tarifblatt. Die Felder <strong>Vergütung Tag</strong>, <strong>Vergütung Nacht</strong>, das <strong>Nachtfenster der Gemeinschaften</strong> und der <strong>Bezugspreis</strong> folgen dann dem Tarifblatt und sind gesperrt. Ein neues Quartal übernimmt die Integration am Stichtag von selbst. Gilt die Nachtvergütung „nach Sonnenuntergang“, rechnet der Fahrplan das Fenster jeden Tag aus dem Sonnenstand, auf volle Stunden nach innen gerundet. Anteil, Gewichtung und Abnahmequote bleiben deine Sache. Mit <strong>Eigene Werte verwenden</strong> gelten wieder die eingetippten Zahlen.</p>
 <p>Unter jeder Gemeinschaft steht, was sie bewirkt: der höchste Aufschlag zur Bedarfsspitze oder, im Quotenmodus, der Mischpreis für Tag und Nacht. Liegt die Vergütung nicht über der Standardvergütung, gibt es mit PeakShare keinen Anreiz, Strom dorthin zu verschieben.</p>
 <p><strong>Gewichtung.</strong> Dieser Betrag wird im Fahrplan zur Vergütung addiert, bevor die Differenz zur Standardvergütung gebildet wird. Die Gemeinschaft zählt dadurch mehr, als sie zahlt. Gedacht für eine EEG: Wer dort deinen Strom bezieht, spart Netzgebühren — das soll im Fahrplan zählen, auch wenn du es nicht bekommst. Bei einer BEG (Bürgerenergiegemeinschaft) gibt es diesen Vorteil nicht, dort trägst du 0 ein. In die Geldrechnung (Gewinn- und Bilanzkarten) geht die Gewichtung nicht ein.</p>
 <p><strong>Zweite Gemeinschaft.</strong> Mit <strong>Zweite Gemeinschaft hinzufügen</strong> kommt ein zweiter Block dazu, z. B. für eine EEG und eine BEG. Beide Anteile zusammen dürfen höchstens 100 % ergeben, sonst lässt sich nicht speichern. Der Rest geht zur Standardvergütung an den Energieversorger.</p>
@@ -200,4 +244,4 @@
 <div class="guide-alert note"><p><strong>Die feste Abnahmequote ist eine Annahme, keine Messung.</strong> Mittags im Sommer ist sie niedrig, weil alle einspeisen; nachts liegt sie nahe 100 %, solange die Gemeinschaft nachts mehr verbraucht als eingespeist wird. Prüfe den Wert ab und zu an deiner Monatsabrechnung — auch die Gewinn- und Bilanzkarten rechnen damit.</p></div>
 
 <h3>Wo du die Felder später findest</h3>
-<p>Alle Felder stehen in den <strong>Einstellungen</strong>, Tab <strong>Tarife</strong>: Karte <strong>Vergütung und Kosten</strong> und Karte <strong>Energiegemeinschaft</strong>. Die Alterungskosten erscheinen dort nur im Expertenmodus (Tab <strong>System</strong>).</p>
+<p>Alle Felder stehen in den <strong>Einstellungen</strong>, Tab <strong>Tarife</strong>: Karten <strong>Einspeisung</strong>, <strong>Bezug</strong> und <strong>Energiegemeinschaft</strong>. Die Alterungskosten erscheinen dort nur im Expertenmodus (Tab <strong>System</strong>), der Abschnitt <strong>Beim Laden aus dem Netz</strong> und der <strong>Bezug aus der Gemeinschaft</strong> nur bei Huawei, Victron und Fronius. Im Einrichtungsassistenten fehlen diese beiden; du findest sie danach in den Einstellungen.</p>

@@ -111,7 +111,7 @@ test("ohne den Reiter landet ein gemerkter Netzladen-Reiter bei Tarife", () => {
   assert.match(html, /class="settings-tab active" data-action="set-settings-tab" data-tab="tarife"/);
 });
 
-test("alle Netzladen-Felder stehen im Reiter Netzladen, keines mehr unter Tarife", () => {
+test("Bezugstarife stehen im Reiter Tarife, getrennt von der Einspeisung", () => {
   const daten = {
     inverter_type: "victron_ess", schedule_netzladen: true,
     peakshare_community: "EEG Musterdorf", peakshare_share_pct: 100,
@@ -121,29 +121,55 @@ test("alle Netzladen-Felder stehen im Reiter Netzladen, keines mehr unter Tarife
   assert.match(netzladen, /data-action="toggle-settings-feature" data-feature="schedule_netzladen" data-on="1"/);
   assert.match(netzladen, /feature-badge on">Aktiv/);
   assert.doesNotMatch(netzladen, /data-field="settings_schedule_netzladen"/);
-  assert.match(netzladen, /Fester Arbeitspreis \(Reiter Tarife\)/);
-  for (const feld of ["schedule_bezug_quelle", "schedule_netzladen_max_kw",
-                      "schedule_netzladen_vorteil", "peakshare_bezug_price", "peakshare_bezug_ebene"]) {
+  for (const feld of ["schedule_netzladen_max_kw", "schedule_netzladen_vorteil"]) {
     assert.match(netzladen, new RegExp(`data-field="settings_${feld}"`), feld);
   }
-  assert.match(netzladen, /EEG Musterdorf/);
+  assert.doesNotMatch(netzladen, /schedule_bezug_quelle|peakshare_bezug/);
+
   const tarife = einstellungen(daten, "tarife");
-  assert.doesNotMatch(tarife, /schedule_netzladen|peakshare_bezug/);
+  assert.match(tarife, /settings-karte-titel"[^>]*>Einspeisung</);
+  assert.match(tarife, /settings-karte-titel"[^>]*>Bezug</);
+  for (const feld of ["schedule_bezug_quelle", "peakshare_bezug_price", "peakshare_bezug_ebene"]) {
+    assert.match(tarife, new RegExp(`data-field="settings_${feld}"`), feld);
+  }
+  // Der Bezugstarif steht in der Karte „Bezug“, nach der Netzgebühr.
+  assert.ok(tarife.indexOf("settings_schedule_bezug_quelle") > tarife.indexOf("settings_schedule_netzbereich"));
+  // In der Gemeinschaft: erst Einspeisung, dann Bezug.
+  assert.ok(tarife.indexOf("settings_peakshare_bezug_price") > tarife.indexOf("settings_peakshare_price_night"));
 });
 
-test("Netzladen aus: Karte zeigt „Aus“, keine Felder", () => {
-  const html = einstellungen({ inverter_type: "huawei_sun2000", schedule_netzladen: false }, "netzladen");
-  assert.match(html, /data-feature="schedule_netzladen" data-on="0"/);
-  assert.doesNotMatch(html, /schedule_bezug_quelle|peakshare_bezug/);
+test("Bezugstarife auch ohne Expertenmodus, aber nur für Treiber mit Netzladen", () => {
+  assert.match(einstellungen({ inverter_type: "huawei_sun2000", expert_mode: false }, "tarife"),
+    /settings_schedule_bezug_quelle/);
+  assert.doesNotMatch(einstellungen({ inverter_type: "sma_smart_energy" }, "tarife"),
+    /schedule_bezug_quelle|peakshare_bezug/);
+});
+
+test("Netzladen lässt sich ohne günstigeren Bezugspreis nicht einschalten", () => {
+  const p = neuesPanel();
+  p._settingsData = { expert_mode: true, inverter_type: "huawei_sun2000", schedule_netzladen: false };
+  p._settingsTab = "netzladen";
+  const fehler = [];
+  p._showValidationError = (m) => fehler.push(m);
+  p._render = () => {};
+  p._handleAction("toggle-settings-feature", { feature: "schedule_netzladen", on: "0" });
+  assert.equal(p._settingsData.schedule_netzladen, false);
+  assert.match(fehler[0], /günstigerer Bezugspreis im Reiter Tarife/);
+  assert.match(p._renderSettings(), /Zum Einschalten fehlt noch/);
+
+  // Mit zeitvariablen Netzentgelten geht es.
+  p._settingsData.schedule_snap_enabled = true;
+  p._handleAction("toggle-settings-feature", { feature: "schedule_netzladen", on: "0" });
+  assert.equal(p._settingsData.schedule_netzladen, true);
 });
 
 test("Quotenmodus: kein Gemeinschaftsbezug, nur der Hinweis", () => {
   const html = einstellungen({
-    inverter_type: "victron_ess", schedule_netzladen: true, eeg_demand_source: "quote",
+    inverter_type: "victron_ess", eeg_demand_source: "quote",
     peakshare_community: "EEG Musterdorf",
-  }, "netzladen");
+  }, "tarife");
   assert.doesNotMatch(html, /peakshare_bezug_price/);
-  assert.match(html, /feste[rn]? Abnahmequote/);
+  assert.match(html, /feste[rn]? Abnahmequote statt PeakShare/);
 });
 
 test("Prüfkarte: grün ohne Befund, rot mit Problem, Text wird maskiert", () => {

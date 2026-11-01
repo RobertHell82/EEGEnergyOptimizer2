@@ -83,11 +83,24 @@ test("Gemeinschaft ohne Server-Eintrag bleibt wie bisher", async () => {
   assert.doesNotMatch(html, /data-field="settings_peakshare_price" [^>]*disabled/);
 });
 
-test("Netzladen: Bezugspreis aus dem Tarifblatt", async () => {
-  const p = einstellungen({ schedule_netzladen: true, peakshare_bezug_price: 0.2 }, "netzladen");
+test("Bezug aus der Gemeinschaft: Preis aus dem Tarifblatt (Reiter Tarife)", async () => {
+  const p = einstellungen({ peakshare_bezug_price: 0.2 }, "tarife");
   p._renderSettings();
   await warten();
   const html = p._renderSettings();
   assert.match(html, /data-field="settings_peakshare_bezug_price" data-unit="ct"\s+value="13\.7"[\s\S]*?disabled/);
   assert.match(html, /Aus dem Tarifblatt/);
+});
+
+test("Netzladen: Bezugspreis vom Tarifblatt reicht zum Einschalten", async () => {
+  const p = einstellungen({ schedule_netzladen: false, peakshare_bezug_price: null,
+    schedule_netzbereich: "oberoesterreich" }, "netzladen");
+  p._renderSettings();
+  await warten();
+  assert.doesNotMatch(p._renderSettings(), /Zum Einschalten fehlt noch/);
+  const ohne = einstellungen({ schedule_netzladen: false, peakshare_bezug_price: null,
+    schedule_netzbereich: "oberoesterreich" }, "netzladen", []);
+  ohne._renderSettings();
+  await warten();
+  assert.match(ohne._renderSettings(), /Zum Einschalten fehlt noch/);
 });

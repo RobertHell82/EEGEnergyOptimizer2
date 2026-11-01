@@ -14,7 +14,7 @@
 <tbody>
 <tr>
 <td><strong>Tarife</strong></td>
-<td>Karten <strong>Vergütung und Kosten</strong> (Standardvergütung, Nachtsatz, Bezugspreis, Netzbereich) und <strong>Energiegemeinschaft</strong>. Wie der Assistentenschritt „Tarife &amp; Gemeinschaft“</td>
+<td>Karten <strong>Einspeisung</strong> (Standardvergütung, Nachtsatz), <strong>Bezug</strong> (Arbeitspreis, Netzbereich, zeitvariable Netzentgelte; bei Huawei, Victron und Fronius der Bezugstarif <strong>beim Laden aus dem Netz</strong>) und <strong>Energiegemeinschaft</strong> (je Gemeinschaft Einspeisung und, bei Huawei, Victron und Fronius, Bezug). Wie der Assistentenschritt „Tarife &amp; Gemeinschaft“, plus die Bezugsfelder fürs Laden aus dem Netz</td>
 </tr>
 <tr>
 <td><strong>Anlage</strong></td>
@@ -26,11 +26,11 @@
 </tr>
 <tr>
 <td><strong>Spitzenkappung</strong> (Beta)</td>
-<td>Bezugsspitzen kappen: Grenzwert, Mindest- und Maximalreserve der Batterie (Huawei, Fronius, SMA, SolaX) und Verbraucher, die abgeschaltet werden dürfen (siehe Anleitung „Spitzenkappung“)</td>
+<td>Bezugsspitzen kappen: Grenzwert, Mindest- und Maximalreserve der Batterie (Huawei, Fronius, SMA, SolaX), bei Huawei und Fronius <em>Reserve notfalls aus dem Netz nachladen</em>, und Verbraucher, die abgeschaltet werden dürfen (siehe Anleitung „Spitzenkappung“)</td>
 </tr>
 <tr>
 <td><strong>Netzladen</strong> (Beta)</td>
-<td><em>Batterie aus dem Netz laden</em>: Schalter, Bezugstarif des Lieferanten, Grenze am Zähler, Mindestvorteil und Bezugspreis je Gemeinschaft (siehe Anleitung „Batterie aus dem Netz laden“). <strong>Nur im Expertenmodus</strong> und nur bei Huawei, Victron und Fronius</td>
+<td><em>Batterie aus dem Netz laden</em>: Schalter, Grenze am Zähler und Mindestvorteil (siehe Anleitung „Batterie aus dem Netz laden“). Die Bezugspreise dazu stehen im Tab <strong>Tarife</strong>; ohne einen günstigeren Bezugspreis lässt sich der Schalter nicht einschalten. <strong>Nur im Expertenmodus</strong> und nur bei Huawei, Victron und Fronius</td>
 </tr>
 <tr>
 <td><strong>Verbraucher</strong></td>
@@ -66,7 +66,7 @@
 <ul>
 <li><strong>Anlage:</strong> AC-Grenzleistung, PV-Spitzenleistung, Batterie-Leistungsgrenze, Höhe der Einspeisegrenze (wenn eingeschaltet)</li>
 <li><strong>Tarife:</strong> Standardvergütung (bei „Fester Wert“), Arbeitspreis, Netzbereich (wenn Sommer-Nieder- oder Winter-Nieder-Arbeitspreis eingeschaltet ist), das Nachtfenster, sobald ein Nachtsatz eingetragen ist (Standardvergütung und je Gemeinschaft), die Anteile der Gemeinschaften (zusammen höchstens 100 %), im Quotenmodus die Tages-Abnahmequote</li>
-<li><strong>Netzladen</strong> (wenn eingeschaltet): ein Bezugspreis, der billiger sein kann als die Nacht (Spot-Tarif, Bezugspreis einer Gemeinschaft oder zeitvariable Netzentgelte), bei Spot- oder Gemeinschaftsbezug außerdem der Netzbereich im Reiter Tarife</li>
+<li><strong>Netzladen</strong> (wenn eingeschaltet): ein Bezugspreis im Tab <strong>Tarife</strong>, der billiger sein kann als die Nacht (Spot-Tarif, Bezugspreis einer Gemeinschaft oder zeitvariable Netzentgelte), bei Spot- oder Gemeinschaftsbezug außerdem der Netzbereich</li>
 <li><strong>Prognose:</strong> die Sensoren einer fremden Prognosequelle, gültige PV-Flächen</li>
 <li><strong>Verbraucher:</strong> Adresse, Leistung und Maximaltemperatur des Heizstabs, Adresse der Ambibox</li>
 <li><strong>Spitzenkappung</strong> (wenn eingeschaltet): Grenzwert zwischen 2 und 20 kW, Mindest- und Maximalreserve zwischen 0 und 80 % (die Mindestreserve nicht über der maximalen), je Verbraucher Leistungssensor und Schalter, und ohne Batterie-Stufe mindestens ein Verbraucher</li>
