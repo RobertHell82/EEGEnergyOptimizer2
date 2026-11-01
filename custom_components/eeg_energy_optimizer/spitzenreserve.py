@@ -169,7 +169,7 @@ def reservekurve(
     verlauf: dict[datetime, float],
     slot_starts_lokal: Sequence[datetime],
     ueberschuss: Sequence[bool],
-    grenze_kw: float,
+    grenze_kw: float | Sequence[float],
     entlade_kw: float,
     *,
     tage: int = TAGE,
@@ -177,6 +177,9 @@ def reservekurve(
     min_tage: int = MIN_TAGE,
 ) -> tuple[list[float | None], int]:
     """Reserve in kWh je Slot (Bedarf ab dem Slot-BEGINN) und genutzte Tage.
+
+    ``grenze_kw`` ist eine Zahl oder eine je Slot — über einen Monatswechsel
+    gilt die Monatsspitze nur bis Mitternacht (``schedule._spitzenreserve_fuer_plan``).
 
     ``verlauf``: naive Wanduhrzeit des Viertelstunden-Beginns
     (``verlauf_nach_zeit``) → mittlere Nettolast ``Haus − PV`` in kW. Für
@@ -197,7 +200,12 @@ def reservekurve(
     n = len(slot_starts_lokal)
     if n == 0 or len(ueberschuss) != n:
         return [], 0
-    grenze = max(0.0, float(grenze_kw))
+    if isinstance(grenze_kw, (int, float)):
+        grenzen = [max(0.0, float(grenze_kw))] * n
+    else:
+        grenzen = [max(0.0, float(g)) for g in grenze_kw]
+        if len(grenzen) != n:
+            return [], 0
     deckel = max(0.0, float(entlade_kw))
     naiv = [t.replace(tzinfo=None) for t in slot_starts_lokal]
     # Je Slot die Werte der gültigen Tage.
@@ -216,7 +224,7 @@ def reservekurve(
             gesamt += 1
             if wert is not None:
                 vorhanden += 1
-                summe += min(max(float(wert) - grenze, 0.0), deckel) * SLOT_H
+                summe += min(max(float(wert) - grenzen[i], 0.0), deckel) * SLOT_H
             if vorhanden >= MIN_ABDECKUNG * gesamt:
                 werte[i].append(summe)
     kurve: list[float | None] = []

@@ -10,7 +10,7 @@ Die Einstellungen öffnest du über das Zahnrad oben rechts im Dashboard. Die Ta
 | **Anlage** | Karten **Anlage** (Einspeisegrenze) und **Batterie** (Mindest- und Maximum-Ladestand). Wie der Assistentenschritt „Anlage & Batterie“ |
 | **Prognose** | Steuernde Quelle der PV-Prognose mit Sensoren, Schalter **Prognosevergleich** und – wenn die eigene Berechnung steuert oder mitläuft – die Flächentabelle. Wie der Assistentenschritt „PV-Prognose“ |
 | **Spitzenkappung** (Beta) | Bezugsspitzen kappen: Grenzwert, Mindest- und Maximalreserve der Batterie (Huawei, Fronius, SMA, SolaX) und Verbraucher, die abgeschaltet werden dürfen (siehe Anleitung „Spitzenkappung“) |
-| **Netzladen** (Beta) | *Batterie aus dem Netz laden*: Schalter, Bezugstarif des Lieferanten, Grenze am Zähler, Mindestvorteil und Bezugspreis je Gemeinschaft (siehe Anleitung „Batterie aus dem Netz laden“). **Nur im Expertenmodus** und nur bei Huawei und Victron |
+| **Netzladen** (Beta) | *Batterie aus dem Netz laden*: Schalter, Bezugstarif des Lieferanten, Grenze am Zähler, Mindestvorteil und Bezugspreis je Gemeinschaft (siehe Anleitung „Batterie aus dem Netz laden“). **Nur im Expertenmodus** und nur bei Huawei, Victron und Fronius |
 | **Verbraucher** | Karten **Heizstab** (Fronius Ohmpilot, siehe Anleitung „Heizstab“) und **Wallbox** (siehe Anleitung „Wallbox“). **Nur im Expertenmodus**, nicht im Assistenten |
 | **System** | Karte **Dashboard** (Karten ausblenden), Übersicht über Anlage und Sensoren, EEG-Statistik, **Verlauf vergangener Tage**, Fahrplan-Archiv und ganz unten der Schalter **Expertenmodus** |
 
@@ -21,7 +21,7 @@ Der Schalter steht ganz unten im Tab **System**. Er zeigt zusätzliche Optionen 
 Zusätzlich sichtbar werden:
 
 - **Tab Tarife:** *Alterungskosten der Batterie (ct/kWh)*
-- **Tab Netzladen** als Ganzes, bei Huawei und Victron (Beta, siehe Anleitung „Batterie aus dem Netz laden“)
+- **Tab Netzladen** als Ganzes, bei Huawei, Victron und Fronius (Beta, siehe Anleitung „Batterie aus dem Netz laden“)
 - **Tab Anlage:** die Gerätedaten *AC-Grenzleistung des Wechselrichters*, *PV-Spitzenleistung* und *Batterie-Leistungsgrenze*, dazu *Sicherheitspuffer auf die Prognose (%)*, *Ladeziel am Abend (%)* und *Vormittags bevorzugt netzdienlich* (siehe Anleitung „Anlage & Batterie“)
 - **Tab Prognose:** bei Solcast die *Weiteren Prognose-Sensoren* (PV-Prognose heute gesamt, Tag 3 bis Tag 7)
 - **Tab Verbraucher** als Ganzes, mit Heizstab und Wallbox

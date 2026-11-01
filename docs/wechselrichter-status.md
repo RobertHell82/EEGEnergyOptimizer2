@@ -56,6 +56,16 @@ später oder gar nicht.
 
 Offen: Nachweis der Rückfallzeit am Gerät (Ladesperre setzen, Home Assistant
 hart stoppen, nach 5 Minuten prüfen, ob die Batterie wieder lädt).
+
+**Beta: Batterie aus dem Netz laden** (Expertenmodus): ein erzwungener
+Ladepunkt im Model 124 (`InWRte` = +x, `OutWRte` = −x, `StorCtl_Mod` = 3) mit
+`ChaGriSet` = 1. Den Vorwert von `ChaGriSet` sichert der Treiber und schreibt
+ihn bei jeder Freigabe zurück; den Ziel-Ladestand kennt der Gen24 fürs Laden
+nicht, der Treiber liest `ChaState` und gibt am Ziel frei. **Noch nicht am
+Gerät geprüft:** ob `ChaGriSet` allein reicht oder im Webinterface zusätzlich
+das Laden aus dem Netz erlaubt sein muss, ob die Ladeleistung bei
+schwankender PV hält, und ob die Freigabe sauber in den Automatikbetrieb
+zurückführt.
 Guide: [fronius.md](guides/fronius.md)
 
 ### Huawei SUN2000

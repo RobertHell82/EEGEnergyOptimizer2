@@ -362,3 +362,24 @@ def test_hysterese_am_geschriebenen_deckel():
     assert _deckel(bedarf_kw=4.9, bisher_kw=0.0)[1] == 0.0
     assert _deckel(bedarf_kw=4.9, bisher_kw=0.5)[1] == pytest.approx(0.21, abs=0.01)
     assert _deckel(bedarf_kw=5.2, bisher_kw=0.0)[1] == pytest.approx(0.53, abs=0.01)
+
+
+def test_grenze_je_slot():
+    """Eine Grenze je Slot: nur die Slots über IHRER Grenze zählen."""
+    start = datetime(2026, 10, 31, 22, 0)
+    slots = [start + timedelta(minutes=15 * i) for i in range(8)]
+    verlauf = {}
+    for k in range(1, 11):
+        for s in slots:
+            verlauf[s - timedelta(days=k)] = 6.0
+    # Erste Hälfte Grenze 9 (Oktoberspitze), zweite 5 (November).
+    grenzen = [9.0] * 4 + [5.0] * 4
+    kurve, tage = sr.reservekurve(verlauf, slots, [False] * 8, grenzen, 10.0)
+    assert tage == 10
+    # 4 Slots × 1 kW × 0,25 h = 1 kWh, ÷ Entladewirkungsgrad, am Anfang wie
+    # nach der Hälfte gleich — der Oktoberteil legt nichts drauf.
+    assert kurve[0] == pytest.approx(1.0 / sr.ENTLADE_WIRKUNGSGRAD, abs=1e-3)
+    assert kurve[4] == pytest.approx(1.0 / sr.ENTLADE_WIRKUNGSGRAD, abs=1e-3)
+    assert kurve[7] == pytest.approx(0.25 / sr.ENTLADE_WIRKUNGSGRAD, abs=1e-3)
+    # Falsche Länge: lieber keine Kurve als eine verschobene.
+    assert sr.reservekurve(verlauf, slots, [False] * 8, [5.0] * 7, 10.0) == ([], 0)

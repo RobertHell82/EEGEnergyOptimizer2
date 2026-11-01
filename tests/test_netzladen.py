@@ -17,7 +17,7 @@ Was diese Tests festhalten:
 
 import dataclasses
 from datetime import datetime, timedelta, timezone
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -419,6 +419,24 @@ async def test_hauslast_ueber_der_netzgrenze_laedt_mit_null(mock_hass, mock_inve
     with _messwerte(haus=4.0, pv=0.5):
         await ex.async_guard_cycle(_state(_netzslot()), MODE_EIN, now=NOW)
     mock_inverter.async_set_grid_charge.assert_awaited_once_with(0.0, target_soc=60.0)
+
+
+@pytest.mark.parametrize("netzgrenze, erwartet", [(None, 2.2), (2.0, 1.0)])
+async def test_spitzenkappung_deckelt_die_netzladung(mock_hass, mock_inverter, netzgrenze, erwartet):
+    """Mit der Batterie-Stufe der Spitzenkappung zählt auch deren Grenze
+    (minus 0,3 kW Sicherheit) am Zähler: 3,5 − 0,3 − Haus 1,5 + PV 0,5 =
+    2,2 kW. Eine eigene, engere Netzladegrenze gewinnt."""
+    mock_inverter.supports_grid_charge = True
+    mock_inverter.supports_discharge_limit = True
+    mock_inverter.async_set_discharge_limit = AsyncMock(return_value=True)
+    config = {**_make_executor(mock_hass, mock_inverter)._config,
+              "spitzenkappung_enabled": True, "spitzenkappung_grenze_kw": 3.5}
+    if netzgrenze is not None:
+        config["schedule_netzladen_max_kw"] = netzgrenze
+    ex = _make_executor(mock_hass, mock_inverter, config)
+    with _messwerte(haus=1.5, pv=0.5):
+        await ex.async_guard_cycle(_state(_netzslot()), MODE_EIN, now=NOW)
+    assert mock_inverter.async_set_grid_charge.await_args.args[0] == pytest.approx(erwartet)
 
 
 async def test_treiber_ohne_netzladen_bekommt_das_ladelimit(mock_hass, mock_inverter):

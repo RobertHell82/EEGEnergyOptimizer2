@@ -4,7 +4,7 @@ Schafft die Sonne das **Ladeziel** nicht, darf der Fahrplan Strom aus dem Netz z
 
 ## Wo du es einschaltest
 
-Die Einstellungen stehen im eigenen Reiter **Netzladen** (Beta). Er erscheint nur mit eingeschaltetem Expertenmodus (Reiter **System**) und nur mit einem Huawei-Wechselrichter oder einem Victron-System (Victron im Feldtest). Ist der Schalter **Batterie aus dem Netz laden** aus, rechnet der Fahrplan genau wie vorher, und keines der Felder darunter ist Pflicht.
+Die Einstellungen stehen im eigenen Reiter **Netzladen** (Beta). Er erscheint nur mit eingeschaltetem Expertenmodus (Reiter **System**) und nur mit einem Huawei-Wechselrichter, einem Victron-System oder einem Fronius Gen24 (Victron und Fronius im Feldtest). Ist der Schalter **Batterie aus dem Netz laden** aus, rechnet der Fahrplan genau wie vorher, und keines der Felder darunter ist Pflicht.
 
 Steht er auf **Aktiv**, darf der Fahrplan das **Ladeziel** auch mit Netzstrom erreichen, wenn die Sonne an einem trüben Tag nicht reicht. Er kauft aber nur in Viertelstunden, in denen der Netzstrom billiger ist als der Strom, den die Batterie danach ersetzt: der Bezugspreis der Nacht nach dem Ende der PV-Zeit, abzüglich Lade- und Entladeverlust, Alterungskosten und Mindestvorteil. Gekauft wird nur vor dem Ende der PV-Zeit. Ob die Nacht die Energie wirklich braucht, fragt er nicht: Was übrig bleibt, speist er später ein, wenn sich das lohnt. Der Preis dafür ist eine volle Batterie am Abend. Höher als der **maximale Ladestand** (Anlage & Batterie) lädt er nie, und nie schneller als die Batterieleistung.
 
@@ -24,7 +24,7 @@ Spot- und Gemeinschaftsbezug brauchen einen **Netzbereich** (Reiter **Tarife**),
 Während der Netzladung lädt der Wechselrichter mit der geplanten Leistung bis zum geplanten Ladestand, der Statussensor zeigt „Netzladung x kW bis y %“, im Diagramm ist sie violett gestrichelt. Der Heizstab bleibt dabei aus.
 
 > [!WARNING]
-> **Beta.** Bei Huawei ist die Zwangsladung an einem SUN2000 geprüft, sie braucht die Einstellung „Laden aus dem Netz“ nicht. Bei Victron lädt der DVCC-Ladestrom mit der geplanten Leistung, und ein positiver Netzsollwert erlaubt den Bezug; den führt der Optimizer alle 30 Sekunden nach (Anleitung „Victron einrichten“), am Gerät ist das noch nicht erprobt. Der Betrieb über den Fahrplan ist noch im Feldtest.
+> **Beta.** Bei Huawei ist die Zwangsladung an einem SUN2000 geprüft, sie braucht die Einstellung „Laden aus dem Netz“ nicht. Bei Victron lädt der DVCC-Ladestrom mit der geplanten Leistung, und ein positiver Netzsollwert erlaubt den Bezug; den führt der Optimizer alle 30 Sekunden nach (Anleitung „Victron einrichten“), am Gerät ist das noch nicht erprobt. Beim Fronius Gen24 legt der Optimizer einen festen Ladepunkt fest und erlaubt dafür das Laden aus dem Netz; danach stellt er die Erlaubnis zurück, wie sie vorher war. Am Gerät ist auch das noch nicht erprobt, und ob im Webinterface zusätzlich „Laden aus dem Netz“ erlaubt sein muss, ist offen. Der Betrieb über den Fahrplan ist noch im Feldtest.
 
 ## Gemeinschaft statt fester Zeitfenster
 

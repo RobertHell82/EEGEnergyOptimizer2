@@ -196,11 +196,11 @@ const quoteLuecken = (d) => {
 };
 
 // „Batterie aus dem Netz laden" (Beta): nur Einstellungen, Expertenmodus,
-// Huawei und Victron — dieselben Treiber wie im Backend (supports_grid_charge).
+// Huawei, Victron und Fronius — dieselben Treiber wie im Backend (supports_grid_charge).
 // Notschalter, gemeinsam mit schedule.NETZLADEN_FREIGEGEBEN; seit 30.10.2026
 // auch in Releases an (docs/DEVELOPMENT.md).
 const NETZLADEN_SICHTBAR = true;
-const NETZLADEN_TREIBER = ["huawei_sun2000", "victron_ess"];
+const NETZLADEN_TREIBER = ["huawei_sun2000", "victron_ess", "fronius_gen24"];
 const netzladenSichtbar = (d, prefix) =>
   NETZLADEN_SICHTBAR && !!prefix && !!d.expert_mode && NETZLADEN_TREIBER.includes(d.inverter_type);
 
@@ -8351,7 +8351,7 @@ class EegOptimizerPanel extends HTMLElement {
   }
 
   // „Batterie aus dem Netz laden" (Beta): eigener Reiter der Einstellungen,
-  // nur im Expertenmodus, nur für Huawei und Victron (schedule.py:
+  // nur im Expertenmodus, nur für Huawei, Victron und Fronius (schedule.py:
   // CONF_SCHEDULE_NETZLADEN, InverterBase.supports_grid_charge). Erst mit dem
   // Haken erscheinen die Bezugspreise, die ein billigeres Fenster sichtbar
   // machen, samt dem Bezugspreis je Gemeinschaft (_netzladenGemeinschaft).
@@ -9615,6 +9615,13 @@ class EegOptimizerPanel extends HTMLElement {
     return SPITZENKAPPUNG_BATTERIE_TREIBER.includes(d?.inverter_type || this._config?.inverter_type);
   }
 
+  _kappungReserveNetz(d) {
+    // Reserve aus dem Netz nachladen: braucht Entladedeckel UND Netzladen
+    // (schedule.spitzenreserve_netz_kw) — derzeit Huawei und Fronius.
+    const typ = d?.inverter_type || this._config?.inverter_type;
+    return NETZLADEN_SICHTBAR && SPITZENKAPPUNG_BATTERIE_TREIBER.includes(typ) && NETZLADEN_TREIBER.includes(typ);
+  }
+
   _kappungBatterieZustand(b, grenzeKw) {
     // Was die Batterie-Stufe gerade tut — aus Plan und Executor (sensor.py
     // _kappung_batterie). Leer, solange noch kein Lauf da ist.
@@ -9727,7 +9734,17 @@ class EegOptimizerPanel extends HTMLElement {
             <input type="number" data-field="${prefix}spitzenkappung_reserve_max_pct" data-leer="vorgabe" value="${d.spitzenkappung_reserve_max_pct ?? 30}" min="0" max="80" step="1">
             <div class="help-text">Mehr hält sie nie zurück, egal was die Statistik sagt. 0 schaltet die Reserve ab, leer heißt 30. Beide Werte liegen über dem Mindest-Ladestand.</div>
           </div>
-        </div>` : ""}
+        </div>
+        ${this._kappungReserveNetz(d) ? `
+        <div class="field-group">
+          <label style="display:flex;align-items:center;gap:12px;cursor:pointer">
+            <input type="checkbox" data-field="${prefix}spitzenkappung_reserve_netz" ${d.spitzenkappung_reserve_netz ? "checked" : ""}>
+            <div>
+              <div style="font-weight:500">Reserve notfalls aus dem Netz nachladen <span style="display:inline-block;margin-left:4px;padding:1px 6px;border-radius:8px;font-size:11px;font-weight:600;color:#fff;background:var(--warning-color,#ff9800)">BETA</span></div>
+              <div class="help-text" style="margin-top:4px">Reicht die Sonne nicht, lädt der Fahrplan die Reserve vor der nächsten erwarteten Spitze aus dem Netz nach, unabhängig vom Preis, aber in den günstigsten Viertelstunden davor. Mit Bezug aus der Gemeinschaft (Reiter Netzladen) sind das die Viertelstunden, in denen sie Strom übrig hat. Das Nachladen selbst bleibt unter dem Grenzwert. Es kostet die Lade- und Entladeverluste und Strom, der auch dann gekauft ist, wenn die Spitze ausbleibt.</div>
+            </div>
+          </label>
+        </div>` : ""}` : ""}
         <datalist id="eeg-kappung-leistung">${leistung.map(e => `<option value="${esc(e)}"></option>`).join("")}</datalist>
         <datalist id="eeg-kappung-schalter">${schalter.map(e => `<option value="${esc(e)}"></option>`).join("")}</datalist>
         <div class="help-text" style="margin-bottom:4px">Verbraucher in der Reihenfolge, in der abgeschaltet wird${mitBatterie ? " — erst, wenn die Batterie die Spitze nicht mehr deckt" : ""}. Der Leistungssensor zeigt, ob der Verbraucher gerade läuft und wie viel das Abschalten bringt — geschaltet wird nur, was läuft. Wieder eingeschaltet wird er, wenn er neben dem übrigen Haus unter die Grenze passt; die Nennleistung (optional) sagt, wie viel er dann zieht, falls der Sensor beim Abschalten weniger zeigte. Muss er kurz danach wieder aus, bleibt er jedes Mal doppelt so lange aus (bis 60 min). Was jemand von Hand wieder einschaltet, bleibt an, bis die nächste Spitze droht.</div>
@@ -10169,7 +10186,7 @@ class EegOptimizerPanel extends HTMLElement {
         ${this._spitzenkappungFields(d, "settings_")}
       </div>`;
 
-    // --- Tab: Netzladen (Beta, Expertenmodus, Huawei und Victron) ---
+    // --- Tab: Netzladen (Beta, Expertenmodus, Huawei, Victron und Fronius) ---
     const netzladenTab = netzladenReiter ? `
       <div class="card" style="margin-bottom:16px">
         <h3 class="settings-karte-titel" style="margin:0 0 4px">Batterie aus dem Netz laden</h3>

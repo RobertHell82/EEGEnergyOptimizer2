@@ -96,7 +96,7 @@ from .schedule import (
     slot_for,
     spitzenkappung_batterie_aktiv,
 )
-from .spitzenreserve import entladedeckel_kw, reserve_zu
+from .spitzenreserve import SICHERHEIT_KW, entladedeckel_kw, reserve_zu
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -1763,9 +1763,15 @@ class ScheduleExecutor:
         power = max(0.0, action.power_kw)
         if cap is not None:
             power = min(power, cap)
-        netzgrenze = netzladen_netzgrenze_kw(self._config)
+        netzgrenze = netzladen_netzgrenze_kw(self._config) or None
+        # Mit der Batterie-Stufe der Spitzenkappung darf auch eine Netzladung
+        # den Zähler nicht über deren Grenze heben — sonst schüfe gerade das
+        # Nachladen der Reserve die Spitze, gegen die sie vorsorgt.
+        if spitzenkappung_batterie_aktiv(self._config, self._inverter):
+            kappung = max(0.0, self._grenze_jetzt_kw()[0] - SICHERHEIT_KW)
+            netzgrenze = kappung if netzgrenze is None else min(netzgrenze, kappung)
         grenz_text = ""
-        if netzgrenze > 0:
+        if netzgrenze is not None:
             haus = compute_house_load_kw(self._hass, self._config)
             if haus is None:
                 haus = float(action.consumption_kw or 0.0)

@@ -50,8 +50,16 @@
 <li>Liegt die Batterie unter der Reserve, etwa morgens nach einer Nacht mit Spitzen, rechnet der Plan vom tatsächlichen Ladestand aus und lädt sie wieder auf.</li>
 <li>Im Modus <strong>Aus</strong> und während einer <strong>Pause</strong> rechnet der Plan ohne Reserve.</li>
 </ul>
-<div class="guide-alert note"><p>Hast du das Ladeziel ausgeschaltet, erscheint tagsüber trotzdem eine Ladeziel-Marke im Ladestandsdiagramm: Das ist die Abendreserve. Mit <strong>Batterie aus dem Netz laden</strong> (Beta, Huawei und Victron) darf der Plan sie auch mit günstigem Netzstrom erreichen, wie jedes andere Ladeziel.</p></div>
+<div class="guide-alert note"><p>Hast du das Ladeziel ausgeschaltet, erscheint tagsüber trotzdem eine Ladeziel-Marke im Ladestandsdiagramm: Das ist die Abendreserve. Mit <strong>Batterie aus dem Netz laden</strong> (Beta, Huawei, Victron und Fronius) darf der Plan sie auch mit günstigem Netzstrom erreichen, wie jedes andere Ladeziel.</p></div>
 
+<h4>Reserve notfalls aus dem Netz nachladen (Beta)</h4>
+<p>Ohne diese Option holt die Batterie ihre Reserve nur aus der Sonne. Nach einem trüben Tag kann sie dann leer in eine Nacht mit Spitze gehen. Mit <strong>Reserve notfalls aus dem Netz nachladen</strong> lädt der Fahrplan nach, was zur Reserve fehlt, und zwar unabhängig vom Preis.</p>
+<ul>
+<li><strong>Wann:</strong> vor der ersten Viertelstunde, in der laut Statistik eine Spitze kommt, etwa vor der Wärmepumpe am Morgen. Bis dahin ist jede Viertelstunde gleich gut, und der Plan nimmt die <strong>günstigste</strong>. Steckt der Bezug aus der Gemeinschaft im Bezugspreis (Tab <strong>Netzladen</strong>), sind das die Viertelstunden, in denen die Gemeinschaft Strom übrig hat. Sonst gilt der Bezugstarif, etwa ein günstigeres Netzentgelt-Fenster oder bei Spot-Bezug die billigste Stunde.</li>
+<li><strong>Wie viel:</strong> nur, was zur Reserve fehlt und die Sonne bis dahin nicht bringt.</li>
+<li><strong>Nie über der Grenze:</strong> Haus und Ladung zusammen bleiben 0,3 kW unter dem Grenzwert. Sonst schüfe das Nachladen genau die Spitze, gegen die es vorsorgt.</li>
+</ul>
+<p>Die Option gibt es nur bei Wechselrichtern, die beides können: die Entladung begrenzen und aus dem Netz laden. Derzeit sind das <strong>Huawei</strong> und <strong>Fronius</strong>. Sie kostet die Lade- und Entladeverluste und Strom, der auch gekauft ist, wenn die Spitze ausbleibt. Die Reserve deckt die Nacht mit dem höchsten Bedarf der letzten Wochen ab, nicht eine durchschnittliche.</p>
 <h4>Verbraucher abschalten</h4>
 <p><strong>Wann schaltet die Integration ab?</strong></p>
 <ul>
@@ -100,6 +108,10 @@
 <tr>
 <td><strong>Maximalreserve (%)</strong></td>
 <td>Derzeit nur mit Huawei, Fronius, SMA oder SolaX. Mehr hält die Batterie nie zurück. Vorgabe 30. Ein leeres Feld heißt ebenfalls 30, 0 schaltet die Reserve ab</td>
+</tr>
+<tr>
+<td><strong>Reserve notfalls aus dem Netz nachladen</strong></td>
+<td>Beta, nur mit Huawei oder Fronius. Lädt die fehlende Reserve vor der nächsten erwarteten Spitze aus dem Netz nach, in den günstigsten Viertelstunden. Vorgabe aus</td>
 </tr>
 <tr>
 <td><strong>Verbraucher</strong></td>

@@ -258,3 +258,127 @@ async def test_backup_ladestand_des_geraets_zaehlt_als_einstellung():
     inputs, _ = await _sammeln(_hass(cfg, inv, soc="35"))
     assert inputs.min_soc_pct == pytest.approx(35.0)
     assert inputs.min_soc_einstellung_pct == pytest.approx(50.0)
+
+
+async def test_monatsspitze_gilt_nur_bis_zum_monatsende():
+    """31.10.2026 abends: Die Oktoberspitze (9 kW) liegt über jeder Nacht,
+    aber ab Mitternacht zählt im November wieder die Grenze (5 kW). Mit einer
+    Grenze für den ganzen Horizont blieb die Reserve 0 und die Batterie leer,
+    als am 1.11. um 07:30 die erste Novemberspitze kam."""
+    abend = datetime(2026, 10, 31, 19, 7, tzinfo=timezone(timedelta(hours=1)))
+    verlauf = {}
+    t = abend.replace(minute=0) - timedelta(days=11)
+    while t < abend:
+        verlauf[sr.schluessel(t)] = 8.0 if (t.hour >= 19 or t.hour < 6) else 0.0
+        t += timedelta(minutes=15)
+    hass = _hass(CONFIG, _inverter(), verlauf, spitze_kw=9.0)
+    hass.data[sched.DOMAIN]["entry1"]["leistungsspitze"].monat = "2026-10"
+    with (
+        patch.object(sched, "_now_local", return_value=abend),
+        patch.object(sched, "_async_solar_forecast_wh", AsyncMock(return_value=_wh_hours(abend))),
+    ):
+        inputs, problem = await sched.async_collect_inputs(hass, "entry1")
+    assert problem is None
+    info = inputs.spitzenreserve
+    assert info["grenze_kw"] == 9.0
+    # 3 kW über der Grenze von 00:00 bis 06:00 am 1.11. — weit über 30 %.
+    assert info["plan_pct"] == 30.0
+    assert inputs.min_soc_pct == pytest.approx(40.0)
+    # Vor Mitternacht ist der Oktoberabend selbst nichts wert, die Kurve
+    # trägt nur den Novembermorgen; nach 06:00 ist nichts mehr reserviert.
+    morgen = [p for t, p in info["kurve"] if t.startswith("2026-11-01T07:")]
+    assert morgen and all(p == 0.0 for p in morgen)
+
+
+# ---------------------------------------------------------------------------
+# Reserve notfalls aus dem Netz nachladen
+# ---------------------------------------------------------------------------
+
+def _verlauf_spitze_frueh(tage: int = 10) -> dict[str, float]:
+    """Jede Nacht 0,3 kW, nur 05:30–06:00 die Wärmepumpe mit 8 kW."""
+    verlauf = {}
+    t = NOW.replace(minute=0) - timedelta(days=tage + 1)
+    while t < NOW:
+        frueh = t.hour == 5 and t.minute >= 30
+        verlauf[sr.schluessel(t)] = 8.0 if frueh else 0.3
+        t += timedelta(minutes=15)
+    return verlauf
+
+
+def _netz_inverter():
+    inv = _inverter()
+    inv.supports_grid_charge = True
+    return inv
+
+
+CONFIG_NETZ = {**CONFIG, "spitzenkappung_reserve_netz": True}
+
+
+async def test_reserve_netz_nur_mit_schalter_und_faehigem_treiber():
+    ohne_schalter, _ = await _sammeln(_hass(CONFIG, _netz_inverter(), _verlauf_spitze_frueh()))
+    assert ohne_schalter.spitzenreserve_netz_kw == 0.0
+    nur_deckel = _inverter()
+    nur_deckel.supports_grid_charge = False
+    ohne_netzladen, _ = await _sammeln(_hass(CONFIG_NETZ, nur_deckel, _verlauf_spitze_frueh()))
+    assert ohne_netzladen.spitzenreserve_netz_kw == 0.0
+    mit, _ = await _sammeln(_hass(CONFIG_NETZ, _netz_inverter(), _verlauf_spitze_frueh()))
+    assert mit.spitzenreserve_netz_kw == 5.0
+    assert len(mit.spitzenreserve["grenzen"]) == len(mit.spitzenreserve["kurve"])
+
+
+async def test_reserve_wird_in_der_guenstigsten_viertelstunde_nachgeladen():
+    """Batterie bei 15 %, Spitze 05:30–06:00 mit 3 kW über der Grenze: Es
+    fehlen gut 1 kWh. Der Plan lädt sie aus dem Netz — in der billigen
+    Viertelstunde um 02:00, nicht sofort und nicht irgendwann."""
+    import dataclasses
+
+    inputs, problem = await _sammeln(
+        _hass(CONFIG_NETZ, _netz_inverter(), _verlauf_spitze_frueh(), soc="15")
+    )
+    assert problem is None
+    billig = datetime(2026, 8, 25, 2, 0, tzinfo=TZ)
+    reihe = [0.10 if t == billig else 0.30 for t in inputs.timestamps]
+    inputs = dataclasses.replace(inputs, consumption_price_series=reihe)
+    result = sched.solve(inputs)
+
+    netz = {s["t"]: s.get("netzladung", 0.0) for s in result["slots"]}
+    assert netz[billig.isoformat()] > 0.5
+    vor_der_spitze = [
+        s for s in result["slots"]
+        if datetime.fromisoformat(s["t"]) < datetime(2026, 8, 25, 5, 30, tzinfo=TZ)
+    ]
+    # Geladen wird nur um die billige Stelle — die Preise kommen im
+    # 30-min-Raster und werden auf Viertelstunden umgelegt, die Nachbarn
+    # sind also auch günstiger. Nicht sofort, nicht auf Vorrat.
+    geladen = [
+        datetime.fromisoformat(s["t"]) for s in vor_der_spitze if s.get("netzladung", 0.0) > 0.05
+    ]
+    assert geladen
+    assert all(abs(t - billig) <= timedelta(minutes=30) for t in geladen), geladen
+    # Vor der Spitze steht die Reserve: Boden 10 % + Reserve.
+    reserve = next(p for t, p in inputs.spitzenreserve["kurve"] if t.startswith("2026-08-25T05:30"))
+    soc_davor = next(s["soc"] for s in result["slots"] if s["t"].startswith("2026-08-25T05:15"))
+    assert soc_davor >= 10.0 + reserve - 0.5
+
+
+async def test_nachladen_bleibt_unter_der_grenze():
+    """Netzbezug in den Ladeslots: Haus + Ladung ≤ Grenze − 0,3 kW."""
+    import dataclasses
+
+    inputs, _ = await _sammeln(
+        _hass(CONFIG_NETZ, _netz_inverter(), _verlauf_spitze_frueh(), soc="15")
+    )
+    result = sched.solve(dataclasses.replace(inputs, consumption_price_series=None))
+    for s in result["slots"]:
+        if s.get("netzladung", 0.0) > 0.05:
+            bezug = max(0.0, -float(s["grid_p"]))
+            assert bezug <= 5.0 - 0.3 + 0.05, (s["t"], bezug)
+
+
+async def test_ohne_bedarf_kein_zukauf():
+    """Kein Verbrauch über der Grenze: keine Forderung, kein Netzladen."""
+    inputs, _ = await _sammeln(
+        _hass(CONFIG_NETZ, _netz_inverter(), _verlauf(0.3), soc="15")
+    )
+    result = sched.solve(inputs)
+    assert all(s.get("netzladung", 0.0) < 0.05 for s in result["slots"])

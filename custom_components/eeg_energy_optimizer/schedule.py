@@ -261,7 +261,7 @@ MAX_NETZDIENLICH_BONUS = 0.20
 # Batterie, und Bonus und Ziel ringen Minute für Minute um den Vormittag.
 NETZDIENLICH_UEBERSCHUSS_FAKTOR = 1.2
 
-# „Batterie aus dem Netz laden" (Beta, Huawei und Victron, Expertenmodus): Bringt die
+# „Batterie aus dem Netz laden" (Beta, Huawei, Victron und Fronius, Expertenmodus): Bringt die
 # PV die Batterie bis zum Ende der PV-Zeit nicht aufs Ladeziel, darf der Plan
 # zukaufen — aber nur in Slots, in denen Netzstrom billiger ist als der Strom,
 # den die Batterie danach ersetzt (die Nacht bis zur nächsten PV-Zeit). Der
@@ -289,6 +289,14 @@ CONF_SCHEDULE_NETZLADEN_MAX_KW = "schedule_netzladen_max_kw"
 # die PV-Prognose unsicher ist — ein Kauf um einen Zehntelcent Vorteil, den
 # die Sonne dann doch hereingebracht hätte, ist ein Verlust.
 CONF_SCHEDULE_NETZLADEN_VORTEIL = "schedule_netzladen_vorteil"
+# Spitzenkappung: Die Reserve der Batterie notfalls aus dem Netz nachladen —
+# unabhängig vom Preis, aber in den günstigsten Viertelstunden vor dem
+# Bedarf (HAConfig._reserve_netz_untergrenze). Nur mit einem Treiber, der
+# die Entladung deckeln UND aus dem Netz laden kann (Huawei, Fronius).
+CONF_SPITZENKAPPUNG_RESERVE_NETZ = "spitzenkappung_reserve_netz"
+# Unter diesem Anteil einer Viertelstunde an der Reservekurve (kWh) zählt sie
+# nicht als Bedarf — die Kurve ist ein Quantil über Summen und nie ganz glatt.
+RESERVE_NETZ_BEDARF_MIN_KWH = 0.05
 DEFAULT_NETZLADEN_VORTEIL = 0.02
 MAX_NETZLADEN_VORTEIL = 0.20
 # Bezugstarif: fester Arbeitspreis (wie bisher) oder Börsenpreis. Wird nur mit
@@ -539,6 +547,10 @@ class ScheduleInputs:
     netzladen_max_kw: float = 0.0
     netzladen_netzgrenze_kw: float = 0.0
     netzladen_vorteil: float = DEFAULT_NETZLADEN_VORTEIL
+    # Spitzenreserve notfalls aus dem Netz (kW, AC, = Batterieleistung);
+    # 0 = aus. Grenze am Zähler ist die der Spitzenkappung, je Slot in
+    # ``spitzenreserve["grenzen"]``.
+    spitzenreserve_netz_kw: float = 0.0
     forecast_source: str = ""
     # Preisaufschlag je Zeitpunkt aus dem Bedarf der Energiegemeinschaften
     # (€/kWh, siehe eeg_price.py). Leer = keine Gemeinschaft wirkt mit.
@@ -979,6 +991,11 @@ class HAConfig:
         import pandas as pd
 
         ziel = pd.Series(0.0, index=ueberschuss.index)
+        # Spitzenreserve aus dem Netz: dieselbe Untergrenze wie ein Ladeziel,
+        # erreichbar über die Slots, die ``netzladen`` dafür freigibt.
+        reserve = self._reserve_netz_forderung(ueberschuss)
+        if reserve is not None:
+            ziel[:] = reserve
         termine = self.ladeziel_termine(parameters, ueberschuss)
         if not termine:
             return ziel
@@ -1015,6 +1032,8 @@ class HAConfig:
                 if bedarf <= 0.0:
                     break
                 forderung[k] = max(forderung[k], bedarf)
+        if reserve is not None:
+            forderung = [max(f, r) for f, r in zip(forderung, reserve)]
         ziel[:] = forderung
         return ziel
 
@@ -1087,6 +1106,21 @@ class HAConfig:
     def netzladen(self, parameters, ueberschuss):
         """Untergrenze von ``dc_p`` je Slot (kW, DC, ≤ 0) — oder None.
 
+        Zwei Quellen, je Slot die tiefere Grenze: das wirtschaftliche
+        Netzladen (``_netzladen_wirtschaftlich``) und das Nachladen der
+        Spitzenreserve (``_reserve_netz_untergrenze``). Ohne beide None.
+        """
+        wirtschaftlich = self._netzladen_wirtschaftlich(parameters, ueberschuss)
+        reserve = self._reserve_netz_untergrenze(parameters, ueberschuss)
+        if reserve is None:
+            return wirtschaftlich
+        if wirtschaftlich is None:
+            return reserve
+        return wirtschaftlich.combine(reserve, min)
+
+    def _netzladen_wirtschaftlich(self, parameters, ueberschuss):
+        """Untergrenze von ``dc_p`` je Slot (kW, DC, ≤ 0) — oder None.
+
         Aufgerufen von ``opt_highs.opt`` (LOCAL CHANGE, ``chamo/README.md``
         § 5). Wo die Grenze unter null liegt, darf das LP aus dem Netz laden,
         höchstens ``netzladen_max_kw`` (AC). None heißt: nirgends — dann ist
@@ -1152,6 +1186,135 @@ class HAConfig:
         if not any(u < 0 for u in untergrenze):
             return None
         return pd.Series(untergrenze, index=ueberschuss.index)
+
+    def _reserve_netz_forderung(self, ueberschuss) -> list[float] | None:
+        """Mindestinhalt je Slot (kWh im Modellfenster) aus der Spitzenreserve.
+
+        Nur mit „Reserve notfalls aus dem Netz" (``spitzenreserve_netz_kw``).
+        Die Kurve sagt je Viertelstunde, wie viel Energie ab ihr bis zum
+        nächsten Überschuss über der Grenze liegt. Gefordert wird sie nur am
+        Ende des Slots VOR einer Viertelstunde, die selbst zum Bedarf beiträgt
+        (Kurve fällt dort um mehr als ``RESERVE_NETZ_BEDARF_MIN_KWH``): Bis
+        dahin ist jede Viertelstunde gleich gut zum Nachladen, und die
+        günstigste darf es sein. Eine Forderung schon am Abend für die
+        Wärmepumpe um 07:30 ließe nur das sofortige Laden zu.
+
+        Gezählt im Modellfenster, also über ``min_soc_pct`` — dem Boden, der
+        die Reserve von jetzt schon enthält, soweit der Ladestand reicht.
+        """
+        if float(self._inputs.spitzenreserve_netz_kw or 0.0) <= 0:
+            return None
+        info = self._inputs.spitzenreserve or {}
+        basis = self._inputs.min_soc_basis_pct
+        kurve = info.get("kurve") or []
+        if basis is None or not kurve or len(ueberschuss) == 0:
+            return None
+        pct = {}
+        for t, wert in kurve:
+            try:
+                pct[int(datetime.fromisoformat(t).timestamp())] = float(wert)
+            except (TypeError, ValueError):
+                continue
+        kap = float(self._inputs.battery_capacity_kwh)
+        stempel = [int(t.timestamp()) for t in ueberschuss.index]
+        n = len(stempel)
+        forderung = [0.0] * n
+        for k in range(n - 1):
+            jetzt = pct.get(stempel[k + 1])
+            danach = pct.get(stempel[k + 2]) if k + 2 < n else 0.0
+            if jetzt is None:
+                continue
+            anteil = (jetzt - (danach or 0.0)) / 100.0 * kap
+            if anteil <= RESERVE_NETZ_BEDARF_MIN_KWH:
+                continue
+            kwh = kap * (float(basis) + jetzt - float(self._inputs.min_soc_pct)) / 100.0
+            forderung[k] = min(float(self.battery_capacity), max(0.0, kwh))
+        return forderung if any(f > 0 for f in forderung) else None
+
+    def _reserve_netz_untergrenze(self, parameters, ueberschuss):
+        """Netzladung je Slot für die Spitzenreserve (kW, DC, ≤ 0) — oder None.
+
+        Unabhängig vom Preis, aber so günstig wie möglich: Für die erste
+        Forderung (``_reserve_netz_forderung``), die der Stand ohne Zukauf
+        nicht erreicht, wird der günstigste noch freie Slot davor gewählt —
+        bei gleichem Preis der späteste —, dann neu gerechnet, bis alles
+        erreicht ist oder kein Slot mehr hilft. Der Preis ist der Bezugspreis
+        des Slots, mit Spot- und Gemeinschaftsbezug (``bezugsreihe_netzladen``):
+        Hat die Gemeinschaft Überschuss, ist das der günstigste Slot.
+
+        Je Slot darf die Ladung den Zähler nicht über die Grenze der
+        Spitzenkappung heben (minus ``SICHERHEIT_KW``); sonst schüfe das
+        Nachladen die Spitze, gegen die es vorsorgt. Nur gewählte Slots
+        bekommen eine Grenze — so kauft das LP nicht nebenbei auf Vorrat.
+        """
+        forderung = self._reserve_netz_forderung(ueberschuss)
+        if forderung is None:
+            return None
+        import pandas as pd
+
+        from .spitzenreserve import SICHERHEIT_KW
+
+        max_kw = float(self._inputs.spitzenreserve_netz_kw or 0.0)
+        p2e = self.time_res / 3600.0
+        preise = [float(v) / p2e for v in parameters["consumption_price"].values]
+        haus = [float(v) for v in parameters["consumption"].values]
+        pv = [float(v) for v in parameters["dc_production"].values]
+        werte = [float(v) for v in ueberschuss.values]
+        stempel = list(ueberschuss.index)
+        n = len(werte)
+        fest = self._preis_fest_je_slot(stempel)
+        info = self._inputs.spitzenreserve or {}
+        grenze_je_t = {}
+        for (t, _), g in zip(info.get("kurve") or [], info.get("grenzen") or []):
+            try:
+                grenze_je_t[int(datetime.fromisoformat(t).timestamp())] = float(g)
+            except (TypeError, ValueError):
+                continue
+        standard = float(info.get("grenze_kw") or 0.0)
+        netz = []
+        for k in range(n):
+            grenze = grenze_je_t.get(int(stempel[k].timestamp()), standard)
+            netz.append(min(max_kw, max(0.0, grenze - SICHERHEIT_KW - haus[k])))
+
+        kapazitaet = float(self.battery_capacity)
+        grenze_leistung = float(self.battery_power_limit)
+        start = kapazitaet - float(self.battery_free)
+
+        def schritt(k: int, mit_netz: bool) -> float:
+            if mit_netz:
+                return min(
+                    _ladeleistung_aus_dc(pv[k] + netz[k] / self.ac_efficiency, kapazitaet),
+                    grenze_leistung,
+                ) * p2e
+            w = werte[k]
+            if w > 0:
+                return min(_ladeleistung_aus_dc(w, kapazitaet), grenze_leistung) * p2e
+            return -min(_entladeleistung_fuer_dc(-w, kapazitaet), grenze_leistung) * p2e
+
+        gewaehlt = [False] * n
+        for _ in range(n):
+            stand = start
+            luecke = None
+            for k in range(n):
+                stand = min(kapazitaet, max(0.0, stand + schritt(k, gewaehlt[k])))
+                if stand < forderung[k] - 1e-6:
+                    luecke = k
+                    break
+            if luecke is None:
+                break
+            kandidaten = [
+                j for j in range(luecke + 1)
+                if not gewaehlt[j] and fest[j] and netz[j] > 0
+            ]
+            if not kandidaten:
+                break
+            gewaehlt[min(kandidaten, key=lambda j: (preise[j], -j))] = True
+        if not any(gewaehlt):
+            return None
+        return pd.Series(
+            [-netz[k] / self.ac_efficiency if gewaehlt[k] else 0.0 for k in range(n)],
+            index=ueberschuss.index,
+        )
 
     def _preis_fest_je_slot(self, stempel) -> list[bool]:
         """``consumption_price_fest`` auf die Slots des LP umgelegt."""
@@ -1499,12 +1662,32 @@ def netzladen_max_kw(config: dict, inverter: Any = None) -> float:
     """Netzbezugsleistung in die Batterie (kW) — 0 heißt „aus dem Netz laden" aus.
 
     Nur mit dem Schalter und nur, wenn der Treiber Netzladen kann
-    (``supports_grid_charge``, derzeit Huawei und Victron). Das ist die Batterieleistung;
+    (``supports_grid_charge``, derzeit Huawei, Victron und Fronius). Das ist die Batterieleistung;
     die Grenze am Zähler ist ``netzladen_netzgrenze_kw``.
     """
     if not NETZLADEN_FREIGEGEBEN or not config.get(CONF_SCHEDULE_NETZLADEN):
         return 0.0
     if inverter is not None and not getattr(inverter, "supports_grid_charge", False):
+        return 0.0
+    return float(
+        config.get(CONF_DISCHARGE_POWER_KW, DEFAULT_DISCHARGE_POWER_KW)
+        or DEFAULT_DISCHARGE_POWER_KW
+    )
+
+
+def spitzenreserve_netz_kw(config: dict, inverter: Any = None) -> float:
+    """Leistung fürs Nachladen der Spitzenreserve aus dem Netz (kW) — 0 = aus.
+
+    Mit dem Schalter, solange das Netzladen freigegeben ist, und nur, wenn
+    der Treiber beides kann: die Entladung deckeln (die Reserve halten) und
+    aus dem Netz laden. Das ist die Batterieleistung; die Grenze am Zähler
+    setzt die Spitzenkappung selbst.
+    """
+    if not NETZLADEN_FREIGEGEBEN or not config.get(CONF_SPITZENKAPPUNG_RESERVE_NETZ):
+        return 0.0
+    if not spitzenkappung_batterie_aktiv(config, inverter):
+        return 0.0
+    if not getattr(inverter, "supports_grid_charge", False):
         return 0.0
     return float(
         config.get(CONF_DISCHARGE_POWER_KW, DEFAULT_DISCHARGE_POWER_KW)
@@ -1702,10 +1885,18 @@ def _spitzenreserve_fuer_plan(
     erreichten Spitze kostet keine Viertelstunde mehr. Gedeckelt wird je
     Viertelstunde bei der Entladeleistung: Was darüber liegt, kann die
     Batterie nicht kappen, also braucht es dafür auch keine Reserve.
+
+    Die Grenze gilt je Slot: Die Monatsspitze zählt nur in ihrem eigenen
+    Kalendermonat, ab Mitternacht des Monatsersten gilt wieder die
+    eingestellte Grenze. Mit einer Grenze für den ganzen Horizont sah der
+    Plan am 31.10.2026 abends die Oktoberspitze auch über dem Morgen des
+    1.11. — Reserve 0, die Batterie war leer, als die Wärmepumpe um 07:30
+    mit 4,24 kW die erste Novemberspitze setzte (Grenze 3,5 kW).
     """
     if not spitzenkappung_batterie_aktiv(config, inverter) or not _steuert_gerade(data):
         return None
     try:
+        from .leistungsspitze import monat_von
         from .spitzenkappung import grenze_aus_config
         from .spitzenreserve import (
             kurve_in_pct,
@@ -1715,8 +1906,11 @@ def _spitzenreserve_fuer_plan(
             ueberschuss_je_slot,
         )
 
-        grenze = grenze_aus_config(config)
-        spitze = (getattr(data.get("leistungsspitze"), "spitze", None) or {}).get("kw")
+        eingestellt = grenze_aus_config(config)
+        grenze = eingestellt
+        leistungsspitze = data.get("leistungsspitze")
+        spitze = (getattr(leistungsspitze, "spitze", None) or {}).get("kw")
+        spitze_monat = getattr(leistungsspitze, "monat", None) or monat_von(start)
         if isinstance(spitze, (int, float)) and math.isfinite(spitze):
             grenze = max(grenze, float(spitze))
         entlade = None
@@ -1735,8 +1929,11 @@ def _spitzenreserve_fuer_plan(
         ueberschuss = ueberschuss_je_slot(viertel, stamps, production, consumption)
         reserve = data.get("spitzenreserve")
         verlauf = reserve.verlauf_nach_zeit() if reserve is not None else {}
+        grenzen = [
+            grenze if monat_von(t) == spitze_monat else eingestellt for t in viertel
+        ]
         kurve_kwh, tage = reservekurve(
-            verlauf, viertel, ueberschuss, grenze, float(entlade)
+            verlauf, viertel, ueberschuss, grenzen, float(entlade)
         )
         min_pct, max_pct = reserve_grenzen_pct(config)
         kurve_pct = kurve_in_pct(kurve_kwh, capacity_kwh, min_pct, max_pct)
@@ -1748,6 +1945,9 @@ def _spitzenreserve_fuer_plan(
         "grenze_kw": round(grenze, 2),
         "entlade_kw": round(float(entlade), 2),
         "kurve": [[t.isoformat(), p] for t, p in zip(viertel, kurve_pct)],
+        # Grenze je Viertelstunde, gleich lang wie die Kurve — das Nachladen
+        # aus dem Netz bleibt darunter (HAConfig._reserve_netz_untergrenze).
+        "grenzen": [round(g, 2) for g in grenzen],
         "plan_pct": round(plan_pct, 1),
         # Liegt der erste Slot im Überschuss, ist plan_pct die Reserve, mit
         # der der Abend beginnt — sie wird zum Ladeziel, nicht zum Boden.
@@ -3036,8 +3236,12 @@ async def async_collect_inputs(
     # „Aus dem Netz laden" (Beta, nur mit passendem Treiber): erst damit
     # zählen Spot- und EEG-Bezug. Ohne den Schalter bleibt alles beim Alten.
     netzlade_kw = netzladen_max_kw(config, inverter)
+    # Spitzenreserve aus dem Netz: nur, wenn der Plan eine Reserve hält.
+    reserve_netz_kw = (
+        spitzenreserve_netz_kw(config, inverter) if spitzenreserve_info is not None else 0.0
+    )
     bezug_reihe = bezug_fest = None
-    if netzlade_kw > 0:
+    if netzlade_kw > 0 or reserve_netz_kw > 0:
         spot_netto = spot_fest = None
         if str(config.get(CONF_SCHEDULE_BEZUG_QUELLE) or "").lower() == BEZUG_QUELLE_SPOT:
             spot_provider = data.get("spot")
@@ -3046,7 +3250,8 @@ async def async_collect_inputs(
                 spot_fest = spot_provider.bekannt(stamps) if spot_netto else None
         bezug_reihe, bezug_fest = bezugsreihe_netzladen(
             config, stamps, bezug, bezug_snap, bezug_winap, netz,
-            spot_netto, spot_fest, eeg_bedarf, consumption, production, netzlade_kw,
+            spot_netto, spot_fest, eeg_bedarf, consumption, production,
+            max(netzlade_kw, reserve_netz_kw),
         )
 
     inputs = ScheduleInputs(
@@ -3082,6 +3287,7 @@ async def async_collect_inputs(
         netzladen_max_kw=netzlade_kw,
         netzladen_netzgrenze_kw=netzladen_netzgrenze_kw(config) if netzlade_kw > 0 else 0.0,
         netzladen_vorteil=netzladen_vorteil(config),
+        spitzenreserve_netz_kw=reserve_netz_kw,
         # Wie bei den übrigen Fahrplan-Zahlen zählt auch hier ein leeres Feld
         # als „nicht gesetzt": das Panel speicherte leere Zahlenfelder als 0,
         # und eine 0 hieße, die Optimierung schont die Batterie überhaupt
@@ -3197,6 +3403,7 @@ _ENDLICH_SKALARE = (
     "consumption_price", "consumption_price_snap", "consumption_price_winap",
     "battery_cost", "min_soc_pct", "max_soc_pct", "ladeziel_pct", "worst_case_factor",
     "netzdienlich_bonus", "netzladen_max_kw", "netzladen_netzgrenze_kw", "netzladen_vorteil",
+    "spitzenreserve_netz_kw",
     "heizstab_max_kw", "heizstab_waermewert", "heizstab_budget_kwh",
 )
 _ENDLICH_REIHEN = (
@@ -3322,7 +3529,7 @@ def solve(inputs: ScheduleInputs) -> dict[str, Any]:
         slot["heizstab"] = _heizstab_plan_kw(
             slot.get("discard"), inputs, row.get("heater")
         )
-        if inputs.netzladen_max_kw > 0:
+        if inputs.netzladen_max_kw > 0 or inputs.spitzenreserve_netz_kw > 0:
             slot["netzladung"] = netzladung_kw(slot, HAConfig.ac_efficiency)
         slots.append(slot)
     # Puffertemperatur je Slot — Nachrechnung aus der geplanten Wärme, das

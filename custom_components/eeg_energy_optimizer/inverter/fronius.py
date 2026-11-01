@@ -89,8 +89,10 @@ def _scale_to_register(value: float, sf: int) -> int:
 _OFFSET_WCHAMAX = 0
 _OFFSET_STORCTL_MOD = 3
 _OFFSET_MINRSVPCT = 5
+_OFFSET_CHASTATE = 6
 _OFFSET_OUTWRTE = 10
 _OFFSET_INWRTE = 11
+_OFFSET_CHAGRISET = 15
 
 # Registernamen für die Fehlerausgabe — welcher Wert abgelehnt wurde, ist
 # bei der Fehlersuche wichtiger als seine Adresse.
@@ -98,6 +100,7 @@ _REGISTERNAMEN = {
     _OFFSET_MINRSVPCT: "MinRsvPct",
     _OFFSET_OUTWRTE: "OutWRte",
     _OFFSET_INWRTE: "InWRte",
+    _OFFSET_CHAGRISET: "ChaGriSet",
 }
 
 
@@ -187,6 +190,7 @@ _OFFSET_RVRTTMS = 13
 # definition minus the 2-register ID/length header.
 _OFFSET_WCHAMAX_SF = 16
 _OFFSET_MINRSVPCT_SF = 19
+_OFFSET_CHASTATE_SF = 20
 _OFFSET_INOUTWRTE_SF = 23
 
 # Model 124 data length in registers (26 total minus the 2-register header).
@@ -199,6 +203,14 @@ _MODEL124_DATA_LENGTH = 24
 _SF_DEFAULT_WCHAMAX = 0
 _SF_DEFAULT_MINRSVPCT = -2
 _SF_DEFAULT_INOUTWRTE = -2
+_SF_DEFAULT_CHASTATE = -2
+
+# ChaGriSet: 0 = Laden nur aus PV, 1 = Laden aus dem Netz erlaubt.
+_CHAGRISET_PV = 0
+_CHAGRISET_GRID = 1
+# Netzladung darunter: nichts aus dem Netz (die Netzgrenze lässt gerade
+# nichts zu) — wie eine Freigabe, ein Ladepunkt 0 sperrte auch die PV.
+_NETZLADEN_MIN_KW = 0.05
 
 # A sunssf outside this range is not a scale factor but a misread register
 # (wrong model layout, corrupted response). Applying it would shift every
@@ -308,6 +320,27 @@ class FroniusStateStore:
         except (TypeError, ValueError):
             return None
 
+    # ChaGriSet vor der ersten Netzladung — derselbe Grund wie beim
+    # MinRsvPct: Ein Neustart mitten in der Ladung darf den Vorwert nicht
+    # verlieren, sonst bliebe das Laden aus dem Netz dauerhaft erlaubt.
+    async def async_save_original_chagriset(self, raw: int) -> None:
+        self._data["chagriset_original"] = int(raw)
+        if self._store is not None:
+            await self._store.async_save(self._data)
+
+    async def async_clear_original_chagriset(self) -> None:
+        if self._data.pop("chagriset_original", None) is not None:
+            if self._store is not None:
+                await self._store.async_save(self._data)
+
+    @property
+    def original_chagriset(self) -> int | None:
+        val = self._data.get("chagriset_original")
+        try:
+            return int(val) if val is not None else None
+        except (TypeError, ValueError):
+            return None
+
 
 class FroniusInverter(InverterBase):
     """Fronius Gen24 battery control via direct Modbus TCP (SunSpec Model 124)."""
@@ -328,11 +361,13 @@ class FroniusInverter(InverterBase):
         self._sf_wchamax: int = _SF_DEFAULT_WCHAMAX
         self._sf_minrsvpct: int = _SF_DEFAULT_MINRSVPCT
         self._sf_inoutwrte: int = _SF_DEFAULT_INOUTWRTE
+        self._sf_chastate: int = _SF_DEFAULT_CHASTATE
         self._sf_loaded: bool = False
         # Active forced mode the keepalive rewrites until stop:
         #   {"kind": "charge_limit", "power_kw": float}
         #   {"kind": "discharge", "power_kw": float, "target_soc": float|None}
         #   {"kind": "entladedeckel"} — nur der Entladedeckel, ohne Ladelimit
+        #   {"kind": "grid_charge", "power_kw": float, "target_soc": float|None}
         self._active_command: dict | None = None
         # Entladedeckel der Spitzenkappung in kW (None = keiner). Gilt neben
         # einem Ladelimit: dann StorCtl_Mod = 3 mit InWRte UND OutWRte.
@@ -574,6 +609,9 @@ class FroniusInverter(InverterBase):
             self._sf_inoutwrte = _pick(
                 _OFFSET_INOUTWRTE_SF, _SF_DEFAULT_INOUTWRTE, "InOutWRte_SF"
             )
+            self._sf_chastate = _pick(
+                _OFFSET_CHASTATE_SF, _SF_DEFAULT_CHASTATE, "ChaState_SF"
+            )
             self._sf_loaded = True
             _LOGGER.info(
                 "Fronius: scale factors read - WChaMax_SF=%d, MinRsvPct_SF=%d, "
@@ -726,21 +764,8 @@ class FroniusInverter(InverterBase):
         zuerst), die bei jeder Senkung und aus dem Automatikmodus heraus
         funktioniert.
         """
-        try:
-            antwort = await self._client.read_holding_registers(
-                address=self._model124_base + _OFFSET_OUTWRTE,
-                count=1,
-                **_slave_kw(self._client, self._slave_id),
-            )
-            if antwort.isError():
-                return False
-            roh = antwort.registers[0]
-            if roh > 0x7FFF:
-                roh -= 0x10000
-            aktuell = roh * 10 ** self._sf_inoutwrte
-        except Exception:
-            return False
-        return percent > aktuell
+        aktuell = await self._outwrte_aktuell()
+        return aktuell is not None and percent > aktuell
 
     async def _diagnose_model124(self, offset: int, value: int) -> None:
         """Nach einem „Illegal Data Value" den ganzen Model-124-Block loggen.
@@ -831,6 +856,10 @@ class FroniusInverter(InverterBase):
             return await self._write_charge_limit(command["power_kw"])
         if command["kind"] == "entladedeckel":
             return await self._write_entladedeckel()
+        if command["kind"] == "grid_charge":
+            return await self._netzladung_schreiben(
+                command["power_kw"], command.get("target_soc"), aus_keepalive=True
+            )
         return await self._write_discharge(
             command["power_kw"], command.get("target_soc")
         )
@@ -1206,6 +1235,183 @@ class FroniusInverter(InverterBase):
             self._close_client()
             return self._fehler("Ausnahme beim Setzen der Entladung")
 
+    # ------------------------------------------------------------------
+    # Netzladung (Beta): Batterie aus PV und Netz laden
+    # ------------------------------------------------------------------
+    @property
+    def supports_grid_charge(self) -> bool:
+        """Über ein Ladefenster wie Beispiel 5 der Fronius-Modbus-Doku.
+
+        Am Gerät noch nicht geprüft (Stand 01.11.2026): ob ``ChaGriSet = 1``
+        allein reicht oder im Webinterface zusätzlich das Laden aus dem Netz
+        erlaubt sein muss, ob der Gen24 die Ladeleistung bei schwankender PV
+        hält, und ob er nach ``StorCtl_Mod = 0`` sauber zurückkehrt.
+        """
+        return True
+
+    async def async_set_grid_charge(
+        self, power_kw: float, target_soc: float | None = None
+    ) -> bool:
+        """Batterie mit ``power_kw`` laden, PV zuerst, den Rest aus dem Netz.
+
+        Das Spiegelbild der erzwungenen Entladung: InWRte = +x, OutWRte = −x
+        und StorCtl_Mod = 3 legen das Fenster [−OutWRte, InWRte] auf einen
+        Ladepunkt, ``ChaGriSet = 1`` erlaubt dafür den Netzbezug. Den Vorwert
+        von ChaGriSet sichert der Treiber (auch im Store) und schreibt ihn bei
+        jedem Stopp zurück.
+
+        Einen Ziel-Ladestand kennt der Gen24 fürs Laden nicht. Der Treiber
+        liest ChaState bei jedem Schreiben und im Keepalive (60 s) und gibt
+        am Ziel (ohne Ziel: 100 %) frei; steht der Ladestand schon dort, wird
+        nur freigegeben.
+        """
+        if self._nicht_endlich(power_kw, target_soc):
+            return False
+        async with self._lock:
+            return await self._netzladung_schreiben(power_kw, target_soc)
+
+    async def _netzladung_schreiben(
+        self, power_kw: float, target_soc: float | None, aus_keepalive: bool = False
+    ) -> bool:
+        """Netzladung schreiben oder am Ziel freigeben. Aufrufer hält den Lock."""
+        try:
+            if not await self._ensure_model124():
+                return self._fehler("Model 124 nicht erreichbar")
+            ziel = 100.0 if target_soc is None else min(100.0, float(target_soc))
+            leistung = max(0.0, float(power_kw))
+            soc = await self._ladestand_pct()
+            am_ziel = soc is not None and soc >= ziel
+            if leistung < _NETZLADEN_MIN_KW or am_ziel:
+                if am_ziel:
+                    _LOGGER.info(
+                        "Fronius: Netzladung am Ziel (%.1f %% ≥ %.0f %%) — Freigabe",
+                        soc, ziel,
+                    )
+                ok = await self._stop_forcible_locked(
+                    keepalive_stoppen=not aus_keepalive
+                )
+                return (
+                    self._erfolg() if ok
+                    else self._fehler("Freigabe am Ziel fehlgeschlagen")
+                )
+
+            wchamax = await self._read_wchamax()
+            if wchamax is None or wchamax == 0:
+                return self._fehler("WChaMax unbekannt oder null")
+            percent = min(leistung * 1000 / wchamax, 1.0) * 100.0
+
+            if not await self._netzladen_erlauben():
+                return False
+
+            # Reihenfolge wie bei der Entladung: Der Gen24 lehnt jeden
+            # Einzelschritt ab, nach dem das Fenster [−OutWRte, InWRte] leer
+            # wäre. Steigt der Ladepunkt (oder kommt er aus Automatik oder
+            # Entladung), erst InWRte heben; sinkt er, erst OutWRte senken.
+            outwrte = await self._outwrte_aktuell()
+            erst_in = outwrte is None or percent >= -outwrte
+            reihenfolge = (
+                ((_OFFSET_INWRTE, percent), (_OFFSET_OUTWRTE, -percent))
+                if erst_in
+                else ((_OFFSET_OUTWRTE, -percent), (_OFFSET_INWRTE, percent))
+            )
+            for offset, wert in reihenfolge:
+                if not await self._write_register(offset, self._rate_register(wert)):
+                    return False
+            if not await self._write_register(_OFFSET_WINTMS, 0):
+                return False
+            if not await self._write_register(_OFFSET_RVRTTMS, _RVRTTMS_SECONDS):
+                return False
+            if not await self._write_register(_OFFSET_STORCTL_MOD, 3):
+                return False
+
+            # OutWRte gehört jetzt der Ladung — ein Deckel gilt nicht mehr.
+            self._entladedeckel_kw = None
+            self._active_command = {
+                "kind": "grid_charge",
+                "power_kw": power_kw,
+                "target_soc": target_soc,
+            }
+            self._start_keepalive()
+            _LOGGER.info(
+                "Fronius: Netzladung %.2f kW bis %.0f %% (%.1f %% von WChaMax %d W)",
+                leistung, ziel, percent, wchamax,
+            )
+            return self._erfolg()
+        except Exception:
+            _LOGGER.exception("Fronius: Netzladung fehlgeschlagen")
+            self._close_client()
+            return self._fehler("Ausnahme beim Setzen der Netzladung")
+
+    async def _ladestand_pct(self) -> float | None:
+        """ChaState — der Ladestand, mit dem der Gen24 selbst rechnet."""
+        await self._read_scale_factors()
+        try:
+            antwort = await self._client.read_holding_registers(
+                address=self._model124_base + _OFFSET_CHASTATE,
+                count=1,
+                **_slave_kw(self._client, self._slave_id),
+            )
+            if antwort.isError():
+                return None
+            roh = antwort.registers[0]
+            if roh in (0xFFFF, 0x8000):
+                return None
+            return roh * 10 ** self._sf_chastate
+        except Exception:
+            return None
+
+    async def _outwrte_aktuell(self) -> float | None:
+        """OutWRte in Prozent, wie es gerade im Gerät steht (None = unlesbar)."""
+        try:
+            antwort = await self._client.read_holding_registers(
+                address=self._model124_base + _OFFSET_OUTWRTE,
+                count=1,
+                **_slave_kw(self._client, self._slave_id),
+            )
+            if antwort.isError():
+                return None
+            return _to_signed16(antwort.registers[0]) * 10 ** self._sf_inoutwrte
+        except Exception:
+            return None
+
+    async def _netzladen_erlauben(self) -> bool:
+        """ChaGriSet = 1 — vorher den Vorwert sichern (Store hat Vorrang).
+
+        Wie beim MinRsvPct: Nach einem Neustart mitten in der Ladung steht im
+        Register schon unsere 1, nur der Store kennt den echten Vorwert.
+        Ohne lesbaren Vorwert wird nicht geschrieben — sonst wüsste niemand,
+        worauf zurückzustellen ist.
+        """
+        await self._state_store.async_load()
+        if self._state_store.original_chagriset is None:
+            antwort = await self._client.read_holding_registers(
+                address=self._model124_base + _OFFSET_CHAGRISET,
+                count=1,
+                **_slave_kw(self._client, self._slave_id),
+            )
+            if antwort.isError():
+                return self._fehler("ChaGriSet nicht lesbar")
+            vorwert = antwort.registers[0]
+            if vorwert not in (_CHAGRISET_PV, _CHAGRISET_GRID):
+                return self._fehler("ChaGriSet nicht unterstützt")
+            await self._state_store.async_save_original_chagriset(vorwert)
+        return await self._write_register(_OFFSET_CHAGRISET, _CHAGRISET_GRID)
+
+    async def _chagriset_zuruecknehmen(self) -> bool:
+        """ChaGriSet auf den gesicherten Vorwert; ohne Vorwert nichts zu tun."""
+        await self._state_store.async_load()
+        vorwert = self._state_store.original_chagriset
+        if vorwert is None:
+            return True
+        if not await self._write_register(_OFFSET_CHAGRISET, vorwert):
+            _LOGGER.warning(
+                "Fronius: ChaGriSet=%d nicht zurückgesetzt — wird wiederholt", vorwert
+            )
+            return False
+        await self._state_store.async_clear_original_chagriset()
+        _LOGGER.info("Fronius: ChaGriSet auf %d zurückgesetzt", vorwert)
+        return True
+
     async def async_stop_forcible(self) -> bool:
         """Stop forced charge/discharge, return to automatic mode.
 
@@ -1216,12 +1422,16 @@ class FroniusInverter(InverterBase):
         async with self._lock:
             return await self._stop_forcible_locked()
 
-    async def _stop_forcible_locked(self) -> bool:
+    async def _stop_forcible_locked(self, keepalive_stoppen: bool = True) -> bool:
         # Drop the active command first: a keepalive rewrite racing this
         # stop would otherwise re-arm the mode we are about to clear.
+        # ``keepalive_stoppen=False`` nur aus dem Keepalive selbst (Netzladung
+        # am Ziel): Er bräche sich sonst mitten im Stopp selbst ab und endet
+        # ohnehin, sobald kein Kommando mehr steht.
         self._active_command = None
         self._entladedeckel_kw = None
-        self._cancel_keepalive()
+        if keepalive_stoppen:
+            self._cancel_keepalive()
         try:
             if not await self._ensure_model124():
                 return False
@@ -1274,6 +1484,11 @@ class FroniusInverter(InverterBase):
                     # Zyklus wiederholt — sonst bliebe die erhöhte Reserve
                     # bis zum nächsten Zustandswechsel stehen.
                     return False
+
+            # Laden aus dem Netz wieder auf den Vorwert — sonst dürfte der
+            # Gen24 auch im Automatikbetrieb weiter aus dem Netz laden.
+            if not await self._chagriset_zuruecknehmen():
+                return False
 
             _LOGGER.info("Fronius: stopped forcible mode — automatic operation restored")
             return True
@@ -1408,7 +1623,7 @@ class FroniusInverter(InverterBase):
                 return []
             wchamax = await self._read_wchamax()
             try:
-                count = _OFFSET_INWRTE - _OFFSET_STORCTL_MOD + 1
+                count = _OFFSET_CHAGRISET - _OFFSET_STORCTL_MOD + 1
                 result = await self._client.read_holding_registers(
                     address=self._model124_base + _OFFSET_STORCTL_MOD,
                     count=count,
@@ -1471,6 +1686,16 @@ class FroniusInverter(InverterBase):
             "unit": "%",
             "role": "backup_soc",
         })
+        # Ein kurzer Block (ältere Firmware, Testattrappe) endet vor ChaGriSet.
+        if len(regs) > _OFFSET_CHAGRISET - _OFFSET_STORCTL_MOD:
+            cha_gri = _at(_OFFSET_CHAGRISET)
+            rows.append({
+                "label": "Laden aus dem Netz (ChaGriSet)",
+                "value": {_CHAGRISET_PV: "nur PV", _CHAGRISET_GRID: "erlaubt"}.get(
+                    cha_gri, str(cha_gri)
+                ),
+                "role": "grid_charge",
+            })
         return rows
 
     @property

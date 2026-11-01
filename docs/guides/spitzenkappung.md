@@ -58,7 +58,17 @@ Auch der Fahrplan rechnet die Reserve mit ein:
 - Im Modus **Aus** und während einer **Pause** rechnet der Plan ohne Reserve.
 
 > [!NOTE]
-> Hast du das Ladeziel ausgeschaltet, erscheint tagsüber trotzdem eine Ladeziel-Marke im Ladestandsdiagramm: Das ist die Abendreserve. Mit **Batterie aus dem Netz laden** (Beta, Huawei und Victron) darf der Plan sie auch mit günstigem Netzstrom erreichen, wie jedes andere Ladeziel.
+> Hast du das Ladeziel ausgeschaltet, erscheint tagsüber trotzdem eine Ladeziel-Marke im Ladestandsdiagramm: Das ist die Abendreserve. Mit **Batterie aus dem Netz laden** (Beta, Huawei, Victron und Fronius) darf der Plan sie auch mit günstigem Netzstrom erreichen, wie jedes andere Ladeziel.
+
+### Reserve notfalls aus dem Netz nachladen (Beta)
+
+Ohne diese Option holt die Batterie ihre Reserve nur aus der Sonne. Nach einem trüben Tag kann sie dann leer in eine Nacht mit Spitze gehen. Mit **Reserve notfalls aus dem Netz nachladen** lädt der Fahrplan nach, was zur Reserve fehlt, und zwar unabhängig vom Preis.
+
+- **Wann:** vor der ersten Viertelstunde, in der laut Statistik eine Spitze kommt, etwa vor der Wärmepumpe am Morgen. Bis dahin ist jede Viertelstunde gleich gut, und der Plan nimmt die **günstigste**. Steckt der Bezug aus der Gemeinschaft im Bezugspreis (Tab **Netzladen**), sind das die Viertelstunden, in denen die Gemeinschaft Strom übrig hat. Sonst gilt der Bezugstarif, etwa ein günstigeres Netzentgelt-Fenster oder bei Spot-Bezug die billigste Stunde.
+- **Wie viel:** nur, was zur Reserve fehlt und die Sonne bis dahin nicht bringt.
+- **Nie über der Grenze:** Haus und Ladung zusammen bleiben 0,3 kW unter dem Grenzwert. Sonst schüfe das Nachladen genau die Spitze, gegen die es vorsorgt.
+
+Die Option gibt es nur bei Wechselrichtern, die beides können: die Entladung begrenzen und aus dem Netz laden. Derzeit sind das **Huawei** und **Fronius**. Sie kostet die Lade- und Entladeverluste und Strom, der auch gekauft ist, wenn die Spitze ausbleibt. Die Reserve deckt die Nacht mit dem höchsten Bedarf der letzten Wochen ab, nicht eine durchschnittliche.
 
 ### Verbraucher abschalten
 
@@ -99,6 +109,7 @@ Die Spitzenkappung findest du in den **Einstellungen** im Tab **Spitzenkappung**
 | **Grenzwert (kW)** | 2 bis 20 kW, Vorgabe 5. Darunter wird nichts gekappt |
 | **Mindestreserve (%)** | Derzeit nur mit Huawei, Fronius, SMA oder SolaX. So viel hält die Batterie immer für Spitzen zurück, auch wenn die Statistik weniger verlangt. Vorgabe 0 |
 | **Maximalreserve (%)** | Derzeit nur mit Huawei, Fronius, SMA oder SolaX. Mehr hält die Batterie nie zurück. Vorgabe 30. Ein leeres Feld heißt ebenfalls 30, 0 schaltet die Reserve ab |
+| **Reserve notfalls aus dem Netz nachladen** | Beta, nur mit Huawei oder Fronius. Lädt die fehlende Reserve vor der nächsten erwarteten Spitze aus dem Netz nach, in den günstigsten Viertelstunden. Vorgabe aus |
 | **Verbraucher** | Bis zu zehn, in der Reihenfolge, in der abgeschaltet wird. Je Verbraucher brauchst du einen **Leistungssensor** (W oder kW) und einen **Schalter** (`switch.` oder `input_boolean.`). Optional trägst du die **Nennleistung** in kW ein |
 
 Ohne Batterie-Stufe (andere Wechselrichter) brauchst du mindestens einen Verbraucher. Sonst täte die Funktion nichts.

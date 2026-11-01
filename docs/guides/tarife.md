@@ -90,7 +90,7 @@ Nur sichtbar, wenn im Tab **System** der Expertenmodus eingeschaltet ist. **Alte
 
 ### Batterie aus dem Netz laden
 
-Die Felder dafür stehen im eigenen Reiter **Netzladen** (Beta, Expertenmodus, Huawei und Victron), auch der Bezugspreis aus der Gemeinschaft. Siehe Anleitung „Batterie aus dem Netz laden“.
+Die Felder dafür stehen im eigenen Reiter **Netzladen** (Beta, Expertenmodus, Huawei, Victron und Fronius), auch der Bezugspreis aus der Gemeinschaft. Siehe Anleitung „Batterie aus dem Netz laden“.
 
 ## Nachtsatz und Nachtfenster
 
