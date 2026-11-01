@@ -12,6 +12,13 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+## [2.1.59] - 2026-11-01
+
+### Geändert
+
+- **Der Reiter Tarife trennt Einspeisung und Bezug.** Statt einer Karte „Vergütung und Kosten“ gibt es die Karten **Einspeisung** und **Bezug**, und im Block jeder Gemeinschaft stehen **Einspeisung in die Gemeinschaft** und **Bezug aus der Gemeinschaft** als eigene, farbig abgesetzte Abschnitte. Die Bezugstarife fürs Laden aus dem Netz sind aus dem Reiter Netzladen hierher zurückgezogen: der Bezugstarif deines Lieferanten (fest oder Börsenpreis samt Aufschlägen) am Ende der Karte **Bezug**, der Bezugspreis und die Art der Gemeinschaft bei jeder Gemeinschaft. Sichtbar sind sie bei Huawei, Victron und Fronius, auch ohne Expertenmodus, weil auch die Reserve der Spitzenkappung sie nutzt. Der Reiter Netzladen hat nur noch Schalter, Grenze am Zähler und Mindestvorteil.
+- **„Batterie aus dem Netz laden“ lässt sich erst einschalten, wenn ein günstigerer Bezugspreis eingerichtet ist** (Börsenpreis, Bezug aus der Gemeinschaft oder zeitvariable Netzentgelte, bei den ersten beiden mit Netzbereich). Bis dahin steht unter dem Schalter, was fehlt. Ein Bezugspreis aus dem Tarifblatt des Vereins zählt dabei mit.
+
 ## [2.1.58] - 2026-11-01
 
 ### Hinzugefügt
