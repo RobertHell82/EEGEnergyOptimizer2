@@ -12,6 +12,12 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+## [2.1.60] - 2026-11-01
+
+### Hinzugefügt
+
+- **Die Telemetrie meldet jetzt Probleme der Spitzenkappung und des Netzladens.** Bisher kamen dort nur Schreibfehler an; ob die Kappung versagt oder eine Netzladung gar nicht in der Batterie landet, sah man nur an der Anlage. Neu sind drei Meldungen, nur im Modus Ein und nur mit Einwilligung: **peak_exceeded**, wenn trotz eingeschalteter Spitzenkappung eine neue Monatsspitze über dem Grenzwert entsteht, mit Ladestand, Reserve, Entladedeckel und abgeschalteten Verbrauchern im Kontext (die erste Novemberspitze vom 1.11. wäre so sofort aufgefallen); **guard_wirkung**, wenn eine befohlene Netzladung nicht ankommt (weniger als die Hälfte über drei Minuten, nur gemeldet, nicht abgebrochen) oder Guard 3 bei einer Entladung aufgibt; **peak_switch**, wenn sich ein Verbraucher nicht schalten lässt (ohne Entitätsnamen). Das Profil enthält jetzt auch die Einstellungen von Spitzenkappung und Netzladen (Grenzwert, Reserven, Anzahl der Verbraucher, Bezugsquelle), nie die Verbraucher selbst.
+
 ## [2.1.59] - 2026-11-01
 
 ### Geändert
