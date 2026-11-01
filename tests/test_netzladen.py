@@ -558,3 +558,45 @@ async def test_basis_treiber_kann_kein_netzladen():
     assert inv.supports_grid_charge is False
     assert await inv.async_set_grid_charge(1.0, 80) is False
     assert inv.last_write_error
+
+
+
+async def test_wirkungslose_netzladung_wird_gemeldet_nicht_gestoppt(mock_hass, mock_inverter):
+    """Befohlen 3 kW, die Batterie nimmt 0,1 kW: nach GUARD_WIRKUNG_RUNS
+    Läufen steht ``netzladung_wirkungslos`` im Status (für die Telemetrie),
+    der Befehl bleibt stehen. Kommt sie wieder an, ist die Meldung weg."""
+    from unittest.mock import patch
+
+    from custom_components.eeg_energy_optimizer.const import GUARD_WIRKUNG_RUNS
+
+    mock_inverter.supports_grid_charge = True
+    ex = _make_executor(mock_hass, mock_inverter)
+    with patch.object(ex, "_batterie_soc_pct", return_value=50.0):
+        for i in range(GUARD_WIRKUNG_RUNS + 1):
+            with _messwerte(haus=0.6, pv=0.5, batt=0.1):
+                await ex.async_guard_cycle(_state(_netzslot(soc=80.0)), MODE_EIN,
+                                           now=NOW + timedelta(seconds=30 * i))
+        status = ex.status()
+        assert status["netzladung_wirkungslos"] is True
+        assert status["netzladung_ist_kw"] == 0.1
+        mock_inverter.async_stop_forcible.assert_not_called()
+
+        with _messwerte(haus=0.6, pv=0.5, batt=2.9):
+            await ex.async_guard_cycle(_state(_netzslot(soc=80.0)), MODE_EIN,
+                                       now=NOW + timedelta(seconds=30 * (GUARD_WIRKUNG_RUNS + 2)))
+        assert ex.status()["netzladung_wirkungslos"] is False
+
+
+async def test_netzladung_am_ziel_ist_nicht_wirkungslos(mock_hass, mock_inverter):
+    from unittest.mock import patch
+
+    from custom_components.eeg_energy_optimizer.const import GUARD_WIRKUNG_RUNS
+
+    mock_inverter.supports_grid_charge = True
+    ex = _make_executor(mock_hass, mock_inverter)
+    with patch.object(ex, "_batterie_soc_pct", return_value=59.5):
+        for i in range(GUARD_WIRKUNG_RUNS + 2):
+            with _messwerte(haus=0.6, pv=0.5, batt=0.0):
+                await ex.async_guard_cycle(_state(_netzslot(soc=60.0)), MODE_EIN,
+                                           now=NOW + timedelta(seconds=30 * i))
+    assert ex.status()["netzladung_wirkungslos"] is False

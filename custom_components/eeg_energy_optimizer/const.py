@@ -642,6 +642,22 @@ TELEMETRY_SETTINGS_KEYS = (
     "pv_verluste_pct",
     "pv_flaechen_anzahl",
     "pv_flaechen_kwp",
+    # Spitzenkappung und Netzladen: wer sie nutzt und wie eingestellt —
+    # erklärt eine Meldung „peak_exceeded" oder eine Netzladung. Die
+    # Verbraucherliste selbst bleibt draußen (Entitäten), nur ihre Anzahl
+    # (in __init__.py abgeleitet).
+    "spitzenkappung_enabled",
+    "spitzenkappung_grenze_kw",
+    "spitzenkappung_reserve_min_pct",
+    "spitzenkappung_reserve_max_pct",
+    "spitzenkappung_reserve_netz",
+    "spitzenkappung_verbraucher_anzahl",
+    "schedule_netzladen",
+    "schedule_netzladen_max_kw",
+    "schedule_netzladen_vorteil",
+    "schedule_bezug_quelle",
+    "peakshare_bezug_ebene",
+    "peakshare_bezug_ebene_2",
 )
 # ``discharge_a_start_time`` steht bewusst nicht mehr drin: der Schluessel
 # bleibt in der Konfiguration (Rueckwechsel-Garantie), verschiebt aber nur

@@ -394,6 +394,10 @@ class ScheduleExecutor:
         self._wirkung_runs = 0
         self._wirkung_neuversuche = 0
         self._wirkung_wirkungslos = False
+        # Wirkungskontrolle der Netzladung (nur melden, siehe async_guard_cycle).
+        self._netzladung_runs = 0
+        self._netzladung_wirkungslos = False
+        self._netzladung_ist_kw: float | None = None
 
         # Not-Aus (Guard 2): anhaltender Netzbezug während einer Entladung.
         self._emergency_runs = 0
@@ -599,11 +603,42 @@ class ScheduleExecutor:
         soc = self._batterie_soc_pct()
         return soc is not None and soc <= ziel + GUARD_WIRKUNG_SOC_ABSTAND_PCT
 
+    def _netzladung_pruefen(self) -> None:
+        """Kommt die befohlene Netzladung in der Batterie an? Nur zum Melden."""
+        if self._active_kind != "grid_charge":
+            self._netzladung_runs = 0
+            self._netzladung_wirkungslos = False
+            return
+        soll = float(self._written_grid_charge_kw or 0.0)
+        ist = compute_battery_now_kw(self._hass, self._config)
+        ziel = self._written_target_soc
+        soc = self._batterie_soc_pct()
+        am_ziel = (
+            ziel is not None and soc is not None
+            and soc >= ziel - GUARD_WIRKUNG_SOC_ABSTAND_PCT
+        )
+        if soll < 0.5 or ist is None or am_ziel or self._wirkung_erfuellt(soll, max(0.0, ist)):
+            self._netzladung_runs = 0
+            self._netzladung_wirkungslos = False
+            return
+        self._netzladung_runs += 1
+        if self._netzladung_runs >= GUARD_WIRKUNG_RUNS and not self._netzladung_wirkungslos:
+            _LOGGER.warning(
+                "Executor: Netzladung wirkungslos — befohlen %.2f kW, gemessen %.2f kW "
+                "über %d Läufe", soll, ist, self._netzladung_runs,
+            )
+            self._netzladung_wirkungslos = True
+            self._netzladung_ist_kw = round(float(ist), 2)
+
     def _wirkung_zuruecksetzen(self) -> None:
         """Zähler von Guard 3 zurückstellen (Slotwechsel, Ende der Entladung)."""
         self._wirkung_runs = 0
         self._wirkung_neuversuche = 0
         self._wirkung_wirkungslos = False
+        # Wirkungskontrolle der Netzladung (nur melden, siehe async_guard_cycle).
+        self._netzladung_runs = 0
+        self._netzladung_wirkungslos = False
+        self._netzladung_ist_kw: float | None = None
 
     async def async_release(self) -> bool:
         """Wechselrichter freigeben: erzwungene Modi stoppen, Automatik läuft.
@@ -993,6 +1028,14 @@ class ScheduleExecutor:
         else:
             self._wirkung_runs = 0
 
+        # Wirkungskontrolle der Netzladung — nur beobachten und melden. Ein
+        # Neuaufsetzen wie bei Guard 3 ist hier nicht erprobt (Fronius und
+        # Victron im Feldtest); erst sehen, ob und wie oft es vorkommt. Kommt
+        # weniger als die Hälfte des Ladebefehls in der Batterie an (und mehr
+        # als 0,3 kW fehlen), über GUARD_WIRKUNG_RUNS Läufe, gilt sie als
+        # wirkungslos — bis sie wieder ankommt oder der Slot wechselt.
+        self._netzladung_pruefen()
+
         # Failsafe: kein brauchbarer Fahrplan → einmalig freigeben.
         if action is None:
             overdue = (
@@ -1099,6 +1142,8 @@ class ScheduleExecutor:
             "wirkung_runs": self._wirkung_runs,
             "wirkung_neuversuche": self._wirkung_neuversuche,
             "wirkung_wirkungslos": self._wirkung_wirkungslos,
+            "netzladung_wirkungslos": self._netzladung_wirkungslos,
+            "netzladung_ist_kw": self._netzladung_ist_kw,
             "heizstab": None if self._heizstab is None else self._heizstab.status(),
             "written_entladedeckel_kw": self._written_entladedeckel_kw,
             "spitzenkappung": self.spitzenkappung,

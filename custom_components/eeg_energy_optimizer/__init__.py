@@ -275,6 +275,10 @@ def _build_telemetry_profile(hass, entry, identity_registered_at):
     # Muss in TELEMETRY_SETTINGS_KEYS stehen, sonst filtert _shape_profile sie
     # wieder heraus.
     settings["steuerung"] = TELEMETRY_STEUERUNG
+    # Spitzenkappung: nur die Anzahl der Verbraucher, nie die Entitäten.
+    verbraucher = config.get("spitzenkappung_verbraucher")
+    if isinstance(verbraucher, list):
+        settings["spitzenkappung_verbraucher_anzahl"] = len(verbraucher)
     # Eigene PV-Prognose: Anzahl und Summe der Flaechen statt der Liste.
     flaechen = config.get(CONF_PV_FLAECHEN)
     if isinstance(flaechen, list) and flaechen:
@@ -537,6 +541,103 @@ def _check_schedule_health(schedule_state, status, mode, config, dedup, emit):
                 "slot": str(slot),
                 "emergency_runs": status.get("emergency_runs"),
             },
+        )
+
+    # Befehle, die quittiert wurden, aber nicht ankommen: Guard 3 hat bei der
+    # Entladung aufgegeben, oder die Netzladung lädt die Batterie nicht (nur
+    # gemeldet, siehe ScheduleExecutor._netzladung_pruefen). Ein „True" des
+    # Treibers ist kein Beweis — ohne diese Meldung sähe man das nur am Gerät.
+    action = status.get("plan_action") or {}
+    if status.get("wirkung_wirkungslos"):
+        emit(
+            category="guard_wirkung",
+            severity="warning",
+            message_hash="entladung",
+            context={
+                "inverter_type": config.get(CONF_INVERTER_TYPE),
+                "soll_kw": status.get("written_discharge_kw"),
+                "ziel_soc": status.get("written_target_soc"),
+                "slot": action.get("slot"),
+            },
+        )
+    if status.get("netzladung_wirkungslos"):
+        emit(
+            category="guard_wirkung",
+            severity="warning",
+            message_hash="netzladung",
+            context={
+                "inverter_type": config.get(CONF_INVERTER_TYPE),
+                "soll_kw": status.get("written_grid_charge_kw"),
+                "ist_kw": status.get("netzladung_ist_kw"),
+                "ziel_soc": status.get("written_target_soc"),
+                "slot": action.get("slot"),
+            },
+        )
+
+
+def _check_spitzenkappung_health(status, mode, config, spitze, kappung, merker, soc, emit):
+    """Probleme der Spitzenkappung — gemeldet nur, wenn sie wirken soll.
+
+    Reine Funktion wie ``_check_schedule_health``: ``spitze`` ist die
+    Leistungsspitze (``monat``, ``spitze``), ``kappung`` der Status der
+    Verbraucher-Stufe (``Spitzenkappung.status()``), ``merker`` ein dict, das
+    die zuletzt gesehene Monatsspitze hält.
+
+    - ``peak_exceeded`` — eine neue Monatsspitze über dem Grenzwert, obwohl
+      die Spitzenkappung an war (Modus Ein, keine Pause). Genau das soll sie
+      verhindern; der Kontext sagt, warum es nicht gereicht hat: Ladestand
+      gegen Schwelle, Deckel, Reserve, was abgeschaltet war, was der
+      Executor gerade tat. Die erste Spitze eines Monats zählt ab 0, beim
+      Start (leerer Merker) wird nur gemerkt — eine alte Spitze ist kein
+      neues Problem.
+    - ``peak_switch`` — ein Verbraucher ließ sich nicht schalten (Dienst
+      fehlgeschlagen). Ohne Entität im Hash: die gehört der Anlage.
+    """
+    if not config.get("spitzenkappung_enabled") or mode != MODE_EIN or status.get("pause_bis"):
+        merker.clear()
+        return
+    eintrag = getattr(spitze, "spitze", None) or {}
+    monat = getattr(spitze, "monat", None)
+    kw = eintrag.get("kw")
+    if monat is not None and isinstance(kw, (int, float)):
+        if not merker:
+            merker.update(monat=monat, kw=float(kw))
+        else:
+            vorher = float(merker.get("kw") or 0.0) if merker.get("monat") == monat else 0.0
+            if float(kw) > vorher + 0.005:
+                merker.update(monat=monat, kw=float(kw))
+                try:
+                    grenze = float(config.get("spitzenkappung_grenze_kw") or 5.0)
+                except (TypeError, ValueError):
+                    grenze = 5.0
+                if float(kw) > grenze:
+                    batterie = status.get("spitzenkappung") or {}
+                    emit(
+                        category="peak_exceeded",
+                        severity="warning",
+                        message_hash="neue_monatsspitze",
+                        context={
+                            "kw": round(float(kw), 2),
+                            "grenze_kw": grenze,
+                            "vorher_kw": round(vorher, 2),
+                            "start": eintrag.get("start"),
+                            "inverter_type": config.get(CONF_INVERTER_TYPE),
+                            "soc": None if soc is None else round(float(soc), 1),
+                            "aktiv": status.get("active_kind"),
+                            "batterie": {
+                                k: batterie.get(k)
+                                for k in ("aktiv", "reserve_pct", "schwelle_pct", "deckel_kw", "grund")
+                            } if batterie else None,
+                            "abgeschaltet": len((kappung or {}).get("abgeschaltet") or []),
+                        },
+                    )
+    fehler = (kappung or {}).get("fehler")
+    if fehler:
+        emit(
+            category="peak_switch",
+            severity="error",
+            message_hash="schalten_fehlgeschlagen",
+            context={"grund": str(fehler).split(": ", 1)[-1][:80]},
         )
 
 
@@ -2220,6 +2321,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     )
                 except Exception:  # pragma: no cover
                     _LOGGER.exception("Telemetry: schedule watchdog failed")
+                try:
+                    kappung = data.get("spitzenkappung")
+                    _check_spitzenkappung_health(
+                        status, mode, config, data.get("leistungsspitze"),
+                        kappung.status() if kappung is not None else None,
+                        data.setdefault("telemetry_spitze_merker", {}),
+                        _read_soc(), _emit_failure_dedup,
+                    )
+                except Exception:  # pragma: no cover
+                    _LOGGER.exception("Telemetry: Spitzenkappung watchdog failed")
                 try:
                     _collect_snapshot(schedule_state, status, mode, _read_soc())
                 except Exception:  # pragma: no cover

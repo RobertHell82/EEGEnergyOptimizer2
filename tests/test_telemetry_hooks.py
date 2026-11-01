@@ -904,3 +904,105 @@ def test_snapshot_queue_sichern_ohne_store_ist_ein_no_op():
     hass = SimpleNamespace(async_create_task=MagicMock())
     _snapshot_queue_sichern(hass, {"telemetry_snapshot_queue": [{"ts": "a"}]})
     hass.async_create_task.assert_not_called()
+
+
+
+# ---------------------------------------------------------------------------
+# Wirkungslose Befehle und Spitzenkappung
+# ---------------------------------------------------------------------------
+def test_schedule_health_meldet_wirkungslose_entladung_und_netzladung():
+    from custom_components.eeg_energy_optimizer import _check_schedule_health
+
+    calls, emit = _sammler()
+    _check_schedule_health(
+        {"error": None},
+        {"supported": True, "wirkung_wirkungslos": True, "netzladung_wirkungslos": True,
+         "written_discharge_kw": 1.2, "written_grid_charge_kw": 3.0,
+         "netzladung_ist_kw": 0.1, "written_target_soc": 80.0,
+         "plan_action": {"slot": "2026-11-01T02:00:00+01:00"}},
+        MODE_EIN, {CONF_INVERTER_TYPE: "fronius_gen24"}, {}, emit,
+    )
+    hashes = {(c["category"], c["message_hash"]) for c in calls}
+    assert ("guard_wirkung", "entladung") in hashes
+    assert ("guard_wirkung", "netzladung") in hashes
+    netz = next(c for c in calls if c["message_hash"] == "netzladung")
+    assert netz["context"]["soll_kw"] == 3.0
+    assert netz["context"]["ist_kw"] == 0.1
+    assert netz["context"]["inverter_type"] == "fronius_gen24"
+
+
+def _spitze(monat, kw):
+    return SimpleNamespace(monat=monat, spitze={"kw": kw, "start": "2026-11-01T06:30:00+00:00"})
+
+
+KAPPUNG_AN = {"spitzenkappung_enabled": True, "spitzenkappung_grenze_kw": 3.5,
+              CONF_INVERTER_TYPE: "huawei_sun2000"}
+
+
+def test_kappung_beim_start_nur_merken():
+    from custom_components.eeg_energy_optimizer import _check_spitzenkappung_health
+
+    calls, emit = _sammler()
+    merker = {}
+    _check_spitzenkappung_health({}, MODE_EIN, KAPPUNG_AN, _spitze("2026-11", 4.24), None, merker, 13.0, emit)
+    assert calls == []
+    assert merker == {"monat": "2026-11", "kw": 4.24}
+
+
+def test_kappung_neue_spitze_ueber_der_grenze_wird_gemeldet():
+    """01.11.2026: erste Novemberspitze 4,24 kW bei 3,5 kW Grenze, Batterie leer."""
+    from custom_components.eeg_energy_optimizer import _check_spitzenkappung_health
+
+    calls, emit = _sammler()
+    merker = {"monat": "2026-10", "kw": 6.1}
+    status = {"active_kind": "release",
+              "spitzenkappung": {"aktiv": True, "reserve_pct": 1.0, "schwelle_pct": 14.0,
+                                 "deckel_kw": 0.0, "grund": "Reserve halten"}}
+    _check_spitzenkappung_health(
+        status, MODE_EIN, KAPPUNG_AN, _spitze("2026-11", 4.24),
+        {"abgeschaltet": [], "fehler": None}, merker, 13.0, emit,
+    )
+    assert len(calls) == 1
+    m = calls[0]
+    assert m["category"] == "peak_exceeded"
+    assert m["context"]["kw"] == 4.24
+    assert m["context"]["vorher_kw"] == 0.0  # neuer Monat zählt ab 0
+    assert m["context"]["grenze_kw"] == 3.5
+    assert m["context"]["soc"] == 13.0
+    assert m["context"]["batterie"]["schwelle_pct"] == 14.0
+
+    # Dieselbe Spitze noch einmal: nichts Neues.
+    _check_spitzenkappung_health(status, MODE_EIN, KAPPUNG_AN, _spitze("2026-11", 4.24), None, merker, 13.0, emit)
+    assert len(calls) == 1
+
+
+def test_kappung_spitze_unter_der_grenze_und_pause_melden_nichts():
+    from custom_components.eeg_energy_optimizer import _check_spitzenkappung_health
+
+    calls, emit = _sammler()
+    merker = {"monat": "2026-11", "kw": 2.0}
+    _check_spitzenkappung_health({}, MODE_EIN, KAPPUNG_AN, _spitze("2026-11", 3.2), None, merker, 50.0, emit)
+    assert calls == [] and merker["kw"] == 3.2
+    # Pause: der Merker wird geleert, danach nur neu gemerkt.
+    _check_spitzenkappung_health({"pause_bis": "2026-11-01T12:00"}, MODE_EIN, KAPPUNG_AN,
+                                 _spitze("2026-11", 6.0), None, merker, 50.0, emit)
+    assert calls == [] and merker == {}
+    _check_spitzenkappung_health({}, MODE_EIN, KAPPUNG_AN, _spitze("2026-11", 6.0), None, merker, 50.0, emit)
+    assert calls == []
+    # Funktion aus: nie etwas.
+    _check_spitzenkappung_health({}, MODE_EIN, {}, _spitze("2026-11", 9.0), None, merker, 50.0, emit)
+    assert calls == []
+
+
+def test_kappung_schaltfehler_ohne_entitaet():
+    from custom_components.eeg_energy_optimizer import _check_spitzenkappung_health
+
+    calls, emit = _sammler()
+    _check_spitzenkappung_health(
+        {}, MODE_EIN, KAPPUNG_AN, None,
+        {"abgeschaltet": [], "fehler": "switch.wallbox_garage: Service not found"},
+        {}, None, emit,
+    )
+    assert calls[0]["category"] == "peak_switch"
+    assert "switch." not in str(calls[0])
+    assert calls[0]["context"]["grund"] == "Service not found"

@@ -555,3 +555,29 @@ async def test_tick_speichert_die_maxima_fuer_die_kalibrierung():
     assert tag["netz_max"][k] == pytest.approx(4.0)
     assert tag["gemessen_max"][k] == pytest.approx(5.0)
     assert tag["batterie_max"][k] == pytest.approx(3.0)
+
+
+
+def test_telemetrie_profil_kennt_spitzenkappung_und_netzladen():
+    from types import SimpleNamespace
+
+    from custom_components.eeg_energy_optimizer import _build_telemetry_profile
+
+    entry = SimpleNamespace(
+        entry_id="e1",
+        data={
+            "spitzenkappung_enabled": True, "spitzenkappung_grenze_kw": 3.5,
+            "spitzenkappung_reserve_netz": True,
+            "spitzenkappung_verbraucher": [{"name": "Auto", "schalter_entity": "switch.x"}],
+            "schedule_netzladen": True, "schedule_bezug_quelle": "spot",
+        },
+        options={},
+    )
+    settings = _build_telemetry_profile(MagicMock(), entry, None)["settings"]
+    assert settings["spitzenkappung_enabled"] is True
+    assert settings["spitzenkappung_grenze_kw"] == 3.5
+    assert settings["spitzenkappung_reserve_netz"] is True
+    assert settings["spitzenkappung_verbraucher_anzahl"] == 1
+    assert "spitzenkappung_verbraucher" not in settings
+    assert settings["schedule_netzladen"] is True
+    assert settings["schedule_bezug_quelle"] == "spot"
