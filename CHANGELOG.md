@@ -12,6 +12,19 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+## [2.1.58] - 2026-11-01
+
+### Hinzugefügt
+
+- **Spitzenkappung: Reserve notfalls aus dem Netz nachladen** (Beta, Reiter Spitzenkappung, Huawei und Fronius). Bisher holte die Batterie ihre Reserve nur aus der Sonne und ging nach einem trüben Tag womöglich leer in eine Nacht mit Spitze. Mit der Option lädt der Fahrplan nach, was zur Reserve fehlt, unabhängig vom Preis, aber in den günstigsten Viertelstunden vor der ersten erwarteten Spitze. Mit Bezug aus der Gemeinschaft sind das die Viertelstunden, in denen sie Strom übrig hat. Gefordert wird die Reserve erst vor der Viertelstunde, die sie braucht, etwa vor der Wärmepumpe am Morgen, damit der Plan die Wahl hat. Haus und Ladung bleiben zusammen 0,3 kW unter dem Grenzwert, und gekauft wird nur in den dafür gewählten Viertelstunden. Jede Netzladung, auch die wirtschaftliche, hält jetzt bei eingeschalteter Spitzenkappung deren Grenze ein.
+
+- **„Batterie aus dem Netz laden“ jetzt auch beim Fronius Gen24** (Beta, Expertenmodus, Reiter Netzladen). Der Treiber legt über Modbus einen festen Ladepunkt fest, das Spiegelbild der erzwungenen Entladung, und erlaubt dafür mit `ChaGriSet` das Laden aus dem Netz. Den Vorwert von `ChaGriSet` sichert er, auch über einen Neustart hinweg, und schreibt ihn bei jeder Freigabe zurück. Einen Ziel-Ladestand fürs Laden kennt der Gen24 nicht; der Treiber liest dafür den Ladestand des Geräts und gibt am Ziel frei. Am Gerät ist das noch nicht erprobt: Offen ist, ob im Webinterface zusätzlich „Laden aus dem Netz“ erlaubt sein muss, ob die Ladeleistung bei schwankender PV hält und ob die Freigabe sauber in den Automatikbetrieb zurückführt.
+
+### Behoben
+
+- **Die Legende der Energieprognose überlappt nicht mehr** (#9). Eine lange Bezeichnung wie „Eigene Berechnung (Open-Meteo)“ lief in „Solcast“ hinein, weil die Legende im Diagramm in festen Spalten stand. Sie steht jetzt über dem Diagramm und bricht bei Platzmangel um.
+- **Die Spitzenkappung hielt am Monatsende keine Reserve für den Morgen des Monatsersten.** Der Plan rechnete die Reserve über den ganzen 48-Stunden-Horizont mit einer Grenze: der eingestellten oder der schon erreichten Monatsspitze, je nachdem, welche höher war. Am 31. Oktober abends lag die Oktoberspitze über jeder Nacht, also hielt der Plan nichts zurück, auch nicht für den 1. November, an dem die Spitze wieder bei null beginnt. Die Batterie war leer, als die Wärmepumpe um 07:30 vor dem PV-Start die erste Novemberspitze setzte: 4,24 kW bei einer Grenze von 3,5 kW. Die Monatsspitze gilt jetzt nur in ihrem eigenen Monat. Ab Mitternacht des Monatsersten rechnet die Reserve wieder mit der eingestellten Grenze, und der Abend davor hält zurück, was der Morgen braucht.
+
 ## [2.1.57] - 2026-10-30
 
 ### Hinzugefügt
