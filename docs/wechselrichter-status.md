@@ -271,7 +271,10 @@ keine zusätzlichen Register. Die PV deckt davon, was sie kann, der Rest kommt
 aus dem Netz. Einen Ziel-Ladestand kennt das CmpBMS nicht: Der Treiber liest
 den Ladestand (Register 30845) bei jedem Schreiben und alle 60 Sekunden und
 reagiert dazwischen auf jede Änderung des SOC-Sensors; am Ziel geht es
-zurück in den Normalbetrieb. **Noch nicht am Gerät geprüft:** ob 2289 mit gleicher minimaler
+zurück in den Normalbetrieb. Scheitert diese Freigabe, wiederholt der
+Keepalive nur noch sie — auch wenn 30845 knapp unter dem Ziel steht, das der
+Sensor schon gemeldet hat; den Ladeblock (und damit den Watchdog) erneuert er
+nicht mehr. **Noch nicht am Gerät geprüft:** ob 2289 mit gleicher minimaler
 und maximaler Ladeleistung tatsächlich aus dem Netz lädt (eine Forennotiz
 spricht von „nur bei Einspeisung am Netzanschlusspunkt“, vermutlich nur mit
 minimaler Ladeleistung 0), ob die minimale Ladeleistung als erzwungene
@@ -314,9 +317,13 @@ welchen.
 
 **Gen6 ohne Mode 1:** Gen6 kennt RemoteControl Mode 1 nicht. Dort wirkt nur
 das Ladelimit (`battery_charge_max_current`); Zwangsentladung und Netzladen
-nicht. Fehlen die Mode-1-Entitäten, scheitert eine Entladung mit dem Grund
-„Mode 1 nicht verfügbar“ (bis 2.1.63 schrieb der Treiber an Entitäten, die es
-nicht gibt, und meldete Erfolg), und Netzladen bietet der Treiber nicht an —
+nicht. Fehlen die Mode-1-Entitäten, meldet der Treiber
+`supports_forced_discharge = False`: Der Plan rechnet zwar weiter mit
+Einspeisung, die Steuerung gibt in diesen Slots aber frei, statt eine
+Zwangsentladung zu befehlen (bis 2.1.63 schrieb der Treiber an Entitäten, die
+es nicht gibt, und meldete Erfolg; danach scheiterte jede geplante Entladung
+mit „Mode 1 nicht verfügbar“ — Schreibbremse und tägliche
+`inverter_write`-Telemetrie). Netzladen bietet der Treiber nicht an —
 der Reiter **Netzladen** erscheint im Panel trotzdem, wirkt aber nicht. Ob
 Gen6 eine Zwangsentladung auf anderem Weg kann, ist am Gerät nicht geklärt.
 

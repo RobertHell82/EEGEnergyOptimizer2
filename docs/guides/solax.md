@@ -13,7 +13,7 @@ Voll steuerbar sind **Gen4 und Gen5**. Gen6 kennt die Fernsteuerung Mode 1 nicht
 | Batterie aus dem Netz laden (Beta, Expertenmodus) | ja | **nein** |
 
 > [!NOTE]
-> Bei Gen6 erscheint der Reiter **Netzladen** in den Einstellungen trotzdem — die Funktion wirkt dort aber nicht, der Optimizer plant keine Netzladung. Eine geplante Einspeisung meldet er als fehlgeschlagen („Mode 1 nicht verfügbar“), statt so zu tun, als liefe sie.
+> Bei Gen6 erscheint der Reiter **Netzladen** in den Einstellungen trotzdem — die Funktion wirkt dort aber nicht, der Optimizer plant keine Netzladung. Eine Zwangsentladung gibt es bei Gen6 nicht: Der Fahrplan rechnet zwar weiter mit Einspeisung aus der Batterie, in diesen Viertelstunden gibt der Optimizer den Wechselrichter aber frei — die Batterie bleibt im Automatikbetrieb und versorgt das Haus.
 
 ## 2. Wechselrichter-Einstellungen
 

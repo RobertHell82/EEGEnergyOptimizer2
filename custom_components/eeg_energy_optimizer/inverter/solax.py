@@ -339,7 +339,9 @@ class SolaXInverter(InverterBase):
             # Sicherstellen, dass Mode 1 NICHT aktiv ist (Migration für
             # Bestands-Setups, die noch im alten Mode-1-Idle stehen).
             await self._set_select("remotecontrol_power_control", "Disabled")
-            return True
+            # _erfolg() statt True: Erst das räumt einen Grund aus einem
+            # früheren Fehlschlag ab, sonst trüge die Telemetrie ihn weiter.
+            return self._erfolg()
         except Exception as exc:
             _LOGGER.exception("SolaX: Failed to set charge limit")
             return self._fehler(type(exc).__name__)
@@ -484,9 +486,18 @@ class SolaXInverter(InverterBase):
 
             await self._restauriere_entladeboden()
             self._discharge_active = False
-            return True
+            return self._erfolg()
         except Exception as exc:
-            _LOGGER.exception("SolaX: Failed to stop forcible mode")
+            if self._stopp_offen:
+                # Die Wiederholung aus dem Takt (alle 30 s): Der Stacktrace
+                # steht schon vom ersten Fehlschlag im Log. Bei einem Gerät,
+                # das länger weg ist, füllte er es sonst im Halbminutentakt.
+                _LOGGER.warning(
+                    "SolaX: Stopp erneut fehlgeschlagen (%s: %s)",
+                    type(exc).__name__, exc,
+                )
+            else:
+                _LOGGER.exception("SolaX: Failed to stop forcible mode")
             return self._fehler(type(exc).__name__)
 
     # ------------------------------------------------------------------
@@ -664,6 +675,20 @@ class SolaXInverter(InverterBase):
             self._hass.states.get(self._resolve_entity(key)) is not None
             for key in _MODE1_ENTITAETEN
         )
+
+    @property
+    def supports_forced_discharge(self) -> bool:
+        """Kann der Treiber zwangsentladen? Nur mit Mode 1 — auf Gen6 nicht.
+
+        Die Zwangsentladung läuft über Mode 1 („Enabled Battery Control" mit
+        negativer Leistung). Gen6 hat ihn nicht: Jede geplante Einspeisung
+        scheiterte dort mit „Mode 1 nicht verfügbar", die Schreibbremse
+        griffe, und die Telemetrie meldete jeden Tag ``inverter_write`` für
+        etwas, das der Treiber gar nicht kann. Mit False gibt der Executor
+        statt einer Zwangsentladung frei — der Plan rechnet zwar weiter mit
+        der Einspeisung, die Batterie bleibt aber im Automatikbetrieb.
+        """
+        return self._mode1_vorhanden()
 
     @property
     def supports_grid_charge(self) -> bool:

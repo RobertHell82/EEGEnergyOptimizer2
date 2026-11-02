@@ -1067,6 +1067,17 @@ class TestNetzladung:
         inv = _netzlade_treiber(mock_hass, werte)
         assert inv.supports_grid_charge is False
 
+    def test_zwangsentladung_nur_mit_mode1(self, mock_hass):
+        """Gen6 ohne Mode 1: keine Zwangsentladung — der Executor gibt dann
+        frei, statt jede geplante Einspeisung scheitern zu lassen (Schreib-
+        bremse, tägliche inverter_write-Telemetrie)."""
+        mit = _netzlade_treiber(mock_hass, _mode1_vorhanden())
+        assert mit.supports_forced_discharge is True
+        werte = _mode1_vorhanden()
+        del werte[TRIGGER_ENTITY]
+        ohne = _netzlade_treiber(mock_hass, werte)
+        assert ohne.supports_forced_discharge is False
+
     async def test_werte_und_reihenfolge(self, mock_hass, takt):
         inv = _netzlade_treiber(
             mock_hass,
@@ -1277,6 +1288,24 @@ class TestNetzladung:
         takt.abmelder.assert_called_once()
         assert inv._stopp_offen is False
 
+    async def test_dauerhaft_scheiternder_stopp_nur_einmal_mit_stacktrace(
+        self, mock_hass, takt, caplog
+    ):
+        """Der Takt wiederholt einen gescheiterten Stopp alle 30 s. Nur der
+        erste Fehlschlag kommt mit Stacktrace, danach eine knappe Warnung."""
+        werte = _mode1_vorhanden(**{SOC_SENSOR: "60"})
+        inv = _netzlade_treiber(mock_hass, werte)
+        await inv.async_set_grid_charge(2.0, target_soc=80)
+        werte[SOC_SENSOR] = "80"
+        mock_hass.services.async_call = AsyncMock(side_effect=Exception("boom"))
+        caplog.clear()
+        for _ in range(3):
+            await takt.takte[0][0](None)
+        mit_stack = [r for r in caplog.records if r.exc_info]
+        assert len(mit_stack) == 1
+        assert "Stopp erneut fehlgeschlagen" in caplog.text
+        assert inv._stopp_offen is True
+
     async def test_neuer_befehl_erledigt_den_offenen_stopp(self, mock_hass, takt):
         werte = _mode1_vorhanden(**{SOC_SENSOR: "60"})
         inv = _netzlade_treiber(mock_hass, werte)
@@ -1342,6 +1371,18 @@ class TestEntladungFehlerpfade:
     async def test_erfolg_verwirft_den_alten_fehlergrund(self, inverter, mock_hass):
         inverter.last_write_error = "RuntimeError"
         assert await inverter.async_set_discharge(2.0) is True
+        assert inverter.last_write_error is None
+
+    async def test_ladelimit_und_stopp_verwerfen_den_alten_fehlergrund(
+        self, inverter, mock_hass
+    ):
+        """Auch Ladelimit und Freigabe melden den Erfolg über ``_erfolg()`` —
+        sonst trüge die Telemetrie einen längst behobenen Grund weiter."""
+        inverter.last_write_error = "RuntimeError"
+        assert await inverter.async_set_charge_limit(1.0) is True
+        assert inverter.last_write_error is None
+        inverter.last_write_error = "RuntimeError"
+        assert await inverter.async_stop_forcible() is True
         assert inverter.last_write_error is None
 
     async def test_gescheiterter_neuer_befehl_stoppt_den_alten(

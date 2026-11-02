@@ -700,6 +700,67 @@ class TestNetzladung:
         assert inv._netzladung_ziel is None
         soc_beobachter.abmelder.assert_called_once()
 
+    async def test_offene_freigabe_gilt_auch_wenn_30845_darunter_meldet(
+        self, mock_hass, mock_modbus_client, soc_beobachter, monkeypatch
+    ):
+        """Sensor 80 %, Register 79 %: Der Beobachter erkennt das Ziel, seine
+        Freigabe scheitert. Der Keepalive prüft zuerst 30845 und hielte die
+        Ladung für unfertig — mit „Freigabe offen“ wiederholt er trotzdem NUR
+        die Freigabe und schreibt den Ladeblock nicht neu (das fütterte den
+        Watchdog, die Netzladung liefe über das Ziel weiter)."""
+        inv = _mit_sensor(mock_hass, mock_modbus_client)
+        _soc_register(mock_modbus_client, 50)
+        mock_hass.states.get = MagicMock(return_value=SimpleNamespace(state="50"))
+        await inv.async_set_grid_charge(2.0, target_soc=80)
+        _entities, rueckruf = soc_beobachter.rueckrufe[0]
+        aufgaben = []
+        mock_hass.async_create_task = MagicMock(
+            side_effect=lambda c: aufgaben.append(asyncio.ensure_future(c))
+        )
+        mock_hass.states.get = MagicMock(return_value=SimpleNamespace(state="80"))
+        _soc_register(mock_modbus_client, 79)
+        mock_modbus_client.write_registers = AsyncMock(return_value=_err_response())
+        rueckruf(None)
+        await asyncio.gather(*aufgaben)
+        assert inv._freigabe_offen is True
+
+        monkeypatch.setattr(
+            "custom_components.eeg_energy_optimizer.inverter.sma."
+            "KEEPALIVE_INTERVAL",
+            0.01,
+        )
+        inv._cancel_keepalive()
+        mock_modbus_client.write_registers = AsyncMock(return_value=_ok_response())
+        inv._start_keepalive()
+        await _warten_bis(lambda: inv._active is None)
+        assert _last_block(mock_modbus_client) == NORMAL_BLOCK
+        assert all(
+            registers_to_u32(v) != OPMOD_CHARGE
+            for a, v in _writes(mock_modbus_client)
+            if a == REG_CMPBMS_OPMOD
+        )
+        assert inv._freigabe_offen is False
+        assert inv._netzladung_ziel is None
+
+    async def test_neuer_befehl_raeumt_offene_freigabe_ab(
+        self, mock_hass, mock_modbus_client
+    ):
+        """Ein neuer Ladeblock, ein Ladelimit oder das Trennen beenden die
+        offene Freigabe — sie gehörte zur alten Ladung."""
+        inv = _mit_sensor(mock_hass, mock_modbus_client)
+        _soc_register(mock_modbus_client, 50)
+        mock_hass.states.get = MagicMock(return_value=SimpleNamespace(state="50"))
+        await inv.async_set_grid_charge(2.0, target_soc=80)
+        inv._freigabe_offen = True
+        assert await inv.async_set_grid_charge(2.5, target_soc=90) is True
+        assert inv._freigabe_offen is False
+        inv._freigabe_offen = True
+        assert await inv.async_set_charge_limit(1.0) is True
+        assert inv._freigabe_offen is False
+        inv._freigabe_offen = True
+        await inv.async_disconnect()
+        assert inv._freigabe_offen is False
+
     async def test_keepalive_verbindet_nach_lesefehler_neu(
         self, inverter, mock_modbus_client, monkeypatch, caplog
     ):

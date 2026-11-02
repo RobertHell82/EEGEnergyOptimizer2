@@ -268,6 +268,11 @@ class SMAInverter(InverterBase):
         # Abmelder des SOC-Beobachters — siehe _beobachte_ziel_soc().
         self._netzladung_ziel: float | None = None
         self._ziel_abmelden: Any = None
+        # Die Netzladung ist am Ziel, die Freigabe aber gescheitert. Dann
+        # wiederholt der Keepalive NUR noch die Freigabe, egal was 30845
+        # inzwischen meldet — siehe _keepalive_loop(). Abgeräumt von jedem
+        # neuen Befehl, jeder gelungenen Freigabe und dem Trennen.
+        self._freigabe_offen: bool = False
         self._keepalive_task: asyncio.Task | None = None
         # Serializes Modbus operations between the 30-second optimizer
         # cycle, manual WebSocket commands, and the keepalive task (the
@@ -436,7 +441,14 @@ class SMAInverter(InverterBase):
                             "SMA: keepalive write skipped — not connected"
                         )
                         continue
-                    if (
+                    # Beobachter (SOC-Sensor) und Keepalive (zuerst 30845)
+                    # sehen das Ziel nicht immer gleich: Meldet der Sensor
+                    # 80 %, das Register 79 %, und scheitert die Freigabe des
+                    # Beobachters, hielte die Prüfung unten die Ladung für
+                    # unfertig und schriebe den Ladeblock neu — das fütterte
+                    # den Watchdog, und die Netzladung liefe über das Ziel
+                    # weiter. Einmal am Ziel erkannt, bleibt es am Ziel.
+                    if self._freigabe_offen or (
                         active.op_mod == OPMOD_CHARGE
                         and await self._netzladung_am_ziel()
                     ):
@@ -446,6 +458,7 @@ class SMAInverter(InverterBase):
                         # spätestens nach 300 s endet die Ladung im Gerät.
                         if await self._freigeben_locked(keepalive_stoppen=False):
                             return
+                        self._freigabe_offen = True
                         continue
                     # Ein gescheitertes Lesen von 30845 schließt die
                     # Verbindung (``_client`` ist dann None). Ohne neuen
@@ -566,6 +579,7 @@ class SMAInverter(InverterBase):
             return False
         if not keepalive_stoppen:
             self._vergessen()
+        self._freigabe_offen = False
         _LOGGER.info(
             "SMA: stopped forcible mode — watchdog will hand back "
             "to internal automatic management"
@@ -723,6 +737,9 @@ class SMAInverter(InverterBase):
         self._entladedeckel_w = None
         self._ladelimit_w = None
         self._active = block
+        # Ein neuer Ladeblock ist ein neuer Befehl — eine Freigabe, die für
+        # den alten offen war, gilt nicht mehr.
+        self._freigabe_offen = False
         self._beobachte_ziel_soc()
         self._start_keepalive()
         _LOGGER.info(
@@ -821,12 +838,16 @@ class SMAInverter(InverterBase):
                 self._cancel_keepalive()
                 _LOGGER.info("SMA: Netzladung am Ziel %.0f %% — Normal-Block", ziel)
             else:
+                self._freigabe_offen = True
                 _LOGGER.warning(
                     "SMA: Netzladung am Ziel, Freigabe fehlgeschlagen — "
                     "der Keepalive wiederholt sie in 60 s"
                 )
 
     def _netzladung_vergessen(self) -> None:
+        # Mit der Netzladung ist auch eine offene Freigabe erledigt: Wer
+        # das hier ruft, hat einen anderen Block geschrieben oder trennt.
+        self._freigabe_offen = False
         self._netzladung_ziel = None
         if self._ziel_abmelden is not None:
             try:
