@@ -215,8 +215,9 @@ wird nicht geprüft.
 ## Freigabe heißt: Standardwert
 
 „Freigabe" ist kein eigener Zustand im Wechselrichter, sondern die Rückkehr zu
-seinen Standardwerten: Ein gesetztes Ladelimit wird aufgehoben und eine
-laufende Zwangsentladung oder Netzladung gestoppt. Wie das am Gerät aussieht,
+seinen Standardwerten: Ein gesetztes Ladelimit wird aufgehoben, ein
+Entladedeckel der Spitzenkappung ebenfalls, und eine laufende Zwangsentladung
+oder Netzladung gestoppt. Wie das am Gerät aussieht,
 hängt vom Treiber ab — bei Huawei wird das Ladelimit auf das Maximum der
 Number-Entität gesetzt (bei einer 5-kW-Batterie also 5 kW), bei den
 Modbus-Treibern (Fronius, Kostal, SMA) geht die Batteriesteuerung zurück an die
@@ -224,9 +225,10 @@ interne Automatik des Wechselrichters. Bei SolaX wird Mode 1 beendet
 („Disabled“), der Ladestrom auf den gesicherten Vorwert zurückgeschrieben
 (ohne gesicherten Wert: das Maximum der Entität) und ein abgesenkter
 Entladeboden wiederhergestellt. Bei Sigenergy geht der Modus zurück auf
-„Maximum Self Consumption“, danach wird Remote EMS ausgeschaltet. Bei Victron
-werden ESS-Netzsollwert und DVCC-Ladestrom auf die Werte zurückgeschrieben,
-die vor dem ersten Eingriff am GX-Gerät standen.
+„Maximum Self Consumption“, die eigenen Lade- und Entladelimits gehen zurück
+auf die Nennleistung, danach wird Remote EMS ausgeschaltet. Bei Victron
+werden ESS-Netzsollwert, DVCC-Ladestrom und „Max. Wechselrichterleistung“ auf
+die Werte zurückgeschrieben, die vor dem ersten Eingriff am GX-Gerät standen.
 
 Deshalb gilt: **Wir greifen nur ein, wenn der Fahrplan einen konkreten Wert
 vorgibt.** Sonst stehen die Werte des Geräts.

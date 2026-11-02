@@ -14,7 +14,9 @@ Schon eine einzige Viertelstunde zählt: Laufen Auto, Herd und Wärmepumpe gleic
 2. **Verbraucher abschalten.** Reicht die Batterie nicht, schaltet die Integration die Verbraucher ab, die du einträgst, einen nach dem anderen. Das passiert etwa, wenn die Batterie leer ist oder das Auto mehr zieht, als sie liefern kann. Sobald wieder Platz ist, schaltet sie die Verbraucher wieder ein.
 
 > [!NOTE]
-> Die erste Stufe gibt es mit allen Wechselrichtern. Bei **Kostal**, **Sigenergy** und **Victron** ist sie neu und am Gerät noch nicht geprüft (Beta). Victron braucht dafür eine aktuelle Victron-Integration in Home Assistant, die „Max. Wechselrichterleistung“ auf −1 zurückschreiben kann; sonst meldet das der Assistent, und die Integration kappt dort nur über das Abschalten von Verbrauchern.
+> Die erste Stufe gibt es mit allen Wechselrichtern. Bei **Kostal**, **Sigenergy** und **Victron** ist sie neu und am Gerät noch nicht geprüft (Beta). Victron braucht dafür eine aktuelle Victron-Integration in Home Assistant, die „Max. Wechselrichterleistung“ auf −1 zurückschreiben kann; sonst meldet das der Assistent, und die Integration kappt dort nur über das Abschalten von Verbrauchern. In den Einstellungen sind die Verbraucher dann Pflicht.
+>
+> Fällt dir etwas auf, etwa eine Spitze trotz Reserve oder ein Verbraucher, der nicht wieder einschaltet: Melde es unter [GitHub-Issues](https://github.com/RobertHell82/EEGEnergyOptimizer2/issues) und häng das ZIP aus **Einstellungen → System → Fahrplan-Archiv → Archiv herunterladen** an.
 
 ## Wie es funktioniert
 
@@ -67,6 +69,10 @@ Ohne diese Option holt die Batterie ihre Reserve nur aus der Sonne. Nach einem t
 - **Wann:** vor der ersten Viertelstunde, in der laut Statistik eine Spitze kommt, etwa vor der Wärmepumpe am Morgen. Bis dahin ist jede Viertelstunde gleich gut, und der Plan nimmt die **günstigste**. Ist im Tab **Tarife** ein Bezug aus der Gemeinschaft eingerichtet, sind das die Viertelstunden, in denen die Gemeinschaft Strom übrig hat. Sonst gilt der Bezugstarif aus der Karte **Bezug**, etwa ein günstigeres Netzentgelt-Fenster oder bei Spot-Bezug die billigste Stunde. Das Netzladen selbst (Tab **Netzladen**) muss dafür nicht an sein.
 - **Wie viel:** nur, was zur Reserve fehlt und die Sonne bis dahin nicht bringt.
 - **Nie über der Grenze:** Haus und Ladung zusammen bleiben 0,3 kW unter dem Grenzwert. Sonst schüfe das Nachladen genau die Spitze, gegen die es vorsorgt.
+
+Ein Beispiel: Grenzwert 5 kW, die Statistik verlangt für die Nacht 20 % Reserve, nach einem trüben Tag hat die Batterie abends nur 12 %. Um 6:00 läuft gewöhnlich die Wärmepumpe an. Der Fahrplan lädt die fehlenden 8 % in den günstigsten Viertelstunden zwischen jetzt und 6:00 nach, bei 0,8 kW Hausverbrauch mit höchstens 3,9 kW. Mehr als die Reserve kauft er dabei nicht.
+
+Das ist etwas anderes als die **Mindestladung am Abend** im Tab **Netzladen**: Die gilt am Ende der PV-Zeit und ist ein fester Ladestand, den du einträgst. Die Reserve rechnet die Integration selbst aus, und nachgeladen wird vor der nächsten Spitze.
 
 Die Option braucht einen Wechselrichter, der beides kann: die Entladung begrenzen und aus dem Netz laden. Das können alle, außer SolaX Gen6 (lädt nicht aus dem Netz) und Victron ohne aktuelle Integration (begrenzt die Entladung nicht). Geprüft ist das Laden aus dem Netz bisher nur bei Huawei. Sie kostet die Lade- und Entladeverluste und Strom, der auch gekauft ist, wenn die Spitze ausbleibt. Die Reserve deckt die Nacht mit dem höchsten Bedarf der letzten Wochen ab, nicht eine durchschnittliche.
 
@@ -137,7 +143,7 @@ _Alle Felder wirken ohne Neustart der Integration._
 
 - **Optimierung aus oder Pause:** Die Spitzenkappung tut nichts. Die Batterie läuft im Automatikbetrieb, abgeschaltete Verbraucher kommen zurück.
 - **Absturz von Home Assistant:**
-  - **Fronius** und **SMA** geben die Batterie nach spätestens fünf Minuten von selbst frei, **Kostal** nach höchstens 15 Minuten. Ob der Kostal dabei auch den Deckel zurücksetzt, ist noch nicht geprüft.
+  - **Fronius** und **SMA** geben die Batterie nach spätestens fünf Minuten von selbst frei, **Kostal** nach Ablauf seines Watchdog-Timeouts (beobachtet: bis 15 min). Ob der Kostal dabei auch den Deckel zurücksetzt, ist noch nicht geprüft.
   - Bei **Sigenergy** und **Victron** bleibt der Deckel stehen, bis Home Assistant wieder läuft und ihn aufhebt. Bleibt Home Assistant länger aus, stell ihn von Hand zurück: bei Sigenergy Remote EMS aus und das Entladelimit auf die Nennleistung, bei Victron die **Max. Wechselrichterleistung** (Einstellungen → ESS) auf den alten Wert, meist −1.
   - Bei **Huawei** bleibt die gesetzte Entladeleistung im Wechselrichter stehen, bis Home Assistant wieder läuft. Ist die Spitzenkappung beim Start eingeschaltet, setzt die Integration sie auf das Maximum zurück. Hast du die Spitzenkappung in der Zwischenzeit ausgeschaltet, prüf die Entität **Maximale Entladeleistung** und stell sie von Hand zurück.
 - **SolaX:** Die Integration stellt den maximalen Entladestrom (`battery_discharge_max_current`). Wie bei Huawei bleibt er bei einem Absturz stehen. Den Wert, der vorher eingestellt war, sichert die Integration und stellt ihn beim Aufheben wieder her. Am Gerät ist das noch nicht geprüft. Wer es testet, schaut auf diese Entität.

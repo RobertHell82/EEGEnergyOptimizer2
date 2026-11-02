@@ -84,7 +84,7 @@ Alle 15 Minuten und bei jeder deutlichen Planänderung wird der Fahrplan abgeleg
 - den Einstellungen, **ohne** Netzwerk- und Zugangsdaten
 - einer Lesehilfe
 
-Hat die Anlage etwas Unerwartetes getan, schick dieses ZIP an den Support. _Der Download-Link gilt nur wenige Minuten. Geht er nicht mehr, klick auf **Zustand aktualisieren**._
+Hat die Anlage etwas Unerwartetes getan, beschreib unter [GitHub-Issues](https://github.com/RobertHell82/EEGEnergyOptimizer2/issues), was passiert ist und wann, und häng dieses ZIP an. _Der Download-Link gilt nur wenige Minuten. Geht er nicht mehr, klick auf **Zustand aktualisieren**._
 
 ### Verbrauchsprofil (Expertenmodus)
 
