@@ -46,16 +46,16 @@ test("ohne Attribut keine Warnung", () => {
 });
 
 // Spitzenkappung: „Reserve notfalls aus dem Netz nachladen" nur, wo der
-// Treiber die Entladung deckeln UND aus dem Netz laden kann.
-test("Reserve aus dem Netz: nur Huawei und Fronius", () => {
+// Treiber die Entladung deckeln UND aus dem Netz laden kann — seit 2.1.64
+// alle sieben; ein unbekannter Typ bekommt den Schalter nicht.
+test("Reserve aus dem Netz: alle bekannten Treiber", () => {
   const p = neuesPanel();
   const sichtbar = (typ) => p._kappungReserveNetz({ inverter_type: typ });
-  assert.equal(sichtbar("huawei_sun2000"), true);
-  assert.equal(sichtbar("fronius_gen24"), true);
-  assert.equal(sichtbar("victron_ess"), false);
-  assert.equal(sichtbar("sma_smart_energy"), false);
-  assert.equal(sichtbar("solax_gen4"), false);
-  assert.equal(sichtbar("kostal_plenticore"), false);
+  for (const typ of ["huawei_sun2000", "fronius_gen24", "victron_ess", "sma_smart_energy",
+                     "solax_gen4", "kostal_plenticore", "sigenergy_sigenstor"]) {
+    assert.equal(sichtbar(typ), true, typ);
+  }
+  assert.equal(sichtbar("unbekannt"), false);
 });
 
 test("Schalter steht im Reiter Spitzenkappung", () => {
@@ -65,6 +65,6 @@ test("Schalter steht im Reiter Spitzenkappung", () => {
     "settings_",
   );
   assert.match(html, /data-field="settings_spitzenkappung_reserve_netz" checked/);
-  const ohne = p._spitzenkappungFields({ inverter_type: "sma_smart_energy", spitzenkappung_enabled: true }, "settings_");
+  const ohne = p._spitzenkappungFields({ inverter_type: "unbekannt", spitzenkappung_enabled: true }, "settings_");
   assert.doesNotMatch(ohne, /spitzenkappung_reserve_netz/);
 });

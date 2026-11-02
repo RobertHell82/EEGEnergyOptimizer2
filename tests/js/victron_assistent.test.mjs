@@ -141,7 +141,8 @@ test("Bezugstarife stehen im Reiter Tarife, getrennt von der Einspeisung", () =>
 test("Bezugstarife auch ohne Expertenmodus, aber nur für Treiber mit Netzladen", () => {
   assert.match(einstellungen({ inverter_type: "huawei_sun2000", expert_mode: false }, "tarife"),
     /settings_schedule_bezug_quelle/);
-  assert.doesNotMatch(einstellungen({ inverter_type: "sma_smart_energy" }, "tarife"),
+  // Seit 2.1.64 können alle sieben Treiber aus dem Netz laden — ohne Bezugstarife bleibt nur ein unbekannter Typ.
+  assert.doesNotMatch(einstellungen({ inverter_type: "unbekannt" }, "tarife"),
     /schedule_bezug_quelle|peakshare_bezug/);
 });
 

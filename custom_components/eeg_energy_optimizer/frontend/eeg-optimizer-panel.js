@@ -112,9 +112,13 @@ const VIERTELSTUNDEN_FEHLEN = "Für diesen Tag gibt es nur die Tagessumme — di
 const EINSP_BEDARF_HINWEIS = "„Bei Gemeinschaftsbedarf“ zählt die Einspeisung in Viertelstunden, in denen die Gemeinschaft laut PeakShare-Prognose unterversorgt war, höchstens ihren Restbedarf. Auch bei Überschuss nimmt sie anteilig etwas auf; wie viel, lässt sich ohne ihre Verbrauchs- und Erzeugungsdaten nicht sagen.";
 
 // Treiber, deren Batterie die Spitzenkappung über einen Entladedeckel
-// hält (InverterBase.supports_discharge_limit). Alle anderen kappen nur
-// über das Abschalten von Verbrauchern.
-const SPITZENKAPPUNG_BATTERIE_TREIBER = ["huawei_sun2000", "fronius_gen24", "sma_smart_energy", "solax_gen4"];
+// hält (InverterBase.supports_discharge_limit) — seit 2.1.64 alle sieben.
+// Ob der Deckel an der konkreten Anlage geht, sagt erst der Treiber
+// (Victron: nur mit schreibbarem −1); ohne ihn kappen die Verbraucher allein.
+const SPITZENKAPPUNG_BATTERIE_TREIBER = [
+  "huawei_sun2000", "fronius_gen24", "sma_smart_energy", "solax_gen4",
+  "kostal_plenticore", "sigenergy_sigenstor", "victron_ess",
+];
 
 // Nur der Startwert, bis _resolveEntityIds die Registry gelesen hat. Der
 // Statussensor steht in beiden Schreibweisen drin — Bestandsinstallationen
@@ -196,11 +200,15 @@ const quoteLuecken = (d) => {
 };
 
 // „Batterie aus dem Netz laden" (Beta): nur Einstellungen, Expertenmodus,
-// Huawei, Victron und Fronius — dieselben Treiber wie im Backend (supports_grid_charge).
+// seit 2.1.64 alle sieben Treiber (supports_grid_charge; SolaX nur Gen4/Gen5 —
+// ohne Mode 1 wirkt der Schalter im Backend nicht).
 // Notschalter, gemeinsam mit schedule.NETZLADEN_FREIGEGEBEN; seit 30.10.2026
 // auch in Releases an (docs/DEVELOPMENT.md).
 const NETZLADEN_SICHTBAR = true;
-const NETZLADEN_TREIBER = ["huawei_sun2000", "victron_ess", "fronius_gen24"];
+const NETZLADEN_TREIBER = [
+  "huawei_sun2000", "victron_ess", "fronius_gen24", "sma_smart_energy",
+  "solax_gen4", "kostal_plenticore", "sigenergy_sigenstor",
+];
 const netzladenSichtbar = (d, prefix) =>
   NETZLADEN_SICHTBAR && !!prefix && !!d.expert_mode && NETZLADEN_TREIBER.includes(d.inverter_type);
 
@@ -5860,7 +5868,7 @@ class EegOptimizerPanel extends HTMLElement {
     // Stufe 1: Batterie — Ladestandsbalken mit Mindest-Ladestand und Schwelle.
     let batterie;
     if (!b) {
-      batterie = "Dieser Wechselrichter kappt nicht über die Batterie (nur Huawei, Fronius, SMA und SolaX) — hier wirken nur die Verbraucher.";
+      batterie = "Dieser Wechselrichter kappt hier nicht über die Batterie (bei Victron etwa, wenn die Integration die Wechselrichtergrenze nicht zurücksetzen kann) — es wirken nur die Verbraucher.";
     } else {
       const basis = b.basis_pct != null ? Number(b.basis_pct) : Number(b.schwelle_pct) - Number(b.reserve_pct);
       const schwelleP = Number(b.schwelle_pct);
@@ -8399,7 +8407,7 @@ class EegOptimizerPanel extends HTMLElement {
   }
 
   // „Batterie aus dem Netz laden" (Beta): eigener Reiter der Einstellungen,
-  // nur im Expertenmodus, nur für Huawei, Victron und Fronius (schedule.py:
+  // nur im Expertenmodus, für alle Treiber mit Netzladen (schedule.py:
   // CONF_SCHEDULE_NETZLADEN, InverterBase.supports_grid_charge). Die
   // Bezugspreise, die ein billigeres Fenster sichtbar machen, stehen im
   // Reiter Tarife (_bezugTarifFeld, _gemeinschaftBezug) — ohne einen davon
@@ -9684,7 +9692,7 @@ class EegOptimizerPanel extends HTMLElement {
 
   _kappungReserveNetz(d) {
     // Reserve aus dem Netz nachladen: braucht Entladedeckel UND Netzladen
-    // (schedule.spitzenreserve_netz_kw) — derzeit Huawei und Fronius.
+    // (schedule.spitzenreserve_netz_kw) — seit 2.1.64 alle Treiber.
     const typ = d?.inverter_type || this._config?.inverter_type;
     return NETZLADEN_SICHTBAR && SPITZENKAPPUNG_BATTERIE_TREIBER.includes(typ) && NETZLADEN_TREIBER.includes(typ);
   }
@@ -10256,7 +10264,7 @@ class EegOptimizerPanel extends HTMLElement {
         ${this._spitzenkappungFields(d, "settings_")}
       </div>`;
 
-    // --- Tab: Netzladen (Beta, Expertenmodus, Huawei, Victron und Fronius) ---
+    // --- Tab: Netzladen (Beta, Expertenmodus, NETZLADEN_TREIBER) ---
     const netzladenTab = netzladenReiter ? `
       <div class="card" style="margin-bottom:16px">
         <h3 class="settings-karte-titel" style="margin:0 0 4px">Batterie aus dem Netz laden</h3>
