@@ -9707,14 +9707,31 @@ class EegOptimizerPanel extends HTMLElement {
   }
 
   _kappungMitBatterie(d) {
-    return SPITZENKAPPUNG_BATTERIE_TREIBER.includes(d?.inverter_type || this._config?.inverter_type);
+    const typ = d?.inverter_type || this._config?.inverter_type;
+    if (!SPITZENKAPPUNG_BATTERIE_TREIBER.includes(typ)) return false;
+    // Die Typliste nennt alle sieben — ob der Deckel an dieser Anlage geht,
+    // weiß erst der Treiber (Victron ohne schreibbares −1 nicht). Läuft die
+    // Spitzenkappung schon, steht es im Attribut ``kappung`` der
+    // Bezugsspitze: ``batterie`` null = kein Entladedeckel
+    // (sensor._kappung_batterie). Nur für den Treiber, der gerade läuft —
+    // ein Typwechsel im Assistenten hat noch keinen Laufzeitwert.
+    if (this._kappungOhneDeckel(typ)) return false;
+    return true;
+  }
+
+  // true, wenn die laufende Spitzenkappung meldet, dass der Treiber keinen
+  // Entladedeckel kann. Ohne Laufzeitwert (Funktion aus, Sensor fehlt): false.
+  _kappungOhneDeckel(typ) {
+    if (this._config?.inverter_type && typ !== this._config.inverter_type) return false;
+    const kappung = this._readState(this._entityIds?.bezugsspitze_monat)?.attributes?.kappung;
+    return !!kappung && typeof kappung === "object" && "batterie" in kappung && kappung.batterie == null;
   }
 
   _kappungReserveNetz(d) {
     // Reserve aus dem Netz nachladen: braucht Entladedeckel UND Netzladen
     // (schedule.spitzenreserve_netz_kw) — seit 2.1.64 alle Treiber.
     const typ = d?.inverter_type || this._config?.inverter_type;
-    return NETZLADEN_SICHTBAR && SPITZENKAPPUNG_BATTERIE_TREIBER.includes(typ) && NETZLADEN_TREIBER.includes(typ);
+    return NETZLADEN_SICHTBAR && this._kappungMitBatterie(d) && NETZLADEN_TREIBER.includes(typ);
   }
 
   _kappungBatterieZustand(b, grenzeKw) {
@@ -9819,7 +9836,7 @@ class EegOptimizerPanel extends HTMLElement {
       titel: "Bezugsspitzen kappen",
       beschreibung: mitBatterie
         ? "Mit der neuen Tarifstruktur (je nach Netzbereich ab 2027 oder 2028) kostet der höchste Viertelstunden-Bezug des Monats extra. Solange die Batterie genug hat, deckt sie Spitzen ohnehin. Wird sie knapp, hält sie eine Reserve zurück: Darin gibt sie nur noch ab, was über dem Grenzwert liegt, die Grundlast kommt aus dem Netz. Wie groß die Reserve ist, rechnet die Integration aus dem Verbrauch der letzten vier Wochen. Reicht die Batterie nicht, schaltet sie die Verbraucher unten der Reihe nach ab. Ist die Optimierung aus oder pausiert, greift nichts davon."
-        : "Mit der neuen Tarifstruktur (je nach Netzbereich ab 2027 oder 2028) kostet der höchste Viertelstunden-Bezug des Monats extra. Droht die laufende Viertelstunde über den Grenzwert und über die bisherige Monatsspitze zu steigen, schaltet die Integration die Verbraucher unten der Reihe nach ab — und wieder ein, sobald sie eine volle Viertelstunde lang Platz hätten. Gemessen wird am Netz, also nach der Batterie: Was sie deckt, zählt gar nicht erst. Über die Batterie kappt dieser Wechselrichter nicht (nur Huawei, Fronius, SMA und SolaX). Ist die Optimierung aus oder pausiert, wird alles wieder eingeschaltet.",
+        : "Mit der neuen Tarifstruktur (je nach Netzbereich ab 2027 oder 2028) kostet der höchste Viertelstunden-Bezug des Monats extra. Droht die laufende Viertelstunde über den Grenzwert und über die bisherige Monatsspitze zu steigen, schaltet die Integration die Verbraucher unten der Reihe nach ab — und wieder ein, sobald sie eine volle Viertelstunde lang Platz hätten. Gemessen wird am Netz, also nach der Batterie: Was sie deckt, zählt gar nicht erst. Über die Batterie kappt dieser Wechselrichter hier nicht (bei Victron etwa, wenn die Integration die Wechselrichtergrenze nicht zurücksetzen kann) — deshalb braucht es mindestens einen Verbraucher. Ist die Optimierung aus oder pausiert, wird alles wieder eingeschaltet.",
       params: `
         ${zustand}
         <div class="field-group">
@@ -9846,7 +9863,7 @@ class EegOptimizerPanel extends HTMLElement {
             <input type="checkbox" data-field="${prefix}spitzenkappung_reserve_netz" ${d.spitzenkappung_reserve_netz ? "checked" : ""}>
             <div>
               <div style="font-weight:500">Reserve notfalls aus dem Netz nachladen <span style="display:inline-block;margin-left:4px;padding:1px 6px;border-radius:8px;font-size:11px;font-weight:600;color:#fff;background:var(--warning-color,#ff9800)">BETA</span></div>
-              <div class="help-text" style="margin-top:4px">Reicht die Sonne nicht, lädt der Fahrplan die Reserve vor der nächsten erwarteten Spitze aus dem Netz nach, unabhängig vom Preis, aber in den günstigsten Viertelstunden davor. Mit Bezug aus der Gemeinschaft oder Börsenpreis (Reiter Tarife, Bezug) sind das die Viertelstunden, in denen sie Strom übrig hat bzw. die billigsten. Das Nachladen selbst bleibt unter dem Grenzwert. Es kostet die Lade- und Entladeverluste und Strom, der auch dann gekauft ist, wenn die Spitze ausbleibt.</div>
+              <div class="help-text" style="margin-top:4px">Reicht die Sonne nicht, lädt der Fahrplan die Reserve vor der nächsten erwarteten Spitze aus dem Netz nach, unabhängig vom Preis, aber in den günstigsten Viertelstunden davor. Mit Bezug aus der Gemeinschaft oder Börsenpreis (Reiter Tarife, Bezug) sind das die Viertelstunden, in denen sie Strom übrig hat bzw. die billigsten. Das Nachladen selbst bleibt unter dem Grenzwert. Es kostet die Lade- und Entladeverluste und Strom, der auch dann gekauft ist, wenn die Spitze ausbleibt. Wirkt nur, wenn der Wechselrichter aus dem Netz laden kann (SolaX Gen6 etwa nicht).</div>
             </div>
           </label>
         </div>` : ""}` : ""}
@@ -10298,7 +10315,7 @@ class EegOptimizerPanel extends HTMLElement {
     const netzladenTab = netzladenReiter ? `
       <div class="card" style="margin-bottom:16px">
         <h3 class="settings-karte-titel" style="margin:0 0 4px">Batterie aus dem Netz laden</h3>
-        <div class="help-text" style="margin-bottom:12px">${anleitungLink("netzladen", "Batterie aus dem Netz laden")}</div>
+        <div class="help-text" style="margin-bottom:12px">Wirkt nur, wenn der Wechselrichter aus dem Netz laden kann — SolaX Gen6 etwa nicht, dort bleibt der Schalter ohne Wirkung. ${anleitungLink("netzladen", "Batterie aus dem Netz laden")}</div>
         ${this._netzladenFeld(d, "settings_")}
       </div>` : "";
 

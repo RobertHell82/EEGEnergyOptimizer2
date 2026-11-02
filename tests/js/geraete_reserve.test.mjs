@@ -68,3 +68,45 @@ test("Schalter steht im Reiter Spitzenkappung", () => {
   const ohne = p._spitzenkappungFields({ inverter_type: "unbekannt", spitzenkappung_enabled: true }, "settings_");
   assert.doesNotMatch(ohne, /spitzenkappung_reserve_netz/);
 });
+
+// Die Typliste nennt alle sieben; ob der Entladedeckel an der Anlage geht,
+// meldet erst die laufende Spitzenkappung (kappung.batterie = null).
+function mitKappung(p, kappung) {
+  p._config = { inverter_type: "victron_ess" };
+  p._entityIds = { ...(p._entityIds || {}), bezugsspitze_monat: "sensor.bezugsspitze_monat" };
+  p._hass = { ...(p._hass || {}), states: {
+    "sensor.bezugsspitze_monat": { state: "3.2", attributes: kappung === undefined ? {} : { kappung } },
+  } };
+}
+
+const victronKappung = () => ({
+  inverter_type: "victron_ess", spitzenkappung_enabled: true, spitzenkappung_grenze_kw: 5,
+  spitzenkappung_verbraucher: [], inverter_ac_limit_kw: 5, pv_peak_kwp: 8,
+});
+
+test("Spitzenkappung: Laufzeit ohne Deckel macht Verbraucher zur Pflicht", () => {
+  const p = neuesPanel();
+  mitKappung(p, { schwelle_kw: 5, abgeschaltet: [], batterie: null });
+  const d = victronKappung();
+  assert.equal(p._kappungMitBatterie(d), false);
+  assert.equal(p._kappungReserveNetz(d), false);
+  p._settingsData = d;
+  assert.ok(p._settingsPflichtLuecken().some(x => /mindestens ein Verbraucher/.test(x)));
+  const html = p._spitzenkappungFields(d, "settings_");
+  assert.doesNotMatch(html, /spitzenkappung_reserve_min_pct/);
+  assert.match(html, /mindestens einen Verbraucher/);
+});
+
+test("Spitzenkappung: Deckel gemeldet oder noch kein Laufzeitwert → Typliste gilt", () => {
+  const p = neuesPanel();
+  const d = victronKappung();
+  mitKappung(p, { schwelle_kw: 5, abgeschaltet: [], batterie: { unterstuetzt: true } });
+  assert.equal(p._kappungMitBatterie(d), true);
+  mitKappung(p, undefined);
+  assert.equal(p._kappungMitBatterie(d), true);
+  p._settingsData = d;
+  assert.ok(!p._settingsPflichtLuecken().some(x => /mindestens ein Verbraucher/.test(x)));
+  // Typwechsel im Assistenten: der Laufzeitwert gehört zum alten Treiber.
+  mitKappung(p, { schwelle_kw: 5, abgeschaltet: [], batterie: null });
+  assert.equal(p._kappungMitBatterie({ inverter_type: "huawei_sun2000" }), true);
+});
