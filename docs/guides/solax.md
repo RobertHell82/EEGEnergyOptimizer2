@@ -4,6 +4,9 @@
 
 Nur **Gen4, Gen5 und Gen6**. Ältere Geräte (Gen2/Gen3) haben keine Remote Control (Fernsteuerung).
 
+> [!NOTE]
+> **Batterie aus dem Netz laden** (Beta, Expertenmodus) gibt es nur bei **Gen4 und Gen5**. Gen6 kennt die dafür nötige Fernsteuerung (Mode 1) nicht — dort bietet der Optimizer die Funktion gar nicht an.
+
 ## 2. Wechselrichter-Einstellungen
 
 Stelle am Wechselrichter oder in der SolaX-App ein:

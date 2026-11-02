@@ -39,6 +39,11 @@ der Integration (``MODE1_AUTOREPEAT_S``) überbrückt die Zeit dazwischen mit
 Abstand. ``remotecontrol_duration`` (``MODE1_DAUER_S``) bleibt der Rückfall
 im Gerät: Fällt Home Assistant aus, endet der Befehl dort spätestens diese
 Zeit nach dem letzten Schreiben.
+
+**Batterie aus dem Netz laden (Beta)** ist derselbe Mode-1-Befehl mit
+positiver Leistung, nur auf Gen4/Gen5 (Gen6 hat keinen Mode 1). Das Gerät
+kennt dabei keinen Ziel-Ladestand; den beobachtet der Treiber selbst, siehe
+``async_set_grid_charge``.
 """
 
 from __future__ import annotations
@@ -48,6 +53,7 @@ import logging
 import re
 from typing import Any
 
+from ..const import CONF_BATTERY_SOC_SENSOR
 from .base import InverterBase
 
 try:
@@ -76,6 +82,22 @@ DISCHARGE_FLOOR_MARGIN_PCT = 5.0
 MODE1_DAUER_S = 300
 MODE1_AUTOREPEAT_S = 600
 MODE1_KEEPALIVE_S = 240
+
+# Netzladung: darunter ist sie eine Freigabe (die Netzgrenze lässt gerade
+# nichts zu), und Mode 1 nimmt die Leistung in 100-W-Schritten.
+NETZLADEN_MIN_KW = 0.05
+MODE1_SCHRITT_W = 100
+
+# Mode-1-Entitäten, ohne die es keine Netzladung gibt. Gen6 kennt Mode 1
+# nicht; dort findet der Suffix-Scan sie nicht, und der Treiber bietet die
+# Netzladung gar nicht erst an.
+_MODE1_ENTITAETEN = (
+    "remotecontrol_power_control",
+    "remotecontrol_active_power",
+    "remotecontrol_duration",
+    "remotecontrol_autorepeat_duration",
+    "remotecontrol_trigger",
+)
 
 # Entity Key -> Default Entity ID Mapping
 SOLAX_ENTITY_DEFAULTS = {
@@ -219,6 +241,10 @@ class SolaXInverter(InverterBase):
         # Keepalive-Takt erneuert, und dessen Abmelder. None = kein Befehl.
         self._mode1_watt: int | None = None
         self._keepalive_abmelden: Any = None
+        # Ziel-SOC der laufenden Netzladung und der Abmelder des
+        # SOC-Beobachters — siehe _beobachte_ziel_soc().
+        self._ziel_soc: float | None = None
+        self._ziel_abmelden: Any = None
         # Executor (30-s-Lauf) und Keepalive-Takt schreiben nebenläufig. Ohne
         # Sperre könnte ein Takt zwischen die Schritte eines Stopps fallen und
         # Mode 1 danach wieder einschalten — unbeobachtet, bis der Rückfall im
@@ -403,6 +429,14 @@ class SolaXInverter(InverterBase):
 
     async def _stopp(self) -> bool:
         self._keepalive_beenden()
+        return await self._stopp_schreiben()
+
+    async def _stopp_schreiben(self) -> bool:
+        """Die Schreibfolge der Freigabe — ohne den Takt anzufassen.
+
+        Getrennt, weil die Netzladung am Ziel-SOC den Takt bei einem
+        Fehlschlag behalten will: Er ist dann die Wiederholung des Stopps.
+        """
         try:
             await self._set_select("remotecontrol_power_control", "Disabled")
             await self._set_number("remotecontrol_active_power", 0)
@@ -458,7 +492,9 @@ class SolaXInverter(InverterBase):
         )
 
     def _keepalive_beenden(self) -> None:
+        """Takt und SOC-Beobachtung beenden — jeder neue Befehl tut das."""
         self._mode1_watt = None
+        self._beobachtung_beenden()
         if self._keepalive_abmelden is not None:
             try:
                 self._keepalive_abmelden()
@@ -475,6 +511,13 @@ class SolaXInverter(InverterBase):
         der Wiederholung läuft der Befehl ohnehin weiter.
         """
         async with self._sperre:
+            # Netzladung am Ziel: zurücknehmen statt erneuern — auch als
+            # Wiederholung eines gescheiterten Stopps, denn am Ziel ändert
+            # sich der SOC womöglich nicht mehr, und der Beobachter bliebe
+            # stumm.
+            if self._am_ziel():
+                await self._ziel_erreicht()
+                return
             if self._mode1_watt is None:
                 return
             try:
@@ -568,6 +611,201 @@ class SolaXInverter(InverterBase):
             _LOGGER.warning(
                 "SolaX: Entladeboden nicht zurücksetzbar (%.0f %%) — bleibt "
                 "gespeichert für den nächsten Versuch", original, exc_info=True,
+            )
+
+    # ------------------------------------------------------------------
+    # Batterie aus dem Netz laden (Beta)
+    # ------------------------------------------------------------------
+    @property
+    def supports_grid_charge(self) -> bool:
+        """„Batterie aus dem Netz laden" (Beta) — Mode 1 mit positiver Leistung.
+
+        Nur, wenn die Mode-1-Entitäten auffindbar sind. Gen6 hat keinen
+        Mode 1; dort bliebe ein Netzladebefehl ohne Wirkung, und der Plan
+        kaufte Strom für eine Ladung, die nie kommt.
+        """
+        return all(
+            self._hass.states.get(self._resolve_entity(key)) is not None
+            for key in _MODE1_ENTITAETEN
+        )
+
+    async def async_set_grid_charge(
+        self, power_kw: float, target_soc: float | None = None
+    ) -> bool:
+        """Batterie mit ``power_kw`` laden, PV zuerst, den Rest aus dem Netz.
+
+        Mode 1 „Enabled Battery Control" mit POSITIVER ``active_power``: Die
+        Batterie lädt genau diese Leistung; die Integration rechnet die PV
+        heraus (``ap_target = target − pv_power``) und holt den Rest aus dem
+        Netz, die Hauslast ebenso. Dieselbe Schreibfolge wie die Entladung,
+        derselbe Keepalive-Takt.
+
+        Zwei Dinge erledigt der Treiber selbst:
+
+        * **Ladestrom vorher zurück.** Ein stehendes Ladelimit
+          (``battery_charge_max_current``, etwa 0 A aus dem Slot davor)
+          deckelt vermutlich auch die Mode-1-Ladung. Zurück auf den
+          gesicherten Vorwert, ohne ihn auf das Maximum des Geräts.
+        * **Ziel-SOC.** Das Gerät hört bei keinem Ladestand auf, der Executor
+          schreibt nur bei einer Änderung — zwischen zwei Befehlen hielte
+          niemand an. Der Treiber beobachtet den SOC-Sensor und gibt am Ziel
+          frei wie ``async_stop_forcible``. Ohne Ziel lädt er bis 100 %.
+
+        ``remotecontrol_import_limit`` bleibt unberührt: Die Netzgrenze führt
+        der Executor in jedem Lauf über die Leistung nach.
+
+        Am Gerät nicht geprüft (Stand 02.11.2026) — das ist der Weg, den
+        die Integration dokumentiert.
+        """
+        if self._nicht_endlich(power_kw, target_soc):
+            return False
+        async with self._sperre:
+            return await self._netzladung(power_kw, target_soc)
+
+    async def _netzladung(self, power_kw: float, target_soc: float | None) -> bool:
+        ziel = 100.0 if target_soc is None else min(100.0, float(target_soc))
+        leistung = max(0.0, float(power_kw))
+        soc = self._soc()
+        if leistung < NETZLADEN_MIN_KW or (soc is not None and soc >= ziel):
+            # Nichts aus dem Netz (die Netzgrenze lässt gerade nichts zu)
+            # oder das Ziel steht schon: wie eine Freigabe. Ein Mode-1-Befehl
+            # mit 0 W hielte die Batterie fest — auch gegen PV-Überschuss.
+            return self._erfolg() if await self._stopp() else False
+        self._keepalive_beenden()
+        try:
+            await self._ladestrom_freigeben()
+            power_w = self._ladeleistung_w(leistung)
+            await self._mode1_schreiben(power_w)
+        except Exception as exc:  # noqa: BLE001
+            _LOGGER.exception("SolaX: Netzladung konnte nicht gestartet werden")
+            # Nichts halb stehen lassen: Der Executor hält den Befehl für
+            # gescheitert und schreibt bei unverändertem Plan womöglich nichts
+            # anderes mehr.
+            try:
+                await self._stopp_schreiben()
+            except Exception:  # noqa: BLE001 — der Fehlerpfad darf nie werfen
+                _LOGGER.debug("SolaX: Stopp nach gescheiterter Netzladung", exc_info=True)
+            return self._fehler(f"Netzladung: {type(exc).__name__}")
+        self._discharge_active = False
+        self._beobachte_ziel_soc(ziel)
+        self._starte_keepalive(power_w)
+        return self._erfolg()
+
+    def _ladeleistung_w(self, leistung_kw: float) -> int:
+        """kW → W in 100-W-Schritten, gedeckelt am Maximum der Entität.
+
+        Mindestens ein Schritt: Unter ``NETZLADEN_MIN_KW`` kommt man hier
+        nicht an, und 0 W wäre kein Laden, sondern ein Festhalten.
+        """
+        watt = max(MODE1_SCHRITT_W, round(leistung_kw * 1000.0 / MODE1_SCHRITT_W) * MODE1_SCHRITT_W)
+        state = self._hass.states.get(self._resolve_entity("remotecontrol_active_power"))
+        try:
+            maximum = abs(float(state.attributes.get("max"))) if state is not None else None
+        except (TypeError, ValueError):
+            maximum = None
+        if maximum is not None:
+            watt = min(watt, int(maximum // MODE1_SCHRITT_W) * MODE1_SCHRITT_W)
+        return int(watt)
+
+    async def _ladestrom_freigeben(self) -> None:
+        """Ein eigenes Ladelimit zurücknehmen, bevor Mode 1 laden soll.
+
+        Ziel ist der gesicherte Vorwert. Ohne ihn hat der Treiber das Limit
+        nie verstellt — ein Wert über 0 ist dann die Einstellung des
+        Betreibers und bleibt. Nur 0 A ohne Vorwert (Neustart mitten im
+        Sperren, Store verloren) geht auf das Maximum der Entität.
+        """
+        await self._state_store.async_load()
+        aktuell = self._read_current_charge_max_current()
+        ziel = self._state_store.original_current
+        if ziel is None:
+            if aktuell is not None and aktuell > 0:
+                return
+            ziel = self._read_max_charge_current_attribute()
+        if ziel is None:
+            _LOGGER.warning(
+                "SolaX: Ladestrom vor der Netzladung nicht zurücksetzbar — "
+                "Vorwert und Maximum unbekannt"
+            )
+            return
+        if aktuell is not None and abs(aktuell - ziel) < 0.05:
+            return
+        await self._set_number("battery_charge_max_current", ziel)
+
+    # ------------------------------------------------------------------
+    # Ziel-SOC der Netzladung
+    # ------------------------------------------------------------------
+    def _soc(self) -> float | None:
+        sensor = self._config.get(CONF_BATTERY_SOC_SENSOR)
+        if not sensor:
+            return None
+        state = self._hass.states.get(sensor)
+        if state is None:
+            return None
+        try:
+            return float(state.state)
+        except (TypeError, ValueError):
+            return None
+
+    def _am_ziel(self) -> bool:
+        if self._ziel_soc is None:
+            return False
+        soc = self._soc()
+        return soc is not None and soc >= self._ziel_soc
+
+    def _beobachte_ziel_soc(self, ziel: float) -> None:
+        """Am SOC-Sensor anmelden und am Ziel freigeben (Muster: Victron)."""
+        self._ziel_soc = ziel
+        if self._ziel_abmelden is not None:
+            return
+        sensor = self._config.get(CONF_BATTERY_SOC_SENSOR)
+        if not sensor:
+            return
+        try:
+            from homeassistant.helpers.event import async_track_state_change_event
+        except ImportError:  # pragma: no cover — Testumgebung
+            return
+
+        def _soc_geaendert(_event: Any) -> None:
+            if self._am_ziel():
+                self._hass.async_create_task(self._ziel_erreicht_gesperrt())
+
+        self._ziel_abmelden = async_track_state_change_event(
+            self._hass, [sensor], _soc_geaendert
+        )
+
+    def _beobachtung_beenden(self) -> None:
+        self._ziel_soc = None
+        if self._ziel_abmelden is not None:
+            try:
+                self._ziel_abmelden()
+            except Exception:  # noqa: BLE001 — Abmelden darf nie werfen
+                pass
+            self._ziel_abmelden = None
+
+    async def _ziel_erreicht_gesperrt(self) -> None:
+        """Aus dem SOC-Beobachter: unter der Sperre und erst nach erneuter
+        Prüfung — ein Befehl dazwischen kann ein neues Ziel gesetzt haben."""
+        async with self._sperre:
+            if self._am_ziel():
+                await self._ziel_erreicht()
+
+    async def _ziel_erreicht(self) -> None:
+        """Am Ziel freigeben wie ``async_stop_forcible``.
+
+        Scheitert der Stopp, bleiben Beobachtung und Takt stehen — der Takt
+        erneuert dann nicht mehr den Ladebefehl, sondern wiederholt den
+        Stopp. Ein stehender Mode-1-Befehl kaufte sonst bis zum Ablauf der
+        Wiederholung weiter Netzstrom.
+        """
+        ziel = self._ziel_soc
+        self._mode1_watt = None
+        if await self._stopp_schreiben():
+            self._keepalive_beenden()
+            _LOGGER.info("SolaX: Ziel-SOC %.0f %% erreicht — Netzladung beendet", ziel or 0.0)
+        else:
+            _LOGGER.warning(
+                "SolaX: Netzladung am Ziel-SOC nicht beendet — wird wiederholt"
             )
 
     # ------------------------------------------------------------------
@@ -715,7 +953,9 @@ class SolaXInverter(InverterBase):
         rows: list[dict] = []
         for config_key, label, rolle in (
             ("battery_charge_max_current", "Ladestrom max", "charge_limit"),
-            ("remotecontrol_active_power", "Entladeleistung (Mode 1)", "discharge_limit"),
+            # Ein Wert für beide Richtungen: negativ entlädt, positiv lädt
+            # (Netzladung).
+            ("remotecontrol_active_power", "Mode-1-Leistung (− Entladen, + Laden)", "discharge_limit"),
             ("remotecontrol_power_control", "Betriebsmodus", "mode"),
             ("selfuse_discharge_min_soc", "Entladeboden", "backup_soc"),
         ):

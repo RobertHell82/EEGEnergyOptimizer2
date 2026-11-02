@@ -12,12 +12,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from custom_components.eeg_energy_optimizer.const import CONF_BATTERY_SOC_SENSOR
 from custom_components.eeg_energy_optimizer.inverter.base import InverterBase
 from custom_components.eeg_energy_optimizer.inverter.solax import (
     DISCHARGE_FLOOR_MARGIN_PCT,
     MODE1_AUTOREPEAT_S,
     MODE1_DAUER_S,
     MODE1_KEEPALIVE_S,
+    NETZLADEN_MIN_KW,
     SOLAX_DOMAIN,
     SOLAX_ENTITY_DEFAULTS,
     SolaXInverter,
@@ -1009,3 +1011,227 @@ class TestMode1Keepalive:
         await takt.takte[0][0](None)
         assert inverter._mode1_watt == -2000
         takt.abmelder.assert_not_called()
+
+
+SOC_SENSOR = "sensor.batterie_soc"
+
+
+def _netzlade_treiber(mock_hass, werte: dict[str, str], attribute: dict | None = None):
+    """Treiber mit SOC-Sensor und vorgegebenen Zuständen."""
+    mock_hass.states.get = MagicMock(side_effect=_states(werte, attribute))
+    inv = SolaXInverter(mock_hass, {CONF_BATTERY_SOC_SENSOR: SOC_SENSOR})
+    _install_noop_store(inv)
+    return inv
+
+
+def _mode1_vorhanden(**extra) -> dict[str, str]:
+    werte = {
+        SELECT_ENTITY: "Disabled",
+        ACTIVE_POWER_ENTITY: "0",
+        DURATION_ENTITY: "20",
+        AUTOREPEAT_ENTITY: "0",
+        TRIGGER_ENTITY: "unknown",
+    }
+    werte.update(extra)
+    return werte
+
+
+class TestNetzladung:
+    """Batterie aus dem Netz laden (Beta): Mode 1 mit positiver Leistung.
+
+    Am Gerät nicht geprüft — die Tests halten fest, was der Treiber
+    schreibt, nicht, was die SolaX daraus macht.
+    """
+
+    def test_angeboten_mit_mode1_entitaeten(self, mock_hass):
+        inv = _netzlade_treiber(mock_hass, _mode1_vorhanden())
+        assert inv.supports_grid_charge is True
+
+    def test_nicht_angeboten_ohne_mode1(self, mock_hass):
+        """Gen6 hat keinen Mode 1 — der Plan darf keine Netzladung vorsehen,
+        die nie ankäme."""
+        werte = _mode1_vorhanden()
+        del werte[TRIGGER_ENTITY]
+        inv = _netzlade_treiber(mock_hass, werte)
+        assert inv.supports_grid_charge is False
+
+    async def test_werte_und_reihenfolge(self, mock_hass, takt):
+        inv = _netzlade_treiber(
+            mock_hass,
+            _mode1_vorhanden(**{SOC_SENSOR: "40", MAX_CURRENT_ENTITY: "25"}),
+            {ACTIVE_POWER_ENTITY: {"max": 10000}},
+        )
+        assert await inv.async_set_grid_charge(3.04, target_soc=80) is True
+        assert _mode1_schreibvorgaenge(mock_hass) == [
+            ("select", "select_option",
+             {"entity_id": SELECT_ENTITY, "option": "Enabled Battery Control"}),
+            ("number", "set_value", {"entity_id": ACTIVE_POWER_ENTITY, "value": 3000}),
+            ("number", "set_value", {"entity_id": DURATION_ENTITY, "value": MODE1_DAUER_S}),
+            ("number", "set_value", {"entity_id": AUTOREPEAT_ENTITY, "value": MODE1_AUTOREPEAT_S}),
+            ("button", "press", {"entity_id": TRIGGER_ENTITY}),
+        ]
+        assert inv.last_write_error is None
+
+    async def test_leistung_am_maximum_gedeckelt(self, mock_hass, takt):
+        inv = _netzlade_treiber(
+            mock_hass,
+            _mode1_vorhanden(**{SOC_SENSOR: "40", MAX_CURRENT_ENTITY: "25"}),
+            {ACTIVE_POWER_ENTITY: {"max": 5000}},
+        )
+        await inv.async_set_grid_charge(8.0, target_soc=80)
+        assert _calls_by_entity(mock_hass)[ACTIVE_POWER_ENTITY]["value"] == 5000
+
+    async def test_import_limit_wird_nicht_geschrieben(self, mock_hass, takt):
+        """Die Netzgrenze führt der Executor über die Leistung nach."""
+        inv = _netzlade_treiber(mock_hass, _mode1_vorhanden(**{SOC_SENSOR: "40"}))
+        await inv.async_set_grid_charge(2.0, target_soc=80)
+        assert not any("import_limit" in eid for eid in _calls_by_entity(mock_hass))
+
+    async def test_ladestrom_vorher_zurueck(self, mock_hass, takt):
+        """Ein Ladelimit von 0 A aus dem Slot davor deckelte sonst auch die
+        Mode-1-Ladung."""
+        inv = _netzlade_treiber(
+            mock_hass, _mode1_vorhanden(**{SOC_SENSOR: "40", MAX_CURRENT_ENTITY: "0"}),
+            {MAX_CURRENT_ENTITY: {"max": 30}},
+        )
+        inv._state_store._data = {"battery_charge_max_current_original": 25.0}
+        inv._state_store._loaded = True
+
+        await inv.async_set_grid_charge(2.0, target_soc=80)
+
+        aufrufe = _mode1_schreibvorgaenge(mock_hass)
+        assert aufrufe[0] == (
+            "number", "set_value", {"entity_id": MAX_CURRENT_ENTITY, "value": 25.0}
+        )
+        assert aufrufe[1][2]["option"] == "Enabled Battery Control"
+
+    async def test_ladestrom_ohne_vorwert_auf_maximum(self, mock_hass, takt):
+        inv = _netzlade_treiber(
+            mock_hass, _mode1_vorhanden(**{SOC_SENSOR: "40", MAX_CURRENT_ENTITY: "0"}),
+            {MAX_CURRENT_ENTITY: {"max": 30}},
+        )
+        await inv.async_set_grid_charge(2.0, target_soc=80)
+        assert _calls_by_entity(mock_hass)[MAX_CURRENT_ENTITY]["value"] == 30.0
+
+    async def test_eigener_ladestrom_des_betreibers_bleibt(self, mock_hass, takt):
+        """Ohne gesicherten Vorwert hat der Treiber nichts verstellt — ein Wert
+        über 0 ist die Einstellung des Betreibers."""
+        inv = _netzlade_treiber(
+            mock_hass, _mode1_vorhanden(**{SOC_SENSOR: "40", MAX_CURRENT_ENTITY: "18"}),
+            {MAX_CURRENT_ENTITY: {"max": 30}},
+        )
+        await inv.async_set_grid_charge(2.0, target_soc=80)
+        assert MAX_CURRENT_ENTITY not in _calls_by_entity(mock_hass)
+
+    async def test_ziel_schon_erreicht_gibt_frei(self, mock_hass, takt):
+        inv = _netzlade_treiber(mock_hass, _mode1_vorhanden(**{SOC_SENSOR: "80"}))
+        assert await inv.async_set_grid_charge(2.0, target_soc=80) is True
+        payloads = _calls_by_entity(mock_hass)
+        assert payloads[SELECT_ENTITY]["option"] == "Disabled"
+        assert payloads[ACTIVE_POWER_ENTITY]["value"] == 0
+        assert takt.takte == []
+        assert takt.beobachter == []
+
+    async def test_unter_mindestleistung_wie_freigabe(self, mock_hass, takt):
+        """0 W in Mode 1 hielte die Batterie fest — auch gegen PV-Überschuss."""
+        inv = _netzlade_treiber(mock_hass, _mode1_vorhanden(**{SOC_SENSOR: "40"}))
+        assert await inv.async_set_grid_charge(NETZLADEN_MIN_KW / 2, target_soc=80) is True
+        payloads = _calls_by_entity(mock_hass)
+        assert payloads[SELECT_ENTITY]["option"] == "Disabled"
+        assert takt.takte == []
+
+    async def test_nicht_endlich(self, mock_hass, takt):
+        inv = _netzlade_treiber(mock_hass, _mode1_vorhanden(**{SOC_SENSOR: "40"}))
+        assert await inv.async_set_grid_charge(float("nan"), target_soc=80) is False
+        assert mock_hass.services.async_call.call_count == 0
+        assert inv.last_write_error == "Sollwert nicht endlich"
+
+    async def test_soc_beobachter_stoppt_am_ziel(self, mock_hass, takt):
+        werte = _mode1_vorhanden(**{SOC_SENSOR: "60"})
+        inv = _netzlade_treiber(mock_hass, werte)
+        mock_hass.async_create_task = MagicMock()
+        await inv.async_set_grid_charge(2.0, target_soc=80)
+        assert takt.beobachter[0][0] == [SOC_SENSOR]
+
+        werte[SOC_SENSOR] = "70"
+        takt.beobachter[0][1](None)
+        mock_hass.async_create_task.assert_not_called()
+
+        werte[SOC_SENSOR] = "80"
+        mock_hass.services.async_call.reset_mock()
+        takt.beobachter[0][1](None)
+        await mock_hass.async_create_task.call_args.args[0]
+
+        assert _calls_by_entity(mock_hass)[SELECT_ENTITY]["option"] == "Disabled"
+        takt.soc_abmelder.assert_called_once()
+        takt.abmelder.assert_called_once()
+        assert inv._mode1_watt is None
+
+    async def test_ohne_ziel_bis_100(self, mock_hass, takt):
+        inv = _netzlade_treiber(mock_hass, _mode1_vorhanden(**{SOC_SENSOR: "60"}))
+        await inv.async_set_grid_charge(2.0)
+        assert inv._ziel_soc == 100.0
+
+    async def test_keepalive_erneuert_und_endet_am_ziel(self, mock_hass, takt):
+        werte = _mode1_vorhanden(**{SOC_SENSOR: "60"})
+        inv = _netzlade_treiber(mock_hass, werte)
+        await inv.async_set_grid_charge(2.0, target_soc=80)
+        assert len(takt.takte) == 1
+
+        mock_hass.services.async_call.reset_mock()
+        await takt.takte[0][0](None)
+        assert _calls_by_entity(mock_hass)[ACTIVE_POWER_ENTITY]["value"] == 2000
+
+        # Am Ziel ändert sich der SOC womöglich nicht mehr — der Takt sieht
+        # es trotzdem und gibt frei, statt weiter zu laden.
+        werte[SOC_SENSOR] = "81"
+        mock_hass.services.async_call.reset_mock()
+        await takt.takte[0][0](None)
+        payloads = _calls_by_entity(mock_hass)
+        assert payloads[SELECT_ENTITY]["option"] == "Disabled"
+        assert payloads[ACTIVE_POWER_ENTITY]["value"] == 0
+        takt.abmelder.assert_called_once()
+
+    async def test_gescheiterter_stopp_am_ziel_wird_wiederholt(self, mock_hass, takt):
+        werte = _mode1_vorhanden(**{SOC_SENSOR: "60"})
+        inv = _netzlade_treiber(mock_hass, werte)
+        await inv.async_set_grid_charge(2.0, target_soc=80)
+
+        werte[SOC_SENSOR] = "80"
+        mock_hass.services.async_call = AsyncMock(side_effect=Exception("boom"))
+        await takt.takte[0][0](None)
+        takt.abmelder.assert_not_called()           # Takt bleibt als Wiederholung
+        assert inv._mode1_watt is None              # lädt aber nicht mehr
+
+        mock_hass.services.async_call = AsyncMock(return_value=None)
+        await takt.takte[0][0](None)
+        assert _calls_by_entity(mock_hass)[SELECT_ENTITY]["option"] == "Disabled"
+        takt.abmelder.assert_called_once()
+
+    async def test_stopp_beendet_netzladung(self, mock_hass, takt):
+        inv = _netzlade_treiber(mock_hass, _mode1_vorhanden(**{SOC_SENSOR: "60"}))
+        await inv.async_set_grid_charge(2.0, target_soc=80)
+        assert await inv.async_stop_forcible() is True
+        takt.abmelder.assert_called_once()
+        takt.soc_abmelder.assert_called_once()
+        assert inv._ziel_soc is None
+
+    async def test_fehlerpfad(self, mock_hass, takt):
+        """Scheitert der Trigger, bleibt nichts halb stehen: Die Freigabe-Folge
+        läuft, kein Takt, kein Beobachter, ein Grund für die Telemetrie."""
+        inv = _netzlade_treiber(mock_hass, _mode1_vorhanden(**{SOC_SENSOR: "60"}))
+        erster = {"trigger": True}
+
+        async def _call(domain, service, daten, blocking=True):
+            if daten.get("entity_id") == TRIGGER_ENTITY and erster["trigger"]:
+                erster["trigger"] = False
+                raise RuntimeError("Modbus")
+
+        mock_hass.services.async_call = AsyncMock(side_effect=_call)
+
+        assert await inv.async_set_grid_charge(2.0, target_soc=80) is False
+        assert inv.last_write_error == "Netzladung: RuntimeError"
+        assert takt.takte == []
+        assert takt.beobachter == []
+        geschrieben = [c.args[2] for c in mock_hass.services.async_call.call_args_list]
+        assert {"entity_id": SELECT_ENTITY, "option": "Disabled"} in geschrieben

@@ -199,6 +199,23 @@ Fahrplan rechnet in Leistung. Umgerechnet wird über die Batteriespannung
 (Rückfallwert 400 V, wenn der Spannungssensor fehlt) — bei einer fehlenden
 Spannung ist das Limit entsprechend ungenau.
 
+**Beta: Batterie aus dem Netz laden** (Expertenmodus, nur Gen4/Gen5 — Gen6
+hat keinen Mode 1, dort bietet der Treiber es nicht an): derselbe
+Mode-1-Befehl wie die Entladung, mit positiver Leistung
+(`remotecontrol_active_power` > 0). Die Batterie lädt diese Leistung, die
+Integration nimmt zuerst die PV und den Rest aus dem Netz. Ein stehendes
+Ladelimit (`battery_charge_max_current`) stellt der Treiber vorher auf den
+gesicherten Vorwert zurück. Einen Ziel-Ladestand kennt Mode 1 nicht: Der
+Treiber beobachtet den SOC-Sensor und gibt am Ziel frei.
+`remotecontrol_import_limit` bleibt unberührt — die Netzgrenze führt die
+Steuerung über die Ladeleistung nach. **Noch nicht am Gerät geprüft:** ob
+die Batterie mit der befohlenen Leistung lädt und PV dabei Vorrang hat, ob
+ein Ladestrom von 0 A die Mode-1-Ladung tatsächlich deckelt (und das
+Zurückstellen damit nötig ist), ob die Ladung bei schwankender PV und
+Hauslast hält, ob der Keepalive sie ohne Lücke über den Ablauf der
+Wiederholung trägt, und ob die Freigabe am Ziel sauber in Self Use
+zurückführt.
+
 Guide: [solax.md](guides/solax.md)
 
 ### Victron ESS
