@@ -12,6 +12,20 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+## [2.1.62] - 2026-11-02
+
+### Hinzugefügt
+
+- **Mindestladung am Abend** (Reiter **Netzladen**, mit „Batterie aus dem Netz laden“). Ein Ladestand, den die Batterie am Ende der PV-Zeit auf jeden Fall haben soll. Schafft die erwartete PV das nicht, lädt der Fahrplan den Rest aus dem Netz, unabhängig vom Preis, aber in den günstigsten Viertelstunden davor, also bevorzugt dann, wenn die Gemeinschaft Strom übrig hat. Gekauft wird nur bis zu diesem Wert; was darüber bis zum Ladeziel fehlt, kommt weiter nur von der Sonne oder aus Viertelstunden, in denen sich der Zukauf rechnet. Liegt der Ladestand am Ende der PV-Zeit trotzdem mehr als 3 Prozentpunkte darunter, meldet die Telemetrie das als **abendladung**, mit Schwellwert, gemessenem und geplantem Ladestand.
+
+### Behoben
+
+- **Das Ladeziel füllt die Batterie nicht mehr über Pflicht-Viertelstunden aus dem Netz.** Gab die Reserve der Spitzenkappung Viertelstunden zum Nachladen frei, nutzte das Ladeziel sie mit und lud bis 100 %, auch wenn die Reserve nur eine kleine Menge brauchte. Diese Viertelstunden gehören jetzt allein der Reserve und der Mindestladung am Abend.
+
+### Geändert
+
+- **Eine Bürgerenergiegemeinschaft wird beim Bezug automatisch als solche gerechnet.** Heißt die Gemeinschaft „BEG …“ oder „Bürgerenergiegemeinschaft …“, steht die Art im Abschnitt **Bezug aus der Gemeinschaft** fest auf **Bürgerenergiegemeinschaft (volle Netzgebühr)** und ist gesperrt. Ein früher gespeichertes „lokal“ gilt nicht mehr: Eine BEG bekommt keine Ermäßigung der Netznutzung, der Fahrplan hätte ihren Strom sonst zu billig gesehen.
+
 ## [2.1.61] - 2026-11-02
 
 ### Behoben
