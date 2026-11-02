@@ -68,18 +68,21 @@ _Die Version steht im Kostal-Webserver unter „Info". Updates macht der Wechsel
 
 ## Was der Optimizer am Gerät tut
 
-Der Optimizer stellt zwei Register. Beide liegen im flüchtigen Speicher (RAM) — häufiges Schreiben nutzt also nichts ab.
+Der Optimizer stellt bis zu drei Register. Alle liegen im flüchtigen Speicher (RAM) — häufiges Schreiben nutzt also nichts ab.
 
 | Register | Wofür |
 |---|---|
 | **1038** Max. Ladeleistung | Begrenzt das Laden auf die geplante Leistung. 0 W sperrt das Laden ganz; Entladen für das Haus bleibt möglich |
-| **1034** Batterie-Sollwert | Erzwungene Entladung ins Netz — positiver Wert, in Watt |
+| **1034** Batterie-Sollwert | Erzwungene Entladung ins Netz — positiver Wert, in Watt. **Beta:** negativer Wert = Laden aus PV und Netz („Batterie aus dem Netz laden“) |
+| **1040** Max. Entladeleistung | **Beta:** nur mit Spitzenkappung — begrenzt, wie viel die Batterie in der Spitzenreserve abgibt. Beim Aufheben schreibt der Optimizer den Wert von vorher zurück |
+
+_Netzladen und Entladedeckel sind beim Kostal noch nicht am Gerät geprüft. Wenn du sie ausprobierst, melde dich bitte._
 
 **Sicherheitsnetz (Watchdog):** Der Sollwert muss regelmäßig erneuert werden (empfohlen: 60 Sekunden, Einstellung im Servicemenü). Der Optimizer schreibt alle 25 Sekunden nach. Stürzt Home Assistant während einer Entladung ab, fällt der Wechselrichter nach Ablauf der Zeit in sein eigenes Batteriemanagement zurück.
 
-Einen Ziel-Ladestand kennt Kostal nicht. Der Optimizer prüft den Ladestand alle 30 Sekunden selbst und beendet die Entladung.
+Einen Ziel-Ladestand kennt Kostal nicht. Der Optimizer prüft den Ladestand alle 30 Sekunden selbst und beendet die Entladung (beim Laden aus dem Netz ebenso die Ladung).
 
-**Nach einer Entladung kann die Batterie bis zu 15 Minuten stillstehen.** Der Optimizer schreibt dann nichts, bis der Wechselrichter von selbst in sein eigenes Batteriemanagement zurückgefallen ist (höchstens 15 Minuten). Zeigt die Statuskarte in dieser Zeit „Normalbetrieb“ und die Batterie steht still, ist das kein Fehler.
+**Nach einer Entladung oder einer Ladung aus dem Netz kann die Batterie bis zu 15 Minuten stillstehen.** Der Optimizer schreibt dann nichts, bis der Wechselrichter von selbst in sein eigenes Batteriemanagement zurückgefallen ist (höchstens 15 Minuten). Zeigt die Statuskarte in dieser Zeit „Normalbetrieb“ und die Batterie steht still, ist das kein Fehler.
 
 > **Teil-Ladelimits** (der Normalfall) prüft der Optimizer beim ersten Mal nach. Weicht der zurückgelesene Wert stark ab, steht eine Warnung im Protokoll — dann melde dich bitte mit der Firmware-Version.
 

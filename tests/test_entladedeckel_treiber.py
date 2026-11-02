@@ -1,7 +1,8 @@
-"""Entladedeckel der Spitzenkappung in den drei Treibern, die ihn können.
+"""Entladedeckel der Spitzenkappung in den Treibern, die ihn können.
 
-Fronius (OutWRte mit StorCtl_Mod Bit 1), SMA (BatDschMaxW im CmpBMS-Block)
-und Huawei (Number-Entität „Maximale Entladeleistung"). Jeder Treiber muss
+Fronius (OutWRte mit StorCtl_Mod Bit 1), SMA (BatDschMaxW im CmpBMS-Block),
+Huawei (Number-Entität „Maximale Entladeleistung"), SolaX und Kostal
+(Register 1040, Beta). Jeder Treiber muss
 dreierlei richtig machen: den Deckel neben einem Ladelimit halten, ihn ohne
 anderen Modus als eigenen Zustand führen (mit Watchdog-Keepalive bei den
 Modbus-Treibern) und ihn bei Freigabe und Zwangsentladung loswerden.
@@ -613,3 +614,93 @@ async def test_sigen_nan_wird_abgelehnt(mock_hass):
     inv, _ = _sigen(mock_hass)
     assert await inv.async_set_discharge_limit(float("nan")) is False
     mock_hass.services.async_call.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# Kostal (Register 1040, Beta) — die ausführlichen Fälle stehen in
+# test_kostal_inverter.py; hier die drei Pflichten jedes Deckel-Treibers.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def kostal(mock_hass):
+    from custom_components.eeg_energy_optimizer.inverter.kostal import (
+        REG_MAX_CHARGE_POWER,
+        REG_MAX_DISCHARGE_POWER,
+        KostalInverter,
+        float_to_registers,
+    )
+
+    vorwerte = {REG_MAX_CHARGE_POWER: 6000.0, REG_MAX_DISCHARGE_POWER: 5000.0}
+
+    async def _read(address, count, **kwargs):
+        return _ok(float_to_registers(vorwerte.get(address, 0.0)))
+
+    client = MagicMock()
+    client.connected = True
+    client.write_registers = AsyncMock(return_value=_ok())
+    client.read_holding_registers = AsyncMock(side_effect=_read)
+    client.connect = AsyncMock(return_value=True)
+    client.close = MagicMock()
+    inv = KostalInverter(mock_hass, {"kostal_modbus_host": "1.2.3.4"})
+    inv._client = client
+    yield inv, client
+    inv._cancel_keepalive()
+
+
+def _kostal_werte(client, address):
+    from custom_components.eeg_energy_optimizer.inverter.kostal import (
+        registers_to_float,
+    )
+    return [
+        round(registers_to_float(c.kwargs["values"]))
+        for c in client.write_registers.await_args_list
+        if c.kwargs.get("address") == address
+    ]
+
+
+async def test_kostal_deckel_neben_ladelimit(kostal):
+    from custom_components.eeg_energy_optimizer.inverter.kostal import (
+        REG_MAX_CHARGE_POWER,
+        REG_MAX_DISCHARGE_POWER,
+    )
+    inv, client = kostal
+    assert inv.supports_discharge_limit is True
+    assert await inv.async_set_charge_limit(2.0) is True
+    assert await inv.async_set_discharge_limit(0.0) is True
+    # Getrennte Register: Das Ladelimit bleibt, der Deckel kommt dazu.
+    assert inv._active == ("charge_limit", 2000.0)
+    assert inv._deckel_w == 0.0
+    assert _kostal_werte(client, REG_MAX_CHARGE_POWER) == [2000]
+    assert _kostal_werte(client, REG_MAX_DISCHARGE_POWER) == [0]
+
+
+async def test_kostal_freigabe_hebt_deckel_auf(kostal):
+    from custom_components.eeg_energy_optimizer.inverter.kostal import (
+        REG_MAX_DISCHARGE_POWER,
+    )
+    inv, client = kostal
+    await inv.async_set_discharge_limit(1.5)
+    assert await inv.async_stop_forcible() is True
+    assert _kostal_werte(client, REG_MAX_DISCHARGE_POWER) == [1500, 5000]
+    assert inv._deckel_w is None
+
+
+async def test_kostal_zwangsentladung_hebt_deckel_auf(kostal):
+    from custom_components.eeg_energy_optimizer.inverter.kostal import (
+        REG_BATTERY_SETPOINT,
+        REG_MAX_DISCHARGE_POWER,
+    )
+    inv, client = kostal
+    await inv.async_set_discharge_limit(0.0)
+    client.write_registers.reset_mock()
+    assert await inv.async_set_discharge(3.0) is True
+    adressen = [c.kwargs["address"] for c in client.write_registers.await_args_list]
+    assert adressen == [REG_MAX_DISCHARGE_POWER, REG_BATTERY_SETPOINT]
+    assert _kostal_werte(client, REG_MAX_DISCHARGE_POWER) == [5000]
+
+
+async def test_kostal_aufheben_ohne_deckel_ist_noop(kostal):
+    inv, client = kostal
+    assert await inv.async_set_discharge_limit(None) is True
+    assert client.write_registers.await_count == 0

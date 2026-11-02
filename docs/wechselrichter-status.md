@@ -102,6 +102,37 @@ Seitdem schreibt der Treiber 1034 nur nach einer echten Entladung und
 danach kein Steuerregister, bis die gemessene Batterieleistung den Rückfall
 zur internen Automatik zeigt (höchstens 15 min) — der Watchdog-Timeout ist
 per Modbus nicht lesbar und je Anlage verschieden.
+
+**Beta: Entladedeckel der Spitzenkappung** über Register 1040 (max.
+Entladeleistung, W). Der Keepalive schreibt ihn neben dem Ladelimit (1038)
+zyklisch neu; beim Aufheben schreibt der Treiber den Wert von vorher zurück
+(ohne gesicherten Vorwert die Entladegrenze der Batterie aus Register 1078).
+Nach einer Entladung oder Netzladung wartet auch der Deckel auf den
+Rückfall — jeder Schreibzugriff auf 1040 hielte sonst den alten 1034-Sollwert
+fest.
+
+**Beta: Batterie aus dem Netz laden** (Expertenmodus): negativer Sollwert in
+1034 (DC-Batterieleistung — PV zuerst, der Rest aus dem Netz). Vorher gehen
+1038 und 1040 auf ihre Vorwerte zurück. Einen Ziel-Ladestand kennt der
+Plenticore nicht; der Treiber liest Register 210 bei jedem Schreiben und im
+Keepalive und hält am Ziel mit 1034 = 0 an, danach gilt dieselbe
+Rückfall-Wartezeit wie nach einer Entladung.
+
+**Österreich: Gradientensperre.** Nach jeder Netzzuschaltung ist 1034 rund
+10 Minuten gesperrt (Kostal-Spezifikation, Fußnote 7) — Entladung und
+Netzladung kommen in dieser Zeit mit dem Grund „1034 gesperrt (Gradient …)“
+zurück, der Executor versucht es gebremst erneut. 1038 und 1040 sind nicht
+betroffen.
+
+**Noch nicht am Gerät geprüft** (auch nicht in Ansfelden):
+- Netzladung: lädt 1034 = −1000 W nachts (ohne PV) 5 Minuten lang wirklich
+  1 kW aus dem Netz?
+- Deckel: hält 1040 = 1000 W nachts bei mehr als 1 kW Hauslast die Batterie
+  bei 1 kW? Belegt ist bisher nur 1040 = 0 (aus evcc). Und: setzt der
+  Watchdog-Rückfall 1040 zurück oder bleibt der Wert stehen?
+- Watchdog-Timeout der Anlage im Servicemenü ablesen — er bestimmt, wie lange
+  die Batterie nach einer Entladung oder Netzladung stillsteht.
+
 Guide: [kostal.md](guides/kostal.md)
 
 ### Sigenergy SigenStor
