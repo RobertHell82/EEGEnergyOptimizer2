@@ -171,7 +171,17 @@ def soc_beobachter():
     modul = ModuleType("homeassistant.helpers.event")
     modul.async_track_state_change_event = _track
     modul.async_track_time_interval = _intervall
-    with patch.dict(sys.modules, {"homeassistant.helpers.event": modul}):
+    # Andere Testmodule legen unter homeassistant.core einen MagicMock ab,
+    # dessen ``callback`` den Rückruf verschlucken würde — hier eines, das
+    # ihn nur markiert, wie das echte.
+    core = ModuleType("homeassistant.core")
+
+    def _callback(func):
+        func._hass_callback = True
+        return func
+
+    core.callback = _callback
+    with patch.dict(sys.modules, {"homeassistant.helpers.event": modul, "homeassistant.core": core}):
         yield SimpleNamespace(
             rueckrufe=rueckrufe, abmelder=abmelder, takte=takte, takt_abmelder=takt_abmelder
         )
@@ -498,6 +508,9 @@ class TestEntladung:
         assert anlage.wert(SOLLWERT) == -3000.0
         [(entities, rueckruf)] = soc_beobachter.rueckrufe
         assert entities == [SOC]
+        # Ohne @callback führte HA den Rückruf im Executor-Thread aus, und
+        # async_create_task von dort lehnt HA ab — die Rücknahme liefe nie.
+        assert getattr(rueckruf, "_hass_callback", False)
 
         aufgaben = []
         mock_hass.async_create_task = MagicMock(side_effect=aufgaben.append)

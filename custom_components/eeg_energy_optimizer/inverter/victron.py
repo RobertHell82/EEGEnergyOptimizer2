@@ -587,7 +587,19 @@ class VictronInverter(InverterBase):
             from homeassistant.helpers.event import async_track_state_change_event
         except ImportError:  # pragma: no cover — Testumgebung
             return
+        try:
+            from homeassistant.core import callback
+        except ImportError:  # pragma: no cover — Testumgebung
+            def callback(func: Any) -> Any:
+                func._hass_callback = True
+                return func
 
+        # @callback ist Pflicht: Eine schlichte Funktion führt HA im
+        # Executor-Thread aus, und ``hass.async_create_task`` aus einem
+        # fremden Thread weist HA ab — die Rücknahme am Ziel-SOC liefe nie,
+        # der Netzsollwert entlüde bis zum ESS-Mindest-SOC weiter. Dasselbe
+        # Muster wie in leistungsspitze.py (Grünbach, 25.09.2026).
+        @callback
         def _soc_geaendert(_event: Any) -> None:
             if self._am_ziel():
                 self._hass.async_create_task(self._ziel_erreicht_gesperrt())
