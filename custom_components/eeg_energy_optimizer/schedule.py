@@ -559,6 +559,13 @@ class ScheduleInputs:
     netzladen_vorteil: float = DEFAULT_NETZLADEN_VORTEIL
     # Mindestladung am Abend in Prozent (0 = aus), nur mit Netzladen.
     netzladen_abend_pct: float = 0.0
+    # PV-Überschuss des laufenden Kalendertags VOR ``start`` (kWh, DC wie
+    # ``dc_production − consumption/η``): der größere Wert aus Prognose der
+    # schon vergangenen Viertelstunden und gemessenem Überschuss seit
+    # Mitternacht. Die Zeitachse beginnt bei ``start`` — ohne diesen Wert
+    # hielte ``pv_erzeugung_enden`` einen sonnigen Tag, dessen Überschuss um
+    # 15:30 schon vorbei ist, für einen dunklen.
+    ueberschuss_vor_start_kwh: float = 0.0
     # Spitzenreserve notfalls aus dem Netz (kW, AC, = Batterieleistung);
     # 0 = aus. Grenze am Zähler ist die der Spitzenkappung, je Slot in
     # ``spitzenreserve["grenzen"]``.
@@ -699,10 +706,24 @@ def pv_enden(werte: list[float], tage: list) -> list[int]:
 # Überschuss noch als „Erzeugung" zählt — darunter ist es Dämmerung, und
 # deren Prognose sagt nichts über das Ende des Tages.
 PV_ERZEUGUNG_MIN_KW = 0.05
+# Unter so viel Überschuss am ganzen Tag (kWh) gilt ein Tag für die
+# Mindestladung als dunkel. Ein einzelner Slot mit 0,01 kW über der Hauslast
+# zu Mittag ist kein Ende der PV-Zeit, sondern Rauschen in der Prognose —
+# als solches gezählt, sprang der Termin von ~16:30 auf 12:00, sobald die
+# Prognose den Slot einmal knapp über und einmal knapp unter die Hauslast
+# legte, und mit ihm die Pflichtladung um vier Stunden nach vorn. Eine halbe
+# Kilowattstunde lädt keine Batterie nennenswert.
+UEBERSCHUSS_WINZIG_KWH = 0.5
 
 
-def pv_erzeugung_enden(pv: list[float], werte: list[float], tage: list) -> list[int]:
-    """Termine der Mindestladung an Tagen ohne Überschuss-Slot.
+def pv_erzeugung_enden(
+    pv: list[float],
+    werte: list[float],
+    tage: list,
+    vorher_kwh: dict | None = None,
+    p2e: float = 0.25,
+) -> list[int]:
+    """Termine der Mindestladung an Tagen ohne nennenswerten Überschuss.
 
     ``pv_enden`` kennt nur Tage, an denen die PV das Haus wenigstens eine
     Viertelstunde übersteigt. An einem dunklen Novembertag (PV ganztags unter
@@ -719,14 +740,25 @@ def pv_erzeugung_enden(pv: list[float], werte: list[float], tage: list) -> list[
     dem man ihn festmachen könnte, und ein frei gewählter Zeitpunkt wäre eine
     Erfindung.
 
+    „Dunkel" heißt: Der Überschuss des GANZEN Kalendertags bleibt unter
+    ``UEBERSCHUSS_WINZIG_KWH``. Gezählt wird, was im Horizont liegt, plus
+    ``vorher_kwh`` (Datum → kWh) für den Teil des Tages vor dem Horizontstart.
+    Ohne diesen Teil bekam ein sonniger Tag, dessen letzter Überschuss-Slot
+    um 15:30 schon vorbei war, einen zweiten Termin am Ende der Erzeugung
+    (~16:30): ein Zwangskauf am Nachmittag für einen Tag, dessen PV-Ende
+    längst war, und eine zweite Prüfung in der Telemetrie.
+
     Nur für die Mindestladung, nicht fürs Ladeziel: Das Ladeziel lässt sich
     ohnehin nur aus Überschuss erreichen — an einem Tag ohne ihn gibt es für
     es nichts zu planen.
     """
-    mit_ueberschuss = {tage[i] for i, w in enumerate(werte) if w > 0}
+    summe: dict = dict(vorher_kwh or {})
+    for i, w in enumerate(werte):
+        if w > 0:
+            summe[tage[i]] = summe.get(tage[i], 0.0) + w * p2e
     letzte: dict = {}
     for i, p in enumerate(pv):
-        if tage[i] not in mit_ueberschuss and p > PV_ERZEUGUNG_MIN_KW:
+        if summe.get(tage[i], 0.0) < UEBERSCHUSS_WINZIG_KWH and p > PV_ERZEUGUNG_MIN_KW:
             letzte[tage[i]] = i
     enden: list[int] = []
     for i in sorted(letzte.values()):
@@ -735,6 +767,39 @@ def pv_erzeugung_enden(pv: list[float], werte: list[float], tage: list) -> list[
             continue  # Horizont- oder Tagesende, kein Ende der Erzeugung
         enden.append(i)
     return enden
+
+
+def abend_kandidaten(
+    pv: list[float],
+    werte: list[float],
+    tage: list,
+    vorher_kwh: dict | None = None,
+    p2e: float = 0.25,
+) -> list[int]:
+    """Kandidaten für den Termin der Mindestladung, je Kalendertag höchstens einer.
+
+    Tage mit nennenswertem Überschuss: das Ende der PV-Zeit (``pv_enden``),
+    wie beim Ladeziel. Dunkle Tage (``pv_erzeugung_enden``): das Ende der
+    Erzeugung — auch dann, wenn ein winziger Überschuss-Slot ``pv_enden``
+    einen Mittagstermin gäbe. Der Termin ist dort also max(PV-Ende,
+    Erzeugungsende) — praktisch das Erzeugungsende, denn die Erzeugung endet
+    nur bei einer Hauslast nahe null vor dem Überschuss. Liegt es hinter dem
+    Horizont, fällt der Tag ganz weg, statt auf den Mittag zurückzufallen —
+    wie bei ``pv_enden`` ist das Ende der Rechnung kein Ende des Tages.
+    """
+    erzeugung = {tage[i]: i for i in pv_erzeugung_enden(pv, werte, tage, vorher_kwh, p2e)}
+    summe: dict = dict(vorher_kwh or {})
+    for i, w in enumerate(werte):
+        if w > 0:
+            summe[tage[i]] = summe.get(tage[i], 0.0) + w * p2e
+    termine = dict(erzeugung)
+    for i in pv_enden(werte, tage):
+        tag = tage[i]
+        if summe.get(tag, 0.0) >= UEBERSCHUSS_WINZIG_KWH:
+            termine[tag] = i
+        elif tag in erzeugung:
+            termine[tag] = max(i, erzeugung[tag])
+    return sorted(termine.values())
 
 
 class HAConfig:
@@ -1156,8 +1221,9 @@ class HAConfig:
         ``ziel_kwh`` prüft statt des Ladeziels einen anderen Stand am selben
         Termin — die Mindestladung am Abend (``_abend_forderung``). Mit ``pv``
         (erwartete Erzeugung je Slot) bekommen auch Tage ohne Überschuss-Slot
-        einen Termin, am Ende der Erzeugung (``pv_erzeugung_enden``) — nur
-        für die Mindestladung, das Ladeziel ruft ohne.
+        einen Termin, am Ende der Erzeugung (``abend_kandidaten``), ebenso
+        Tage mit nur winzigem Überschuss — nur für die Mindestladung, das
+        Ladeziel ruft ohne.
 
         Der Zeitpunkt ist je Kalendertag der letzte Slot mit Überschuss, also
         das Ende der PV-Zeit. Nur wenn danach am selben Tag noch ein Slot im
@@ -1217,10 +1283,13 @@ class HAConfig:
         ende_halb = min(self.battery_capacity / 2.0, stand)
 
         tage = [stempel.date() for stempel in ueberschuss.index]
-        kandidaten = pv_enden(werte, tage)
-        if pv is not None:
-            kandidaten = sorted(
-                kandidaten + pv_erzeugung_enden([float(v) for v in pv], werte, tage)
+        if pv is None:
+            kandidaten = pv_enden(werte, tage)
+        else:
+            vorher = float(self._inputs.ueberschuss_vor_start_kwh or 0.0)
+            kandidaten = abend_kandidaten(
+                [float(v) for v in pv], werte, tage,
+                {tage[0]: vorher} if vorher > 0 else None, p2e,
             )
         for i in kandidaten:
             if ziel - ende_halb > rest[i + 1] + 1e-9:
@@ -1502,7 +1571,12 @@ class HAConfig:
             w = werte[k]
             if w > 0:
                 return min(_ladeleistung_aus_dc(w, kapazitaet), grenze_leistung) * p2e
-            return -min(_entladeleistung_fuer_dc(-w, kapazitaet), grenze_leistung) * p2e
+            # Die Entladung NICHT auf die Batterieleistung deckeln — wie
+            # ``_erreichbar`` und ``opt_highs``. Gedeckelt blieb der Stand
+            # hier höher, als er im LP fällt, wenn das Haus mehr braucht, als
+            # die Batterie hergibt: Es wurden zu wenige Pflicht-Slots
+            # gewählt, und ``opt()`` kappte die Forderung danach still.
+            return -_entladeleistung_fuer_dc(-w, kapazitaet) * p2e
 
         gewaehlt = [False] * n
         for _ in range(n):
@@ -2458,6 +2532,67 @@ def _messmittel(
     return sum(w for _, w in puffer) / len(puffer)
 
 
+def _ueberschuss_vor_start_prognose(
+    coordinator: Any,
+    start: datetime,
+    detailed: dict[datetime, tuple[float, float]] | None,
+    wh_hours: dict[str, float] | None,
+) -> float:
+    """Prognostizierter PV-Überschuss des Tages von Mitternacht bis ``start`` (kWh).
+
+    Dieselbe Rechnung wie das LP (``dc_production − consumption/η``), nur
+    über die Viertelstunden, die die Zeitachse nicht mehr enthält. Solcast
+    und die eigene Prognose liefern den ganzen Tag, ``wh_hours`` ebenso; was
+    fehlt, zählt als 0 — dann bleibt es beim gemessenen Wert.
+    """
+    mitternacht = start.replace(hour=0, minute=0, second=0, microsecond=0)
+    schritte = int((start.timestamp() - mitternacht.timestamp()) // 900)
+    if schritte <= 0 or not (detailed or wh_hours):
+        return 0.0
+    stamps = [
+        datetime.fromtimestamp(mitternacht.timestamp() + k * 900, tz=start.tzinfo)
+        for k in range(schritte)
+    ]
+    try:
+        haus = _consumption_from_profile(coordinator, stamps)
+        if haus is None:
+            return 0.0
+        if detailed:
+            pv, _ = _production_from_detailed(detailed, stamps)
+        else:
+            pv = _production_from_wh(wh_hours, stamps)
+    except Exception:  # noqa: BLE001 — nur eine Hilfsgröße für die Termine
+        return 0.0
+    eta = HAConfig.ac_efficiency
+    return sum(max(0.0, p - h / eta) for p, h in zip(pv, haus)) * 0.25
+
+
+def _ueberschuss_gemessen(
+    data: dict, now: datetime, pv_kw: float | None, haus_kw: float | None
+) -> float:
+    """Gemessener PV-Überschuss seit Mitternacht (kWh), je Planlauf aufsummiert.
+
+    Liegt in ``hass.data`` wie das Messmittel, überlebt also keinen Neustart —
+    dafür gibt es die Prognose der vergangenen Viertelstunden. Ein Lauf zählt
+    höchstens fünf Minuten: Nach einer Pause wäre der Überschuss von jetzt
+    eine Erfindung für die Zeit dazwischen.
+    """
+    merker = data.setdefault("ueberschuss_heute", {})
+    tag = now.date()
+    if merker.get("tag") != tag:
+        merker.clear()
+        merker.update(tag=tag, kwh=0.0, zuletzt=None)
+    zuletzt = merker.get("zuletzt")
+    merker["zuletzt"] = now
+    if pv_kw is None or haus_kw is None or zuletzt is None:
+        return float(merker["kwh"])
+    dauer_h = min(max(0.0, (now - zuletzt).total_seconds()), 300.0) / 3600.0
+    merker["kwh"] = float(merker["kwh"]) + max(
+        0.0, pv_kw - haus_kw / HAConfig.ac_efficiency
+    ) * dauer_h
+    return float(merker["kwh"])
+
+
 def _grid_timestamps(
     start: datetime, hours: int, step_min: int = GRID_STEP_MIN
 ) -> list[datetime]:
@@ -3127,6 +3262,16 @@ async def async_collect_inputs(
     if house_load_now is not None:
         consumption[0] = round(house_load_now, 4)
 
+    # Überschuss des Tages vor dem Horizontstart — für die Termine der
+    # Mindestladung (``pv_erzeugung_enden``): Prognose der vergangenen
+    # Viertelstunden, gemessen seit Mitternacht, der größere Wert.
+    ueberschuss_vorher = max(
+        _ueberschuss_vor_start_prognose(
+            coordinator, start, detailed if wh_hours is None else None, wh_hours
+        ),
+        _ueberschuss_gemessen(data, now, pv_now, house_load_now),
+    )
+
     # Batterie: kombinierter Zustand bei Master/Slave, sonst die Sensoren.
     # ``has_combined_battery_state`` ist eine PROPERTY (inverter/base.py) —
     # das getattr liefert also bereits den Wahrheitswert. Bis 1.5.50 stand
@@ -3499,6 +3644,7 @@ async def async_collect_inputs(
         consumption_kw=consumption,
         production_kw=production,
         min_production_kw=min_production,
+        ueberschuss_vor_start_kwh=round(ueberschuss_vorher, 3),
         worst_case_factor=DEFAULT_WORST_CASE_FACTOR,
         battery_free_kwh=round(battery_free, 3),
         battery_capacity_kwh=float(capacity),
