@@ -441,12 +441,25 @@ class TestTeilfehler:
         # Der Folgeschritt lief trotzdem.
         assert ("number", "set_value", {"entity_id": CHARGE_LIMIT, "value": 20.0}) in _calls(mock_hass)
 
-    async def test_modus_nicht_angekommen_im_eigenverbrauch_nur_false(self, mock_hass):
+    async def test_verspaeteter_befehlsmodus_mit_altem_state_wird_freigegeben(self, mock_hass):
+        """Der Entlademodus meldet eine Zeitüberschreitung, der State steht
+        noch auf „Eigenverbrauch" — der Befehl kann trotzdem verspätet
+        ankommen. Bis Review-Runde 2 tat der Rollback dann nichts, und die
+        Entladung lief später unbeobachtet los. Jetzt: freigeben, Remote EMS
+        aus beendet auch einen verspäteten Befehl."""
         inv, zustand = self._inv(mock_hass)
         mock_hass.services.async_call = _wechselnd(zustand, modus_fehler=TimeoutError(), modus_kommt_an=False)
         assert await inv.async_set_discharge(3.0, 30.0) is False
         assert inv.last_write_error == "TimeoutError"
         assert inv._befehl is None
+        assert ("switch", "turn_off", {"entity_id": SWITCH}) in _calls(mock_hass)
+
+    async def test_eigenverbrauch_nicht_angekommen_im_eigenverbrauch_nur_false(self, mock_hass):
+        """Ziel war der Eigenverbrauch selbst und er steht: kein Befehl, der
+        verspätet ankommen könnte — nichts zurückzunehmen."""
+        inv, zustand = self._inv(mock_hass)
+        mock_hass.services.async_call = _wechselnd(zustand, modus_fehler=TimeoutError(), modus_kommt_an=False)
+        assert await inv.async_set_charge_limit(1.0) is True  # Modus steht ja schon
         assert all(c[1] != "turn_off" for c in _calls(mock_hass))
 
     async def test_modus_nicht_angekommen_aus_einem_befehl_wird_freigegeben(self, mock_hass):
@@ -847,3 +860,101 @@ class TestVorzeichen:
              "sensor.sigen_plant_grid_active_power": kw},
         )
         assert compute_house_load_kw(mock_hass, cfg) == pytest.approx(2.0)
+
+
+class TestReviewRunde2:
+    """Review-Runde 2: Bei ausgeschaltetem Remote EMS nur zurücksetzen, was
+    nachweislich von uns stammt; Ziel-Hysterese gegen das Zehntel-Rauschen
+    des Plans."""
+
+    @staticmethod
+    def _aus(mock_hass, *, nenn=True, **limits):
+        werte = {SWITCH: "off", MODE: "unavailable", CHARGE_LIMIT: "20.0", DISCHARGE_LIMIT: "21.6", **limits}
+        attr = {CHARGE_LIMIT: {"max": 100.0}, DISCHARGE_LIMIT: {"max": 100.0}}
+        if nenn:
+            werte.update(NENN)
+            attr.update(NENN_ATTR)
+        mock_hass.states.get.side_effect = _states(werte, attr)
+        mock_hass.states.async_all.return_value = []
+        return SigenergyInverter(mock_hass, {}), werte
+
+    async def test_fremdes_limit_bei_schalter_aus_bleibt(self, mock_hass):
+        """Der Betreiber hat 5 kW Ladelimit bewusst gesetzt — kein Wert von
+        uns, keine Signatur: nichts schreiben, bei keiner Freigabe."""
+        inv, _ = self._aus(mock_hass, **{CHARGE_LIMIT: "5.0", DISCHARGE_LIMIT: "8.0"})
+        assert await inv.async_stop_forcible() is True
+        assert await inv.async_stop_forcible() is True
+        assert _calls(mock_hass) == []
+
+    async def test_signatur_wird_zurueckgesetzt(self, mock_hass):
+        """Deckel „halten" (0,01 kW), nachdem jemand Remote EMS von Hand
+        ausgeschaltet hat: unsere Signatur, zurück auf die Nennleistung."""
+        inv, _ = self._aus(mock_hass, **{DISCHARGE_LIMIT: "0.01"})
+        assert await inv.async_stop_forcible() is True
+        assert _calls(mock_hass) == [
+            ("number", "set_value", {"entity_id": DISCHARGE_LIMIT, "value": 21.6}),
+        ]
+
+    async def test_eigener_gemerkter_wert_wird_zurueckgesetzt(self, mock_hass):
+        inv, _ = self._aus(mock_hass, **{CHARGE_LIMIT: "3.0"})
+        await inv._limit_store.async_merken("ess_max_charging_limit", 3.0)
+        assert await inv.async_stop_forcible() is True
+        assert _calls(mock_hass) == [
+            ("number", "set_value", {"entity_id": CHARGE_LIMIT, "value": 20.0}),
+        ]
+        assert inv._limit_store.wert("ess_max_charging_limit") is None
+
+    async def test_gemerkter_wert_von_fremder_hand_ueberschrieben_bleibt(self, mock_hass):
+        inv, _ = self._aus(mock_hass, **{CHARGE_LIMIT: "6.0"})
+        await inv._limit_store.async_merken("ess_max_charging_limit", 3.0)
+        assert await inv.async_stop_forcible() is True
+        assert _calls(mock_hass) == []
+        assert inv._limit_store.wert("ess_max_charging_limit") is None
+
+    async def test_geschriebenes_limit_wird_gemerkt(self, inverter):
+        await inverter.async_set_charge_limit(2.5)
+        assert inverter._limit_store.wert("ess_max_charging_limit") == 2.5
+        # Die Nennleistung für 40034 ist kein Wert, den es zu merken gilt.
+        assert inverter._limit_store.wert("ess_max_discharging_limit") is None
+
+    async def test_ohne_nennleistungs_sensor_nur_signatur(self, mock_hass, caplog):
+        """Ohne Sensor ist „zu niedrig" gegen das ``max`` (100 kW) nicht
+        entscheidbar: ein 5-kW-Limit bleibt, auch ein gemerktes; nur die
+        Signatur geht zurück (aufs Maximum), und das Fehlen wird einmal je
+        Limit geloggt."""
+        import logging
+        caplog.set_level(logging.INFO)
+        inv, werte = self._aus(mock_hass, nenn=False, **{CHARGE_LIMIT: "5.0", DISCHARGE_LIMIT: "21.6"})
+        await inv._limit_store.async_merken("ess_max_charging_limit", 5.0)
+        assert await inv.async_stop_forcible() is True
+        assert await inv.async_stop_forcible() is True
+        assert _calls(mock_hass) == []
+        assert caplog.text.count("Nennleistungs-Sensor zu") == 2
+
+        werte[CHARGE_LIMIT] = "0"
+        inv._frisch_freigegeben = False
+        assert await inv.async_stop_forcible() is True
+        assert _calls(mock_hass) == [
+            ("number", "set_value", {"entity_id": CHARGE_LIMIT, "value": 100.0}),
+        ]
+
+    async def test_deckel_aufheben_direkt_nach_freigabe_ist_noop(self, mock_hass):
+        """Nach einem Stopp hebt der Executor im selben Lauf den Deckel auf —
+        keine zweite Freigabe."""
+        inv, werte = self._aus(mock_hass, **{DISCHARGE_LIMIT: "0.01"})
+        assert await inv.async_stop_forcible() is True
+        werte[DISCHARGE_LIMIT] = "0.01"  # Rückmeldung noch nicht da
+        mock_hass.services.async_call.reset_mock()
+        assert await inv.async_set_discharge_limit(None) is True
+        assert _calls(mock_hass) == []
+
+    async def test_ziel_80_auf_80_4_behaelt_die_hysterese(self, mock_hass, soc_beobachter):
+        """Der Slot-End-SOC ändert sich bei jeder Neuplanung um Zehntel —
+        80,0 erreicht, 80,4 verlangt, SOC 79,5: kein Neustart."""
+        inv, werte = _netzlader(mock_hass, soc="80")
+        assert await inv.async_set_grid_charge(3.0, 80.0) is True
+        werte[SOC] = "79.5"
+        assert await inv.async_set_grid_charge(3.0, 80.4) is True
+        assert _calls(mock_hass) == []
+        assert inv._befehl is None
+        assert inv._ziel_erreicht_pct == 80.0

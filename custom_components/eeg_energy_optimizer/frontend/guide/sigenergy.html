@@ -192,7 +192,7 @@
 </tr>
 </tbody>
 </table>
-<div class="guide-alert note"><p>Lade- und Entladelimit gelten am Gerät <strong>in jedem Modus</strong>, auch nachdem Remote EMS aus ist. Deshalb stellt der Optimizer beide bei der Freigabe auf die Nennleistung zurück — sonst bliebe zum Beispiel ein „Laden gesperrt“ stehen. Findet er „Remote EMS“ schon ausgeschaltet vor, prüft er die beiden Limits trotzdem und setzt zurück, was darunter steht.</p></div>
+<div class="guide-alert note"><p>Lade- und Entladelimit gelten am Gerät <strong>in jedem Modus</strong>, auch nachdem Remote EMS aus ist. Deshalb stellt der Optimizer beide bei der Freigabe auf die Nennleistung zurück — sonst bliebe zum Beispiel ein „Laden gesperrt“ stehen. Findet er „Remote EMS“ schon ausgeschaltet vor, setzt er nur zurück, was nachweislich von ihm stammt — einen Wert, den er selbst geschrieben hat, oder ein Limit von höchstens 0,01 kW. Ein Limit, das du selbst gesetzt hast, bleibt stehen.</p></div>
 
 <div class="guide-alert warning"><p><strong>Kein Sicherheitsnetz im Gerät.</strong> Anders als Fronius, Kostal oder SMA hat Sigenergy keine Rückfallzeit: Ein Befehl läuft weiter, bis er zurückgenommen wird. Der Optimizer gibt bei „Aus", bei fehlendem Plan und beim Neustart selbst frei. Stürzt Home Assistant <strong>hart</strong> ab (Stromausfall, eingefroren), bleibt der letzte Befehl stehen. Dann schalte „Remote EMS" in Home Assistant oder in der Sigen-App von Hand aus <strong>und stelle „ESS Max Charging Limit“ und „ESS Max Discharging Limit“ auf die Nennleistung</strong> — die Limits wirken auch bei ausgeschaltetem Remote EMS weiter. Läuft Home Assistant wieder, holt der Optimizer das bei der nächsten Freigabe selbst nach.</p></div>
 
@@ -239,7 +239,7 @@
 </tr>
 <tr>
 <td><strong>Batterie lädt oder entlädt nicht, obwohl Remote EMS aus ist</strong></td>
-<td>Ein altes Limit steht noch (es wirkt in jedem Modus). Die nächste Freigabe des Optimizers setzt es zurück; von Hand: beide Limits auf die Nennleistung stellen</td>
+<td>Ein altes Limit steht noch (es wirkt in jedem Modus). Stammt es vom Optimizer, setzt seine nächste Freigabe es zurück; ein selbst gesetztes Limit lässt er stehen. Von Hand: beide Limits auf die Nennleistung stellen</td>
 </tr>
 </tbody>
 </table>
