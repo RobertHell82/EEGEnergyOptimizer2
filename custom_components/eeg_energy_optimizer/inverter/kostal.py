@@ -497,9 +497,31 @@ class KostalInverter(InverterBase):
         wiederherstellen muesste, und keine Hardware-Grenze. Ein 1040
         darueber bleibt der Vorwert (so stand es vorher da); die Grenze ist
         dann trotzdem 1078 — mehr gibt die Batterie nicht her.
+
+        Ist 1078 nicht lesbar, fehlt genau dieser Massstab, und ein stehender
+        Deckel waere wieder Vorwert und Grenze. Dann gilt die konfigurierte
+        Batterieleistung als Plausibilitaet: Ein 1040 darunter ist weder
+        Vorwert noch Hardware-Grenze — lieber keiner als ein falscher, das
+        Aufheben faellt dann auf 1078 zurueck bzw. scheitert laut.
         """
         vorher = await self._read_float(REG_MAX_DISCHARGE_POWER)
         batterie = await self._read_float(REG_MAX_DISCHARGE_BATTERY)
+        if vorher is not None and vorher > 0:
+            if batterie is not None and batterie > 0 and vorher < batterie:
+                _LOGGER.info(
+                    "Kostal: 1040 = %.0f W liegt unter der Entladegrenze der "
+                    "Batterie (1078 = %.0f W) — als Vorwert verworfen",
+                    vorher, batterie,
+                )
+            elif batterie is None or batterie <= 0:
+                konfiguriert = self._konfigurierte_leistung_w()
+                if konfiguriert is not None and vorher < konfiguriert:
+                    _LOGGER.info(
+                        "Kostal: 1078 nicht lesbar, 1040 = %.0f W liegt unter der "
+                        "eingestellten Batterieleistung (%.0f W) — kein Vorwert, "
+                        "keine Grenze", vorher, konfiguriert,
+                    )
+                    vorher = None
         kandidaten = [w for w in (vorher, batterie) if w is not None and w > 0]
         if kandidaten:
             self._max_discharge_pre_deckel = max(kandidaten)
@@ -507,6 +529,14 @@ class KostalInverter(InverterBase):
             self._max_discharge_hw = batterie
         elif vorher is not None and vorher > 0:
             self._max_discharge_hw = vorher
+
+    def _konfigurierte_leistung_w(self) -> float | None:
+        """Die eingestellte Batterieleistung in W, None ohne Angabe."""
+        try:
+            kw = float(self._config.get(CONF_DISCHARGE_POWER_KW))
+        except (TypeError, ValueError):
+            return None
+        return kw * 1000.0 if kw > 0 else None
 
     async def _deckel_zuruecksetzen(self) -> bool:
         """1040 auf den Wert vor unserem ersten Deckel zurueckschreiben.
@@ -675,6 +705,10 @@ class KostalInverter(InverterBase):
         if self._nicht_endlich(power_kw):
             return False
         async with self._lock:
+            # Ein Ladelimit ist eine neue Absicht: Das „am Ziel angehalten"
+            # einer früheren Netzladung gilt nicht mehr (siehe
+            # async_stop_forcible).
+            self._netz_ziel_erreicht_pct = None
             return await self._set_charge_limit_locked(power_kw)
 
     async def _set_charge_limit_locked(self, power_kw: float) -> bool:
@@ -810,6 +844,10 @@ class KostalInverter(InverterBase):
         internal automatic management on timeout.
         """
         async with self._lock:
+            # Ein Stopp von aussen beendet auch das „am Ziel angehalten":
+            # Bliebe der Merker, gaelte bei unlesbarem Ladestand jede neue
+            # Netzladung als erledigt, und sie begaenne nie wieder.
+            self._netz_ziel_erreicht_pct = None
             return await self._stop_forcible_locked()
 
     async def _stop_forcible_locked(self, keepalive_stoppen: bool = True) -> bool:
@@ -976,6 +1014,21 @@ class KostalInverter(InverterBase):
     # ------------------------------------------------------------------
 
     @property
+    def netzladung_am_ziel(self) -> bool:
+        """True, solange der Treiber die Netzladung am erreichten Ziel angehalten hat.
+
+        Der Executor prüft die Wirkung einer Netzladung (Guard
+        ``guard_wirkung/netzladung``) nur bis Ziel − 1 %. Hält der Treiber
+        darüber selbst an (1034 = 0), lädt die Batterie nicht mehr — und das
+        sähe ohne diesen Hinweis wie eine wirkungslose Netzladung aus. Der
+        Executor liest das Flag per ``getattr(inverter,
+        "netzladung_am_ziel", False) is True`` und meldet dann nichts.
+        Gelöscht wird es mit jeder neuen Absicht (Ladelimit, Entladung,
+        Stopp von außen, neue Netzladung).
+        """
+        return self._netz_ziel_erreicht_pct is not None
+
+    @property
     def supports_grid_charge(self) -> bool:
         """Ueber einen negativen 1034-Sollwert (DC-Batterieleistung), Beta.
 
@@ -1030,7 +1083,12 @@ class KostalInverter(InverterBase):
                         "%.0f %%) — Freigabe",
                         "unbekannt" if soc is None else f"{soc:.1f} %", ziel,
                     )
-                    self._netz_ziel_erreicht_pct = ziel
+                    # Nur ein wirklich erreichtes Ziel wird der neue Merker —
+                    # sonst wanderte er mit jedem Zehntel des Plans nach oben.
+                    if self._netz_ziel_erreicht_pct is None or (
+                        soc is not None and soc >= ziel
+                    ):
+                        self._netz_ziel_erreicht_pct = ziel
                 ok = await self._stop_forcible_locked()
                 return (
                     self._erfolg() if ok
@@ -1095,10 +1153,16 @@ class KostalInverter(InverterBase):
         sobald die Batterie im Rueckfall ein Zehntelprozent ans Haus gibt.
         Ein unbekannter Ladestand gilt dann ebenfalls als erledigt: Ein
         Neustart ohne Messung waere genau das Pendeln, das hier verhindert
-        werden soll. Ein anderes Ziel ist ein neuer Befehl.
+        werden soll.
+
+        Erst ein Ziel, das mehr als NETZLADEN_ZIEL_HYSTERESE_PCT ueber dem
+        erreichten liegt, ist ein neuer Befehl. Der Slot-End-SOC des Plans
+        aendert sich bei jeder Neuplanung um Zehntel; bis zur Review-Runde 2
+        fiel der Merker schon bei 0,05 Prozentpunkten, und die Hysterese
+        griff kaum. Gemessen wird dann gegen das neue Ziel.
         """
         erreicht = self._netz_ziel_erreicht_pct
-        if erreicht is not None and abs(erreicht - ziel) > 0.05:
+        if erreicht is not None and ziel > erreicht + NETZLADEN_ZIEL_HYSTERESE_PCT:
             self._netz_ziel_erreicht_pct = erreicht = None
         if soc is not None and soc >= ziel:
             return True
@@ -1112,21 +1176,22 @@ class KostalInverter(InverterBase):
     async def _ladelimit_ersatz_w(self) -> float | None:
         """Ladegrenze, wenn kein Vorwert von 1038 gesichert ist (W).
 
-        Reihenfolge: das gelernte Hardware-Maximum, Register 1076 (was die
-        Batterie selbst als Ladegrenze meldet), die eingestellte
-        Batterieleistung. Ohne diese Kette scheiterte jede Netzladung nach
-        einem Lesefehler beim ersten Ladelimit dauerhaft.
+        Reihenfolge: das gelernte Hardware-Maximum, sonst das groessere aus
+        Register 1076 (was die Batterie selbst als Ladegrenze meldet) und der
+        eingestellten Batterieleistung. Das groessere, nicht 1076 zuerst:
+        1076 kann gerade gedrosselt sein (Temperatur, fast voll), und ein
+        so zurueckgeschriebenes Limit bliebe als Ladegrenze stehen. Ohne
+        diese Kette scheiterte jede Netzladung nach einem Lesefehler beim
+        ersten Ladelimit dauerhaft.
         """
         if self._max_charge_hw is not None:
             return self._max_charge_hw
         batterie = await self._read_float(REG_MAX_CHARGE_BATTERY)
-        if batterie is not None and batterie > 0:
-            return batterie
-        try:
-            kw = float(self._config.get(CONF_DISCHARGE_POWER_KW))
-        except (TypeError, ValueError):
-            return None
-        return kw * 1000.0 if kw > 0 else None
+        kandidaten = [
+            w for w in (batterie, self._konfigurierte_leistung_w())
+            if w is not None and w > 0
+        ]
+        return max(kandidaten) if kandidaten else None
 
     async def _pruefe_encoding(self, geschrieben_w: float) -> None:
         """Einmal pruefen, ob das Geraet das geschriebene Teil-Limit annimmt.

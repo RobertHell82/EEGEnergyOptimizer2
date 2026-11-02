@@ -82,7 +82,7 @@ _Netzladen und Entladedeckel sind beim Kostal noch nicht am Gerät geprüft. Wen
 
 Einen Ziel-Ladestand kennt Kostal nicht. Bei einer Entladung prüft der Optimizer den Ladestand alle 30 Sekunden selbst und beendet sie. Beim Laden aus dem Netz liest der Treiber den Ladestand des Wechselrichters (Register 210) bei jedem Nachschreiben, also alle 25 Sekunden, und hält am Ziel an. Neu gestartet wird diese Ladung erst, wenn der Ladestand 2 Prozentpunkte unter das Ziel gefallen ist.
 
-**Nach einer Entladung oder einer Ladung aus dem Netz kann die Batterie bis zu 15 Minuten stillstehen.** Der Optimizer schreibt dann nichts, bis der Wechselrichter von selbst in sein eigenes Batteriemanagement zurückgefallen ist (höchstens 15 Minuten). Zeigt die Statuskarte in dieser Zeit „Normalbetrieb“ und die Batterie steht still, ist das kein Fehler.
+**Nach einer Entladung oder einer Ladung aus dem Netz kann die Batterie bis zu 15 Minuten stillstehen.** Der Optimizer schreibt dann nichts, bis der Wechselrichter von selbst in sein eigenes Batteriemanagement zurückgefallen ist (nach Ablauf seines Watchdog-Timeouts, beobachtet: bis 15 Minuten). Zeigt die Statuskarte in dieser Zeit „Normalbetrieb“ und die Batterie steht still, ist das kein Fehler.
 
 > **Teil-Ladelimits** (der Normalfall) prüft der Optimizer beim ersten Mal nach. Weicht der zurückgelesene Wert stark ab, steht eine Warnung im Protokoll — dann melde dich bitte mit der Firmware-Version.
 

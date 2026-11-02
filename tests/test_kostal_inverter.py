@@ -14,8 +14,11 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from custom_components.eeg_energy_optimizer.const import CONF_DISCHARGE_POWER_KW
+
 from custom_components.eeg_energy_optimizer.inverter.base import InverterBase
 from custom_components.eeg_energy_optimizer.inverter.kostal import (
+    REG_MAX_CHARGE_BATTERY,
     KEEPALIVE_INTERVAL,
     KOSTAL_UNIT_ID,
     KostalInverter,
@@ -1185,8 +1188,86 @@ class TestNetzladungZielHysterese:
         await inv.async_disconnect()
 
 
+    async def test_ziel_80_auf_80_4_behaelt_die_hysterese(
+        self, inv, register, mock_modbus_client
+    ):
+        """Review-Runde 2: Der Slot-End-SOC ändert sich bei jeder
+        Neuplanung um Zehntel. 80,0 erreicht, 80,4 verlangt, SOC 79,5 —
+        kein Neustart, und das Flag für den Executor bleibt stehen."""
+        await inv.async_set_grid_charge(2.0, target_soc=80.0)
+        register[REG_SOC] = 80.0
+        await inv.async_set_grid_charge(2.0, target_soc=80.0)
+        assert inv.netzladung_am_ziel is True
+        mock_modbus_client.write_registers.reset_mock()
+        register[REG_SOC] = 79.5
+        assert await inv.async_set_grid_charge(2.0, target_soc=80.4) is True
+        assert _written(mock_modbus_client, REG_BATTERY_SETPOINT) == []
+        assert inv._netz_ziel_erreicht_pct == pytest.approx(80.0)
+        assert inv.netzladung_am_ziel is True
+        await inv.async_disconnect()
+
+    async def test_stopp_und_ladelimit_loeschen_das_ziel(
+        self, inv, register, mock_modbus_client
+    ):
+        """Sonst begänne die Netzladung bei unlesbarem Ladestand nie wieder."""
+        await inv.async_set_grid_charge(2.0, target_soc=80.0)
+        register[REG_SOC] = 80.0
+        await inv.async_set_grid_charge(2.0, target_soc=80.0)
+        assert inv.netzladung_am_ziel is True
+        await inv.async_stop_forcible()
+        assert inv.netzladung_am_ziel is False
+
+        await inv.async_set_grid_charge(2.0, target_soc=80.0)
+        assert inv.netzladung_am_ziel is True
+        await inv.async_set_charge_limit(1.0)
+        assert inv.netzladung_am_ziel is False
+        await inv.async_disconnect()
+
+    async def test_flag_aus_waehrend_die_netzladung_laeuft(
+        self, inv, register, mock_modbus_client
+    ):
+        await inv.async_set_grid_charge(2.0, target_soc=80.0)
+        assert inv.netzladung_am_ziel is False
+        await inv.async_disconnect()
+
 class TestVorwert1040:
     """Nach einem HA-Neustart kann ein alter Deckel in 1040 stehen."""
+
+    async def test_1078_unlesbar_1040_unter_batterieleistung_ist_kein_vorwert(
+        self, inverter, mock_modbus_client
+    ):
+        """Review-Runde 2: 1078 None, 1040 = 500 W — ohne den Massstab der
+        Batterie wäre ein stehender alter Deckel wieder Vorwert und Grenze.
+        Unter der eingestellten Batterieleistung zählt er als keins von
+        beidem."""
+        inverter._config[CONF_DISCHARGE_POWER_KW] = 5.0
+        _register_lesen(
+            mock_modbus_client,
+            {REG_MAX_DISCHARGE_POWER: 500.0, REG_MAX_DISCHARGE_BATTERY: None},
+        )
+        await inverter.async_set_discharge_limit(1.0)
+        assert inverter._max_discharge_pre_deckel is None
+        assert inverter._max_discharge_hw is None
+
+    async def test_1078_unlesbar_1040_ueber_batterieleistung_bleibt(
+        self, inverter, mock_modbus_client
+    ):
+        inverter._config[CONF_DISCHARGE_POWER_KW] = 5.0
+        _register_lesen(
+            mock_modbus_client,
+            {REG_MAX_DISCHARGE_POWER: 6000.0, REG_MAX_DISCHARGE_BATTERY: None},
+        )
+        await inverter.async_set_discharge_limit(1.0)
+        assert inverter._max_discharge_pre_deckel == pytest.approx(6000.0)
+
+    async def test_ladelimit_ersatz_nimmt_das_groessere(
+        self, inverter, mock_modbus_client
+    ):
+        """1076 kann gedrosselt sein — das Größere aus 1076 und der
+        eingestellten Leistung."""
+        inverter._config[CONF_DISCHARGE_POWER_KW] = 5.0
+        _register_lesen(mock_modbus_client, {REG_MAX_CHARGE_BATTERY: 1200.0})
+        assert await inverter._ladelimit_ersatz_w() == pytest.approx(5000.0)
 
     async def test_alter_deckel_ist_kein_vorwert(
         self, inverter, mock_modbus_client

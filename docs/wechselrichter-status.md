@@ -127,7 +127,8 @@ Steuerregister geschrieben wird — auch der 1038-Keepalive eines Ladelimits.
 Folgte auf „Normalbetrieb“ ein Ladelimit, stand die Batterie stundenlang.
 Seitdem schreibt der Treiber 1034 nur nach einer echten Entladung und
 danach kein Steuerregister, bis die gemessene Batterieleistung den Rückfall
-zur internen Automatik zeigt (höchstens 15 min) — der Watchdog-Timeout ist
+zur internen Automatik zeigt (nach Ablauf seines Watchdog-Timeouts, beobachtet:
+bis 15 min) — der Watchdog-Timeout ist
 per Modbus nicht lesbar und je Anlage verschieden.
 
 **Beta: Entladedeckel der Spitzenkappung** über Register 1040 (max.
@@ -207,12 +208,17 @@ des Geräts. Bis 2.1.62 blieben sie bei der Freigabe stehen (ein Ladelimit 0
 hätte das Laden weiter gesperrt). Seitdem setzt jede Freigabe beide auf die
 Nennleistung zurück, bevor Remote EMS ausgeht, und jeder Befehl stellt das
 Limit, das er nicht braucht, ebenfalls auf die Nennleistung. Findet die
-Freigabe Remote EMS schon ausgeschaltet vor, liest sie beide Limits und setzt
-zurück, was unter der Nennleistung steht — ohne Remote EMS einzuschalten. Das
-heilt ein Ladelimit 0 aus der Zeit bis 2.1.62 und einen Entladedeckel, nach
-dem jemand Remote EMS von Hand ausgeschaltet hat. Ohne Sensor „ESS Rated
-Charging/Discharging Power“ schreibt der Treiber das Maximum der Zahl-Entität;
-lehnt das Gerät es ab, scheitert die Freigabe mit dem Grund
+Freigabe Remote EMS schon ausgeschaltet vor, setzt sie nur zurück, was
+nachweislich vom Optimizer stammt — ohne Remote EMS einzuschalten: einen Wert,
+den der Treiber selbst geschrieben und gemerkt hat (Store
+`eeg_energy_optimizer.sigen_limits`), oder ohne Merker ein Limit von höchstens
+0,01 kW (unsere Signatur: ein Ladelimit 0 aus der Zeit bis 2.1.62, ein
+Entladedeckel „halten“, nach dem jemand Remote EMS von Hand ausgeschaltet hat).
+Ein Limit, das der Betreiber selbst gesetzt hat, bleibt stehen. Ohne Sensor
+„ESS Rated Charging/Discharging Power“ ist „zu niedrig“ nicht entscheidbar —
+dann setzt der Treiber bei ausgeschaltetem Remote EMS nur die Signatur zurück
+(auf das Maximum der Zahl-Entität) und meldet das Fehlen einmal im Log; lehnt
+das Gerät das Maximum ab, scheitert die Freigabe mit dem Grund
 „Nennleistungs-Sensor fehlt“ — dann die beiden Sensoren aktivieren. Scheitert
 nach einem Moduswechsel nur das Zurücksetzen des anderen Limits, gilt der
 Befehl trotzdem (der Executor muss eine laufende Entladung kennen) und das
