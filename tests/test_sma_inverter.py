@@ -432,7 +432,19 @@ def soc_beobachter():
 
     modul = ModuleType("homeassistant.helpers.event")
     modul.async_track_state_change_event = _track
-    with patch.dict(sys.modules, {"homeassistant.helpers.event": modul}):
+    # Andere Testmodule legen unter homeassistant.core einen MagicMock ab,
+    # dessen ``callback`` den Rückruf verschlucken würde — hier eines, das
+    # ihn nur markiert, wie das echte.
+    core = ModuleType("homeassistant.core")
+
+    def _callback(func):
+        func._hass_callback = True
+        return func
+
+    core.callback = _callback
+    with patch.dict(
+        sys.modules, {"homeassistant.helpers.event": modul, "homeassistant.core": core}
+    ):
         yield SimpleNamespace(rueckrufe=rueckrufe, abmelder=abmelder)
 
 
@@ -547,6 +559,9 @@ class TestNetzladung:
         assert len(soc_beobachter.rueckrufe) == 1
         entities, rueckruf = soc_beobachter.rueckrufe[0]
         assert entities == [SOC_SENSOR]
+        # Ohne @callback führte HA den Rückruf im Executor-Thread aus, und
+        # ``hass.async_create_task`` würde von dort abgewiesen.
+        assert getattr(rueckruf, "_hass_callback", False) is True
 
         aufgaben = []
         mock_hass.async_create_task = MagicMock(
@@ -637,5 +652,111 @@ class TestNetzladung:
         ok = await inv.async_set_grid_charge(2.0, target_soc=80)
         assert ok is True
         assert inv._active is None
+
+    async def test_gescheiterte_freigabe_am_ziel_wiederholt_der_keepalive(
+        self, mock_hass, mock_modbus_client, soc_beobachter, monkeypatch
+    ):
+        """Scheitert die Freigabe aus dem SOC-Beobachter, bleiben Ladeblock
+        und Ziel vermerkt und der Keepalive läuft weiter. Er schreibt den
+        Ladeblock nicht neu, sondern wiederholt die Freigabe — sonst lüde das
+        Gerät bis zum Watchdog (300 s) aus dem Netz weiter, denn der Executor
+        schreibt bei gleicher Leistung nicht neu."""
+        inv = _mit_sensor(mock_hass, mock_modbus_client)
+        _soc_register(mock_modbus_client, 50)
+        mock_hass.states.get = MagicMock(return_value=SimpleNamespace(state="50"))
+        await inv.async_set_grid_charge(2.0, target_soc=80)
+        _entities, rueckruf = soc_beobachter.rueckrufe[0]
+        aufgaben = []
+        mock_hass.async_create_task = MagicMock(
+            side_effect=lambda c: aufgaben.append(asyncio.ensure_future(c))
+        )
+
+        mock_hass.states.get = MagicMock(return_value=SimpleNamespace(state="80"))
+        mock_modbus_client.write_registers = AsyncMock(return_value=_err_response())
+        rueckruf(None)
+        await asyncio.gather(*aufgaben)
+        assert inv._active is not None and inv._active.op_mod == OPMOD_CHARGE
+        assert inv._netzladung_ziel == 80
+        assert inv._keepalive_task is not None and not inv._keepalive_task.done()
+        soc_beobachter.abmelder.assert_not_called()
+
+        # Der nächste Keepalive-Takt: Freigabe statt Ladeblock.
+        monkeypatch.setattr(
+            "custom_components.eeg_energy_optimizer.inverter.sma."
+            "KEEPALIVE_INTERVAL",
+            0.01,
+        )
+        inv._cancel_keepalive()
+        inv._start_keepalive()
+        _soc_register(mock_modbus_client, 80)
+        mock_modbus_client.write_registers = AsyncMock(return_value=_ok_response())
+        await _warten_bis(lambda: inv._active is None)
+        assert _last_block(mock_modbus_client) == NORMAL_BLOCK
+        assert all(
+            registers_to_u32(v) != OPMOD_CHARGE
+            for a, v in _writes(mock_modbus_client)
+            if a == REG_CMPBMS_OPMOD
+        )
+        assert inv._netzladung_ziel is None
+        soc_beobachter.abmelder.assert_called_once()
+
+    async def test_keepalive_verbindet_nach_lesefehler_neu(
+        self, inverter, mock_modbus_client, monkeypatch, caplog
+    ):
+        """Ein Ausnahmefehler beim Lesen von 30845 schließt die Verbindung.
+        Der Keepalive baut sie vor dem Schreiben neu auf, statt in einen
+        AttributeError zu laufen und den Watchdog einen Takt lang nicht zu
+        füttern."""
+        lesungen = {"n": 0}
+
+        async def _lesen(address=None, count=2, **_kw):
+            if address == REG_BATTERY_SOC:
+                lesungen["n"] += 1
+                if lesungen["n"] == 2:  # die erste Lesung im Keepalive
+                    raise ConnectionError("Verbindung weg")
+            return _ok_response(u32_to_registers(50))
+
+        mock_modbus_client.read_holding_registers = AsyncMock(side_effect=_lesen)
+        neue_clients = []
+
+        def _neuer_client(*_a, **_kw):
+            neue_clients.append(1)
+            return mock_modbus_client
+
+        monkeypatch.setattr("pymodbus.client.AsyncModbusTcpClient", _neuer_client)
+        monkeypatch.setattr(
+            "custom_components.eeg_energy_optimizer.inverter.sma."
+            "KEEPALIVE_INTERVAL",
+            0.01,
+        )
+        await inverter.async_set_grid_charge(2.0, target_soc=80)
+        vorher = len(_writes(mock_modbus_client))
+        await _warten_bis(lambda: len(_writes(mock_modbus_client)) >= vorher + 2)
+        await inverter.async_disconnect()
+        assert lesungen["n"] >= 2
+        assert neue_clients
+        assert _writes(mock_modbus_client)[vorher][0] == REG_CMPBMS_OPMOD
+        assert registers_to_u32(_writes(mock_modbus_client)[vorher][1]) == OPMOD_CHARGE
+        assert "exception writing CmpBMS block" not in caplog.text
+
+    async def test_verbindungsabbruch_nach_soc_lesen_vergisst_das_ziel(
+        self, inverter, mock_modbus_client, monkeypatch
+    ):
+        """Bricht die Verbindung beim Lesen von 30845 ab und kommt nicht
+        wieder, gehört das Ziel zu keiner Ladung — es wird zurückgesetzt."""
+        mock_modbus_client.read_holding_registers = AsyncMock(
+            side_effect=ConnectionError("Verbindung weg")
+        )
+
+        def _kein_client(*_a, **_kw):
+            raise ConnectionError("Gerät nicht erreichbar")
+
+        monkeypatch.setattr("pymodbus.client.AsyncModbusTcpClient", _kein_client)
+        ok = await inverter.async_set_grid_charge(2.0, target_soc=80)
+        assert ok is False
+        assert inverter.last_write_error == "Modbus nicht verbunden"
+        assert inverter._active is None
+        assert inverter._netzladung_ziel is None
+        assert _writes(mock_modbus_client) == []
 
 

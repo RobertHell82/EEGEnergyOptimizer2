@@ -447,6 +447,16 @@ class SMAInverter(InverterBase):
                         if await self._freigeben_locked(keepalive_stoppen=False):
                             return
                         continue
+                    # Ein gescheitertes Lesen von 30845 schließt die
+                    # Verbindung (``_client`` ist dann None). Ohne neuen
+                    # Aufbau liefe das Schreiben in einen AttributeError mit
+                    # Stacktrace, und genau dieser Takt fütterte den Watchdog
+                    # nicht — die Ladung fiele für eine Runde aus.
+                    if not await self._ensure_connected():
+                        _LOGGER.warning(
+                            "SMA: keepalive write skipped — not connected"
+                        )
+                        continue
                     if not await self._write_block(active):
                         _LOGGER.warning(
                             "SMA: keepalive rewrite failed (%s) — will retry "
@@ -696,6 +706,11 @@ class SMAInverter(InverterBase):
             return await self._freigeben_locked()
         # Ein gescheitertes Lesen von 30845 schließt die Verbindung.
         if not await self._ensure_connected():
+            # Wie beim Schreibfehler unten: Ein Ziel ohne laufenden Ladeblock
+            # gehört zu nichts — sonst hielte ein späterer Keepalive oder
+            # Beobachter ein Ziel für eine Ladung, die nie begonnen hat.
+            if self._active is None or self._active.op_mod != OPMOD_CHARGE:
+                self._netzladung_ziel = None
             return self._fehler("Modbus nicht verbunden")
         watts = int(leistung * 1000.0)
         block = _block_grid_charge(watts)
@@ -759,7 +774,20 @@ class SMAInverter(InverterBase):
             from homeassistant.helpers.event import async_track_state_change_event
         except ImportError:  # pragma: no cover — Testumgebung
             return
+        try:
+            from homeassistant.core import callback
+        except ImportError:  # pragma: no cover — Testumgebung
+            def callback(func: Any) -> Any:
+                func._hass_callback = True
+                return func
 
+        # @callback ist Pflicht: Eine schlichte Funktion führt HA im
+        # Executor-Thread aus, und ``hass.async_create_task`` aus einem
+        # fremden Thread weist HA ab — die Freigabe am Ziel-SOC liefe nie,
+        # die Batterie lüde bis zum nächsten Keepalive (60 s) weiter aus dem
+        # Netz, und jede SOC-Änderung hinterließe einen Fehler im Log.
+        # Dasselbe Muster wie im Victron-Treiber und in leistungsspitze.py.
+        @callback
         def _soc_geaendert(_event: Any) -> None:
             ziel = self._netzladung_ziel
             soc = self._soc_sensor_pct()
@@ -781,12 +809,21 @@ class SMAInverter(InverterBase):
             soc = self._soc_sensor_pct()
             if soc is None or soc < ziel:
                 return
-            if await self._freigeben_locked():
+            # keepalive_stoppen=False wie im Keepalive selbst: Scheitert die
+            # Freigabe, bleiben Ladeblock und Ziel vermerkt und der Keepalive
+            # läuft weiter — er schreibt den Ladeblock nicht neu, sondern
+            # wiederholt alle 60 s die Freigabe. Mit dem Standard wären Block
+            # und Ziel schon vergessen und der Keepalive abgebrochen; der
+            # Executor schreibt bei gleicher Leistung nicht neu, das Gerät
+            # lüde also bis zum Watchdog (300 s) aus dem Netz weiter.
+            if await self._freigeben_locked(keepalive_stoppen=False):
+                # Erst nach dem Erfolg: Der Keepalive hat nichts mehr zu tun.
+                self._cancel_keepalive()
                 _LOGGER.info("SMA: Netzladung am Ziel %.0f %% — Normal-Block", ziel)
             else:
                 _LOGGER.warning(
                     "SMA: Netzladung am Ziel, Freigabe fehlgeschlagen — "
-                    "der Watchdog beendet sie spätestens nach 300 s"
+                    "der Keepalive wiederholt sie in 60 s"
                 )
 
     def _netzladung_vergessen(self) -> None:

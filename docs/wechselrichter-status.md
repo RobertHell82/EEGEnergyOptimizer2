@@ -253,13 +253,17 @@ Ladeleistung = geplante Batterieleistung, Entladen 0 und Netz-Sollwert 0 —
 keine zusätzlichen Register. Die PV deckt davon, was sie kann, der Rest kommt
 aus dem Netz. Einen Ziel-Ladestand kennt das CmpBMS nicht: Der Treiber liest
 den Ladestand (Register 30845) bei jedem Schreiben und alle 60 Sekunden und
-beobachtet dazwischen den SOC-Sensor; am Ziel geht es zurück in den
-Normalbetrieb. **Noch nicht am Gerät geprüft:** ob 2289 mit gleicher minimaler
+reagiert dazwischen auf jede Änderung des SOC-Sensors; am Ziel geht es
+zurück in den Normalbetrieb. **Noch nicht am Gerät geprüft:** ob 2289 mit gleicher minimaler
 und maximaler Ladeleistung tatsächlich aus dem Netz lädt (eine Forennotiz
 spricht von „nur bei Einspeisung am Netzanschlusspunkt“, vermutlich nur mit
 minimaler Ladeleistung 0), ob die minimale Ladeleistung als erzwungene
-Leistung wirkt, und ob sich Sunny Boy Storage (AC-gekoppelt) und Sunny
-Tripower / Sunny Boy Smart Energy dabei gleich verhalten. Mit Sunny Home
+Leistung wirkt, ob sich Sunny Boy Storage (AC-gekoppelt) und Sunny
+Tripower / Sunny Boy Smart Energy dabei gleich verhalten, und ob Register
+30845 und der SOC-Sensor in Home Assistant denselben Ladestand zeigen —
+laufen sie auseinander, endet die Ladung zu früh oder zu spät, und die
+Telemetrie meldet eine Netzladung ohne Wirkung (`guard_wirkung`), die keine
+ist. Mit Sunny Home
 Manager 2.0: Firmware ab 2.15.5, „Prognosebasiertes Laden“ aus.
 Guide: [sma.md](guides/sma.md)
 
