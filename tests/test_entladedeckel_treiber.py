@@ -704,3 +704,226 @@ async def test_kostal_aufheben_ohne_deckel_ist_noop(kostal):
     inv, client = kostal
     assert await inv.async_set_discharge_limit(None) is True
     assert client.write_registers.await_count == 0
+
+
+# ---------------------------------------------------------------------------
+# Victron — „Max. Wechselrichterleistung" (Settings/CGwacs/MaxDischargePower)
+# ---------------------------------------------------------------------------
+# Der Deckel gilt für den ganzen DC→AC-Wandler, DC-gekoppelte PV läuft mit
+# durch. Geschrieben wird deshalb (Deckel + DC-PV) × 1,05 + 50 W, auf 50 W
+# aufgerundet, und ein Takt führt es an der DC-PV nach.
+
+from .test_victron_inverter import (  # noqa: E402
+    DC_PV,
+    SOLLWERT,
+    WR_GRENZE,
+    Anlage,
+    _Store,
+    _schreibvorgaenge,
+    _treiber,
+    anlage,  # noqa: F401 — Fixture
+    registry_patch,  # noqa: F401 — Fixture
+    soc_beobachter,  # noqa: F401 — Fixture
+)
+
+
+def _deckel_schreibvorgaenge(hass):
+    return [w for e, w in _schreibvorgaenge(hass) if e == WR_GRENZE]
+
+
+async def test_victron_halten_schreibt_nur_dc_pv_und_verluste(mock_hass, anlage, soc_beobachter):
+    anlage.setze(DC_PV, "2000")
+    inv = _treiber(mock_hass)
+    assert inv.supports_discharge_limit is True
+    assert await inv.async_set_discharge_limit(0.0) is True
+    # 2000 × 1,05 + 50 = 2150 W
+    assert _deckel_schreibvorgaenge(mock_hass) == [2150.0]
+    assert inv._state_store.vorwert("entladedeckel") == -1.0
+    assert len(soc_beobachter.takte) == 1
+
+
+async def test_victron_nachts_halten(mock_hass, anlage, soc_beobachter):
+    """Von −1 auf 50 W ist ein Schreiben, kein Totband — auch wenn die
+    Zahlen nur 51 auseinander liegen."""
+    inv = _treiber(mock_hass)
+    assert await inv.async_set_discharge_limit(0.0) is True
+    assert anlage.wert(WR_GRENZE) == 50.0
+
+
+async def test_victron_deckel_plus_pv(mock_hass, anlage, soc_beobachter):
+    anlage.setze(DC_PV, "1000")
+    inv = _treiber(mock_hass)
+    assert await inv.async_set_discharge_limit(1.5) is True
+    # (1500 + 1000) × 1,05 + 50 = 2675 → 2700 W
+    assert anlage.wert(WR_GRENZE) == 2700.0
+
+
+async def test_victron_vorwert_des_betreibers_bleibt_obergrenze(mock_hass, anlage, soc_beobachter):
+    anlage.setze(WR_GRENZE, "3000")
+    anlage.setze(DC_PV, "4000")
+    inv = _treiber(mock_hass)
+    assert await inv.async_set_discharge_limit(1.0) is True
+    assert anlage.wert(WR_GRENZE) == 3000.0
+    assert await inv.async_set_discharge_limit(None) is True
+    assert anlage.wert(WR_GRENZE) == 3000.0
+
+
+async def test_victron_aufheben_stellt_minus_eins_wieder_her(mock_hass, anlage, soc_beobachter):
+    inv = _treiber(mock_hass)
+    await inv.async_set_discharge_limit(0.0)
+    assert await inv.async_set_discharge_limit(None) is True
+    assert anlage.wert(WR_GRENZE) == -1.0
+    assert inv._state_store.vorwert("entladedeckel") is None
+    soc_beobachter.takt_abmelder.assert_called_once()
+    assert inv._entladedeckel_kw is None
+
+
+async def test_victron_aufheben_ohne_eingriff_schreibt_nichts(mock_hass, anlage):
+    inv = _treiber(mock_hass)
+    assert await inv.async_set_discharge_limit(None) is True
+    mock_hass.services.async_call.assert_not_called()
+
+
+async def test_victron_neustart_im_halten_sichert_die_eigene_null_nicht(
+    mock_hass, anlage, soc_beobachter
+):
+    """Der Vorwert steht im Store; nach dem Neustart steht im Gerät unser
+    Halten (50 W) — es darf nicht zum Vorwert werden."""
+    store = _Store()
+    inv = _treiber(mock_hass, store=store)
+    await inv.async_set_discharge_limit(0.0)
+    assert anlage.wert(WR_GRENZE) == 50.0
+
+    neu = _treiber(mock_hass, store=store)
+    assert await neu.async_set_discharge_limit(0.0) is True
+    assert neu._state_store.vorwert("entladedeckel") == -1.0
+    assert await neu.async_set_discharge_limit(None) is True
+    assert anlage.wert(WR_GRENZE) == -1.0
+
+
+async def test_victron_ohne_entitaet_kein_deckel(mock_hass, registry_patch):
+    a = Anlage(mock_hass, **{WR_GRENZE: None})
+    registry_patch.return_value = a.registry
+    inv = _treiber(mock_hass)
+    assert inv.supports_discharge_limit is False
+    assert await inv.async_set_discharge_limit(0.0) is False
+    assert inv.last_write_error == "Entität entladedeckel nicht gefunden"
+
+
+async def test_victron_deaktivierte_entitaet_kann_keinen_deckel(mock_hass, anlage):
+    anlage.registry.entities[WR_GRENZE].disabled_by = "integration"
+    assert _treiber(mock_hass).supports_discharge_limit is False
+
+
+async def test_victron_ersatzbereich_null_bis_hundert_deckelt_nicht(mock_hass, anlage):
+    """Ohne Bereich aus MQTT setzt HA 0–100: −1 käme nie zurück, und jeder
+    Deckel über 100 W wäre abgeschnitten."""
+    anlage.werte[WR_GRENZE][1] = {"min": 0, "max": 100}
+    inv = _treiber(mock_hass)
+    assert await inv.async_set_discharge_limit(0.0) is False
+    assert inv.last_write_error == "Entladedeckel −1 nicht schreibbar"
+    mock_hass.services.async_call.assert_not_called()
+    assert inv._state_store.vorwert("entladedeckel") is None
+
+
+async def test_victron_minus_eins_unschreibbar_beim_aufheben_scheitert_laut(
+    mock_hass, anlage, soc_beobachter
+):
+    """Bereich schrumpft nach dem Eingriff: nicht das Maximum (100 W, „Wandler
+    fast aus") schreiben wie beim Ladestrom, sondern scheitern und den
+    Vorwert für den nächsten Versuch behalten."""
+    inv = _treiber(mock_hass)
+    await inv.async_set_discharge_limit(0.0)
+    anlage.werte[WR_GRENZE][1] = {"min": 0, "max": 100}
+    mock_hass.services.async_call.reset_mock()
+    assert await inv.async_set_discharge_limit(None) is False
+    assert inv.last_write_error == "Entladedeckel −1 nicht schreibbar"
+    mock_hass.services.async_call.assert_not_called()
+    assert inv._state_store.vorwert("entladedeckel") == -1.0
+
+
+async def test_victron_dc_pv_unlesbar_wird_nicht_geraten(mock_hass, anlage, soc_beobachter):
+    anlage.setze(DC_PV, "unavailable")
+    inv = _treiber(mock_hass)
+    assert await inv.async_set_discharge_limit(0.0) is False
+    assert inv.last_write_error == "DC-PV-Leistung unbekannt"
+    assert _deckel_schreibvorgaenge(mock_hass) == []
+
+
+async def test_victron_ohne_laderegler_zaehlt_keine_pv(mock_hass, registry_patch, soc_beobachter):
+    a = Anlage(mock_hass, **{DC_PV: None})
+    registry_patch.return_value = a.registry
+    inv = _treiber(mock_hass)
+    assert await inv.async_set_discharge_limit(1.0) is True
+    assert a.wert(WR_GRENZE) == 1100.0  # 1000 × 1,05 + 50
+
+
+async def test_victron_stopp_hebt_den_deckel_auf(mock_hass, anlage, soc_beobachter):
+    inv = _treiber(mock_hass)
+    await inv.async_set_discharge_limit(0.0)
+    assert await inv.async_stop_forcible() is True
+    assert anlage.wert(WR_GRENZE) == -1.0
+    soc_beobachter.takt_abmelder.assert_called_once()
+    assert inv._entladedeckel_kw is None
+
+
+async def test_victron_entladung_hebt_den_deckel_selbst_auf(mock_hass, anlage, soc_beobachter):
+    inv = _treiber(mock_hass)
+    await inv.async_set_discharge_limit(0.0)
+    assert await inv.async_set_discharge(2.0, 30) is True
+    assert anlage.wert(WR_GRENZE) == -1.0
+    assert anlage.wert(SOLLWERT) == -2000.0
+    # Während der Entladung wird kein Deckel geschrieben.
+    mock_hass.services.async_call.reset_mock()
+    assert await inv.async_set_discharge_limit(0.0) is True
+    mock_hass.services.async_call.assert_not_called()
+
+
+async def test_victron_deckel_neben_ladelimit(mock_hass, anlage, soc_beobachter):
+    """Ladelimit (DVCC) und Deckel sind verschiedene Stellgrößen."""
+    inv = _treiber(mock_hass)
+    await inv.async_set_charge_limit(0.0)
+    await inv.async_set_discharge_limit(0.0)
+    await inv.async_set_charge_limit(1.0)
+    assert anlage.wert(WR_GRENZE) == 50.0
+    assert inv._entladedeckel_kw == 0.0
+
+
+async def test_victron_nachfuehrung_folgt_der_dc_pv(mock_hass, anlage, soc_beobachter):
+    anlage.setze(DC_PV, "1000")
+    inv = _treiber(mock_hass)
+    await inv.async_set_discharge_limit(0.0)
+    assert anlage.wert(WR_GRENZE) == 1100.0
+    [(takt, intervall)] = soc_beobachter.takte
+    assert intervall.total_seconds() == 30
+    anlage.setze(DC_PV, "1150")  # 1257,5 → 1300 W: genau 200 W daneben, schreibt
+    await takt(None)
+    assert _deckel_schreibvorgaenge(mock_hass) == [1100.0, 1300.0]
+    anlage.setze(DC_PV, "1250")  # → 1400 W, nur 100 W daneben
+    await takt(None)
+    assert _deckel_schreibvorgaenge(mock_hass) == [1100.0, 1300.0]
+    anlage.setze(DC_PV, "3000")  # → 3200 W
+    await takt(None)
+    assert anlage.wert(WR_GRENZE) == 3200.0
+    # Ohne Messung halten.
+    anlage.setze(DC_PV, "unavailable")
+    await takt(None)
+    assert anlage.wert(WR_GRENZE) == 3200.0
+
+
+async def test_victron_takt_nach_dem_aufheben_schreibt_nichts(mock_hass, anlage, soc_beobachter):
+    inv = _treiber(mock_hass)
+    await inv.async_set_discharge_limit(0.0)
+    [(takt, _)] = soc_beobachter.takte
+    await inv.async_set_discharge_limit(None)
+    vorher = len(_schreibvorgaenge(mock_hass))
+    anlage.setze(DC_PV, "5000")
+    await takt(None)
+    assert len(_schreibvorgaenge(mock_hass)) == vorher
+
+
+async def test_victron_nur_ein_takt(mock_hass, anlage, soc_beobachter):
+    inv = _treiber(mock_hass)
+    await inv.async_set_discharge_limit(0.0)
+    await inv.async_set_discharge_limit(1.0)
+    assert len(soc_beobachter.takte) == 1

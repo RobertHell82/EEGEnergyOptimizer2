@@ -213,6 +213,8 @@ class TestRegistrierung:
         assert inv.supports_schedule_control is True
         assert inv.discharge_is_grid_setpoint is True
         assert inv.supports_grid_charge is True
+        # Entladedeckel nur mit der Entität „Max. Wechselrichterleistung" —
+        # ohne Registry keine (test_entladedeckel_treiber.py, Victron-Block).
         assert inv.supports_discharge_limit is False
 
     def test_verfuegbar_nur_mit_geladener_integration(self, mock_hass):
@@ -356,6 +358,30 @@ class TestAssistent:
         a.werte[LADESTROM][1] = {"min": 0, "max": 100}
         p = victron_pruefung(mock_hass)
         assert len(p["probleme"]) == 1 and "−1" in p["probleme"][0]
+
+    def test_entladedeckel_minus_eins_nicht_schreibbar_ist_ein_problem(
+        self, mock_hass, anlage
+    ):
+        """Ersatzbereich 0–100 W: Die Freigabe könnte −1 nie zurückschreiben,
+        und jeder Deckel über 100 W wäre abgeschnitten."""
+        anlage.werte[WR_GRENZE][1] = {"min": 0, "max": 100}
+        p = victron_pruefung(mock_hass)
+        assert len(p["probleme"]) == 1
+        assert "Spitzenkappung" in p["probleme"][0] and "−1" in p["probleme"][0]
+
+    def test_entladedeckel_fehlt_ist_ein_hinweis(self, mock_hass, registry_patch):
+        a = Anlage(mock_hass, **{WR_GRENZE: None})
+        registry_patch.return_value = a.registry
+        p = victron_pruefung(mock_hass)
+        assert p["probleme"] == []
+        assert len(p["hinweise"]) == 1 and "nicht vorhanden" in p["hinweise"][0]
+
+    def test_entladedeckel_deaktiviert_ist_ein_hinweis(self, mock_hass, anlage):
+        anlage.registry.entities[WR_GRENZE].disabled_by = "user"
+        anlage.werte.pop(WR_GRENZE)
+        p = victron_pruefung(mock_hass)
+        assert p["probleme"] == []
+        assert len(p["hinweise"]) == 1 and "deaktiviert" in p["hinweise"][0]
 
     def test_deaktivierte_stellgroesse_ist_ein_problem(self, mock_hass, anlage):
         anlage.registry.entities[LADESTROM].disabled_by = "integration"
@@ -712,6 +738,7 @@ class TestLesewerte:
         assert [(r["entity_id"], r["role"]) for r in inv.get_control_entities()] == [
             (SOLLWERT, "forcible"),
             (LADESTROM, "charge_limit"),
+            (WR_GRENZE, "discharge_limit"),
             (MIN_SOC, "backup_soc"),
             (ESS, "mode"),
         ]

@@ -349,8 +349,35 @@ Offen:
   Netzsollwert PV zuerst, und hält die Nachführung (alle 30 s, Batterie
   0,2 kW unter dem Deckel) den Bezug so, dass die PV nicht abgeregelt wird?
 
-Spitzenkappung mit der Batterie gibt es für Victron noch nicht. Batterie
-aus dem Netz laden (Beta) geht wie bei Huawei: DVCC-Ladestrom als
+- Spitzenkappung (Beta): Welchen Wertebereich meldet die Integration für
+  „Max. Wechselrichterleistung“ auf der Feldtest-Anlage, und ist −1
+  schreibbar? Hält der Multiplus die Batterie bei einem Deckel knapp über
+  der DC-PV wirklich (folgt hub4control), und reicht die Nachführung der
+  DC-PV alle 30 s, ohne die Laderegler abzuregeln?
+- Laut ESS-Handbuch (§ 4.3.5) ist der DVCC-Ladestromdeckel **inaktiv**,
+  solange „DC-gekoppelte PV – Überschuss einspeisen“ an ist — der Assistent
+  empfiehlt das aber gerade für das Ladelimit. Am Gerät zu klären, ob das
+  Ladelimit mit DC-gekoppelter PV dann überhaupt wirkt.
+
+**Spitzenkappung mit der Batterie (Beta):** Victron hat keine Grenze für die
+Entladeleistung der Batterie, nur die ESS-Einstellung „Max.
+Wechselrichterleistung“ (`Settings/CGwacs/MaxDischargePower`, −1 =
+unbegrenzt). Sie deckelt den ganzen Wandler des Multiplus, Summe aller
+Phasen, und die Leistung der MPPT-Laderegler läuft mit durch. Ein Deckel
+von 0 W ließe deshalb auch die Sonne vom Dach nicht mehr ins Haus. Der
+Treiber schreibt Deckel + gemessene DC-PV + Verluste (5 % und 50 W) und
+führt das alle 30 s an der DC-PV nach; neu geschrieben wird erst ab 200 W
+Abweichung, weil jede Änderung im Einstellungsspeicher des GX landet.
+AC-gekoppelte PV ist nicht betroffen. Der Wert vor dem ersten Eingriff
+(meist −1) wird gesichert und bei der Freigabe zurückgeschrieben; eine
+eigene Grenze des Betreibers bleibt die Obergrenze. Auch dieser Deckel hat
+keine Rückfallzeit: Bleibt Home Assistant stehen, bleibt er stehen — die
+Freigabe beim Start, „Aus“ und das Entladen der Integration heben ihn auf.
+Fehlt die Entität, kappt die Spitzenkappung nur über Verbraucher. Kann die
+Integration −1 nicht schreiben (ältere Stände, Bereich 0–100), meldet der
+Assistent ein Problem.
+
+Batterie aus dem Netz laden (Beta) geht wie bei Huawei: DVCC-Ladestrom als
 Ladeleistung, dazu ein positiver Netzsollwert, den der Treiber an der
 Messung nachführt. Die Kapazität liefert Victron nur
 in Ah, sie wird im Assistenten in kWh von Hand eingetragen.

@@ -14,7 +14,10 @@ Die drei Absichten des Fahrplan-Executors werden so abgebildet:
   Netzladung X kW → DVCC-Ladestrom = X / Batteriespannung, Netzsollwert
                     positiv, alle 30 s an der Messung nachgeführt (Beta,
                     siehe ``async_set_grid_charge``)
-  Freigabe        → beide Werte zurück auf den Stand vor unserem Eingriff
+  Entladedeckel   → ESS „Max. Wechselrichterleistung" = Deckel + DC-PV +
+                    Verluste, alle 30 s an der DC-PV nachgeführt (Beta,
+                    Spitzenkappung, siehe ``async_set_discharge_limit``)
+  Freigabe        → alle Werte zurück auf den Stand vor unserem Eingriff
 
 **Netzsollwert statt Batterieleistung.** Der ESS-Regelkreis im GX-Gerät
 regelt den Netzanschlusspunkt auf den Sollwert und legt die Hauslast selbst
@@ -31,12 +34,28 @@ DC-gekoppelter PV den Überschuss ins Netz schickt statt ihn abzuregeln, muss
 am GX „DC-gekoppelte PV — Überschuss einspeisen" eingeschaltet sein; der
 Einrichtungsassistent prüft das (``victron_pruefung``).
 
-**Vorwerte.** Beide Stellgrößen sind gespeicherte Einstellungen des
+**Entladedeckel über die Wechselrichterleistung.** Die Spitzenkappung hält
+in der Reserve die Batterie im Automatikbetrieb und deckelt nur ihre
+Entladung. Victron hat dafür keine Batteriegrenze, sondern
+``Settings/CGwacs/MaxDischargePower`` („Limit inverter power", −1 =
+unbegrenzt): Sie deckelt die DC→AC-Wandlung des Multiplus, Summe aller
+Phasen (ESS-Handbuch §4.3.11, dreiphasig in der Community bestätigt). Die
+Leistung der MPPT-Laderegler zählt das GX dabei NICHT heraus — DC-gekoppelte
+PV geht durch denselben Wandler. Ein Deckel von 0 W hieße also auch: Die
+Sonne auf dem Dach versorgt das Haus nicht mehr, es kauft aus dem Netz, und
+die Spitze, die wir kappen wollen, wird größer. Deshalb schreibt der Treiber
+Deckel + gemessene DC-PV + Verluste (5 % und 50 W) und führt das alle 30 s
+an der DC-PV nach (Toleranz 200 W, es ist eine gespeicherte Einstellung).
+AC-gekoppelte PV hängt nicht am Wandler und ist nicht betroffen.
+
+**Vorwerte.** Alle Stellgrößen sind gespeicherte Einstellungen des
 GX-Geräts, die der Betreiber selbst gesetzt hat (Netzsollwert oft 0 oder
 +50 W, Ladestrom oft eine Schutzgrenze für Batterie oder Verkabelung). Der
 Wert vor dem ERSTEN Eingriff wird deshalb im ``VictronStateStore``
 gesichert und bei der Freigabe zurückgeschrieben — überlebt einen Neustart
-mitten im Eingriff, wie beim SolaX-Treiber.
+mitten im Eingriff, wie beim SolaX-Treiber. Beim Entladedeckel steht davor
+meist −1 (unbegrenzt); hat der Betreiber selbst eine Grenze gesetzt, bleibt
+sie die Obergrenze unseres Deckels.
 
 **Kein geräteseitiges Failsafe.** Die Einstellungen haben keinen Watchdog.
 Bleibt Home Assistant mitten in einer Entladung stehen, regelt das GX-Gerät
@@ -50,6 +69,11 @@ regeln. Das ist bewusst nicht gewählt. Zwei Netze darunter:
   den Sollwert selbst zurück, sobald der Ziel-SOC erreicht ist — das GX-Gerät
   kennt keinen Ziel-SOC für einen Netzsollwert.
 - Nach jedem Start gibt der Executor zuerst frei (``START_RELEASE``).
+
+Für den Entladedeckel gilt dasselbe: Bleibt Home Assistant stehen, bleibt
+er stehen — samt der zuletzt nachgeführten DC-PV. Die Batterie hält dann
+ihre Reserve weiter, und wächst die PV, regelt der Wandler sie ab. Freigabe
+beim Start, „Aus" und das Entladen der Integration heben ihn auf.
 
 **Wertebereich des Ladestroms.** Ältere Stände der Integration liefern für
 ``MaxChargeCurrent`` keinen Wertebereich, Home Assistant setzt dann 0–100 A
@@ -79,6 +103,14 @@ wo der Zähler fast null misst.
 - Netzladung: Lädt die Batterie mit DVCC-Deckel und positivem Sollwert die
   PV zuerst, und hält die Nachführung den Bezug knapp unter dem Deckel, ohne
   die PV abzuregeln?
+- Entladedeckel: Welchen Bereich meldet die Integration für „Max.
+  Wechselrichterleistung", ist −1 schreibbar? Hält der Multiplus bei
+  Deckel ≈ DC-PV die Batterie wirklich (folgt hub4control), und reicht die
+  DC-PV-Nachführung, ohne die Laderegler abzuregeln?
+- ESS-Handbuch §4.3.5: Der DVCC-Ladestromdeckel ist INAKTIV, solange
+  „DC-gekoppelte PV — Überschuss einspeisen" an ist — der Assistent
+  empfiehlt das aber gerade fürs Ladelimit. Wirkt das Ladelimit mit
+  DC-gekoppelter PV dann überhaupt? Nur dokumentiert, nicht umgebaut.
 
 Vorzeichen (Venus-OS-D-Bus, von der Bibliothek roh durchgereicht):
 ``Dc/Battery/Power`` positiv = Laden — wie bei uns; Netzleistung
@@ -90,6 +122,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import re
 from typing import Any
 
@@ -133,6 +166,9 @@ VICTRON_METRIKEN: dict[str, tuple[str, str]] = {
         for n in range(GEPLANTES_LADEN_FENSTER)
     },
     "dc_pv_leistung": ("sensor", "system_dc_pv_power"),
+    # Spitzenkappung (optional): ``Settings/CGwacs/MaxDischargePower``, W,
+    # −1 = unbegrenzt. Fehlt die Entität, kann der Treiber keinen Deckel.
+    "entladedeckel": ("number", "system_ess_max_inverter_power_limit"),
 }
 
 # Ohne diese beiden kann der Treiber nichts stellen.
@@ -188,6 +224,15 @@ NETZLADEN_SCHRITT_KW = 1.0
 NETZLADEN_SPERRE_TAKTE = 10
 # Darunter ist die Netzladung eine Freigabe (Netzgrenze lässt nichts zu).
 NETZLADEN_MIN_KW = 0.05
+
+# Entladedeckel (siehe async_set_discharge_limit): Nachführtakt an der
+# DC-PV, Schreibtoleranz (gespeicherte Einstellung), Verluste des Wandlers
+# und die Schrittweite der Entität.
+ENTLADEDECKEL_TAKT_S = 30
+ENTLADEDECKEL_TOLERANZ_W = 200.0
+ENTLADEDECKEL_VERLUST_ANTEIL = 0.05
+ENTLADEDECKEL_VERLUST_W = 50.0
+ENTLADEDECKEL_SCHRITT_W = 50.0
 
 
 def _short_id_muster(short_id: str) -> re.Pattern:
@@ -378,6 +423,28 @@ def victron_pruefung(hass: Any) -> dict[str, Any]:
             "Die ESS-Einspeisegrenze steht auf 0 W — Einspeisen aus der "
             "Batterie ist damit gesperrt"
         )
+    # Entladedeckel der Spitzenkappung: optional. Fehlt die Entität oder ist
+    # sie abgeschaltet, kappt die Spitzenkappung nur über Verbraucher — ein
+    # Hinweis. Ist sie da, muss −1 schreibbar sein: Die Freigabe schreibt
+    # −1 („unbegrenzt") zurück, und im Ersatzbereich 0–100 W wäre jeder
+    # Deckel über 100 W abgeschnitten — ein Haus ohne Strom aus der DC-PV.
+    deckel = _victron_eintrag(hass, *VICTRON_METRIKEN["entladedeckel"])
+    if deckel is None or getattr(deckel, "disabled_by", None):
+        hinweise.append(
+            "„Max. Wechselrichterleistung“ (ESS) ist in Home Assistant "
+            + ("deaktiviert" if deckel is not None else "nicht vorhanden")
+            + " — die Spitzenkappung kann die Batterie dann nicht als "
+            "Reserve halten, nur Verbraucher abschalten"
+        )
+    else:
+        deckel_min = _attribut_zahl(hass, deckel.entity_id, "min")
+        if deckel_min is not None and deckel_min > -1:
+            probleme.append(
+                "Die Batterie-Stufe der Spitzenkappung braucht die "
+                "ESS-Einstellung „Max. Wechselrichterleistung“ mit dem Wert "
+                "−1 (nicht begrenzen), diese Version der Integration kann −1 "
+                "aber nicht schreiben. Bitte Home Assistant aktualisieren"
+            )
     return {
         "entities": entities,
         "fehlt": fehlt,
@@ -453,6 +520,10 @@ class VictronInverter(InverterBase):
         self._netz_soll_w = 0.0
         self._anhebung: tuple[float, float] | None = None
         self._anheben_gesperrt = 0
+        # Laufender Entladedeckel der Spitzenkappung (kW Batterie) und der
+        # Abmelder seines Nachführtakts — siehe async_set_discharge_limit().
+        self._entladedeckel_kw: float | None = None
+        self._deckel_abmelden: Any = None
         # Executor (30-s-Lauf) und SOC-Beobachter schreiben nebenläufig; ein
         # Schreiben über MQTT dauert. Ohne Sperre könnte die Zielrücknahme
         # zwischen Sichern und Schreiben eines Sollwerts fallen — der Wert
@@ -522,6 +593,12 @@ class VictronInverter(InverterBase):
         Liegt der Vorwert außerhalb des Bereichs der Entität (DVCC-Ladestrom
         −1, siehe Modulkopf), wird die nächste Grenze geschrieben. Schlägt
         das Schreiben fehl, bleibt der Eintrag für den nächsten Versuch.
+
+        Nicht so beim Entladedeckel: Dort ist jede Ersatzgrenze falsch. Das
+        Maximum des Ersatzbereichs (100 W) hieße „Wechselrichter fast aus",
+        das Haus bekäme weder Batterie noch DC-PV; beim Ladestrom ist das
+        Maximum (100 A ≈ 5 kW) dagegen eine großzügige Grenze. Also lieber
+        laut scheitern und den Vorwert behalten.
         """
         await self._state_store.async_load()
         vorwert = self._state_store.vorwert(key)
@@ -530,6 +607,11 @@ class VictronInverter(InverterBase):
         ziel = vorwert
         minimum = self._attribut(key, "min")
         maximum = self._attribut(key, "max")
+        if key == "entladedeckel":
+            if minimum is not None and ziel < minimum:
+                raise VictronFehler("Entladedeckel −1 nicht schreibbar")
+            if maximum is not None and ziel > maximum:
+                raise VictronFehler("Entladedeckel-Vorwert außerhalb des Bereichs")
         if minimum is not None and ziel < minimum:
             ziel = maximum if (key == "ladestrom" and maximum is not None) else minimum
         if maximum is not None and ziel > maximum:
@@ -714,6 +796,10 @@ class VictronInverter(InverterBase):
         try:
             self._nachfuehrung_beenden()
             await self._zuruecksetzen("ladestrom", LADESTROM_TOLERANZ_A)
+            # Der Executor hebt den Deckel vor einer Entladung auf; hier
+            # trotzdem selbst: Ein stehender Deckel bremste den negativen
+            # Sollwert still auf DC-PV + Verluste.
+            await self._deckel_aufheben()
             self._beobachte_ziel_soc(target_soc)
             if self._am_ziel():
                 await self._ziel_erreicht()
@@ -952,20 +1038,177 @@ class VictronInverter(InverterBase):
         )
 
     async def async_stop_forcible(self) -> bool:
-        """Freigeben: Netzsollwert, dann Ladestrom auf die Vorwerte.
+        """Freigeben: Netzsollwert, Ladestrom, Entladedeckel auf die Vorwerte.
 
-        Der Sollwert zuerst — er ist der Eingriff, der Energie bewegt.
-        Ohne gesicherten Vorwert gibt es nichts zurückzunehmen.
+        Der Sollwert zuerst — er ist der Eingriff, der Energie bewegt. Der
+        Deckel zuletzt: Scheitert er (−1 nicht schreibbar), sind die beiden
+        anderen schon zurück. Ohne gesicherten Vorwert gibt es nichts
+        zurückzunehmen.
         """
         async with self._sperre:
             self._beobachtung_beenden()
             try:
                 await self._zuruecksetzen("netzsollwert", NETZSOLLWERT_TOLERANZ_W)
                 await self._zuruecksetzen("ladestrom", LADESTROM_TOLERANZ_A)
+                await self._deckel_aufheben()
                 return self._erfolg()
             except Exception as exc:  # noqa: BLE001
                 _LOGGER.exception("Victron: Freigabe fehlgeschlagen")
                 return self._fehler(_grund(exc))
+
+    # ------------------------------------------------------------------
+    # Entladedeckel der Spitzenkappung (Beta)
+    # ------------------------------------------------------------------
+    @property
+    def supports_discharge_limit(self) -> bool:
+        """Nur mit der Entität „Max. Wechselrichterleistung", aktiv in HA.
+
+        Strukturell über die Registry, nicht über den Zustand: Der kommt per
+        MQTT womöglich erst nach dem Start. Ohne Entität bekommt der Plan
+        keine Reserve, die Spitzenkappung schaltet nur Verbraucher.
+        """
+        eintrag = _victron_eintrag(self._hass, *VICTRON_METRIKEN["entladedeckel"])
+        return eintrag is not None and not getattr(eintrag, "disabled_by", None)
+
+    async def async_set_discharge_limit(self, power_kw: float | None) -> bool:
+        """Entladung der Batterie im Automatikbetrieb auf ``power_kw`` deckeln.
+
+        Geschrieben wird „Max. Wechselrichterleistung" (W) =
+        (Deckel + DC-PV) × 1,05 + 50 W, aufgerundet auf 50 W — der Wandler
+        trägt die DC-PV mit, siehe Modulkopf. Hat der Betreiber selbst eine
+        Grenze gesetzt (Vorwert ≥ 0), bleibt sie die Obergrenze. Ein Takt
+        führt den Wert alle ``ENTLADEDECKEL_TAKT_S`` an der DC-PV nach.
+
+        ``None`` hebt auf: Vorwert zurück (meist −1), Takt aus. Ist −1 nicht
+        schreibbar (Ersatzbereich 0–100 W), wird gar nicht erst gedeckelt —
+        sonst ließe sich der Deckel nie wieder aufheben.
+
+        Während einer eigenen Entladung (negativer Netzsollwert) wird nicht
+        geschrieben: Der Executor setzt den Deckel nur im Automatikbetrieb
+        und nach jedem Stopp neu.
+        """
+        if self._nicht_endlich(power_kw):
+            return False
+        async with self._sperre:
+            try:
+                if power_kw is None:
+                    await self._deckel_aufheben()
+                    return self._erfolg()
+                if self._ziel_soc is not None and not self._ziel_laden:
+                    return self._erfolg()
+                await self._deckel_setzen(max(0.0, float(power_kw)))
+                self._starte_deckel_nachfuehrung()
+                return self._erfolg()
+            except Exception as exc:  # noqa: BLE001
+                _LOGGER.exception("Victron: Entladedeckel konnte nicht gesetzt werden")
+                return self._fehler(_grund(exc))
+
+    def _dc_pv_w(self) -> float:
+        """Gemessene DC-PV in W; ohne Laderegler-Entität 0.
+
+        Gibt es die Entität, ist aber der Wert gerade unlesbar, wird nicht
+        geraten: Mit 0 stünde der Deckel unter der PV und regelte sie ab.
+        """
+        entity_id = self._entity("dc_pv_leistung")
+        if entity_id is None:
+            return 0.0  # keine Laderegler: nichts, was durch den Wandler muss
+        wert = _zahl(self._hass, entity_id)
+        if wert is None:
+            raise VictronFehler("DC-PV-Leistung unbekannt")
+        state = self._hass.states.get(entity_id)
+        attribute = getattr(state, "attributes", None) or {}
+        if str(attribute.get("unit_of_measurement") or "W").lower() == "kw":
+            wert *= 1000.0
+        return max(0.0, wert)
+
+    def _deckel_w(self, deckel_kw: float, pv_w: float) -> float:
+        """Der Wert für die Entität, ohne Schreiben."""
+        roh = max(0.0, deckel_kw) * 1000.0 + pv_w
+        watt = roh * (1.0 + ENTLADEDECKEL_VERLUST_ANTEIL) + ENTLADEDECKEL_VERLUST_W
+        watt = math.ceil(watt / ENTLADEDECKEL_SCHRITT_W - 1e-9) * ENTLADEDECKEL_SCHRITT_W
+        vorwert = self._state_store.vorwert("entladedeckel")
+        if vorwert is not None and vorwert >= 0:
+            watt = min(watt, vorwert)
+        maximum = self._attribut("entladedeckel", "max")
+        if maximum is not None:
+            watt = min(watt, maximum)
+        return float(watt)
+
+    async def _deckel_setzen(self, deckel_kw: float) -> None:
+        """Deckel schreiben (der erste Eingriff sichert den Vorwert).
+
+        Toleranz ``ENTLADEDECKEL_TOLERANZ_W`` wie bei ``_setze``, aber −1
+        zählt nie als „nah": Von „unbegrenzt" auf 50 W ist der größte
+        Sprung, den es gibt, auch wenn die Zahlen nur 51 auseinander liegen.
+        """
+        key = "entladedeckel"
+        if self._entity(key) is None:
+            raise VictronFehler("Entität entladedeckel nicht gefunden")
+        minimum = self._attribut(key, "min")
+        if minimum is not None and minimum > -1:
+            raise VictronFehler("Entladedeckel −1 nicht schreibbar")
+        await self._state_store.async_load()
+        aktuell = self._lies(key)
+        if self._state_store.vorwert(key) is None:
+            if aktuell is None:
+                raise VictronFehler("Vorwert entladedeckel unlesbar")
+            await self._state_store.async_sichern(key, aktuell)
+        watt = self._deckel_w(deckel_kw, self._dc_pv_w())
+        zuletzt = self._geschrieben.get(key)
+
+        def _nah(wert: float | None) -> bool:
+            return (
+                wert is not None
+                and wert >= 0
+                and abs(wert - watt) < ENTLADEDECKEL_TOLERANZ_W
+            )
+
+        if not (_nah(aktuell) and (zuletzt is None or _nah(zuletzt))):
+            await self._schreibe(key, watt)
+        self._entladedeckel_kw = deckel_kw
+
+    async def _deckel_aufheben(self) -> None:
+        """Takt aus, Vorwert zurück. Toleranz 1 W: −1 und 50 W sind nicht „gleich"."""
+        self._deckel_nachfuehrung_beenden()
+        await self._zuruecksetzen("entladedeckel", 1.0)
+
+    def _deckel_nachfuehrung_beenden(self) -> None:
+        self._entladedeckel_kw = None
+        if self._deckel_abmelden is not None:
+            try:
+                self._deckel_abmelden()
+            except Exception:  # noqa: BLE001 — Abmelden darf nie werfen
+                pass
+            self._deckel_abmelden = None
+
+    def _starte_deckel_nachfuehrung(self) -> None:
+        """Eigener Takt wie bei der Netzladung: Die DC-PV ändert sich
+        zwischen zwei Befehlen des Executors, der Deckel muss ihr folgen —
+        steigt sie über den Deckel, regelt der Wandler sie ab."""
+        if self._deckel_abmelden is not None:
+            return
+        try:
+            from datetime import timedelta
+
+            from homeassistant.helpers.event import async_track_time_interval
+        except ImportError:  # pragma: no cover — Testumgebung
+            return
+
+        async def _takt(_jetzt: Any) -> None:
+            async with self._sperre:
+                if self._entladedeckel_kw is None:
+                    return
+                try:
+                    await self._deckel_setzen(self._entladedeckel_kw)
+                except Exception:  # noqa: BLE001 — ohne Messung halten
+                    _LOGGER.warning(
+                        "Victron: Entladedeckel nicht an der DC-PV nachgeführt",
+                        exc_info=True,
+                    )
+
+        self._deckel_abmelden = async_track_time_interval(
+            self._hass, _takt, timedelta(seconds=ENTLADEDECKEL_TAKT_S)
+        )
 
     @property
     def is_available(self) -> bool:
@@ -1004,9 +1247,11 @@ class VictronInverter(InverterBase):
         return min(grenzen) * spannung / 1000.0 if grenzen else None
 
     # get_max_discharge_power_kw bleibt beim Default (None): Die ESS-Grenze
-    # „Max. Wechselrichterleistung" gilt je nach Venus-OS-Stand je Phase —
-    # als Gesamtgrenze genommen, deckelte Guard 2 eine dreiphasige Anlage
-    # auf ein Drittel. Unbelegt; die Grenze setzt das Gerät ohnehin selbst.
+    # „Max. Wechselrichterleistung" ist kein Maß der Batterie — sie steht
+    # meist auf −1 und ist seit dem Entladedeckel unsere eigene Stellgröße;
+    # sie als Obergrenze zu lesen, hieße, den eigenen Deckel zurückzulesen.
+    # Ob sie je Phase oder gesamt gilt, war lange unklar (ESS-Handbuch
+    # §4.3.11: gesamt). Die Grenze setzt das Gerät ohnehin selbst.
 
     def get_backup_reserve_soc_pct(self) -> float | None:
         """Höhere aus ESS-Mindest-SOC und aktiver SOC-Grenze (BatteryLife)."""
@@ -1021,6 +1266,7 @@ class VictronInverter(InverterBase):
         for key, label, rolle in (
             ("netzsollwert", "ESS-Netzsollwert", "forcible"),
             ("ladestrom", "DVCC-Ladestrom", "charge_limit"),
+            ("entladedeckel", "ESS-Max. Wechselrichterleistung", "discharge_limit"),
             ("min_soc", "ESS-Mindest-SOC", "backup_soc"),
             ("ess_modus", "ESS-Modus", "mode"),
         ):
