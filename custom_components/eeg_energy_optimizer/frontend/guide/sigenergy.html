@@ -182,15 +182,25 @@
 <td><strong>Freigabe</strong> (Normalbetrieb)</td>
 <td>„Maximum Self Consumption" → beide Limits auf die Nennleistung → Remote EMS <strong>aus</strong></td>
 </tr>
+<tr>
+<td><strong>Batterie hält die Spitzenreserve</strong> (Beta)</td>
+<td>Remote EMS an, „Maximum Self Consumption“, das Entladelimit wird gedeckelt („halten“ = 0,01 kW)</td>
+</tr>
+<tr>
+<td><strong>Aus dem Netz laden</strong> (Beta)</td>
+<td>Remote EMS an → „Command Charging (PV First)“ mit dem Ladelimit als Leistung; am Ziel-Ladestand gibt der Optimizer frei</td>
+</tr>
 </tbody>
 </table>
 <div class="guide-alert note"><p>Lade- und Entladelimit gelten am Gerät <strong>in jedem Modus</strong>, auch nachdem Remote EMS aus ist. Deshalb stellt der Optimizer beide bei der Freigabe auf die Nennleistung zurück — sonst bliebe zum Beispiel ein „Laden gesperrt“ stehen.</p></div>
 
 <div class="guide-alert warning"><p><strong>Kein Sicherheitsnetz im Gerät.</strong> Anders als Fronius, Kostal oder SMA hat Sigenergy keine Rückfallzeit: Ein Befehl läuft weiter, bis er zurückgenommen wird. Der Optimizer gibt bei „Aus", bei fehlendem Plan und beim Neustart selbst frei. Stürzt Home Assistant <strong>hart</strong> ab (Stromausfall, eingefroren), bleibt der letzte Befehl stehen. Dann schalte „Remote EMS" in Home Assistant oder in der Sigen-App von Hand aus.</p></div>
 
+<div class="guide-alert caution"><p><strong>Aus dem Netz laden ist Beta und am Sigenergy noch nicht erprobt.</strong> Das Gerät hört am Ziel-Ladestand nicht von selbst auf — das übernimmt Home Assistant. Stürzt Home Assistant während einer Netzladung ab, lädt die Anlage weiter, <strong>bis die Batterie voll ist</strong>, notfalls aus dem Netz. Dann „Remote EMS“ von Hand ausschalten.</p></div>
+
 <h3>Zu beachten</h3>
 <ul>
-<li><strong>Kein „Command Charging“:</strong> Für ein Ladelimit nutzt der Optimizer bewusst nicht „Command Charging (PV First)“. Dieser Modus lädt den Rest aus dem Netz, wenn die PV nicht reicht.</li>
+<li><strong>„Command Charging“ nur zum Netzladen:</strong> Für ein Ladelimit nutzt der Optimizer bewusst nicht „Command Charging (PV First)“. Dieser Modus lädt den Rest aus dem Netz, wenn die PV nicht reicht — das ist nur beim (Beta-)Laden aus dem Netz gewollt.</li>
 <li><strong>Firmware SPC113:</strong> Laut Berichten wirkt das Ladelimit im Eigenverbrauchsmodus erst ab dieser Firmware. Davor wirkt es nicht — die Anlage lädt dann mit Überschuss weiter, aber nie aus dem Netz. Den Stand zeigt die Sigen-App.</li>
 <li><strong>Entladegrenze:</strong> „ESS Discharge Cut-Off State of Charge“ liest der Optimizer als Untergrenze für den Plan, ändert sie aber nicht.</li>
 </ul>

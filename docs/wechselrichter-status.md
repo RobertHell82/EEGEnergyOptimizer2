@@ -146,6 +146,30 @@ hätte das Laden weiter gesperrt). Seitdem setzt jede Freigabe beide auf die
 Nennleistung zurück, bevor Remote EMS ausgeht, und jeder Befehl stellt das
 Limit, das er nicht braucht, ebenfalls auf die Nennleistung. Offen am Gerät:
 ob die Limits nach dem Ausschalten wirklich auf der Nennleistung stehen.
+
+**Entladedeckel der Spitzenkappung und Netzladen (Beta, am Gerät nicht
+geprüft).** Der Deckel ist das Entladelimit (40034) im Modus „Maximum Self
+Consumption“, neben einem laufenden Ladelimit; „halten“ schreibt der Treiber
+als 0,01 kW, weil das Gerät eine 0 laut Maintainer der Integration oft als
+„nicht gesetzt“ liest. Netzladen nutzt „Command Charging (PV First)“ mit dem
+Ladelimit als Leistung — genau der Modus, der am 11.09.2026 an der Testanlage
+aus dem Netz geladen hat. Das Gerät hört am Ziel-Ladestand nicht von selbst
+auf; der Treiber beobachtet den Ladestand und gibt am Ziel frei.
+
+> [!WARNING]
+> **Netzladen ohne Watchdog.** Stürzt Home Assistant während einer Netzladung
+> ab, lädt das Gerät weiter, bis die Batterie voll ist — aus dem Netz, soweit
+> die Sonne nicht reicht. Abhilfe: Remote EMS von Hand ausschalten.
+
+Am Gerät zu prüfen, bevor die Beta-Funktionen als erprobt gelten:
+
+1. Deckel 1 kW und 0 (= 0,01 kW) im Eigenverbrauch nachts: hält die Batterie,
+   kommt der Rest der Hauslast aus dem Netz?
+2. Lädt die PV bei stehendem Deckel tagsüber weiter in die Batterie?
+3. „Command Charging (PV First)“ mit 2 kW bei 5 kW PV: Wohin geht der
+   Überschuss — ins Haus, ins Netz oder wird er abgeregelt?
+4. Stehen Lade- und Entladelimit nach dem Ausschalten des Remote EMS auf der
+   Nennleistung?
 Guide: [sigenergy.md](guides/sigenergy.md)
 
 ### SMA Smart Energy

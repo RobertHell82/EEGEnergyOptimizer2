@@ -477,3 +477,139 @@ async def test_solax_deckel_nie_ueber_dem_maximum_und_ohne_entitaet_fehler(mock_
     zustaende.pop(SOLAX_DSCH)
     assert await leer.async_set_discharge_limit(1.0) is False
     assert "nicht verfügbar" in leer.last_write_error
+
+
+# ---------------------------------------------------------------------------
+# Sigenergy
+# ---------------------------------------------------------------------------
+
+from custom_components.eeg_energy_optimizer.inverter.sigenergy import (  # noqa: E402
+    MODE_SELF_CONSUMPTION as SIGEN_SC,
+    SIGEN_ENTITY_DEFAULTS,
+    SigenergyInverter,
+)
+
+SIGEN_SWITCH = SIGEN_ENTITY_DEFAULTS["remote_ems_switch"]
+SIGEN_MODE = SIGEN_ENTITY_DEFAULTS["remote_ems_mode"]
+SIGEN_LADEN = SIGEN_ENTITY_DEFAULTS["ess_max_charging_limit"]
+SIGEN_ENTLADEN = SIGEN_ENTITY_DEFAULTS["ess_max_discharging_limit"]
+SIGEN_NENN_LADEN = SIGEN_ENTITY_DEFAULTS["ess_rated_charging_power"]
+SIGEN_NENN_ENTLADEN = SIGEN_ENTITY_DEFAULTS["ess_rated_discharging_power"]
+
+
+def _sigen(mock_hass, **zustand):
+    werte = {
+        SIGEN_SWITCH: "on", SIGEN_MODE: SIGEN_SC,
+        SIGEN_NENN_LADEN: "20.0", SIGEN_NENN_ENTLADEN: "21.6", **zustand,
+    }
+    kw = {"unit_of_measurement": "kW"}
+    mock_hass.states.get = MagicMock(side_effect=lambda e: (
+        SimpleNamespace(state=werte[e], attributes=kw if "rated" in e else {})
+        if e in werte else None
+    ))
+    mock_hass.states.async_all = MagicMock(return_value=[])
+    return SigenergyInverter(mock_hass, {}), werte
+
+
+def _sigen_calls(mock_hass):
+    return [(c.args[1], c.args[2]) for c in mock_hass.services.async_call.await_args_list]
+
+
+async def test_sigen_deckel_null_wird_ein_hauch(mock_hass):
+    """0 lesen Sigenergy-Geräte laut Maintainer oft als „nicht gesetzt" —
+    0,01 kW ist praktisch Halten. Der Modus steht schon, also kein Schreiben
+    des Modus (jedes wartet bis zu 60 s)."""
+    inv, _ = _sigen(mock_hass)
+    assert inv.supports_discharge_limit is True
+    assert await inv.async_set_discharge_limit(0.0) is True
+    assert _sigen_calls(mock_hass) == [("set_value", {"entity_id": SIGEN_ENTLADEN, "value": 0.01})]
+
+
+async def test_sigen_deckel_aus_der_freigabe_schaltet_remote_ems_ein(mock_hass):
+    """Aus der Freigabe (Remote EMS aus): einschalten, erst den Deckel, dann
+    den Eigenverbrauch — falls das Gerät noch in einem Befehl stand."""
+    inv, werte = _sigen(mock_hass, **{SIGEN_SWITCH: "off", SIGEN_MODE: "unavailable"})
+
+    async def _aufruf(domain, service, data, **kw):
+        if service == "turn_on":
+            werte[SIGEN_SWITCH] = "on"
+            werte[SIGEN_MODE] = "Command Discharging (ESS First)"
+
+    mock_hass.services.async_call = AsyncMock(side_effect=_aufruf)
+    assert await inv.async_set_discharge_limit(1.0) is True
+    assert _sigen_calls(mock_hass) == [
+        ("turn_on", {"entity_id": SIGEN_SWITCH}),
+        ("set_value", {"entity_id": SIGEN_ENTLADEN, "value": 1.0}),
+        ("select_option", {"entity_id": SIGEN_MODE, "option": SIGEN_SC}),
+    ]
+
+
+async def test_sigen_aufheben_ohne_deckel_tut_nichts(mock_hass):
+    inv, _ = _sigen(mock_hass)
+    assert await inv.async_set_discharge_limit(None) is True
+    mock_hass.services.async_call.assert_not_awaited()
+
+
+async def test_sigen_aufheben_ohne_anderen_modus_gibt_frei(mock_hass):
+    """Der Deckel war das Einzige, wofür Remote EMS an war: ganze Freigabe."""
+    inv, _ = _sigen(mock_hass)
+    await inv.async_set_discharge_limit(0.0)
+    mock_hass.services.async_call.reset_mock()
+    assert await inv.async_set_discharge_limit(None) is True
+    assert _sigen_calls(mock_hass) == [
+        ("select_option", {"entity_id": SIGEN_MODE, "option": SIGEN_SC}),
+        ("set_value", {"entity_id": SIGEN_LADEN, "value": 20.0}),
+        ("set_value", {"entity_id": SIGEN_ENTLADEN, "value": 21.6}),
+        ("turn_off", {"entity_id": SIGEN_SWITCH}),
+    ]
+    assert inv._entladedeckel_kw is None
+
+
+async def test_sigen_deckel_neben_ladelimit(mock_hass):
+    """Ein laufendes Ladelimit (40032) bleibt unberührt, ein späteres
+    Ladelimit nimmt den Deckel mit, Aufheben setzt nur 40034 zurück."""
+    inv, _ = _sigen(mock_hass)
+    await inv.async_set_charge_limit(2.0)
+    mock_hass.services.async_call.reset_mock()
+    assert await inv.async_set_discharge_limit(0.5) is True
+    assert _sigen_calls(mock_hass) == [("set_value", {"entity_id": SIGEN_ENTLADEN, "value": 0.5})]
+    mock_hass.services.async_call.reset_mock()
+    await inv.async_set_charge_limit(1.0)
+    assert _sigen_calls(mock_hass)[-1] == ("set_value", {"entity_id": SIGEN_ENTLADEN, "value": 0.5})
+    mock_hass.services.async_call.reset_mock()
+    assert await inv.async_set_discharge_limit(None) is True
+    assert _sigen_calls(mock_hass) == [("set_value", {"entity_id": SIGEN_ENTLADEN, "value": 21.6})]
+
+
+async def test_sigen_stopp_und_entladung_vergessen_den_deckel(mock_hass):
+    inv, _ = _sigen(mock_hass)
+    await inv.async_set_discharge_limit(0.0)
+    assert await inv.async_stop_forcible() is True
+    assert inv._entladedeckel_kw is None
+    mock_hass.services.async_call.reset_mock()
+    assert await inv.async_set_discharge_limit(None) is True
+    mock_hass.services.async_call.assert_not_awaited()
+    # Während einer Entladung gehört 40034 ihr: nur merken, nicht schreiben.
+    await inv.async_set_discharge_limit(0.0)
+    await inv.async_set_discharge(2.0, 30.0)
+    assert inv._entladedeckel_kw is None
+    mock_hass.services.async_call.reset_mock()
+    assert await inv.async_set_discharge_limit(1.0) is True
+    mock_hass.services.async_call.assert_not_awaited()
+
+
+async def test_sigen_dienstfehler_meldet_false_und_bleibt_aufhebbar(mock_hass):
+    inv, _ = _sigen(mock_hass)
+    mock_hass.services.async_call = AsyncMock(side_effect=RuntimeError("modbus"))
+    assert await inv.async_set_discharge_limit(0.0) is False
+    assert inv.last_write_error == "RuntimeError"
+    # Halb geschrieben ist unbekannt: Das Aufheben findet noch etwas zu tun.
+    mock_hass.services.async_call = AsyncMock(return_value=None)
+    assert await inv.async_set_discharge_limit(None) is True
+    assert ("turn_off", {"entity_id": SIGEN_SWITCH}) in _sigen_calls(mock_hass)
+
+
+async def test_sigen_nan_wird_abgelehnt(mock_hass):
+    inv, _ = _sigen(mock_hass)
+    assert await inv.async_set_discharge_limit(float("nan")) is False
+    mock_hass.services.async_call.assert_not_awaited()

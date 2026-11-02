@@ -10,13 +10,15 @@ Registry-Auflösung der ab Werk deaktivierten Steuerentitäten und die
 Vorzeichenkonvention der Sensoren.
 """
 
-from types import SimpleNamespace
+import sys
+from types import ModuleType, SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from custom_components.eeg_energy_optimizer.const import (
     CONF_BATTERY_POWER_SENSOR,
+    CONF_BATTERY_SOC_SENSOR,
     CONF_GRID_POWER_SENSOR,
     CONF_INVERTER_TYPE,
     CONF_PV_POWER_SENSOR,
@@ -294,6 +296,132 @@ class TestFreigabe:
             ("number", "set_value", {"entity_id": DISCHARGE_LIMIT, "value": 21.6}),
             ("switch", "turn_off", {"entity_id": SWITCH}),
         ]
+
+
+SOC = "sensor.sigen_plant_battery_state_of_charge"
+
+
+@pytest.fixture
+def soc_beobachter():
+    """``async_track_state_change_event`` abfangen: liefert die Rückrufe.
+
+    ``homeassistant.core`` wird mit ersetzt: Andere Testmodule legen dort
+    einen MagicMock ab, dessen ``callback`` den Rückruf verschlucken würde.
+    """
+    rueckrufe = []
+    abmelder = MagicMock()
+
+    def _track(hass, entities, rueckruf):
+        rueckrufe.append((list(entities), rueckruf))
+        return abmelder
+
+    event = ModuleType("homeassistant.helpers.event")
+    event.async_track_state_change_event = _track
+    core = ModuleType("homeassistant.core")
+    core.callback = lambda func: func
+    with patch.dict(sys.modules, {"homeassistant.helpers.event": event, "homeassistant.core": core}):
+        yield SimpleNamespace(rueckrufe=rueckrufe, abmelder=abmelder)
+
+
+def _netzlader(mock_hass, soc="50", **zustand):
+    werte = {SWITCH: "on", MODE: MODE_SELF_CONSUMPTION, SOC: soc, **NENN, **zustand}
+    mock_hass.states.get.side_effect = _states(werte, NENN_ATTR)
+    mock_hass.states.async_all.return_value = []
+    return SigenergyInverter(mock_hass, {CONF_BATTERY_SOC_SENSOR: SOC}), werte
+
+
+FREIGABE = [
+    ("select", "select_option", {"entity_id": MODE, "option": MODE_SELF_CONSUMPTION}),
+    ("number", "set_value", {"entity_id": CHARGE_LIMIT, "value": 20.0}),
+    ("number", "set_value", {"entity_id": DISCHARGE_LIMIT, "value": 21.6}),
+    ("switch", "turn_off", {"entity_id": SWITCH}),
+]
+
+
+class TestNetzladung:
+    """Beta „Batterie aus dem Netz laden": „Command Charging (PV First)" mit
+    dem Ladelimit als Leistung — derselbe Modus, der am 11.09.2026 aus dem
+    Netz geladen hat, diesmal gewollt. Das Gerät stoppt nicht am Ziel-SOC."""
+
+    def test_kann_netzladen(self, inverter):
+        assert inverter.supports_grid_charge is True
+
+    async def test_limit_vor_modus(self, mock_hass, soc_beobachter):
+        """Erst das Limit, dann der Ladebefehl — umgekehrt liefe er einen
+        Moment mit dem alten, höheren Limit aus dem Netz."""
+        inv, _ = _netzlader(mock_hass)
+        assert await inv.async_set_grid_charge(3.0, 80.0) is True
+        assert _calls(mock_hass) == [
+            ("number", "set_value", {"entity_id": CHARGE_LIMIT, "value": 3.0}),
+            ("select", "select_option", {"entity_id": MODE, "option": MODE_COMMAND_CHARGING_PV_FIRST}),
+        ]
+        assert inv.last_write_error is None
+
+    async def test_ziel_erreicht_schreibt_nichts(self, mock_hass, soc_beobachter):
+        inv, _ = _netzlader(mock_hass, soc="80")
+        assert await inv.async_set_grid_charge(3.0, 80.0) is True
+        assert _calls(mock_hass) == []
+        assert soc_beobachter.rueckrufe == []
+
+    async def test_ziel_erreicht_beendet_eine_laufende_netzladung(self, mock_hass, soc_beobachter):
+        inv, werte = _netzlader(mock_hass)
+        await inv.async_set_grid_charge(3.0, 80.0)
+        mock_hass.services.async_call.reset_mock()
+        werte[SOC] = "81"
+        assert await inv.async_set_grid_charge(3.0, 80.0) is True
+        assert _calls(mock_hass) == FREIGABE
+
+    async def test_unter_dem_minimum_wie_freigabe(self, mock_hass, soc_beobachter):
+        """Nichts aus dem Netz: freigeben. Ein Ladebefehl mit Limit 0
+        sperrte auch das Laden aus PV."""
+        inv, _ = _netzlader(mock_hass)
+        assert await inv.async_set_grid_charge(0.03, 80.0) is True
+        assert _calls(mock_hass) == FREIGABE
+        assert soc_beobachter.rueckrufe == []
+
+    async def test_beobachter_gibt_am_ziel_frei(self, mock_hass, soc_beobachter):
+        inv, werte = _netzlader(mock_hass)
+        await inv.async_set_grid_charge(3.0, 80.0)
+        [(entities, rueckruf)] = soc_beobachter.rueckrufe
+        assert entities == [SOC]
+        mock_hass.services.async_call.reset_mock()
+        werte[SOC] = "79"
+        rueckruf(None)
+        mock_hass.async_create_task.assert_not_called()
+        werte[SOC] = "80"
+        rueckruf(None)
+        await mock_hass.async_create_task.call_args.args[0]
+        assert _calls(mock_hass) == FREIGABE
+        soc_beobachter.abmelder.assert_called_once()
+        assert inv._befehl is None
+
+    async def test_ohne_ziel_bis_voll(self, mock_hass, soc_beobachter):
+        inv, _ = _netzlader(mock_hass)
+        assert await inv.async_set_grid_charge(3.0, None) is True
+        assert inv._ziel_soc == 100.0
+
+    async def test_nan_schreibt_nichts(self, mock_hass, soc_beobachter):
+        inv, _ = _netzlader(mock_hass)
+        assert await inv.async_set_grid_charge(float("nan"), 80.0) is False
+        assert await inv.async_set_grid_charge(3.0, float("inf")) is False
+        assert inv.last_write_error == "Sollwert nicht endlich"
+        assert _calls(mock_hass) == []
+
+    async def test_dienstfehler_meldet_false_und_beobachtet_weiter(self, mock_hass, soc_beobachter):
+        """Ein Moduswechsel kann in der Integration bis 60 s warten und
+        trotzdem am Gerät angekommen sein — dann soll am Ziel jemand anhalten."""
+        inv, _ = _netzlader(mock_hass)
+        mock_hass.services.async_call = AsyncMock(side_effect=RuntimeError("timeout"))
+        assert await inv.async_set_grid_charge(3.0, 80.0) is False
+        assert inv.last_write_error == "RuntimeError"
+        assert len(soc_beobachter.rueckrufe) == 1
+
+    async def test_ladelimit_danach_beendet_die_beobachtung(self, mock_hass, soc_beobachter):
+        inv, _ = _netzlader(mock_hass)
+        await inv.async_set_grid_charge(3.0, 80.0)
+        await inv.async_set_charge_limit(1.0)
+        soc_beobachter.abmelder.assert_called_once()
+        assert inv._ziel_soc is None
 
 
 class TestVerfuegbarkeit:
