@@ -12,6 +12,12 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+## [2.1.61] - 2026-11-02
+
+### Behoben
+
+- **Spitzenkappung, „Reserve aus dem Netz“: kein Netzladen mehr wegen des Horizontendes.** Lag der Ladestand innerhalb der Mindestreserve, sah die Planung das Ende des 48‑h‑Horizonts als Bedarf: Dort fehlte ihr der nächste Wert der Reservekurve, und sie rechnete mit 0. Die Mindestreserve wurde so zu einer Forderung am letzten Slot, die ohne Zukauf nicht erreichbar war. Das gab die billigsten Netzslots frei, und das Ladeziel füllte die Batterie dann mittags bis 100 % aus dem Netz, auch wenn sich das nicht rechnete (eine Anlage plante am 02.11.2026 5,8 kWh Netzladung zu 17,6 ct). Gefordert wird jetzt nur noch, wo die Kurve im Horizont wirklich fällt.
+
 ## [2.1.60] - 2026-11-01
 
 ### Hinzugefügt
