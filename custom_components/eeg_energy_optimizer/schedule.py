@@ -1220,11 +1220,17 @@ class HAConfig:
         n = len(stempel)
         forderung = [0.0] * n
         for k in range(n - 1):
+            # Ohne Kurvenwert (hinter dem Horizont) fällt die Kurve nicht —
+            # ein „danach = 0“ machte aus der Mindestreserve eine Forderung
+            # am letzten Slot (Traun 02.11.2026). Die Kurve reicht einen Slot
+            # weiter als das LP; den Wert dort gibt es also meist noch.
             jetzt = pct.get(stempel[k + 1])
-            danach = pct.get(stempel[k + 2]) if k + 2 < n else 0.0
-            if jetzt is None:
+            danach = pct.get(
+                stempel[k + 2] if k + 2 < n else stempel[-1] + int(self.time_res)
+            )
+            if jetzt is None or danach is None:
                 continue
-            anteil = (jetzt - (danach or 0.0)) / 100.0 * kap
+            anteil = (jetzt - danach) / 100.0 * kap
             if anteil <= RESERVE_NETZ_BEDARF_MIN_KWH:
                 continue
             kwh = kap * (float(basis) + jetzt - float(self._inputs.min_soc_pct)) / 100.0

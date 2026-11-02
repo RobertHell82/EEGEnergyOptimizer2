@@ -382,3 +382,26 @@ async def test_ohne_bedarf_kein_zukauf():
     )
     result = sched.solve(inputs)
     assert all(s.get("netzladung", 0.0) < 0.05 for s in result["slots"])
+
+
+async def test_mindestreserve_fordert_am_horizontende_nichts():
+    """Flache Kurve auf der Mindestreserve, Ladestand mitten in der Reserve
+    (der Boden kann sie nicht ganz halten): Das Horizontende ist kein Abfall
+    der Kurve. Vorher galt dort „danach = 0“, die Mindestreserve wurde zur
+    Forderung am letzten Slot, und weil sie ohne Zukauf nicht erreichbar war,
+    gab das die billigsten Slots frei — das Ladeziel füllte dann bis 100 %
+    aus dem Netz (Traun 02.11.2026, 5,8 kWh zu 17,6 ct ohne jeden Vorteil)."""
+    config = {**CONFIG_NETZ, "spitzenkappung_reserve_min_pct": 5}
+    inputs, _ = await _sammeln(
+        _hass(config, _netz_inverter(), _verlauf(0.3), soc="12")
+    )
+    import pandas as pd
+
+    kurve = inputs.spitzenreserve["kurve"]
+    assert {p for _, p in kurve} == {5.0}
+    assert inputs.spitzenreserve_netz_kw > 0
+    # Die Slots des LP: eine Viertelstunde weniger als die Kurve, die bis
+    # einschließlich Horizontende reicht — wie in Traun (192 gegen 193).
+    stempel = pd.DatetimeIndex([datetime.fromisoformat(t) for t, _ in kurve[:-1]])
+    ueberschuss = pd.Series([0.0] * len(stempel), index=stempel)
+    assert sched.HAConfig(inputs)._reserve_netz_forderung(ueberschuss) is None
