@@ -218,6 +218,10 @@ const tarifAbschnitt = (art, titel) => {
 // Gemeinschaft): im Reiter Tarife, Karte „Bezug“ bzw. bei jeder Gemeinschaft.
 // Für jeden Treiber, der aus dem Netz laden kann — auch ohne Expertenmodus,
 // weil die Reserve der Spitzenkappung (für alle) sie ebenfalls nutzt.
+// Bürgerenergiegemeinschaft am Namen erkennen — dieselbe Regel wie
+// schedule.ist_beg im Backend.
+const istBeg = (name) => !!name && /\bBEG\b|b(ü|ue)rgerenergie/i.test(String(name));
+
 const bezugTarifeSichtbar = (d, prefix) =>
   NETZLADEN_SICHTBAR && !!prefix && NETZLADEN_TREIBER.includes(d.inverter_type);
 
@@ -8492,7 +8496,10 @@ class EegOptimizerPanel extends HTMLElement {
     const server = this._gemTarifFuer(d, name)?.tarif;
     const vomServer = server && server.bezug != null;
     const bezug = vomServer ? server.bezug : d[`peakshare_bezug_price${s}`];
-    const ebene = d[`peakshare_bezug_ebene${s}`] || "lokal";
+    // Eine BEG (am Namen erkannt, wie schedule.ist_beg) zahlt die volle
+    // Netzgebühr — dann steht die Art fest und ist gesperrt.
+    const beg = istBeg(name);
+    const ebene = beg ? "beg" : (d[`peakshare_bezug_ebene${s}`] || "lokal");
     return `
           ${tarifAbschnitt("bezug", "Bezug aus der Gemeinschaft")}
           <div style="display:flex;gap:12px;flex-wrap:wrap">
@@ -8506,11 +8513,12 @@ class EegOptimizerPanel extends HTMLElement {
             </div>
             <div class="field-group" style="flex:1;min-width:140px">
               <label>Gemeinschaft ist</label>
-              <select data-field="${prefix}peakshare_bezug_ebene${s}">
+              <select data-field="${prefix}peakshare_bezug_ebene${s}" ${beg ? "disabled" : ""}>
                 <option value="lokal" ${ebene === "lokal" ? "selected" : ""}>lokal (−57 % Netznutzung)</option>
                 <option value="regional" ${ebene === "regional" ? "selected" : ""}>regional (−28 % Netznutzung)</option>
                 <option value="beg" ${ebene === "beg" ? "selected" : ""}>Bürgerenergiegemeinschaft (volle Netzgebühr)</option>
               </select>
+              ${beg ? `<div class="help-text">Am Namen als Bürgerenergiegemeinschaft erkannt.</div>` : ""}
             </div>
           </div>
           <div class="help-text" style="margin-bottom:8px">Zählt nur, wenn die Batterie aus dem Netz lädt. Energiepreis der Gemeinschaft inklusive Mehrwertsteuer; die Netzgebühr rechnet der Fahrplan selbst dazu, ohne SNAP und WiNAP. Aus der Gemeinschaft kommt höchstens dein Anteil, und nur so viel, wie sie laut PeakShare übrig hat — der Rest kostet den Preis deines Lieferanten. Leer = kein Bezug aus dieser Gemeinschaft.</div>`;

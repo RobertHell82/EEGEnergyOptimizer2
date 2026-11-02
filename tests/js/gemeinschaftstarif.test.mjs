@@ -104,3 +104,16 @@ test("Netzladen: Bezugspreis vom Tarifblatt reicht zum Einschalten", async () =>
   await warten();
   assert.match(ohne._renderSettings(), /Zum Einschalten fehlt noch/);
 });
+
+
+test("BEG: Art steht fest auf Bürgerenergiegemeinschaft", async () => {
+  const p = einstellungen({ peakshare_bezug_ebene: "lokal" }, "tarife", []);
+  const html = p._renderSettings();
+  assert.match(html, /data-field="settings_peakshare_bezug_ebene" disabled>/);
+  assert.match(html, /<option value="beg" selected>/);
+  assert.match(html, /Am Namen als Bürgerenergiegemeinschaft erkannt/);
+  const eeg = einstellungen({ peakshare_community: "Marchtrenk", peakshare_bezug_ebene: "regional" }, "tarife", []);
+  const html2 = eeg._renderSettings();
+  assert.doesNotMatch(html2, /data-field="settings_peakshare_bezug_ebene" disabled/);
+  assert.match(html2, /<option value="regional" selected>/);
+});

@@ -600,3 +600,25 @@ async def test_netzladung_am_ziel_ist_nicht_wirkungslos(mock_hass, mock_inverter
                 await ex.async_guard_cycle(_state(_netzslot(soc=60.0)), MODE_EIN,
                                            now=NOW + timedelta(seconds=30 * i))
     assert ex.status()["netzladung_wirkungslos"] is False
+
+
+
+@pytest.mark.parametrize("name, erwartet", [
+    ("BEG", True), ("BEG Ansfelden", True), ("Bürgerenergiegemeinschaft Traun", True),
+    ("Buergerenergie Linz", True), ("EEG Musterdorf", False), ("Begonien-EEG", False), ("", False),
+])
+def test_ist_beg_am_namen(name, erwartet):
+    assert sched.ist_beg(name) is erwartet
+
+
+def test_beg_bekommt_immer_die_volle_netzgebuehr():
+    """Ein gespeichertes „lokal“ aus der Zeit vor der Erkennung zählt nicht."""
+    config = {
+        "peakshare_community": "BEG Ansfelden", "peakshare_share_pct": 100,
+        "peakshare_bezug_price": 0.137, "peakshare_bezug_ebene": "lokal",
+        "peakshare_community_2": "EEG Musterdorf", "peakshare_share_pct_2": 50,
+        "peakshare_bezug_price_2": 0.12, "peakshare_bezug_ebene_2": "lokal",
+    }
+    beg, eeg = sched.eeg_bezug_aus_config(config)
+    assert beg["reduktion"] == sched.EEG_BEZUG_REDUKTION["beg"]
+    assert eeg["reduktion"] == sched.EEG_BEZUG_REDUKTION["lokal"]

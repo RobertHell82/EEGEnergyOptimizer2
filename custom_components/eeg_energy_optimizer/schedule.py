@@ -24,6 +24,7 @@ from __future__ import annotations
 import bisect
 import logging
 import math
+import re
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -1867,6 +1868,17 @@ def netzladen_vorteil(config: dict) -> float:
     return max(0.0, min(MAX_NETZLADEN_VORTEIL, zahl))
 
 
+def ist_beg(name: str | None) -> bool:
+    """Heißt die Gemeinschaft wie eine Bürgerenergiegemeinschaft („BEG …“)?
+
+    Eine BEG zahlt die volle Netzgebühr (§ 75 Abs. 5 EAG nennt nur die
+    EEG); lokal oder regional gibt es bei ihr nicht. Der Name ist das
+    einzige Merkmal, das PeakShare liefert — Panel (``istBeg``) und Fahrplan
+    entscheiden gleich.
+    """
+    return bool(name) and re.search(r"\bBEG\b|b(ü|ue)rgerenergie", str(name), re.I) is not None
+
+
 def eeg_bezug_aus_config(config: dict) -> list[dict]:
     """Die Gemeinschaften mit eingetragenem Bezugspreis.
 
@@ -1885,6 +1897,8 @@ def eeg_bezug_aus_config(config: dict) -> list[dict]:
         ebene = str(config.get(CONF_PEAKSHARE_BEZUG_EBENE + s) or DEFAULT_EEG_BEZUG_EBENE).lower()
         if ebene not in EEG_BEZUG_REDUKTION:
             ebene = DEFAULT_EEG_BEZUG_EBENE
+        if ist_beg(name):
+            ebene = "beg"  # gespeichertes „lokal“ aus der Zeit vor der Erkennung
         ergebnis.append({
             "name": name, "preis": preis, "anteil": anteil,
             "reduktion": EEG_BEZUG_REDUKTION[ebene],
