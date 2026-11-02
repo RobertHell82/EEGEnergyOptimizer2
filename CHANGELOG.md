@@ -12,6 +12,14 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+## [2.1.63] - 2026-11-02
+
+### Behoben
+
+- **SolaX: Eine geplante Entladung endet nicht mehr nach einer Minute.** Seit etwa solax_modbus 2026.10 schaltet die SolaX-Integration einen Fernsteuerbefehl (Mode 1) ausdrücklich ab, sobald ihre Wiederholungszeit abläuft. Der Optimizer setzte diese Zeit auf 60 s und schreibt nur, wenn sich der Plan ändert — eine Entladung, die eine Stunde laufen sollte, hörte nach etwa einer Minute auf. Der Treiber löst einen laufenden Befehl jetzt alle 4 Minuten selbst erneut aus, die Wiederholung der Integration steht auf 10 Minuten. Fällt Home Assistant aus, endet der Befehl am Gerät weiterhin spätestens 5 Minuten nach dem letzten Schreiben.
+- **Sigenergy: Lade- und Entladelimit gehen bei der Freigabe zurück.** Laut Sigenergy-Spezifikation V2.9 gelten „ESS Max Charging Limit“ und „ESS Max Discharging Limit“ in jedem Betriebsmodus, auch nachdem Remote EMS wieder aus ist. Der Treiber ging noch von V2.7 aus („nur in den Befehlsmodi“) und ließ beide bei der Freigabe stehen: Ein „Laden gesperrt“ aus dem Fahrplan hätte so im eigenen EMS des Geräts weitergegolten, ein Entladelimit aus einer Einspeisung den Eigenverbrauch gedeckelt. Jetzt setzt jede Freigabe beide auf die Nennleistung zurück, bevor Remote EMS ausgeht, und jeder Befehl stellt das Limit, das er nicht braucht, ebenfalls auf die Nennleistung.
+- **Victron: Die Rücknahme am Ziel-Ladestand läuft wieder.** Der Treiber beobachtet den Ladestand während einer Entladung oder Netzladung selbst und nimmt den Netzsollwert am Ziel zurück, weil das GX-Gerät keinen Ziel-Ladestand kennt. Der Rückruf dafür war aber so angemeldet, dass Home Assistant ihn in einem fremden Thread ausführte und den Auftrag daraus abwies. Die Rücknahme lief deshalb nie: Eine Entladung ging bis zum ESS-Mindest-Ladestand, eine Netzladung lief weiter bis zum nächsten Takt.
+
 ## [2.1.62] - 2026-11-02
 
 ### Hinzugefügt
