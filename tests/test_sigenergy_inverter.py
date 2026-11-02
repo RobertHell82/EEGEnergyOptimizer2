@@ -169,12 +169,35 @@ class TestLadelimit:
         assert await SigenergyInverter(mock_hass, {}).async_set_charge_limit(1.0) is True
         assert _calls(mock_hass)[-1] == ("number", "set_value", {"entity_id": DISCHARGE_LIMIT, "value": 100.0})
 
-    async def test_nennleistung_unbekannt_scheitert_laut(self, mock_hass):
+    async def test_nennleistung_unbekannt_meldet_den_grund(self, mock_hass):
+        """Das Ladelimit steht trotzdem — das Entladelimit ist nur ein
+        Folgeschritt. Laut bleibt es über ``last_write_error``, nachgeholt
+        wird bei der Freigabe."""
         mock_hass.states.async_all.return_value = []
         mock_hass.states.get.side_effect = _states({SWITCH: "on", MODE: MODE_SELF_CONSUMPTION})
         inv = SigenergyInverter(mock_hass, {})
-        assert await inv.async_set_charge_limit(1.0) is False
-        assert inv.last_write_error == "Nennleistung unbekannt"
+        assert await inv.async_set_charge_limit(1.0) is True
+        assert inv.last_write_error == "Limit nicht auf Nennleistung: Nennleistung unbekannt"
+        assert inv._nennwert_offen == {"ess_max_discharging_limit"}
+
+    async def test_maximum_abgelehnt_nennt_den_fehlenden_sensor(self, mock_hass):
+        """Ohne Nennleistungs-Sensor wird das ``max`` geschrieben; lehnt das
+        Gerät es ab, sagt der Grund, was zu tun ist."""
+        mock_hass.states.async_all.return_value = []
+        mock_hass.states.get.side_effect = _states(
+            {SWITCH: "on", MODE: MODE_SELF_CONSUMPTION, CHARGE_LIMIT: "0", DISCHARGE_LIMIT: "3.0"},
+            {CHARGE_LIMIT: {"max": 100.0}, DISCHARGE_LIMIT: {"max": 100.0}},
+        )
+
+        async def _aufruf(domain, service, data, **kw):
+            if domain == "number" and data["value"] == 100.0:
+                raise ValueError("außerhalb des Bereichs")
+
+        mock_hass.services.async_call = AsyncMock(side_effect=_aufruf)
+        inv = SigenergyInverter(mock_hass, {})
+        assert await inv.async_stop_forcible() is False
+        assert inv.last_write_error == "Maximum abgelehnt, Nennleistungs-Sensor fehlt"
+        assert all(c[1] != "turn_off" for c in _calls(mock_hass))
 
 
 class TestRemoteEmsEinschalten:
@@ -277,12 +300,54 @@ class TestFreigabe:
         assert inverter.last_write_error == "RuntimeError"
         assert all(c[1] != "turn_off" for c in _calls(mock_hass))
 
-    async def test_schalter_schon_aus_nichts_zu_tun(self, mock_hass):
-        mock_hass.states.get.side_effect = _states({SWITCH: "off", MODE: "unavailable"})
+    async def test_schalter_aus_limits_auf_nennwert_nichts_zu_tun(self, mock_hass):
+        """Schalter aus, beide Limits auf der Nennleistung: nichts schreiben —
+        diese Freigabe läuft auch, wenn wir nie etwas gestellt haben."""
+        mock_hass.states.get.side_effect = _states(
+            {SWITCH: "off", MODE: "unavailable", CHARGE_LIMIT: "20.0", DISCHARGE_LIMIT: "21.6", **NENN},
+            NENN_ATTR,
+        )
         mock_hass.states.async_all.return_value = []
         inv = SigenergyInverter(mock_hass, {})
         assert await inv.async_stop_forcible() is True
         assert _calls(mock_hass) == []
+
+    async def test_schalter_aus_limits_nicht_lesbar_kein_fehlschlag(self, mock_hass):
+        """Nicht verfügbare Limits sind nicht schreibbar: loggen, Freigabe gilt."""
+        mock_hass.states.get.side_effect = _states(
+            {SWITCH: "off", MODE: "unavailable", CHARGE_LIMIT: "unavailable", **NENN}, NENN_ATTR,
+        )
+        mock_hass.states.async_all.return_value = []
+        inv = SigenergyInverter(mock_hass, {})
+        assert await inv.async_stop_forcible() is True
+        assert _calls(mock_hass) == []
+
+    async def test_szenario_a_altes_ladelimit_null_bei_schalter_aus(self, mock_hass):
+        """Bis 2.1.62 ließ die Freigabe die Limits stehen und schaltete Remote
+        EMS aus. Ein Ladelimit 0 von damals wirkt global (V2.9) und sperrt das
+        Laden bis heute — die Freigabe setzt es zurück, ohne Remote EMS
+        einzuschalten."""
+        mock_hass.states.get.side_effect = _states(
+            {SWITCH: "off", MODE: "unavailable", CHARGE_LIMIT: "0", DISCHARGE_LIMIT: "21.6", **NENN},
+            NENN_ATTR,
+        )
+        mock_hass.states.async_all.return_value = []
+        inv = SigenergyInverter(mock_hass, {})
+        assert await inv.async_stop_forcible() is True
+        assert _calls(mock_hass) == [
+            ("number", "set_value", {"entity_id": CHARGE_LIMIT, "value": 20.0}),
+        ]
+
+    async def test_schalter_aus_schreibfehler_meldet_false(self, mock_hass):
+        mock_hass.states.get.side_effect = _states(
+            {SWITCH: "off", MODE: "unavailable", CHARGE_LIMIT: "0", DISCHARGE_LIMIT: "21.6", **NENN},
+            NENN_ATTR,
+        )
+        mock_hass.states.async_all.return_value = []
+        mock_hass.services.async_call = AsyncMock(side_effect=RuntimeError("modbus"))
+        inv = SigenergyInverter(mock_hass, {})
+        assert await inv.async_stop_forcible() is False
+        assert inv.last_write_error == "RuntimeError"
 
     async def test_auswahl_nicht_verfuegbar_trotzdem_ausschalten(self, mock_hass):
         """Schalter an, Auswahl (noch) nicht verfügbar → kein select_option
@@ -296,6 +361,111 @@ class TestFreigabe:
             ("number", "set_value", {"entity_id": DISCHARGE_LIMIT, "value": 21.6}),
             ("switch", "turn_off", {"entity_id": SWITCH}),
         ]
+
+
+def _wechselnd(zustand: dict, *, modus_fehler=None, modus_kommt_an=True, nummer_fehler=None):
+    """Service-Mock, der den Modus im Zustand nachführt und gezielt scheitert.
+
+    ``modus_fehler``: Ausnahme beim select_option (Zeitüberschreitung der
+    Integration); ``modus_kommt_an``: steht der Modus trotzdem am Gerät.
+    ``nummer_fehler``: {entity_id: Ausnahme} für number.set_value.
+    """
+    nummer_fehler = nummer_fehler or {}
+
+    async def _aufruf(domain, service, data, **kw):
+        if service == "select_option":
+            if modus_fehler is not None:
+                if modus_kommt_an:
+                    zustand[MODE] = data["option"]
+                raise modus_fehler
+            zustand[MODE] = data["option"]
+        elif service == "set_value":
+            if data["entity_id"] in nummer_fehler:
+                raise nummer_fehler[data["entity_id"]]
+            zustand[data["entity_id"]] = str(data["value"])
+        elif service == "turn_off":
+            zustand[SWITCH] = "off"
+            zustand[MODE] = "unavailable"
+
+    return AsyncMock(side_effect=_aufruf)
+
+
+class TestTeilfehler:
+    """Der Modus ist umgeschaltet, ein späterer Schritt scheitert — oder der
+    Moduswechsel meldet einen Fehler und ist trotzdem angekommen. Meldete der
+    Treiber dann ``False``, bliebe der Executor bei seiner alten Absicht:
+    Not-Aus und Guard 3 liefen nicht, eine spätere Freigabe stiege aus, und
+    eine Zwangsentladung liefe unbeobachtet."""
+
+    @staticmethod
+    def _inv(mock_hass, **extra):
+        zustand = {SWITCH: "on", MODE: MODE_SELF_CONSUMPTION, CHARGE_LIMIT: "0", DISCHARGE_LIMIT: "21.6", **NENN, **extra}
+        mock_hass.states.get.side_effect = _states(zustand, NENN_ATTR)
+        mock_hass.states.async_all.return_value = []
+        return SigenergyInverter(mock_hass, {}), zustand
+
+    async def test_ladelimit_folgeschritt_scheitert_entladung_gilt(self, mock_hass):
+        inv, zustand = self._inv(mock_hass)
+        mock_hass.services.async_call = _wechselnd(zustand, nummer_fehler={CHARGE_LIMIT: TimeoutError()})
+        assert await inv.async_set_discharge(3.0, 30.0) is True
+        assert zustand[MODE] == MODE_COMMAND_DISCHARGING_ESS_FIRST
+        assert inv._befehl == "entladung"
+        assert inv.last_write_error == "Limit nicht auf Nennleistung: TimeoutError"
+        assert inv._nennwert_offen == {"ess_max_charging_limit"}
+
+        # Die Freigabe holt es nach und vergisst es danach.
+        mock_hass.services.async_call = _wechselnd(zustand)
+        assert await inv.async_stop_forcible() is True
+        assert ("number", "set_value", {"entity_id": CHARGE_LIMIT, "value": 20.0}) in _calls(mock_hass)
+        assert inv._nennwert_offen == set()
+
+    async def test_offenes_limit_holt_die_naechste_netzladung_nach(self, mock_hass):
+        inv, zustand = self._inv(mock_hass)
+        mock_hass.services.async_call = _wechselnd(zustand, nummer_fehler={DISCHARGE_LIMIT: TimeoutError()})
+        assert await inv.async_set_charge_limit(1.0) is True
+        assert inv._nennwert_offen == {"ess_max_discharging_limit"}
+        mock_hass.services.async_call = _wechselnd(zustand)
+        assert await inv.async_set_grid_charge(3.0, 80.0) is True
+        assert _calls(mock_hass)[-1] == ("number", "set_value", {"entity_id": DISCHARGE_LIMIT, "value": 21.6})
+        assert inv._nennwert_offen == set()
+        assert inv.last_write_error is None
+
+    async def test_modus_zeitueberschreitung_aber_angekommen(self, mock_hass):
+        """Die Integration wartet bis 60 s auf die Rückmeldung; ein Timeout
+        heißt nicht, dass der Modus fehlt. Steht er, läuft die Entladung."""
+        inv, zustand = self._inv(mock_hass)
+        mock_hass.services.async_call = _wechselnd(zustand, modus_fehler=TimeoutError())
+        assert await inv.async_set_discharge(3.0, 30.0) is True
+        assert inv._befehl == "entladung"
+        assert inv.last_write_error == "Modus mit Fehler gesetzt: TimeoutError"
+        # Der Folgeschritt lief trotzdem.
+        assert ("number", "set_value", {"entity_id": CHARGE_LIMIT, "value": 20.0}) in _calls(mock_hass)
+
+    async def test_modus_nicht_angekommen_im_eigenverbrauch_nur_false(self, mock_hass):
+        inv, zustand = self._inv(mock_hass)
+        mock_hass.services.async_call = _wechselnd(zustand, modus_fehler=TimeoutError(), modus_kommt_an=False)
+        assert await inv.async_set_discharge(3.0, 30.0) is False
+        assert inv.last_write_error == "TimeoutError"
+        assert inv._befehl is None
+        assert all(c[1] != "turn_off" for c in _calls(mock_hass))
+
+    async def test_modus_nicht_angekommen_aus_einem_befehl_wird_freigegeben(self, mock_hass):
+        """Stand das Gerät noch in einem anderen Befehl, gibt der Treiber
+        frei — kein Befehl, den der Executor nicht kennt."""
+        inv, zustand = self._inv(mock_hass, **{MODE: MODE_COMMAND_CHARGING_PV_FIRST})
+        mock_hass.services.async_call = _wechselnd(zustand, modus_fehler=TimeoutError(), modus_kommt_an=False)
+        assert await inv.async_set_discharge(3.0, 30.0) is False
+        assert inv.last_write_error == "TimeoutError"
+        assert ("switch", "turn_off", {"entity_id": SWITCH}) in _calls(mock_hass)
+        assert inv._befehl is None
+
+    async def test_ladelimit_modusfehler_aus_entladung_gibt_frei(self, mock_hass):
+        inv, zustand = self._inv(mock_hass, **{MODE: MODE_COMMAND_DISCHARGING_ESS_FIRST})
+        inv._befehl = "entladung"
+        mock_hass.services.async_call = _wechselnd(zustand, modus_fehler=TimeoutError(), modus_kommt_an=False)
+        assert await inv.async_set_charge_limit(1.0) is False
+        assert ("switch", "turn_off", {"entity_id": SWITCH}) in _calls(mock_hass)
+        assert inv._befehl is None
 
 
 SOC = "sensor.sigen_plant_battery_state_of_charge"
@@ -415,6 +585,67 @@ class TestNetzladung:
         assert await inv.async_set_grid_charge(3.0, 80.0) is False
         assert inv.last_write_error == "RuntimeError"
         assert len(soc_beobachter.rueckrufe) == 1
+
+    async def test_leistungsaenderung_schreibt_den_modus_nicht_neu(self, mock_hass, soc_beobachter):
+        """Der Executor führt die Leistung jeden Lauf nach; jedes Schreiben
+        des Modus wartet bis zu 60 s. Steht er schon, nur das Limit."""
+        inv, werte = _netzlader(mock_hass)
+        await inv.async_set_grid_charge(3.0, 80.0)
+        werte[MODE] = MODE_COMMAND_CHARGING_PV_FIRST
+        mock_hass.services.async_call.reset_mock()
+        assert await inv.async_set_grid_charge(2.4, 80.0) is True
+        assert _calls(mock_hass) == [
+            ("number", "set_value", {"entity_id": CHARGE_LIMIT, "value": 2.4}),
+        ]
+
+    async def test_start_erst_ueber_minimum_plus_hysterese(self, mock_hass, soc_beobachter):
+        """Eine neue Netzladung braucht 0,1 kW, eine laufende endet erst unter
+        0,05 kW — Pendeln am Rand schaltet Remote EMS nicht aus und ein."""
+        inv, werte = _netzlader(mock_hass)
+        assert await inv.async_set_grid_charge(0.08, 80.0) is True
+        assert inv._befehl is None
+        assert all(c[1] != "select_option" or c[2]["option"] != MODE_COMMAND_CHARGING_PV_FIRST
+                   for c in _calls(mock_hass))
+
+        assert await inv.async_set_grid_charge(0.2, 80.0) is True
+        werte[MODE] = MODE_COMMAND_CHARGING_PV_FIRST
+        mock_hass.services.async_call.reset_mock()
+        assert await inv.async_set_grid_charge(0.07, 80.0) is True
+        assert inv._befehl == "netzladung"
+        assert _calls(mock_hass) == [
+            ("number", "set_value", {"entity_id": CHARGE_LIMIT, "value": 0.07}),
+        ]
+        mock_hass.services.async_call.reset_mock()
+        assert await inv.async_set_grid_charge(0.04, 80.0) is True
+        assert ("switch", "turn_off", {"entity_id": SWITCH}) in _calls(mock_hass)
+
+    async def test_nach_dem_ziel_erst_unter_ziel_minus_ein_prozent(self, mock_hass, soc_beobachter):
+        inv, werte = _netzlader(mock_hass)
+        await inv.async_set_grid_charge(3.0, 80.0)
+        [(_, rueckruf)] = soc_beobachter.rueckrufe
+        werte[SOC] = "80"
+        rueckruf(None)
+        await mock_hass.async_create_task.call_args.args[0]
+        assert inv._befehl is None
+
+        # Knapp unter dem Ziel: kein Neustart, nichts geschrieben.
+        mock_hass.services.async_call.reset_mock()
+        werte[SOC] = "79.2"
+        assert await inv.async_set_grid_charge(2.5, 80.0) is True
+        assert _calls(mock_hass) == []
+        assert inv._befehl is None
+
+        # Unter Ziel − 1 %: neu laden.
+        werte[SOC] = "78.9"
+        assert await inv.async_set_grid_charge(2.5, 80.0) is True
+        assert inv._befehl == "netzladung"
+
+    async def test_neues_ziel_vergisst_die_hysterese(self, mock_hass, soc_beobachter):
+        inv, werte = _netzlader(mock_hass, soc="80")
+        assert await inv.async_set_grid_charge(3.0, 80.0) is True
+        werte[SOC] = "79.5"
+        assert await inv.async_set_grid_charge(3.0, 90.0) is True
+        assert inv._befehl == "netzladung"
 
     async def test_ladelimit_danach_beendet_die_beobachtung(self, mock_hass, soc_beobachter):
         inv, _ = _netzlader(mock_hass)

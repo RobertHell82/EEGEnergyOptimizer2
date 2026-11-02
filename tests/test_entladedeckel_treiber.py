@@ -551,6 +551,37 @@ async def test_sigen_aufheben_ohne_deckel_tut_nichts(mock_hass):
     mock_hass.services.async_call.assert_not_awaited()
 
 
+async def test_sigen_szenario_b_deckel_nach_absturz_remote_ems_von_hand_aus(mock_hass):
+    """HA stürzt mit Deckel 0,01 kW ab, der Nutzer schaltet Remote EMS von
+    Hand aus. 40034 wirkt global weiter — ohne Gedächtnis hob ``None``
+    früher nichts auf, die Batterie entlud nie mehr. Jetzt entscheidet der
+    gelesene Wert; Remote EMS bleibt aus."""
+    inv, _ = _sigen(mock_hass, **{
+        SIGEN_SWITCH: "off", SIGEN_MODE: "unavailable", SIGEN_LADEN: "20.0", SIGEN_ENTLADEN: "0.01",
+    })
+    assert await inv.async_set_discharge_limit(None) is True
+    assert _sigen_calls(mock_hass) == [("set_value", {"entity_id": SIGEN_ENTLADEN, "value": 21.6})]
+    # Dasselbe über die Freigabe des Executors.
+    mock_hass.services.async_call.reset_mock()
+    assert await inv.async_stop_forcible() is True
+    assert _sigen_calls(mock_hass) == [("set_value", {"entity_id": SIGEN_ENTLADEN, "value": 21.6})]
+
+
+async def test_sigen_deckel_ohne_gedaechtnis_bei_remote_ems_an_gibt_frei(mock_hass):
+    """Nach einem Neustart steht Remote EMS noch an, 40034 tief: das ist
+    unser Rest von vorher — ganze Freigabe."""
+    inv, _ = _sigen(mock_hass, **{SIGEN_LADEN: "20.0", SIGEN_ENTLADEN: "0.01"})
+    assert await inv.async_set_discharge_limit(None) is True
+    assert ("turn_off", {"entity_id": SIGEN_SWITCH}) in _sigen_calls(mock_hass)
+    assert ("set_value", {"entity_id": SIGEN_ENTLADEN, "value": 21.6}) in _sigen_calls(mock_hass)
+
+
+async def test_sigen_aufheben_ohne_gedaechtnis_limit_auf_nennwert_nichts(mock_hass):
+    inv, _ = _sigen(mock_hass, **{SIGEN_ENTLADEN: "21.6"})
+    assert await inv.async_set_discharge_limit(None) is True
+    mock_hass.services.async_call.assert_not_awaited()
+
+
 async def test_sigen_aufheben_ohne_anderen_modus_gibt_frei(mock_hass):
     """Der Deckel war das Einzige, wofür Remote EMS an war: ganze Freigabe."""
     inv, _ = _sigen(mock_hass)

@@ -202,8 +202,18 @@ jedem Betriebsmodus — auch nach dem Ausschalten des Remote EMS im eigenen EMS
 des Geräts. Bis 2.1.62 blieben sie bei der Freigabe stehen (ein Ladelimit 0
 hätte das Laden weiter gesperrt). Seitdem setzt jede Freigabe beide auf die
 Nennleistung zurück, bevor Remote EMS ausgeht, und jeder Befehl stellt das
-Limit, das er nicht braucht, ebenfalls auf die Nennleistung. Offen am Gerät:
-ob die Limits nach dem Ausschalten wirklich auf der Nennleistung stehen.
+Limit, das er nicht braucht, ebenfalls auf die Nennleistung. Findet die
+Freigabe Remote EMS schon ausgeschaltet vor, liest sie beide Limits und setzt
+zurück, was unter der Nennleistung steht — ohne Remote EMS einzuschalten. Das
+heilt ein Ladelimit 0 aus der Zeit bis 2.1.62 und einen Entladedeckel, nach
+dem jemand Remote EMS von Hand ausgeschaltet hat. Ohne Sensor „ESS Rated
+Charging/Discharging Power“ schreibt der Treiber das Maximum der Zahl-Entität;
+lehnt das Gerät es ab, scheitert die Freigabe mit dem Grund
+„Nennleistungs-Sensor fehlt“ — dann die beiden Sensoren aktivieren. Scheitert
+nach einem Moduswechsel nur das Zurücksetzen des anderen Limits, gilt der
+Befehl trotzdem (der Executor muss eine laufende Entladung kennen) und das
+Limit wird nachgeholt. Offen am Gerät: ob die Limits nach dem Ausschalten
+wirklich auf der Nennleistung stehen.
 
 **Entladedeckel der Spitzenkappung und Netzladen (Beta, am Gerät nicht
 geprüft).** Der Deckel ist das Entladelimit (40034) im Modus „Maximum Self
@@ -217,7 +227,10 @@ auf; der Treiber beobachtet den Ladestand und gibt am Ziel frei.
 > [!WARNING]
 > **Netzladen ohne Watchdog.** Stürzt Home Assistant während einer Netzladung
 > ab, lädt das Gerät weiter, bis die Batterie voll ist — aus dem Netz, soweit
-> die Sonne nicht reicht. Abhilfe: Remote EMS von Hand ausschalten.
+> die Sonne nicht reicht. Abhilfe: Remote EMS von Hand ausschalten **und**
+> „ESS Max Charging Limit“ / „ESS Max Discharging Limit“ auf die
+> Nennleistung stellen — die Limits wirken auch bei ausgeschaltetem Remote
+> EMS. Dasselbe gilt für einen stehenden Entladedeckel.
 
 Am Gerät zu prüfen, bevor die Beta-Funktionen als erprobt gelten:
 

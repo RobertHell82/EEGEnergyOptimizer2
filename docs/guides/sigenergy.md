@@ -116,13 +116,13 @@ Während der Optimizer steuert, ist der Schalter „Remote EMS" **an**. Gibt er 
 | **Aus dem Netz laden** (Beta) | Remote EMS an → „Command Charging (PV First)“ mit dem Ladelimit als Leistung; am Ziel-Ladestand gibt der Optimizer frei |
 
 > [!NOTE]
-> Lade- und Entladelimit gelten am Gerät **in jedem Modus**, auch nachdem Remote EMS aus ist. Deshalb stellt der Optimizer beide bei der Freigabe auf die Nennleistung zurück — sonst bliebe zum Beispiel ein „Laden gesperrt“ stehen.
+> Lade- und Entladelimit gelten am Gerät **in jedem Modus**, auch nachdem Remote EMS aus ist. Deshalb stellt der Optimizer beide bei der Freigabe auf die Nennleistung zurück — sonst bliebe zum Beispiel ein „Laden gesperrt“ stehen. Findet er „Remote EMS“ schon ausgeschaltet vor, prüft er die beiden Limits trotzdem und setzt zurück, was darunter steht.
 
 > [!WARNING]
-> **Kein Sicherheitsnetz im Gerät.** Anders als Fronius, Kostal oder SMA hat Sigenergy keine Rückfallzeit: Ein Befehl läuft weiter, bis er zurückgenommen wird. Der Optimizer gibt bei „Aus", bei fehlendem Plan und beim Neustart selbst frei. Stürzt Home Assistant **hart** ab (Stromausfall, eingefroren), bleibt der letzte Befehl stehen. Dann schalte „Remote EMS" in Home Assistant oder in der Sigen-App von Hand aus.
+> **Kein Sicherheitsnetz im Gerät.** Anders als Fronius, Kostal oder SMA hat Sigenergy keine Rückfallzeit: Ein Befehl läuft weiter, bis er zurückgenommen wird. Der Optimizer gibt bei „Aus", bei fehlendem Plan und beim Neustart selbst frei. Stürzt Home Assistant **hart** ab (Stromausfall, eingefroren), bleibt der letzte Befehl stehen. Dann schalte „Remote EMS" in Home Assistant oder in der Sigen-App von Hand aus **und stelle „ESS Max Charging Limit“ und „ESS Max Discharging Limit“ auf die Nennleistung** — die Limits wirken auch bei ausgeschaltetem Remote EMS weiter. Läuft Home Assistant wieder, holt der Optimizer das bei der nächsten Freigabe selbst nach.
 
 > [!CAUTION]
-> **Aus dem Netz laden ist Beta und am Sigenergy noch nicht erprobt.** Das Gerät hört am Ziel-Ladestand nicht von selbst auf — das übernimmt Home Assistant. Stürzt Home Assistant während einer Netzladung ab, lädt die Anlage weiter, **bis die Batterie voll ist**, notfalls aus dem Netz. Dann „Remote EMS“ von Hand ausschalten.
+> **Aus dem Netz laden ist Beta und am Sigenergy noch nicht erprobt.** Das Gerät hört am Ziel-Ladestand nicht von selbst auf — das übernimmt Home Assistant. Stürzt Home Assistant während einer Netzladung ab, lädt die Anlage weiter, **bis die Batterie voll ist**, notfalls aus dem Netz. Dann „Remote EMS“ von Hand ausschalten und „ESS Max Charging Limit“ und „ESS Max Discharging Limit“ auf die Nennleistung stellen.
 
 ## Zu beachten
 
@@ -139,4 +139,5 @@ Während der Optimizer steuert, ist der Schalter „Remote EMS" **an**. Gibt er 
 | **„Remote EMS Control Mode" ist nicht verfügbar** | Normal, solange „Remote EMS" aus ist |
 | **Befehle ohne Wirkung** | Sigen-App: EMS-Modus „Maximum Self Consumption", TOU/Peak Shaving aus; kein zweites Programm (evcc, App) gleichzeitig |
 | **Netzleistung mit falschem Vorzeichen** | Der Optimizer dreht das Vorzeichen selbst (positiv = Bezug). Bei Einspeisung muss `binary_sensor.sigen_plant_exporting_to_grid` „an" zeigen |
-| **Nach HA-Absturz läuft ein Befehl weiter** | Schalter „Remote EMS (Controlled by Home Assistant)" von Hand ausschalten |
+| **Nach HA-Absturz läuft ein Befehl weiter** | Schalter „Remote EMS (Controlled by Home Assistant)" von Hand ausschalten und „ESS Max Charging Limit“ / „ESS Max Discharging Limit“ auf die Nennleistung stellen |
+| **Batterie lädt oder entlädt nicht, obwohl Remote EMS aus ist** | Ein altes Limit steht noch (es wirkt in jedem Modus). Die nächste Freigabe des Optimizers setzt es zurück; von Hand: beide Limits auf die Nennleistung stellen |

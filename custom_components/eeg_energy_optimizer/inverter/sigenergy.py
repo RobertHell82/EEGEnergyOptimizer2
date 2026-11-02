@@ -55,9 +55,12 @@ davon aus, dass sie nur in den Befehlsmodi greifen, und ließ sie bei der
 Freigabe stehen: Ein Ladelimit 0 aus dem Fahrplan hätte dann das Laden auch
 im eigenen EMS des Geräts weiter gesperrt, ein altes Entladelimit den
 Eigenverbrauch gedeckelt. Deshalb setzt jede Freigabe beide auf die
-Nennleistung zurück, BEVOR Remote EMS ausgeht (danach ist die Auswahl weg und
-der Zustand nicht mehr unser), und jeder Befehl stellt das Limit, das er
-selbst nicht braucht, ebenfalls auf die Nennleistung.
+Nennleistung zurück, BEVOR Remote EMS ausgeht, und jeder Befehl stellt das
+Limit, das er selbst nicht braucht, ebenfalls auf die Nennleistung. Steht der
+Schalter bei der Freigabe schon aus, liest sie beide Limits und setzt zurück,
+was darunter steht, ohne Remote EMS einzuschalten: ein Ladelimit 0 aus der
+Zeit bis 2.1.62, ein Deckel, nach dem jemand Remote EMS von Hand
+ausgeschaltet hat. Die Limits sind auch bei aus schreibbar.
 
 **Warum kein Command Charging.** Bis 2.1.0-dev6 wurde für ein Ladelimit in
 den Modus „Command Charging (PV First)" geschaltet, weil Register 40032 laut
@@ -85,7 +88,11 @@ die Integration beim Entladen und beim Umschalten auf „Aus" immer aktiv frei.
 Am teuersten trifft das die Netzladung: Stürzt Home Assistant währenddessen
 ab, lädt das Gerät weiter, bis die Batterie voll ist — aus dem Netz, soweit
 die Sonne nicht reicht. Ein stehender Entladedeckel hielte die Batterie
-entsprechend fest, bis jemand Remote EMS ausschaltet.
+entsprechend fest. Von Hand hilft dann nicht allein, Remote EMS
+auszuschalten — die Limits wirken global weiter —, sondern zusätzlich
+„ESS Max Charging Limit" und „ESS Max Discharging Limit" auf die
+Nennleistung zu stellen. Läuft die Integration wieder, erledigt das ihre
+nächste Freigabe von selbst.
 
 **Am Gerät zu verifizieren (Feldtest):**
 
@@ -137,6 +144,20 @@ REMOTE_EMS_POLL_INTERVAL_S = 0.5
 # Unterhalb davon ist eine Netzladung keine: wie eine Freigabe behandelt
 # (gleiche Schwelle wie beim Victron-Treiber).
 NETZLADEN_MIN_KW = 0.05
+# Starten erst ab Minimum + Hysterese. Die Leistung, die der Executor aus
+# Netzgrenze, Hauslast und PV nachführt, pendelt am Rand gern um ein paar
+# Watt — ohne Abstand schaltete jedes Pendeln Remote EMS aus und wieder ein,
+# und jedes Schreiben von Schalter oder Modus wartet bis zu 60 s.
+NETZLADEN_START_HYSTERESE_KW = 0.05
+# Hat eine Netzladung ihr Ziel einmal erreicht, beginnt sie erst unter
+# Ziel − 1 % von vorn. Sonst startete der Ladebefehl knapp unter dem Ziel bei
+# jeder Leistungsänderung des Executors neu, nur um gleich wieder zu enden.
+NETZLADEN_ZIEL_HYSTERESE_PCT = 1.0
+
+# Ein Limit gilt als „auf Nennleistung", solange es höchstens so viel
+# darunter liegt. Nur ein Limit UNTER der Nennleistung beschränkt etwas;
+# darüber beschneidet das Gerät selbst.
+LIMIT_TOLERANZ_KW = 0.1
 
 # Kleinster geschriebener Entladedeckel. 0 lesen Sigenergy-Geräte laut
 # Maintainer der Integration oft als „nicht gesetzt" — siehe
@@ -154,6 +175,10 @@ NENNWERT_ZU_LIMIT: dict[str, str] = {
 
 class SigenFehler(Exception):
     """Ein Schreibschritt ist nicht möglich; der Text wird ``last_write_error``."""
+
+
+class _ModusNichtAngekommen(SigenFehler):
+    """Der Moduswechsel ist gescheitert und steht auch nicht am Gerät."""
 
 
 def _grund(exc: Exception) -> str:
@@ -290,6 +315,13 @@ class SigenergyInverter(InverterBase):
         # ein Schreiben von Schalter oder Modus kann bis zu 60 s dauern. Ohne
         # Sperre fiele die Rücknahme am Ziel mitten in einen neuen Befehl.
         self._sperre = asyncio.Lock()
+        # Limits, deren Rücksetzen auf die Nennleistung als Folgeschritt eines
+        # Befehls gescheitert ist — beim nächsten Befehl bzw. der Freigabe
+        # nachgeholt (siehe _folgeschritt()).
+        self._nennwert_offen: set[str] = set()
+        # Ziel, an dem die laufende Netzladung schon einmal angekommen ist —
+        # Grundlage der Ziel-Hysterese (NETZLADEN_ZIEL_HYSTERESE_PCT).
+        self._ziel_erreicht_pct: float | None = None
 
     # ------------------------------------------------------------------
     # Entitäten
@@ -348,22 +380,26 @@ class SigenergyInverter(InverterBase):
             blocking=True,
         )
 
-    def _nennwert_kw(self, limit_key: str) -> float | None:
-        """Nennleistung zum Limit; ohne Sensor das Maximum der Zahl-Entität.
+    def _nennwert(self, limit_key: str) -> tuple[float | None, bool]:
+        """Nennleistung zum Limit und ob sie vom Nennleistungs-Sensor stammt.
 
-        Die Nennleistungs-Sensoren können deaktiviert sein — das ``max`` der
-        Zahl-Entität (laut Integration 100 kW) ist dann die Obergrenze, die
-        das Gerät selbst auf seine Nennleistung beschneidet.
+        Die Nennleistungs-Sensoren können deaktiviert sein — dann bleibt nur
+        das ``max`` der Zahl-Entität (laut Integration 100 kW). Ob das Gerät
+        einen Wert über seiner Nennleistung selbst beschneidet oder ablehnt,
+        ist nicht geprüft; siehe _limit_auf_nennwert().
         """
         nenn = read_power_kw(self._hass, self._resolve_entity(NENNWERT_ZU_LIMIT[limit_key]))
         if nenn is not None and nenn > 0:
-            return nenn
+            return nenn, True
         state = self._hass.states.get(self._resolve_entity(limit_key))
         try:
             maximum = float(state.attributes.get("max")) if state is not None else None
         except (AttributeError, TypeError, ValueError):
             maximum = None
-        return maximum if maximum is not None and maximum > 0 else None
+        return (maximum if maximum is not None and maximum > 0 else None), False
+
+    def _nennwert_kw(self, limit_key: str) -> float | None:
+        return self._nennwert(limit_key)[0]
 
     async def _limit_auf_nennwert(self, limit_key: str) -> None:
         """Ein Limit freigeben: auf die Nennleistung schreiben.
@@ -371,11 +407,120 @@ class SigenergyInverter(InverterBase):
         Unbekannte Nennleistung ist ein Fehler, kein Überspringen — ein
         stehendes Limit wirkt global weiter (Modulkopf), und das soll laut
         scheitern, nicht still.
+
+        Ohne Nennleistungs-Sensor wird trotzdem das ``max`` der Entität
+        geschrieben, nicht der stehende Wert gelassen: Der stehende Wert ist
+        genau der Fehler, um den es geht (ein Ladelimit 0 sperrt das Laden
+        für immer). Lehnt das Gerät das Maximum ab, steht der alte Wert
+        ohnehin weiter — dann aber laut, mit einem Grund, der sagt, was zu
+        tun ist: den Sensor „ESS Rated …" aktivieren.
         """
-        nenn = self._nennwert_kw(limit_key)
+        nenn, aus_sensor = self._nennwert(limit_key)
         if nenn is None:
             raise SigenFehler("Nennleistung unbekannt")
-        await self._set_number(limit_key, nenn)
+        try:
+            await self._set_number(limit_key, nenn)
+        except Exception as exc:
+            if aus_sensor:
+                raise
+            raise SigenFehler("Maximum abgelehnt, Nennleistungs-Sensor fehlt") from exc
+        self._nennwert_offen.discard(limit_key)
+
+    async def _folgeschritt(self, limit_key: str) -> str | None:
+        """Das Limit, das ein Befehl nicht braucht, auf die Nennleistung.
+
+        Läuft NACH dem Moduswechsel, der Befehl steht also schon am Gerät.
+        Scheitert nur dieser Schritt, ist der Befehl deshalb nicht
+        gescheitert: Meldete der Treiber ``False``, hielte der Executor an
+        seiner alten Absicht fest (etwa ``release``), Not-Aus und Guard 3
+        liefen nicht, und eine spätere Freigabe stiege aus — eine
+        Zwangsentladung oder ein Ladebefehl liefe unbeobachtet weiter.
+        Deshalb: merken, beim nächsten Befehl oder der Freigabe nachholen,
+        den Grund in ``last_write_error`` und ``True``.
+        """
+        try:
+            await self._limit_auf_nennwert(limit_key)
+        except Exception as exc:  # noqa: BLE001
+            self._nennwert_offen.add(limit_key)
+            _LOGGER.warning(
+                "Sigenergy: %s nicht auf Nennleistung (%s) — wird nachgeholt",
+                limit_key, _grund(exc),
+            )
+            return f"Limit nicht auf Nennleistung: {_grund(exc)}"
+        return None
+
+    async def _offene_nachholen(self, *selbst_geschrieben: str) -> str | None:
+        """Gescheiterte Folgeschritte früherer Befehle wiederholen — außer
+        für Limits, die der laufende Befehl selbst gerade geschrieben hat."""
+        self._nennwert_offen.difference_update(selbst_geschrieben)
+        for key in sorted(self._nennwert_offen):
+            grund = await self._folgeschritt(key)
+            if grund is not None:
+                return grund
+        return None
+
+    def _teilerfolg(self, grund: str | None) -> bool:
+        """Befehl steht; ``grund`` nennt einen gescheiterten Nebenschritt."""
+        if grund is None:
+            return self._erfolg()
+        self.last_write_error = grund
+        return True
+
+    def _modus_ist(self) -> str | None:
+        return self._state_str(self._resolve_entity("remote_ems_mode"))
+
+    async def _modus_wechseln(self, option: str) -> str | None:
+        """Modus schreiben; bei einer Ausnahme nachsehen, was am Gerät steht.
+
+        Seit ``sigen`` 1.3.0 wartet das Schreiben bis zu 60 s auf die
+        Rückmeldung des Geräts; eine Zeitüberschreitung heißt nicht, dass der
+        Modus nicht angekommen ist. Steht danach der gewünschte Modus, gilt
+        der Schritt als gelungen (Rückgabe: der Grund als Hinweis) — der
+        Befehl läuft ja, und nur wenn der Executor das weiß, beobachtet er
+        ihn. Steht er nicht, ``_ModusNichtAngekommen``.
+        """
+        try:
+            await self._set_mode(option)
+            return None
+        except Exception as exc:  # noqa: BLE001
+            grund = _grund(exc)
+            if self._modus_ist() == option:
+                _LOGGER.warning(
+                    "Sigenergy: Modus „%s“ meldete %s, steht aber am Gerät", option, grund
+                )
+                return f"Modus mit Fehler gesetzt: {grund}"
+            _LOGGER.warning("Sigenergy: Modus „%s“ nicht gesetzt (%s)", option, grund)
+            raise _ModusNichtAngekommen(grund) from exc
+
+    async def _zurueckrollen(self) -> None:
+        """Nach einem gescheiterten Moduswechsel: kein Befehl ohne Wissen
+        des Executors.
+
+        Er bekommt ``False`` und hält an seiner alten Absicht fest. Steht das
+        Gerät dann womöglich in einem Befehl (anderer Modus als
+        Eigenverbrauch, oder unbekannt — die Rückmeldung kann noch kommen),
+        gibt der Treiber frei: Remote EMS aus beendet jeden Befehl, auch einen,
+        der verspätet ankommt. Im Eigenverbrauch ist nichts zu tun.
+
+        Scheitert auch die Freigabe — ein Gerät, das den Modus nicht annimmt,
+        nimmt ihn meist auch dort nicht —, bleibt als letzter Schritt das
+        Ausschalten allein. Die Limits stehen dann noch; die nächste Freigabe
+        findet den Schalter aus und setzt sie zurück (_limits_bei_aus()).
+        """
+        if self._modus_ist() == MODE_SELF_CONSUMPTION:
+            return
+        if await self._freigeben():
+            return
+        try:
+            await self._switch(False)
+        except Exception as exc:  # noqa: BLE001
+            _LOGGER.warning(
+                "Sigenergy: Rücknahme nach gescheitertem Moduswechsel fehlgeschlagen (%s)",
+                _grund(exc),
+            )
+            return
+        self._befehl = None
+        self._ladelimit_kw = None
 
     async def _ensure_remote_ems(self) -> None:
         """Remote EMS einschalten und warten, bis die Modus-Auswahl da ist.
@@ -421,15 +566,26 @@ class SigenergyInverter(InverterBase):
         Aus brächte bei stehenden Limits nichts, und der nächste Versuch des
         Executors findet die Entitäten so vor, wie er sie braucht.
 
-        Ist der Schalter schon aus, gibt es nichts zurückzunehmen — ein Befehl
-        von uns hätte ihn angelassen. Erst nach einem Erfolg wird vergessen,
-        was stand: Ein gescheitertes Aufheben des Deckels muss beim nächsten
-        Mal wieder etwas zu tun finden.
+        Ist der Schalter schon aus, gibt es keinen Befehl zurückzunehmen —
+        wohl aber Limits: Sie wirken auch bei ausgeschaltetem Remote EMS. Bis
+        2.1.62 blieben sie bei der Freigabe stehen, ein Ladelimit 0 von damals
+        sperrt das Laden bis heute; und wer nach einem Absturz von Home
+        Assistant Remote EMS von Hand ausschaltet, lässt einen Entladedeckel
+        von 0,01 kW stehen, die Batterie entlädt nie wieder. Deshalb liest die
+        Freigabe beide und setzt zurück, was unter der Nennleistung steht
+        (siehe _limits_bei_aus()). Remote EMS wird dafür NICHT eingeschaltet:
+        Die Limits sind auch bei aus schreibbar, und ein Einschalten zöge den
+        Modus wieder an uns.
+
+        Erst nach einem Erfolg wird vergessen, was stand: Ein gescheitertes
+        Aufheben des Deckels muss beim nächsten Mal wieder etwas zu tun finden.
         """
         try:
             schalter = self._state_str(self._resolve_entity("remote_ems_switch"))
-            if schalter != "off":
-                if self._ist_verfuegbar(self._state_str(self._resolve_entity("remote_ems_mode"))):
+            if schalter == "off":
+                await self._limits_bei_aus()
+            else:
+                if self._ist_verfuegbar(self._modus_ist()):
                     await self._set_mode(MODE_SELF_CONSUMPTION)
                 await self._limit_auf_nennwert("ess_max_charging_limit")
                 await self._limit_auf_nennwert("ess_max_discharging_limit")
@@ -440,7 +596,42 @@ class SigenergyInverter(InverterBase):
         self._ladelimit_kw = None
         self._entladedeckel_kw = None
         self._befehl = None
+        self._nennwert_offen.clear()
         return self._erfolg()
+
+    def _limit_zu_niedrig(self, limit_key: str) -> bool | None:
+        """Steht das Limit unter der Nennleistung? None = nicht lesbar."""
+        ist = self._state_float(self._resolve_entity(limit_key))
+        nenn = self._nennwert_kw(limit_key)
+        if ist is None or nenn is None:
+            return None
+        return ist < nenn - LIMIT_TOLERANZ_KW
+
+    async def _limits_bei_aus(self) -> None:
+        """Remote EMS ist aus: nur zurücksetzen, was unter der Nennleistung steht.
+
+        Gelesen statt blind geschrieben, weil diese Freigabe auch läuft, wenn
+        wir am Gerät gar nichts gestellt haben (Modus „Aus", jeder Start) —
+        dann soll sie nichts schreiben. Eine nicht verfügbare Entität ist
+        nicht schreibbar (Home Assistant überspränge den Aufruf still): kurz
+        loggen, die Freigabe gilt trotzdem, ändern ließe sich ohnehin nichts.
+        """
+        for key in NENNWERT_ZU_LIMIT:
+            zu_niedrig = self._limit_zu_niedrig(key)
+            if zu_niedrig is None:
+                _LOGGER.info(
+                    "Sigenergy: %s bei ausgeschaltetem Remote EMS nicht lesbar — "
+                    "nicht zurückgesetzt", self._resolve_entity(key),
+                )
+                continue
+            if not zu_niedrig:
+                continue
+            _LOGGER.warning(
+                "Sigenergy: %s steht bei ausgeschaltetem Remote EMS unter der "
+                "Nennleistung — es wirkt global, zurück auf die Nennleistung",
+                self._resolve_entity(key),
+            )
+            await self._limit_auf_nennwert(key)
 
     def _soc(self) -> float | None:
         soc_sensor = self._config.get(CONF_BATTERY_SOC_SENSOR)
@@ -515,6 +706,7 @@ class SigenergyInverter(InverterBase):
             )
             return
         self._beobachtung_beenden()
+        self._ziel_erreicht_pct = ziel
         _LOGGER.info("Sigenergy: Ziel-SOC %.0f %% erreicht — Netzladung beendet", ziel or 0.0)
 
     # ------------------------------------------------------------------
@@ -537,25 +729,46 @@ class SigenergyInverter(InverterBase):
         liefe die Entladung einen Moment mit voller Leistung. Steht ein
         Entladedeckel der Spitzenkappung, bleibt er stattdessen stehen: Beide
         gelten nebeneinander.
+
+        Teilfehler: Scheitert das Entladelimit nach dem Moduswechsel, steht
+        das Ladelimit trotzdem — ``True`` mit Grund (siehe _folgeschritt()).
+        Scheitert der Moduswechsel und das Gerät steht womöglich noch in
+        einem Befehl, wird freigegeben (siehe _zurueckrollen()).
         """
         if self._nicht_endlich(power_kw):
             return False
         async with self._sperre:
             self._beobachtung_beenden()
+            self._ziel_erreicht_pct = None
+            leistung = max(0.0, float(power_kw))
             try:
                 await self._ensure_remote_ems()
-                await self._set_number("ess_max_charging_limit", max(0.0, float(power_kw)))
-                await self._set_mode(MODE_SELF_CONSUMPTION)
-                self._befehl = None
-                self._ladelimit_kw = max(0.0, float(power_kw))
-                if self._entladedeckel_kw is not None:
-                    await self._set_number("ess_max_discharging_limit", self._entladedeckel_kw)
-                else:
-                    await self._limit_auf_nennwert("ess_max_discharging_limit")
-                return self._erfolg()
+                await self._set_number("ess_max_charging_limit", leistung)
+                hinweis = await self._modus_wechseln(MODE_SELF_CONSUMPTION)
+            except _ModusNichtAngekommen as exc:
+                await self._zurueckrollen()
+                return self._fehler(str(exc))
             except Exception as exc:  # noqa: BLE001
                 _LOGGER.exception("Sigenergy: Ladelimit konnte nicht gesetzt werden")
                 return self._fehler(_grund(exc))
+            self._befehl = None
+            self._ladelimit_kw = leistung
+            # 40032 gehört jetzt dem Ladelimit, 40034 schreibt dieser Befehl
+            # selbst — nichts Offenes bleibt außerhalb dieses Befehls.
+            self._nennwert_offen.discard("ess_max_charging_limit")
+            if self._entladedeckel_kw is not None:
+                try:
+                    await self._set_number("ess_max_discharging_limit", self._entladedeckel_kw)
+                    self._nennwert_offen.discard("ess_max_discharging_limit")
+                    folge = None
+                except Exception as exc:  # noqa: BLE001
+                    # Der Deckel bleibt gemerkt; das nächste Ladelimit oder
+                    # der nächste Deckel schreibt ihn erneut.
+                    _LOGGER.warning("Sigenergy: Entladedeckel neben dem Ladelimit nicht gesetzt (%s)", _grund(exc))
+                    folge = f"Entladedeckel nicht gesetzt: {_grund(exc)}"
+            else:
+                folge = await self._folgeschritt("ess_max_discharging_limit")
+            return self._teilerfolg(hinweis or folge)
 
     async def async_set_discharge(
         self, power_kw: float, target_soc: float | None = None
@@ -570,28 +783,41 @@ class SigenergyInverter(InverterBase):
         auf die Nennleistung — es wirkt global und gehört nicht zur Entladung.
         Ein Entladedeckel ist mit dem ersten Schreiben überschrieben, 40034
         gehört jetzt der Entladung.
+
+        Steht der Entlademodus, ist die Entladung gestartet — auch wenn das
+        Ladelimit danach nicht auf die Nennleistung geht oder der Modus erst
+        nach einer Zeitüberschreitung ankam. Der Executor muss sie dann
+        kennen, sonst laufen Not-Aus und Guard 3 nicht (siehe
+        _folgeschritt() und _modus_wechseln()). Steht er nicht, gibt der
+        Treiber frei, falls das Gerät womöglich in einem Befehl steht.
         """
         if self._nicht_endlich(power_kw, target_soc):
             return False
         async with self._sperre:
             self._beobachtung_beenden()
+            self._ziel_erreicht_pct = None
             try:
                 await self._ensure_remote_ems()
                 await self._set_number("ess_max_discharging_limit", max(0.0, abs(float(power_kw))))
                 self._entladedeckel_kw = None
-                await self._set_mode(MODE_COMMAND_DISCHARGING_ESS_FIRST)
-                self._befehl = "entladung"
-                self._ladelimit_kw = None
-                await self._limit_auf_nennwert("ess_max_charging_limit")
-                return self._erfolg()
+                hinweis = await self._modus_wechseln(MODE_COMMAND_DISCHARGING_ESS_FIRST)
+            except _ModusNichtAngekommen as exc:
+                await self._zurueckrollen()
+                return self._fehler(str(exc))
             except Exception as exc:  # noqa: BLE001
                 _LOGGER.exception("Sigenergy: Entladung konnte nicht gestartet werden")
                 return self._fehler(_grund(exc))
+            self._befehl = "entladung"
+            self._ladelimit_kw = None
+            self._nennwert_offen.discard("ess_max_discharging_limit")
+            folge = await self._folgeschritt("ess_max_charging_limit")
+            return self._teilerfolg(hinweis or folge)
 
     async def async_stop_forcible(self) -> bool:
         """Freigeben (siehe ``_freigeben``); eine Netzladung wird nicht mehr beobachtet."""
         async with self._sperre:
             self._beobachtung_beenden()
+            self._ziel_erreicht_pct = None
             return await self._freigeben()
 
     @property
@@ -626,7 +852,12 @@ class SigenergyInverter(InverterBase):
         **Risiko: kein Watchdog.** Stürzt Home Assistant während einer
         Netzladung ab, lädt das Gerät weiter, bis die Batterie voll ist — aus
         dem Netz, wenn die Sonne nicht reicht. Abhilfe dann von Hand: Remote
-        EMS ausschalten.
+        EMS ausschalten und beide Limits auf die Nennleistung stellen.
+
+        Hysteresen: Eine neue Netzladung beginnt erst ab Minimum + 0,05 kW,
+        eine laufende endet unter dem Minimum; nach erreichtem Ziel beginnt
+        sie erst unter Ziel − 1 % von vorn. Der Modus wird nur geschrieben,
+        wenn er nicht schon steht — eine Leistungsänderung schreibt nur 40032.
         """
         if self._nicht_endlich(power_kw, target_soc):
             return False
@@ -636,16 +867,30 @@ class SigenergyInverter(InverterBase):
     async def _netzladung(self, power_kw: float, target_soc: float | None) -> bool:
         ziel = 100.0 if target_soc is None else min(100.0, float(target_soc))
         leistung = max(0.0, float(power_kw))
-        if leistung < NETZLADEN_MIN_KW:
+        laeuft = self._befehl == "netzladung"
+        # Eine laufende Netzladung endet erst unter dem Minimum, eine neue
+        # beginnt erst darüber plus Hysterese — siehe
+        # NETZLADEN_START_HYSTERESE_KW.
+        schwelle = NETZLADEN_MIN_KW if laeuft else NETZLADEN_MIN_KW + NETZLADEN_START_HYSTERESE_KW
+        if leistung < schwelle:
             # Nichts aus dem Netz (die Netzgrenze lässt gerade nichts zu):
             # wie eine Freigabe. Ein Ladebefehl mit Limit 0 sperrte sonst auch
             # das Laden aus PV.
             self._beobachtung_beenden()
             return await self._freigeben()
+        if self._ziel_erreicht_pct is not None and self._ziel_erreicht_pct != ziel:
+            self._ziel_erreicht_pct = None  # neues Ziel, neue Netzladung
         self._ziel_soc = ziel
-        if self._am_ziel():
+        soc = self._soc()
+        knapp_darunter = (
+            self._ziel_erreicht_pct is not None
+            and soc is not None
+            and soc >= ziel - NETZLADEN_ZIEL_HYSTERESE_PCT
+        )
+        if self._am_ziel() or knapp_darunter:
             self._beobachtung_beenden()
-            if self._befehl == "netzladung":
+            self._ziel_erreicht_pct = ziel
+            if laeuft:
                 return await self._freigeben()
             return self._erfolg()
         # Vor dem Schreiben anmelden: Ein Moduswechsel kann in der Integration
@@ -656,14 +901,23 @@ class SigenergyInverter(InverterBase):
         try:
             await self._ensure_remote_ems()
             await self._set_number("ess_max_charging_limit", leistung)
-            await self._set_mode(MODE_COMMAND_CHARGING_PV_FIRST)
+            # Den Modus nur schreiben, wenn er nicht schon steht: Der Executor
+            # führt die Leistung jeden Lauf der Netzgrenze nach, und jedes
+            # Schreiben des Modus wartet bis zu 60 s (wie beim Deckel).
+            hinweis = None
+            if self._modus_ist() != MODE_COMMAND_CHARGING_PV_FIRST:
+                hinweis = await self._modus_wechseln(MODE_COMMAND_CHARGING_PV_FIRST)
+        except _ModusNichtAngekommen as exc:
+            await self._zurueckrollen()
+            return self._fehler(str(exc))
         except Exception as exc:  # noqa: BLE001
             _LOGGER.exception("Sigenergy: Netzladung konnte nicht gestartet werden")
             return self._fehler(_grund(exc))
         self._befehl = "netzladung"
         self._ladelimit_kw = None
         self._entladedeckel_kw = None
-        return self._erfolg()
+        nachgeholt = await self._offene_nachholen("ess_max_charging_limit")
+        return self._teilerfolg(hinweis or nachgeholt)
 
     # ------------------------------------------------------------------
     # Entladedeckel der Spitzenkappung
@@ -688,7 +942,8 @@ class SigenergyInverter(InverterBase):
         ``None`` hebt den Deckel auf: 40034 zurück auf die Nennleistung; läuft
         weder ein Ladelimit noch ein Befehl, gleich die ganze Freigabe
         (Remote EMS aus) — der Deckel war das Einzige, wofür es an war. Ohne
-        Deckel von uns ist ``None`` nichts zu tun. Während einer Entladung
+        gemerkten Deckel entscheidet der gelesene Wert von 40034 (siehe
+        _deckel_aufheben()). Während einer Entladung
         oder Netzladung gehört 40034 dem Befehl; dann wird der Wert nur
         gemerkt (der Executor hebt den Deckel vor jedem Befehl ohnehin auf).
         """
@@ -707,21 +962,36 @@ class SigenergyInverter(InverterBase):
             try:
                 await self._ensure_remote_ems()
                 await self._set_number("ess_max_discharging_limit", deckel)
+                self._nennwert_offen.discard("ess_max_discharging_limit")
                 # Den Modus nur schreiben, wenn er nicht schon steht: Der
                 # Deckel folgt dem Viertelstundenbudget und ändert sich oft,
                 # und jedes Schreiben des Modus wartet bis zu 60 s.
-                if self._state_str(self._resolve_entity("remote_ems_mode")) != MODE_SELF_CONSUMPTION:
-                    await self._set_mode(MODE_SELF_CONSUMPTION)
-                return self._erfolg()
+                hinweis = None
+                if self._modus_ist() != MODE_SELF_CONSUMPTION:
+                    hinweis = await self._modus_wechseln(MODE_SELF_CONSUMPTION)
+                return self._teilerfolg(hinweis)
+            except _ModusNichtAngekommen as exc:
+                await self._zurueckrollen()
+                return self._fehler(str(exc))
             except Exception as exc:  # noqa: BLE001
                 _LOGGER.exception("Sigenergy: Entladedeckel konnte nicht gesetzt werden")
                 return self._fehler(_grund(exc))
 
     async def _deckel_aufheben(self) -> bool:
-        if self._entladedeckel_kw is None:
-            return self._erfolg()
+        """Den Deckel aufheben — auch einen, von dem der Treiber nichts weiß.
+
+        Ohne Gedächtnis (nach einem Neustart von Home Assistant) entscheidet
+        der gelesene Zustand: Steht 40034 unter der Nennleistung, kann es ein
+        Deckel aus der Zeit vor dem Neustart sein, und der wirkt global — auch
+        wenn jemand Remote EMS inzwischen von Hand ausgeschaltet hat. Früher
+        meldete ``None`` hier ungeprüft Erfolg, und die Batterie blieb
+        gedeckelt. Nicht lesbar heißt: nichts zu sehen, nichts zu tun.
+        """
         if self._befehl is not None:
+            # 40034 gehört dem laufenden Befehl, auch ohne gemerkten Deckel.
             self._entladedeckel_kw = None
+            return self._erfolg()
+        if self._entladedeckel_kw is None and not self._limit_zu_niedrig("ess_max_discharging_limit"):
             return self._erfolg()
         if self._ladelimit_kw is None:
             return await self._freigeben()
