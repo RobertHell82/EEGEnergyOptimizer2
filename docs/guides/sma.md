@@ -78,6 +78,11 @@ Einen Ziel-Ladestand kennt SMA nicht. Der Optimizer prüft den Ladestand alle 30
 
 > Ladesperre, Netz-Sollwert und Stopp sind am Gerät getestet (Sunny Tripower 10.0 Smart Energy). Mit einem Sunny Home Manager 2.0 muss dessen prognosebasiertes Laden aus sein (Abschnitt 3).
 
+**Batterie aus dem Netz laden (Beta, Expertenmodus):** Plant der Fahrplan eine Ladung aus dem Netz, schreibt der Optimizer denselben Block mit der Betriebsart **Laden** (2289) und der geplanten Ladeleistung als minimaler und maximaler Ladeleistung; Entladen und Netz-Sollwert stehen auf 0. Die Sonne deckt davon, was sie kann, der Rest kommt aus dem Netz. Den Ziel-Ladestand prüft der Optimizer selbst (beim Schreiben, alle 60 Sekunden und bei jeder Änderung des Ladestand-Sensors) und schaltet am Ziel zurück in den Normalbetrieb.
+
+> [!WARNING]
+> Am Gerät noch nicht geprüft: ob der SMA in dieser Betriebsart wirklich aus dem Netz lädt und ob Sunny Boy Storage und Sunny Tripower / Sunny Boy Smart Energy sich dabei gleich verhalten. Mit einem Sunny Home Manager 2.0 braucht es Firmware ab 2.15.5 und ausgeschaltetes prognosebasiertes Laden. Wer es ausprobiert: Bitte melden, was die Batterie- und Netzleistung während einer Netzladung zeigen.
+
 ## Häufige Probleme
 
 | Problem | Lösung |

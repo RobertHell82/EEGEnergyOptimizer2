@@ -11,16 +11,21 @@ Focus areas mirror the driver's architecture decisions:
 """
 
 import asyncio
-from unittest.mock import AsyncMock, MagicMock
+import sys
+from types import ModuleType, SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from custom_components.eeg_energy_optimizer.const import CONF_BATTERY_SOC_SENSOR
 from custom_components.eeg_energy_optimizer.inverter.base import InverterBase
 from custom_components.eeg_energy_optimizer.inverter.sma import (
     DEFAULT_POWER_LIMIT_W,
     KEEPALIVE_INTERVAL,
+    OPMOD_CHARGE,
     OPMOD_DEFAULT,
     REG_BAT_CHA_MIN_W,
+    REG_BATTERY_SOC,
     REG_CMPBMS_OPMOD,
     SMA_UNIT_ID,
     SMAInverter,
@@ -393,5 +398,244 @@ class TestFahrplanSchnittstelle:
         mock_modbus_client.connected = False
         mock_modbus_client.connect = AsyncMock(return_value=False)
         assert await inverter.async_get_control_values() == []
+
+
+# ----------------------------------------------------------------------
+# Netzladung (Beta): OpMod 2289, ChaMin = ChaMax = P, Entladen gesperrt
+# ----------------------------------------------------------------------
+
+SOC_SENSOR = "sensor.sma_soc"
+NORMAL_BLOCK = CmpBmsBlock(
+    OPMOD_DEFAULT, 0, DEFAULT_POWER_LIMIT_W, 0, DEFAULT_POWER_LIMIT_W, 0
+)
+
+
+def _soc_register(client, soc):
+    """30845 liefert `soc`, alle anderen Lesezugriffe 0."""
+
+    async def _lesen(address=None, count=2, **_kw):
+        wert = soc if address == REG_BATTERY_SOC else 0
+        return _ok_response(u32_to_registers(wert))
+
+    client.read_holding_registers = AsyncMock(side_effect=_lesen)
+
+
+@pytest.fixture
+def soc_beobachter():
+    """``async_track_state_change_event`` abfangen: liefert die Rückrufe."""
+    rueckrufe = []
+    abmelder = MagicMock()
+
+    def _track(hass, entities, callback):
+        rueckrufe.append((list(entities), callback))
+        return abmelder
+
+    modul = ModuleType("homeassistant.helpers.event")
+    modul.async_track_state_change_event = _track
+    with patch.dict(sys.modules, {"homeassistant.helpers.event": modul}):
+        yield SimpleNamespace(rueckrufe=rueckrufe, abmelder=abmelder)
+
+
+async def _warten_bis(bedingung, frist_s: float = 5.0) -> None:
+    schritte = int(frist_s / 0.02)
+    for _ in range(schritte):
+        if bedingung():
+            return
+        await asyncio.sleep(0.02)
+    assert bedingung()
+
+
+def _mit_sensor(hass, client):
+    inv = SMAInverter(
+        hass, {"sma_modbus_host": "x", CONF_BATTERY_SOC_SENSOR: SOC_SENSOR}
+    )
+    inv._client = client
+    return inv
+
+
+class TestNetzladung:
+    def test_treiber_kann_netzladen(self, inverter):
+        assert inverter.supports_grid_charge is True
+
+    async def test_block_werte(self, inverter, mock_modbus_client):
+        """2289, ChaMin = ChaMax = Batterieleistung, Entladen 0, GridWSpt 0."""
+        _soc_register(mock_modbus_client, 40)
+        ok = await inverter.async_set_grid_charge(2.5, target_soc=80)
+        assert ok is True
+        block = _last_block(mock_modbus_client)
+        assert block == CmpBmsBlock(OPMOD_CHARGE, 2500, 2500, 0, 0, 0)
+        assert inverter._active == block
+        assert inverter._keepalive_task is not None
+        assert await inverter.async_get_charge_limit_kw() == pytest.approx(2.5)
+        await inverter.async_disconnect()
+
+    async def test_schreibmenge_bleibt_geschlossen(self, inverter, mock_modbus_client):
+        """Keine neue Registeradresse: nur 40236 und der 40793-Block."""
+        _soc_register(mock_modbus_client, 40)
+        await inverter.async_set_grid_charge(3.0, target_soc=90)
+        await inverter.async_set_discharge_limit(0.0)
+        await inverter.async_stop_forcible()
+        assert _writes(mock_modbus_client)
+        for address, _values in _writes(mock_modbus_client):
+            assert address in (REG_CMPBMS_OPMOD, REG_BAT_CHA_MIN_W)
+
+    async def test_kleine_leistung_ist_freigabe(self, inverter, mock_modbus_client):
+        """Unter 0,05 kW: Normal-Block, kein Keepalive — 0 W in 2289
+        sperrte sonst auch das Laden aus PV."""
+        _soc_register(mock_modbus_client, 40)
+        ok = await inverter.async_set_grid_charge(0.04, target_soc=80)
+        assert ok is True
+        assert _last_block(mock_modbus_client) == NORMAL_BLOCK
+        assert inverter._active is None
+        assert inverter._keepalive_task is None
+
+    async def test_soc_am_ziel_nur_freigabe(self, inverter, mock_modbus_client):
+        _soc_register(mock_modbus_client, 80)
+        ok = await inverter.async_set_grid_charge(2.0, target_soc=80)
+        assert ok is True
+        assert _last_block(mock_modbus_client) == NORMAL_BLOCK
+        assert all(
+            registers_to_u32(v) != OPMOD_CHARGE
+            for a, v in _writes(mock_modbus_client)
+            if a == REG_CMPBMS_OPMOD
+        )
+        assert inverter._active is None
+
+    async def test_ohne_ziel_gilt_100_prozent(self, inverter, mock_modbus_client):
+        _soc_register(mock_modbus_client, 100)
+        await inverter.async_set_grid_charge(2.0)
+        assert inverter._active is None
+        _soc_register(mock_modbus_client, 99)
+        await inverter.async_set_grid_charge(2.0)
+        assert inverter._active.op_mod == OPMOD_CHARGE
+        await inverter.async_disconnect()
+
+    async def test_keepalive_stoppt_am_ziel(
+        self, inverter, mock_modbus_client, monkeypatch
+    ):
+        monkeypatch.setattr(
+            "custom_components.eeg_energy_optimizer.inverter.sma."
+            "KEEPALIVE_INTERVAL",
+            0.01,
+        )
+        _soc_register(mock_modbus_client, 50)
+        await inverter.async_set_grid_charge(2.0, target_soc=80)
+        vorher = len(_writes(mock_modbus_client))
+        # Unter dem Ziel: der Ladeblock wird erneuert (ein Block braucht
+        # mit den Pausen zwischen den Schreibzugriffen 0,4 s).
+        await _warten_bis(lambda: len(_writes(mock_modbus_client)) >= vorher + 2)
+        assert _last_block(mock_modbus_client).op_mod == OPMOD_CHARGE
+        _soc_register(mock_modbus_client, 80)
+        await _warten_bis(lambda: inverter._active is None)
+        assert _last_block(mock_modbus_client) == NORMAL_BLOCK
+        assert inverter._netzladung_ziel is None
+        await _warten_bis(
+            lambda: inverter._keepalive_task is None or inverter._keepalive_task.done()
+        )
+        anzahl = len(_writes(mock_modbus_client))
+        await asyncio.sleep(0.1)
+        assert len(_writes(mock_modbus_client)) == anzahl
+
+    async def test_soc_sensor_beendet_die_ladung(
+        self, mock_hass, mock_modbus_client, soc_beobachter
+    ):
+        """Zwischen zwei Keepalives: der SOC-Sensor meldet das Ziel."""
+        inv = _mit_sensor(mock_hass, mock_modbus_client)
+        _soc_register(mock_modbus_client, 50)
+        mock_hass.states.get = MagicMock(return_value=SimpleNamespace(state="50"))
+        await inv.async_set_grid_charge(2.0, target_soc=80)
+        assert len(soc_beobachter.rueckrufe) == 1
+        entities, rueckruf = soc_beobachter.rueckrufe[0]
+        assert entities == [SOC_SENSOR]
+
+        aufgaben = []
+        mock_hass.async_create_task = MagicMock(
+            side_effect=lambda c: aufgaben.append(asyncio.ensure_future(c))
+        )
+        rueckruf(None)  # 50 % — nichts
+        assert aufgaben == []
+        mock_hass.states.get = MagicMock(return_value=SimpleNamespace(state="80.4"))
+        rueckruf(None)
+        await asyncio.gather(*aufgaben)
+        assert _last_block(mock_modbus_client) == NORMAL_BLOCK
+        assert inv._active is None
+        assert inv._keepalive_task is None
+        soc_beobachter.abmelder.assert_called_once()
+
+    async def test_stopp_meldet_den_beobachter_ab(
+        self, mock_hass, mock_modbus_client, soc_beobachter
+    ):
+        inv = _mit_sensor(mock_hass, mock_modbus_client)
+        _soc_register(mock_modbus_client, 50)
+        await inv.async_set_grid_charge(2.0, target_soc=80)
+        # Eine Leistungsänderung meldet nicht doppelt an.
+        await inv.async_set_grid_charge(1.5, target_soc=80)
+        assert len(soc_beobachter.rueckrufe) == 1
+        await inv.async_stop_forcible()
+        soc_beobachter.abmelder.assert_called_once()
+        assert inv._netzladung_ziel is None
+
+    async def test_deckel_waehrend_netzladung_wird_nur_gemerkt(
+        self, inverter, mock_modbus_client
+    ):
+        _soc_register(mock_modbus_client, 40)
+        await inverter.async_set_grid_charge(2.0, target_soc=80)
+        anzahl = len(_writes(mock_modbus_client))
+        ok = await inverter.async_set_discharge_limit(0.5)
+        assert ok is True
+        assert len(_writes(mock_modbus_client)) == anzahl
+        assert _last_block(mock_modbus_client).op_mod == OPMOD_CHARGE
+        assert inverter._active.op_mod == OPMOD_CHARGE
+        await inverter.async_disconnect()
+
+    async def test_netzladung_loescht_deckel_und_ladelimit(
+        self, inverter, mock_modbus_client
+    ):
+        _soc_register(mock_modbus_client, 40)
+        await inverter.async_set_charge_limit(1.0)
+        await inverter.async_set_discharge_limit(0.0)
+        await inverter.async_set_grid_charge(2.0, target_soc=80)
+        assert inverter._entladedeckel_w is None
+        assert inverter._ladelimit_w is None
+        assert _last_block(mock_modbus_client).dsch_max_w == 0
+        await inverter.async_disconnect()
+
+    async def test_stopp_schreibt_normal_block(self, inverter, mock_modbus_client):
+        _soc_register(mock_modbus_client, 40)
+        await inverter.async_set_grid_charge(2.0, target_soc=80)
+        ok = await inverter.async_stop_forcible()
+        assert ok is True
+        assert _last_block(mock_modbus_client) == NORMAL_BLOCK
+        assert inverter._active is None
+        assert inverter._netzladung_ziel is None
+        assert inverter._keepalive_task is None
+
+    async def test_nicht_endlich_schreibt_nichts(self, inverter, mock_modbus_client):
+        ok = await inverter.async_set_grid_charge(float("nan"), target_soc=80)
+        assert ok is False
+        assert inverter.last_write_error == "Sollwert nicht endlich"
+        assert _writes(mock_modbus_client) == []
+
+    async def test_schreibfehler_meldet_grund(self, inverter, mock_modbus_client):
+        _soc_register(mock_modbus_client, 40)
+        mock_modbus_client.write_registers = AsyncMock(return_value=_err_response())
+        ok = await inverter.async_set_grid_charge(2.0, target_soc=80)
+        assert ok is False
+        assert inverter.last_write_error
+        assert inverter._active is None
+        assert inverter._netzladung_ziel is None
+
+    async def test_soc_aus_sensor_wenn_register_fehlt(
+        self, mock_hass, mock_modbus_client
+    ):
+        """30845 nicht lesbar (SMA-NaN) → der SOC-Sensor entscheidet."""
+        inv = _mit_sensor(mock_hass, mock_modbus_client)
+        mock_modbus_client.read_holding_registers = AsyncMock(
+            return_value=_ok_response([0xFFFF, 0xFFFF])
+        )
+        mock_hass.states.get = MagicMock(return_value=SimpleNamespace(state="85"))
+        ok = await inv.async_set_grid_charge(2.0, target_soc=80)
+        assert ok is True
+        assert inv._active is None
 
 

@@ -45,12 +45,30 @@ consumption on top — the exported power is directly the EEG-effective
 power. There is no hardware target-SOC: the optimizer supervises SOC every
 30 s; the watchdog covers the HA-crash case.
 
+Netzladung (Beta, „Batterie aus dem Netz laden"): derselbe 6er-Block mit
+OpMod 2289 (Laden), BatChaMinW = BatChaMaxW = P, beide Entladegrenzen 0 und
+GridWSpt 0 — keine neue Registeradresse, der Schreibumfang bleibt die
+geschlossene Menge oben. Vorgegeben wird die BATTERIEleistung, nicht der
+Netzbezug: Der Executor rechnet die Netzladung in Batterieleistung (PV +
+Netz), der Wechselrichter nimmt die PV zuerst, was fehlt, kommt aus dem
+Netz. Einen Ziel-Ladestand kennt das CmpBMS nicht — der Treiber liest
+30845 bei jedem Schreiben und in jedem Keepalive und beobachtet zusätzlich
+den SOC-Sensor; am Ziel (ohne Ziel 100 %) geht es zurück in den Normal-
+Block. Die Beschreibung des Mechanismus stammt aus den evcc-Templates
+sma-hybrid / sma-sbs-modbus (nur gelesen, kein Code übernommen — evcc ist
+nicht MIT) und PV-Forum 251643 / 206718.
+
 VERIFY AT DEVICE (beta checklist, .planning/research/SMA-KONZEPT.md §8):
   1. GridWSpt sign + does it really force export beyond house consumption
   2. OpMod address 40236 vs 41259 on the target firmware (probe reads it)
   3. Coexistence with Sunny Home Manager 2 (prognosebasiertes Laden OFF)
   5. Fallback behavior after watchdog timeout
   6. Block-write timing (contiguous multi-write used here)
+  7. Netzladung (2289, ChaMin = ChaMax = P): lädt sie wirklich aus dem
+     Netz? Eine Forennotiz sagt „nur bei Einspeisung am NAP" — vermutlich
+     nur mit ChaMin = 0. Wirkt BatChaMinW als erzwungene Leistung?
+     Unterschiede SBS (AC-gekoppelt) gegen STP SE / SB SE. Mit Sunny Home
+     Manager 2: Firmware ≥ 2.15.5, „Prognosebasiertes Laden" aus.
 """
 
 from __future__ import annotations
@@ -61,6 +79,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from .base import InverterBase
+from ..const import CONF_BATTERY_SOC_SENSOR
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -101,7 +120,7 @@ REG_BATTERY_DISCHARGE_W = 31395  # U32 W — current discharge power
 
 # CmpBMS.OpMod enum values (SMA taglist)
 OPMOD_DEFAULT = 2424   # "Voreinstellung" — limits + GridWSpt apply
-OPMOD_CHARGE = 2289    # force charge (unused by us)
+OPMOD_CHARGE = 2289    # Laden erzwingen — nur für die Netzladung (Beta)
 OPMOD_DISCHARGE = 2290  # force discharge — only discharges on grid DRAW,
 #                         goes standby on export → useless for EEG feed-in;
 #                         forced export works via GridWSpt under 2424.
@@ -121,6 +140,11 @@ KEEPALIVE_INTERVAL = 60.0
 # (STP10.0-SE battery path); devices clamp to their own hardware limit.
 # Beta checklist: verify a value above the device limit is accepted.
 DEFAULT_POWER_LIMIT_W = 10000
+
+# Unter dieser Ladeleistung ist eine Netzladung keine: Die Netzgrenze lässt
+# gerade nichts zu, und ein Block mit 0 W in OpMod 2289 sperrte auch das
+# Laden aus PV. Dann wird wie eine Freigabe behandelt (wie Fronius/Victron).
+NETZLADEN_MIN_KW = 0.05
 
 
 def u32_to_registers(value: int) -> list[int]:
@@ -205,6 +229,19 @@ def _block_discharge(export_watts: int) -> CmpBmsBlock:
     )
 
 
+def _block_grid_charge(watts: int) -> CmpBmsBlock:
+    """Netzladung: OpMod 2289, Laden mit genau `watts`, Entladen gesperrt.
+
+    BatChaMinW = BatChaMaxW = `watts` legt die Ladeleistung fest — die PV
+    deckt davon, was sie kann, der Rest kommt aus dem Netz. Beide
+    Entladegrenzen 0: Während der Ladung soll die Batterie nichts abgeben
+    (ein Entladedeckel der Spitzenkappung hat hier keinen Platz), GridWSpt 0.
+    Ob 2289 mit ChaMin = ChaMax wirklich aus dem Netz zieht, ist am Gerät
+    noch offen (Checkliste Punkt 7).
+    """
+    return CmpBmsBlock(OPMOD_CHARGE, watts, watts, 0, 0, 0)
+
+
 class SMAInverter(InverterBase):
     """SMA battery control via the CmpBMS 6-parameter Modbus method.
 
@@ -227,6 +264,10 @@ class SMAInverter(InverterBase):
         # Ladelimit des laufenden Blocks in W (None = keins) — damit ein
         # Deckel das Ladelimit im selben Block mitschreiben kann.
         self._ladelimit_w: int | None = None
+        # Ziel-Ladestand der laufenden Netzladung (None = keine) und der
+        # Abmelder des SOC-Beobachters — siehe _beobachte_ziel_soc().
+        self._netzladung_ziel: float | None = None
+        self._ziel_abmelden: Any = None
         self._keepalive_task: asyncio.Task | None = None
         # Serializes Modbus operations between the 30-second optimizer
         # cycle, manual WebSocket commands, and the keepalive task (the
@@ -395,6 +436,17 @@ class SMAInverter(InverterBase):
                             "SMA: keepalive write skipped — not connected"
                         )
                         continue
+                    if (
+                        active.op_mod == OPMOD_CHARGE
+                        and await self._netzladung_am_ziel()
+                    ):
+                        # Am Ziel: Normal-Block statt Ladeblock. Scheitert
+                        # er, wird der Ladeblock trotzdem nicht mehr
+                        # erneuert — der nächste Takt versucht es wieder,
+                        # spätestens nach 300 s endet die Ladung im Gerät.
+                        if await self._freigeben_locked(keepalive_stoppen=False):
+                            return
+                        continue
                     if not await self._write_block(active):
                         _LOGGER.warning(
                             "SMA: keepalive rewrite failed (%s) — will retry "
@@ -429,6 +481,7 @@ class SMAInverter(InverterBase):
                 return False
             if not await self._write_block(block):
                 return False
+            self._netzladung_vergessen()
             self._active = block
             self._ladelimit_w = watts
             self._start_keepalive()
@@ -461,6 +514,7 @@ class SMAInverter(InverterBase):
             # BatDschMaxW gehört jetzt der Einspeisung — kein Deckel mehr.
             self._entladedeckel_w = None
             self._ladelimit_w = None
+            self._netzladung_vergessen()
             self._active = block
             self._start_keepalive()
             _LOGGER.info(
@@ -477,23 +531,43 @@ class SMAInverter(InverterBase):
         internal automatic management within 300 s.
         """
         async with self._lock:
+            return await self._freigeben_locked()
+
+    async def _freigeben_locked(self, keepalive_stoppen: bool = True) -> bool:
+        """Normal-Block schreiben und das Füttern des Watchdogs beenden.
+
+        Aufrufer hält den Lock. Aus dem Keepalive selbst (Netzladung am Ziel)
+        kommt ``keepalive_stoppen=False``: Die Schleife bricht sich nicht
+        mitten im Schreiben selbst ab, sondern endet danach von allein.
+        """
+        if keepalive_stoppen:
             # Clear the active block FIRST so a failed write below cannot
             # race with a concurrent keepalive rewrite of the old block.
-            self._active = None
-            self._entladedeckel_w = None
-            self._ladelimit_w = None
+            self._vergessen()
             self._cancel_keepalive()
-            if not await self._ensure_connected():
-                return False
-            if not await self._write_block(_block_normal()):
-                # False → optimizer retries stop next cycle. Even a
-                # persistent failure resolves once the watchdog lapses.
-                return False
-            _LOGGER.info(
-                "SMA: stopped forcible mode — watchdog will hand back "
-                "to internal automatic management"
-            )
-            return True
+        if not await self._ensure_connected():
+            return self._fehler("Modbus nicht verbunden")
+        if not await self._write_block(_block_normal()):
+            # False → optimizer retries stop next cycle. Even a
+            # persistent failure resolves once the watchdog lapses.
+            # Aus dem Keepalive bleibt der Ladeblock vermerkt, damit der
+            # nächste Takt die Freigabe wiederholt — neu geschrieben wird
+            # er nicht mehr, der Watchdog beendet ihn also ohnehin.
+            return False
+        if not keepalive_stoppen:
+            self._vergessen()
+        _LOGGER.info(
+            "SMA: stopped forcible mode — watchdog will hand back "
+            "to internal automatic management"
+        )
+        return self._erfolg()
+
+    def _vergessen(self) -> None:
+        """Kein Block mehr aktiv — Deckel, Ladelimit, Netzladungsziel weg."""
+        self._active = None
+        self._entladedeckel_w = None
+        self._ladelimit_w = None
+        self._netzladung_vergessen()
 
     # ------------------------------------------------------------------
     # Fahrplan-Steuerschnittstelle (Schedule-Executor)
@@ -530,7 +604,12 @@ class SMAInverter(InverterBase):
                 None if power_kw is None else int(max(power_kw, 0.0) * 1000.0)
             )
             aktiv = self._active
-            if aktiv is not None and aktiv.grid_w_spt > 0:
+            # Während Zwangseinspeisung oder Netzladung gehört BatDschMaxW
+            # dem laufenden Befehl — nur vormerken. Die Netzladung schreibt
+            # GridWSpt 0, an ihm allein wäre sie nicht zu erkennen.
+            if aktiv is not None and (
+                aktiv.grid_w_spt > 0 or aktiv.op_mod == OPMOD_CHARGE
+            ):
                 return True
             if aktiv is not None and self._ladelimit_w is not None:
                 block = _block_charge_limit(self._ladelimit_w, self._dsch_max_w())
@@ -558,6 +637,166 @@ class SMAInverter(InverterBase):
                 "aufgehoben" if power_kw is None else f"{power_kw:.2f} kW",
             )
             return True
+
+    # ------------------------------------------------------------------
+    # Netzladung (Beta): Batterie aus PV und Netz laden
+    # ------------------------------------------------------------------
+
+    @property
+    def supports_grid_charge(self) -> bool:
+        """Über OpMod 2289 im CmpBMS-Block (Beta, am Gerät noch nicht geprüft).
+
+        Offen (Modulkopf, Punkt 7): ob 2289 mit ChaMin = ChaMax = P wirklich
+        aus dem Netz lädt oder nur bei Einspeisung am Netzanschlusspunkt,
+        und ob sich SBS und STP SE / SB SE dabei gleich verhalten.
+        """
+        return True
+
+    async def async_set_grid_charge(
+        self, power_kw: float, target_soc: float | None = None
+    ) -> bool:
+        """Batterie mit ``power_kw`` laden, PV zuerst, den Rest aus dem Netz.
+
+        Vorgegeben wird die Batterieleistung (``_block_grid_charge``) — so
+        rechnet auch der Executor, der die Leistung bei jeder Änderung neu
+        schreibt. Anders als bei der Entladung ist hier KEIN Netz-Sollwert
+        im Spiel (GridWSpt 0): Was die PV nicht liefert, fehlt am
+        Netzanschluss und kommt von dort.
+
+        Einen Ziel-Ladestand kennt das CmpBMS nicht, und der Executor
+        schreibt nur bei einer Änderung. Der Treiber liest deshalb 30845 bei
+        jedem Schreiben und im Keepalive (60 s) und beobachtet dazwischen den
+        SOC-Sensor; am Ziel (ohne Ziel 100 %) geht es in den Normal-Block.
+        Steht der Ladestand schon dort oder liegt die Leistung unter
+        ``NETZLADEN_MIN_KW``, wird nur freigegeben.
+        """
+        if self._nicht_endlich(power_kw, target_soc):
+            return False
+        async with self._lock:
+            return await self._netzladung_schreiben(power_kw, target_soc)
+
+    async def _netzladung_schreiben(
+        self, power_kw: float, target_soc: float | None
+    ) -> bool:
+        """Netzladung schreiben oder freigeben. Aufrufer hält den Lock."""
+        ziel = 100.0 if target_soc is None else min(100.0, float(target_soc))
+        leistung = max(0.0, float(power_kw))
+        if leistung < NETZLADEN_MIN_KW:
+            # Die Netzgrenze lässt gerade nichts zu: wie eine Freigabe. Ein
+            # Ladeblock mit 0 W sperrte sonst auch das Laden aus PV.
+            return await self._freigeben_locked()
+        if not await self._ensure_connected():
+            return self._fehler("Modbus nicht verbunden")
+        self._netzladung_ziel = ziel
+        if await self._netzladung_am_ziel():
+            _LOGGER.info(
+                "SMA: Netzladung — Ladestand schon am Ziel %.0f %%, nur Freigabe",
+                ziel,
+            )
+            return await self._freigeben_locked()
+        # Ein gescheitertes Lesen von 30845 schließt die Verbindung.
+        if not await self._ensure_connected():
+            return self._fehler("Modbus nicht verbunden")
+        watts = int(leistung * 1000.0)
+        block = _block_grid_charge(watts)
+        if not await self._write_block(block):
+            if self._active is None or self._active.op_mod != OPMOD_CHARGE:
+                self._netzladung_ziel = None
+            return False
+        # BatDschMaxW gehört jetzt der Ladung — Deckel und Ladelimit sind
+        # Werte eines anderen Blocks (wie bei der Zwangseinspeisung).
+        self._entladedeckel_w = None
+        self._ladelimit_w = None
+        self._active = block
+        self._beobachte_ziel_soc()
+        self._start_keepalive()
+        _LOGGER.info(
+            "SMA: Netzladung %.2f kW bis %.0f %% — keepalive active",
+            leistung, ziel,
+        )
+        return self._erfolg()
+
+    def _soc_sensor_pct(self) -> float | None:
+        entity_id = self._config.get(CONF_BATTERY_SOC_SENSOR)
+        if not entity_id:
+            return None
+        try:
+            state = self._hass.states.get(entity_id)
+            return float(state.state) if state is not None else None
+        except (TypeError, ValueError, AttributeError):
+            return None
+
+    async def _netzladung_am_ziel(self) -> bool:
+        """Ist der Ladestand am Ziel der laufenden Netzladung?
+
+        Zuerst Register 30845 — der Wert, den das Gerät selbst sieht; ist es
+        nicht lesbar, der SOC-Sensor. Ohne beide: nicht am Ziel, es bleiben
+        der Sensor-Beobachter, der nächste Lauf und der Watchdog. Aufrufer
+        hält den Lock und ist verbunden.
+        """
+        ziel = self._netzladung_ziel
+        if ziel is None:
+            return False
+        soc = await self._read_u32(REG_BATTERY_SOC)
+        if soc is None:
+            soc = self._soc_sensor_pct()
+        return soc is not None and soc >= ziel
+
+    def _beobachte_ziel_soc(self) -> None:
+        """Den SOC-Sensor während der Netzladung beobachten.
+
+        Der Executor schreibt nur bei einer Änderung, der Keepalive liest
+        30845 nur alle 60 s — dazwischen lüde die Batterie aus dem Netz über
+        das Ziel hinaus. Deshalb meldet sich der Treiber wie der
+        Victron-Treiber am SOC-Sensor an und gibt am Ziel sofort frei.
+        """
+        if self._ziel_abmelden is not None:
+            return
+        soc_sensor = self._config.get(CONF_BATTERY_SOC_SENSOR)
+        if not soc_sensor:
+            return
+        try:
+            from homeassistant.helpers.event import async_track_state_change_event
+        except ImportError:  # pragma: no cover — Testumgebung
+            return
+
+        def _soc_geaendert(_event: Any) -> None:
+            ziel = self._netzladung_ziel
+            soc = self._soc_sensor_pct()
+            if ziel is not None and soc is not None and soc >= ziel:
+                self._hass.async_create_task(self._ziel_erreicht())
+
+        self._ziel_abmelden = async_track_state_change_event(
+            self._hass, [soc_sensor], _soc_geaendert
+        )
+
+    async def _ziel_erreicht(self) -> None:
+        """Aus dem SOC-Beobachter: unter dem Lock und erst nach erneuter
+        Prüfung — ein Befehl dazwischen kann die Netzladung beendet haben."""
+        async with self._lock:
+            aktiv = self._active
+            ziel = self._netzladung_ziel
+            if aktiv is None or aktiv.op_mod != OPMOD_CHARGE or ziel is None:
+                return
+            soc = self._soc_sensor_pct()
+            if soc is None or soc < ziel:
+                return
+            if await self._freigeben_locked():
+                _LOGGER.info("SMA: Netzladung am Ziel %.0f %% — Normal-Block", ziel)
+            else:
+                _LOGGER.warning(
+                    "SMA: Netzladung am Ziel, Freigabe fehlgeschlagen — "
+                    "der Watchdog beendet sie spätestens nach 300 s"
+                )
+
+    def _netzladung_vergessen(self) -> None:
+        self._netzladung_ziel = None
+        if self._ziel_abmelden is not None:
+            try:
+                self._ziel_abmelden()
+            except Exception:  # noqa: BLE001 — Abmelden darf nie werfen
+                pass
+            self._ziel_abmelden = None
 
     @property
     def discharge_is_grid_setpoint(self) -> bool:
@@ -662,4 +901,5 @@ class SMAInverter(InverterBase):
         """Stop keepalive and disconnect (called on entry unload)."""
         self._cancel_keepalive()
         self._active = None
+        self._netzladung_vergessen()
         self._close_client()

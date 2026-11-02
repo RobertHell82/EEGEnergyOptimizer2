@@ -188,6 +188,21 @@ Besonderheit: Die Entladung ist ein **Netz-Sollwert** (GridWSpt) — der
 Wechselrichter legt die Hauslast selbst obendrauf, deshalb gibt die
 Steuerung hier die geplante Einspeisung vor statt der Batterieleistung
 (`discharge_is_grid_setpoint`).
+
+**Beta: Batterie aus dem Netz laden** (Expertenmodus): derselbe
+CmpBMS-Block mit Betriebsart 2289 („Laden“), minimaler und maximaler
+Ladeleistung = geplante Batterieleistung, Entladen 0 und Netz-Sollwert 0 —
+keine zusätzlichen Register. Die PV deckt davon, was sie kann, der Rest kommt
+aus dem Netz. Einen Ziel-Ladestand kennt das CmpBMS nicht: Der Treiber liest
+den Ladestand (Register 30845) bei jedem Schreiben und alle 60 Sekunden und
+beobachtet dazwischen den SOC-Sensor; am Ziel geht es zurück in den
+Normalbetrieb. **Noch nicht am Gerät geprüft:** ob 2289 mit gleicher minimaler
+und maximaler Ladeleistung tatsächlich aus dem Netz lädt (eine Forennotiz
+spricht von „nur bei Einspeisung am Netzanschlusspunkt“, vermutlich nur mit
+minimaler Ladeleistung 0), ob die minimale Ladeleistung als erzwungene
+Leistung wirkt, und ob sich Sunny Boy Storage (AC-gekoppelt) und Sunny
+Tripower / Sunny Boy Smart Energy dabei gleich verhalten. Mit Sunny Home
+Manager 2.0: Firmware ab 2.15.5, „Prognosebasiertes Laden“ aus.
 Guide: [sma.md](guides/sma.md)
 
 ### SolaX Gen4+
