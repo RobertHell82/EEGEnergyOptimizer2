@@ -16,6 +16,7 @@ KOSTAL Modbus spec Rev. 2.9, chapter 3.4 (identical for G1/G2/G3):
         discharge for house consumption stays available)
   1040  Battery max. discharge power limit  Float RW (Entladedeckel der
         Spitzenkappung, sonst unberuehrt)
+  1076  Max. charge limit from battery      Float R  (Rueckfallwert fuer 1038)
   1078  Max. discharge limit from battery   Float R  (Rueckfallwert fuer 1040)
   210   Act. state of charge (%)            Float R
   1068  Battery work capacity (Wh)          Float R
@@ -37,7 +38,8 @@ setpoint every KEEPALIVE_INTERVAL seconds, decoupled from the optimizer's
 The control registers are volatile (RAM, spec ch. 3.3) — cyclic writing is
 harmless (no NVRAM wear). There is no hardware target-SOC
 register: the optimizer supervises the SOC every 30 s and stops the
-discharge itself; the watchdog covers the HA-crash case.
+discharge itself; a grid charge is stopped by the driver, which reads
+register 210 in every keepalive. The watchdog covers the HA-crash case.
 
 VERIFY AT DEVICE (before first production release):
   1. Does a positive 1034 setpoint really feed into the grid beyond house
@@ -58,6 +60,8 @@ VERIFY AT DEVICE (before first production release):
      der Watchdog-Rueckfall 1040 auf den Vorwert zurueck oder bleibt er?
   7. Watchdog-Timeout der Anlage im Servicemenue ablesen — er bestimmt, wie
      lange die Batterie nach einer Entladung/Netzladung steht.
+  8. Deckel 1040 allein (ohne 1034) nachts mit Hauslast: bleibt der
+     Eigenverbrauch normal, oder steht die Batterie?
 """
 
 from __future__ import annotations
@@ -68,7 +72,7 @@ import struct
 from datetime import datetime, timezone
 from typing import Any
 
-from ..const import CONF_BATTERY_POWER_SENSOR
+from ..const import CONF_BATTERY_POWER_SENSOR, CONF_DISCHARGE_POWER_KW
 from ..power_readings import read_power_kw
 from .base import InverterBase
 
@@ -103,6 +107,7 @@ REG_MAX_DISCHARGE_POWER = 1040  # Float W — Entladedeckel (Spitzenkappung)
 
 # Read registers used by driver/probe
 REG_SOC = 210                 # Float %
+REG_MAX_CHARGE_BATTERY = 1076     # Float W — Ladegrenze, die die Batterie meldet
 REG_MAX_DISCHARGE_BATTERY = 1078  # Float W — Entladegrenze, die die Batterie meldet
 REG_BATTERY_CAPACITY = 1068   # Float Wh
 REG_BATTERY_MGMT_MODE = 1080  # U16: 0=internal, 1=ext. digital I/O, 2=ext. Modbus
@@ -140,6 +145,18 @@ RUECKFALL_ABFRAGE_S = 10.0     # Abfragetakt, solange ein Ladelimit wartet
 # Unter dieser Leistung ist eine Netzladung keine — sie wird wie eine
 # Freigabe behandelt (gleiche Schwelle wie im Fronius-Treiber).
 NETZLADEN_MIN_KW = 0.05
+
+# Hysterese am Ziel der Netzladung. Der Treiber haelt am Ziel mit 1034 = 0
+# an; waehrend des Watchdog-Rueckfalls deckt die Batterie dann wieder das
+# Haus, der Ladestand faellt knapp unter das Ziel — und jede neue Leistung
+# des Executors startete 1034 negativ neu: Ziel, Stillstand, Rueckfall,
+# mehrmals je Slot. Neu gestartet wird deshalb erst, wenn der Ladestand um
+# diesen Betrag unter dem schon einmal erreichten Ziel liegt.
+NETZLADEN_ZIEL_HYSTERESE_PCT = 2.0
+
+# Hoechstdauer des letzten Rueckholversuchs beim Entladen der Integration —
+# ein haengender Modbus darf das Entladen nicht aufhalten.
+DISCONNECT_RUECKNAHME_S = 10.0
 
 # Befehle, die 1034 stellen. Solange einer davon laeuft, haelt der
 # Keepalive den Sollwert ohnehin am Leben; danach gilt die Ansfelden-Regel.
@@ -200,13 +217,18 @@ class KostalInverter(InverterBase):
         self._active: tuple[str, float] | None = None
         # Ziel-Ladestand der laufenden Netzladung (Prozent).
         self._netz_ziel_pct: float | None = None
+        # Ziel, an dem der Treiber eine Netzladung zuletzt selbst angehalten
+        # hat. Gilt, bis ein anderes Ziel kommt, eine Entladung beginnt oder
+        # der Ladestand NETZLADEN_ZIEL_HYSTERESE_PCT darunter liegt.
+        self._netz_ziel_erreicht_pct: float | None = None
         # Entladedeckel (1040) in W, den der Keepalive schreibt; None = keiner.
         self._deckel_w: float | None = None
         # Steht in 1040 ein Wert von uns? Dann muss er zurueck, auch wenn
         # _deckel_w schon None ist. Gesetzt VOR dem Schreiben — bei einem
         # Verbindungsabbruch ist unklar, ob der Wert ankam.
         self._deckel_beruehrt: bool = False
-        # 1040 vor unserem ersten Deckel; ohne ihn gilt 1078.
+        # 1040 vor unserem ersten Deckel, nie unter 1078 (siehe
+        # _deckel_schreiben); ohne ihn gilt 1078.
         self._max_discharge_pre_deckel: float | None = None
         self._keepalive_task: asyncio.Task | None = None
         self._jitter_toggle: bool = False
@@ -292,6 +314,16 @@ class KostalInverter(InverterBase):
 
     async def _write_float(self, address: int, value: float) -> bool:
         """Write a Float32 (word-swapped) via FC16, count writes, 200ms pause."""
+        return await self._schreiben(address, value) == "ok"
+
+    async def _schreiben(self, address: int, value: float) -> str:
+        """Wie _write_float, aber mit der Art des Ausgangs.
+
+        ``"ok"``, ``"abgelehnt"`` (das Geraet hat geantwortet und Nein
+        gesagt — der Wert gilt sicher nicht) oder ``"abbruch"`` (Ausnahme,
+        Verbindung weg — ob der Wert ankam, ist offen). Den Unterschied
+        braucht nur _schreibe_sollwert(); alle anderen fragen _write_float.
+        """
         try:
             result = await self._client.write_registers(
                 address=address, values=float_to_registers(value),
@@ -309,20 +341,21 @@ class KostalInverter(InverterBase):
                     # einer Ablehnung — er gehoert in die Telemetrie, damit
                     # niemand einem Treiberfehler nachjagt. Ob das Geraet
                     # ablehnt oder still ignoriert, ist am Geraet nicht geprueft.
-                    return self._fehler(
-                        "1034 gesperrt (Gradient nach Netzzuschaltung?)"
-                    )
-                return self._fehler(f"Modbus lehnt Register {address} ab")
+                    self._fehler("1034 gesperrt (Gradient nach Netzzuschaltung?)")
+                else:
+                    self._fehler(f"Modbus lehnt Register {address} ab")
+                return "abgelehnt"
             await asyncio.sleep(0.2)
             _LOGGER.debug("Kostal: wrote register %d = %.1f", address, value)
-            return True
+            return "ok"
         except Exception:
             _LOGGER.exception(
                 "Kostal: exception writing register %d (value=%.1f)",
                 address, value,
             )
             self._close_client()
-            return self._fehler(f"Verbindungsfehler bei Register {address}")
+            self._fehler(f"Verbindungsfehler bei Register {address}")
+            return "abbruch"
 
     async def _read_float(self, address: int) -> float | None:
         """Read a Float32 (word-swapped) holding register pair."""
@@ -343,13 +376,20 @@ class KostalInverter(InverterBase):
     async def _schreibe_sollwert(self, watts: float) -> bool:
         """1034 schreiben und merken, dass ab jetzt ein Sollwert gilt.
 
-        Gemerkt wird schon vor dem Ergebnis: Bei einem Verbindungsabbruch ist
+        Gemerkt wird bei Erfolg und bei einem Verbindungsabbruch: Dann ist
         unklar, ob der Wert angekommen ist, und ein irrtuemlich angenommener
         Sollwert kostet nur die Rueckfall-Messung, ein uebersehener dagegen
-        eine stehende Batterie.
+        eine stehende Batterie. Eine ausdrueckliche Ablehnung dagegen
+        (Gradientensperre nach der Netzzuschaltung) setzt sicher nichts —
+        sie als Sollwert zu merken, sperrte 1038/1040 bis zu RUECKFALL_MAX_S
+        fuer einen Befehl, der nie galt. Dann bleibt, was vorher galt.
         """
+        vorher = self._sollwert_seit
         self._sollwert_seit = _jetzt()
-        return await self._write_float(REG_BATTERY_SETPOINT, watts)
+        ausgang = await self._schreiben(REG_BATTERY_SETPOINT, watts)
+        if ausgang == "abgelehnt":
+            self._sollwert_seit = vorher
+        return ausgang == "ok"
 
     def _rueckfall_offen(self) -> bool:
         """Haelt der Kostal womoeglich noch einen 1034-Sollwert fest?
@@ -401,6 +441,31 @@ class KostalInverter(InverterBase):
         """Duerfen 1038/1040 jetzt NICHT geschrieben werden (Ansfelden-Regel)?"""
         return not self._steuert_sollwert() and self._rueckfall_offen()
 
+    @property
+    def batterie_gesperrt(self) -> bool:
+        """Steht die Batterie, weil der Kostal noch einen 1034-Sollwert haelt?
+
+        True, solange nach einer Entladung oder Netzladung der Watchdog-
+        Rueckfall offen ist (_rueckfall_offen()): 1034 = 0 haelt die
+        Batterie still, bis die interne Automatik uebernimmt — bis zu
+        RUECKFALL_MAX_S. Ein Deckel wird in dieser Zeit nur vorgemerkt, der
+        Treiber meldet trotzdem True. Ohne diese Auskunft rechnete
+        ``ScheduleExecutor.batterie_luft_kw`` die volle Entladeleistung als
+        Luft, die Verbraucher-Stufe der Spitzenkappung schaltete nichts ab,
+        und die Spitze ginge durch eine Batterie, die gar nicht liefert.
+
+        Kein Teil von InverterBase: Nur der Kostal kennt diesen Zustand. Der
+        Executor liest sie per ``getattr(inverter, "batterie_gesperrt",
+        False)`` — jeder andere Treiber gilt damit als nicht gesperrt.
+
+        Waehrend einer laufenden Entladung oder Netzladung False: Die
+        Batterie folgt dann unserem Befehl, und das weiss der Executor
+        selbst (dort ist die Luft ohnehin 0). _rueckfall_offen() darf in
+        dieser Zeit nicht gefragt werden — die Bewegung durch den eigenen
+        Befehl hielte es fuer den Rueckfall.
+        """
+        return self._register_gesperrt()
+
     async def _ladestand_pct(self) -> float | None:
         """Register 210 — der Ladestand, mit dem der Plenticore selbst rechnet."""
         soc = await self._read_float(REG_SOC)
@@ -415,12 +480,33 @@ class KostalInverter(InverterBase):
     async def _deckel_schreiben(self, watts: float) -> bool:
         """1040 schreiben; vor dem ersten Mal den Vorwert sichern."""
         if not self._deckel_beruehrt:
-            vorher = await self._read_float(REG_MAX_DISCHARGE_POWER)
-            if vorher is not None and vorher > 0:
-                self._max_discharge_pre_deckel = vorher
-                self._max_discharge_hw = vorher
+            await self._vorwert_1040_sichern()
             self._deckel_beruehrt = True
         return await self._write_float(REG_MAX_DISCHARGE_POWER, watts)
+
+    async def _vorwert_1040_sichern(self) -> None:
+        """Vorwert und Hardware-Grenze vor dem ersten Deckel bestimmen.
+
+        1040 allein reicht nicht: Ob der Watchdog-Rueckfall 1040 zuruecksetzt,
+        ist ungeprueft. Bleibt ein alter Deckel nach einem HA-Neustart dort
+        stehen (der Treiber weiss nach dem Neustart nichts mehr von ihm), hielt
+        der naechste Deckel ihn fuer den Vorwert und fuer die Grenze der
+        Batterie — Guard 2 rechnete mit 0,5 kW, und jedes Aufheben schriebe
+        500 W zurueck. Deshalb zaehlt 1078, was die Batterie selbst als
+        Entladegrenze meldet: Ein 1040 darunter ist kein Vorwert, den man
+        wiederherstellen muesste, und keine Hardware-Grenze. Ein 1040
+        darueber bleibt der Vorwert (so stand es vorher da); die Grenze ist
+        dann trotzdem 1078 — mehr gibt die Batterie nicht her.
+        """
+        vorher = await self._read_float(REG_MAX_DISCHARGE_POWER)
+        batterie = await self._read_float(REG_MAX_DISCHARGE_BATTERY)
+        kandidaten = [w for w in (vorher, batterie) if w is not None and w > 0]
+        if kandidaten:
+            self._max_discharge_pre_deckel = max(kandidaten)
+        if batterie is not None and batterie > 0:
+            self._max_discharge_hw = batterie
+        elif vorher is not None and vorher > 0:
+            self._max_discharge_hw = vorher
 
     async def _deckel_zuruecksetzen(self) -> bool:
         """1040 auf den Wert vor unserem ersten Deckel zurueckschreiben.
@@ -532,6 +618,7 @@ class KostalInverter(InverterBase):
                     "Kostal: Netzladung am Ziel (%.1f %% ≥ %.0f %%) — Freigabe",
                     soc, ziel,
                 )
+                self._netz_ziel_erreicht_pct = ziel
                 await self._stop_forcible_locked(keepalive_stoppen=False)
                 return
             ok = await self._schreibe_sollwert(-(watts + jitter))
@@ -631,7 +718,7 @@ class KostalInverter(InverterBase):
                     "Kostal: Ladelimit %.2f kW vorgemerkt — warte auf den "
                     "Watchdog-Rueckfall des Batterie-Sollwerts", power_kw,
                 )
-                return True
+                return self._erfolg()
             if not await self._write_float(REG_MAX_CHARGE_POWER, watts):
                 return False
             if watts > 0:
@@ -700,6 +787,9 @@ class KostalInverter(InverterBase):
 
             self._active = ("discharge", watts)
             self._netz_ziel_pct = None
+            # Nach einer Entladung ist das erreichte Ziel kein Grund mehr,
+            # eine neue Netzladung zurueckzuhalten.
+            self._netz_ziel_erreicht_pct = None
             self._start_keepalive()
             _LOGGER.info(
                 "Kostal: discharge set (%.2f kW) — keepalive active", power_kw
@@ -854,7 +944,7 @@ class KostalInverter(InverterBase):
                 "Kostal: Entladedeckel %.2f kW vorgemerkt — warte auf den "
                 "Watchdog-Rueckfall des Batterie-Sollwerts", kw,
             )
-            return True
+            return self._erfolg()
         if not await self._ensure_connected():
             return self._fehler("Modbus nicht erreichbar")
         if not await self._deckel_schreiben(watts):
@@ -874,7 +964,7 @@ class KostalInverter(InverterBase):
             # Zuruecksetzen erst nach dem Rueckfall; bis dahin steht die
             # Batterie, der alte Deckel bremst also nichts.
             self._keepalive_neu_starten()
-            return True
+            return self._erfolg()
         if not await self._ensure_connected():
             return self._fehler("Modbus nicht erreichbar")
         if not await self._deckel_zuruecksetzen():
@@ -932,13 +1022,15 @@ class KostalInverter(InverterBase):
             ziel = 100.0 if target_soc is None else min(100.0, float(target_soc))
             leistung = max(0.0, float(power_kw))
             soc = await self._ladestand_pct()
-            am_ziel = soc is not None and soc >= ziel
+            am_ziel = self._netzladung_am_ziel(soc, ziel)
             if leistung < NETZLADEN_MIN_KW or am_ziel:
                 if am_ziel:
                     _LOGGER.info(
-                        "Kostal: Netzladung am Ziel (%.1f %% ≥ %.0f %%) — Freigabe",
-                        soc, ziel,
+                        "Kostal: Netzladung am Ziel (Ladestand %s, Ziel "
+                        "%.0f %%) — Freigabe",
+                        "unbekannt" if soc is None else f"{soc:.1f} %", ziel,
                     )
+                    self._netz_ziel_erreicht_pct = ziel
                 ok = await self._stop_forcible_locked()
                 return (
                     self._erfolg() if ok
@@ -954,12 +1046,13 @@ class KostalInverter(InverterBase):
                 self._max_charge_pre_block = None
             elif self._active is not None and self._active[0] == "charge_limit":
                 # Ladelimit ohne gesicherten Vorwert (Lesefehler beim ersten
-                # Limit): auf das gelernte Hardware-Maximum.
-                if self._max_charge_hw is None:
+                # Limit): auf das gelernte Hardware-Maximum, sonst auf das,
+                # was die Batterie meldet, sonst auf die eingestellte
+                # Batterieleistung.
+                vorwert = await self._ladelimit_ersatz_w()
+                if vorwert is None:
                     return self._fehler("Ladelimit-Vorwert unbekannt")
-                if not await self._write_float(
-                    REG_MAX_CHARGE_POWER, self._max_charge_hw
-                ):
+                if not await self._write_float(REG_MAX_CHARGE_POWER, vorwert):
                     return False
             if self._active is not None and self._active[0] == "charge_limit":
                 # Das Limit gilt nicht mehr — der Keepalive darf es nicht
@@ -980,6 +1073,7 @@ class KostalInverter(InverterBase):
 
             self._active = ("grid_charge", watts)
             self._netz_ziel_pct = ziel
+            self._netz_ziel_erreicht_pct = None
             self._start_keepalive()
             _LOGGER.info(
                 "Kostal: Netzladung %.2f kW bis %.0f %% (1034 = %.0f W)",
@@ -990,6 +1084,49 @@ class KostalInverter(InverterBase):
             _LOGGER.exception("Kostal: Netzladung fehlgeschlagen")
             self._close_client()
             return self._fehler("Ausnahme beim Setzen der Netzladung")
+
+    def _netzladung_am_ziel(self, soc: float | None, ziel: float) -> bool:
+        """Gilt die Netzladung mit diesem Ziel als erledigt?
+
+        Am Ziel ist sie, sobald der Ladestand es erreicht. Hat der Treiber
+        an genau diesem Ziel schon einmal angehalten, bleibt es erledigt,
+        bis der Ladestand NETZLADEN_ZIEL_HYSTERESE_PCT darunter faellt —
+        sonst startete jede Leistungsaenderung des Executors 1034 neu,
+        sobald die Batterie im Rueckfall ein Zehntelprozent ans Haus gibt.
+        Ein unbekannter Ladestand gilt dann ebenfalls als erledigt: Ein
+        Neustart ohne Messung waere genau das Pendeln, das hier verhindert
+        werden soll. Ein anderes Ziel ist ein neuer Befehl.
+        """
+        erreicht = self._netz_ziel_erreicht_pct
+        if erreicht is not None and abs(erreicht - ziel) > 0.05:
+            self._netz_ziel_erreicht_pct = erreicht = None
+        if soc is not None and soc >= ziel:
+            return True
+        if erreicht is None:
+            return False
+        if soc is None or soc > ziel - NETZLADEN_ZIEL_HYSTERESE_PCT:
+            return True
+        self._netz_ziel_erreicht_pct = None
+        return False
+
+    async def _ladelimit_ersatz_w(self) -> float | None:
+        """Ladegrenze, wenn kein Vorwert von 1038 gesichert ist (W).
+
+        Reihenfolge: das gelernte Hardware-Maximum, Register 1076 (was die
+        Batterie selbst als Ladegrenze meldet), die eingestellte
+        Batterieleistung. Ohne diese Kette scheiterte jede Netzladung nach
+        einem Lesefehler beim ersten Ladelimit dauerhaft.
+        """
+        if self._max_charge_hw is not None:
+            return self._max_charge_hw
+        batterie = await self._read_float(REG_MAX_CHARGE_BATTERY)
+        if batterie is not None and batterie > 0:
+            return batterie
+        try:
+            kw = float(self._config.get(CONF_DISCHARGE_POWER_KW))
+        except (TypeError, ValueError):
+            return None
+        return kw * 1000.0 if kw > 0 else None
 
     async def _pruefe_encoding(self, geschrieben_w: float) -> None:
         """Einmal pruefen, ob das Geraet das geschriebene Teil-Limit annimmt.
@@ -1080,12 +1217,14 @@ class KostalInverter(InverterBase):
         return None if self._max_charge_hw is None else self._max_charge_hw / 1000.0
 
     def get_max_discharge_power_kw(self) -> float | None:
-        """Maximale Entladeleistung in kW — Register 1040, aus dem Cache.
+        """Maximale Entladeleistung in kW — Register 1078 bzw. 1040, aus dem Cache.
 
         Gefuellt von async_get_control_values() und vor dem ersten
-        Entladedeckel — nur aus einem 1040, in dem kein Deckel von uns steht.
-        Sonst hielte der Treiber den eigenen Deckel fuer die Grenze der
-        Batterie, und Guard 2 wie die Spitzenkappung rechneten mit ihm.
+        Entladedeckel. Bevorzugt aus 1078 (was die Batterie meldet), sonst nur
+        aus einem 1040, in dem kein Deckel von uns steht. Sonst hielte der
+        Treiber einen Deckel — den eigenen oder einen, der einen HA-Neustart
+        ueberlebt hat — fuer die Grenze der Batterie, und Guard 2 wie die
+        Spitzenkappung rechneten mit ihm.
         """
         return (
             None if self._max_discharge_hw is None
@@ -1106,9 +1245,16 @@ class KostalInverter(InverterBase):
             setpoint = await self._read_float(REG_BATTERY_SETPOINT)
             max_charge = await self._read_float(REG_MAX_CHARGE_POWER)
             max_discharge = await self._read_float(REG_MAX_DISCHARGE_POWER)
+            max_discharge_batterie = await self._read_float(
+                REG_MAX_DISCHARGE_BATTERY
+            )
 
         self._merke_hardware_grenze(max_charge)
-        if (
+        # Grenze der Batterie ist 1078, wenn lesbar — ein 1040 darunter kann
+        # ein stehengebliebener Deckel sein (siehe _vorwert_1040_sichern).
+        if max_discharge_batterie is not None and max_discharge_batterie > 0:
+            self._max_discharge_hw = max_discharge_batterie
+        elif (
             max_discharge is not None and max_discharge > 0
             and not self._deckel_beruehrt
         ):
@@ -1165,9 +1311,50 @@ class KostalInverter(InverterBase):
         return bool(self._host)
 
     async def async_disconnect(self) -> None:
-        """Stop keepalive and disconnect (called on entry unload)."""
+        """Stop keepalive and disconnect (called on entry unload).
+
+        Ein Deckel in 1040 bliebe sonst stehen: Hatte die Freigabe das
+        Zuruecksetzen an den Keepalive delegiert (Rueckfall offen), bricht
+        das Abbrechen des Keepalive es ab, und ob der Watchdog-Rueckfall
+        1040 zuruecksetzt, ist ungeprueft. Deshalb ein letzter Versuch —
+        aber nur, wenn der Rueckfall es zulaesst: Waehrend ein 1034-Sollwert
+        gehalten wird (eigener Befehl oder offener Rueckfall), verlaengerte
+        jeder Schreibzugriff ihn um eine Watchdog-Periode. Dann bleibt nur
+        die laute Warnung.
+        """
         self._cancel_keepalive()
+        befehl_lief = self._steuert_sollwert()
         self._active = None
         self._netz_ziel_pct = None
         self._deckel_w = None
+        if self._deckel_beruehrt:
+            await self._deckel_beim_entladen_zuruecknehmen(befehl_lief)
         self._close_client()
+
+    async def _deckel_beim_entladen_zuruecknehmen(self, befehl_lief: bool) -> None:
+        """Letzter Rueckholversuch fuer 1040 beim Entladen der Integration."""
+        if befehl_lief or self._rueckfall_offen():
+            _LOGGER.warning(
+                "Kostal: Entladedeckel in Register 1040 bleibt beim Entladen "
+                "der Integration stehen — der Wechselrichter haelt noch einen "
+                "Batterie-Sollwert, jeder Schreibzugriff verlaengerte ihn. "
+                "Ob der Watchdog-Rueckfall 1040 zuruecksetzt, ist ungeprueft; "
+                "ggf. im Servicemenue pruefen."
+            )
+            return
+        try:
+            async with asyncio.timeout(DISCONNECT_RUECKNAHME_S):
+                async with self._lock:
+                    if (
+                        await self._ensure_connected()
+                        and await self._deckel_zuruecksetzen()
+                    ):
+                        return
+        except Exception:
+            _LOGGER.debug("Kostal: Rueckholversuch fuer 1040 abgebrochen", exc_info=True)
+        _LOGGER.warning(
+            "Kostal: Entladedeckel in Register 1040 beim Entladen der "
+            "Integration nicht zurueckgesetzt (%s) — ob der Watchdog-Rueckfall "
+            "ihn zuruecksetzt, ist ungeprueft",
+            self.last_write_error or "Zeitueberschreitung",
+        )

@@ -143,7 +143,9 @@ fest.
 1038 und 1040 auf ihre Vorwerte zurück. Einen Ziel-Ladestand kennt der
 Plenticore nicht; der Treiber liest Register 210 bei jedem Schreiben und im
 Keepalive und hält am Ziel mit 1034 = 0 an, danach gilt dieselbe
-Rückfall-Wartezeit wie nach einer Entladung.
+Rückfall-Wartezeit wie nach einer Entladung. Neu gestartet wird erst
+2 Prozentpunkte unter dem erreichten Ziel — sonst pendelte die Ladung im
+Rückfall zwischen Ziel und Stillstand.
 
 **Österreich: Gradientensperre.** Nach jeder Netzzuschaltung ist 1034 rund
 10 Minuten gesperrt (Kostal-Spezifikation, Fußnote 7) — Entladung und
@@ -157,6 +159,8 @@ betroffen.
 - Deckel: hält 1040 = 1000 W nachts bei mehr als 1 kW Hauslast die Batterie
   bei 1 kW? Belegt ist bisher nur 1040 = 0 (aus evcc). Und: setzt der
   Watchdog-Rückfall 1040 zurück oder bleibt der Wert stehen?
+- Deckel 1040 allein (ohne 1034) nachts mit Hauslast: Bleibt der
+  Eigenverbrauch normal, oder steht die Batterie?
 - Watchdog-Timeout der Anlage im Servicemenü ablesen — er bestimmt, wie lange
   die Batterie nach einer Entladung oder Netzladung stillsteht.
 

@@ -80,7 +80,7 @@ _Netzladen und Entladedeckel sind beim Kostal noch nicht am Gerät geprüft. Wen
 
 **Sicherheitsnetz (Watchdog):** Der Sollwert muss regelmäßig erneuert werden (empfohlen: 60 Sekunden, Einstellung im Servicemenü). Der Optimizer schreibt alle 25 Sekunden nach. Stürzt Home Assistant während einer Entladung ab, fällt der Wechselrichter nach Ablauf der Zeit in sein eigenes Batteriemanagement zurück.
 
-Einen Ziel-Ladestand kennt Kostal nicht. Der Optimizer prüft den Ladestand alle 30 Sekunden selbst und beendet die Entladung (beim Laden aus dem Netz ebenso die Ladung).
+Einen Ziel-Ladestand kennt Kostal nicht. Bei einer Entladung prüft der Optimizer den Ladestand alle 30 Sekunden selbst und beendet sie. Beim Laden aus dem Netz liest der Treiber den Ladestand des Wechselrichters (Register 210) bei jedem Nachschreiben, also alle 25 Sekunden, und hält am Ziel an. Neu gestartet wird diese Ladung erst, wenn der Ladestand 2 Prozentpunkte unter das Ziel gefallen ist.
 
 **Nach einer Entladung oder einer Ladung aus dem Netz kann die Batterie bis zu 15 Minuten stillstehen.** Der Optimizer schreibt dann nichts, bis der Wechselrichter von selbst in sein eigenes Batteriemanagement zurückgefallen ist (höchstens 15 Minuten). Zeigt die Statuskarte in dieser Zeit „Normalbetrieb“ und die Batterie steht still, ist das kein Fehler.
 

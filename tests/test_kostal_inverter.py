@@ -712,10 +712,13 @@ class TestEntladedeckel:
 
         await asyncio.sleep(1.0)
         await inverter.async_disconnect()
+        deckel = _werte(mock_modbus_client, REG_MAX_DISCHARGE_POWER)
+        # Das Entladen der Integration nimmt den Deckel als Letztes zurueck.
+        assert deckel[-1] == 5000
         assert set(_werte(mock_modbus_client, REG_MAX_CHARGE_POWER)) <= {2000, 2001}
-        assert set(_werte(mock_modbus_client, REG_MAX_DISCHARGE_POWER)) <= {1000, 1001}
+        assert set(deckel[:-1]) <= {1000, 1001}
         assert len(_werte(mock_modbus_client, REG_MAX_CHARGE_POWER)) >= 2
-        assert len(_werte(mock_modbus_client, REG_MAX_DISCHARGE_POWER)) >= 2
+        assert len(deckel[:-1]) >= 2
         assert _written(mock_modbus_client, REG_BATTERY_SETPOINT) == []
 
     async def test_deckel_allein_haelt_den_keepalive(
@@ -731,8 +734,10 @@ class TestEntladedeckel:
         mock_modbus_client.write_registers.reset_mock()
         await asyncio.sleep(0.6)
         await inverter.async_disconnect()
-        assert set(_werte(mock_modbus_client, REG_MAX_DISCHARGE_POWER)) <= {0, 1}
-        assert len(_werte(mock_modbus_client, REG_MAX_DISCHARGE_POWER)) >= 2
+        deckel = _werte(mock_modbus_client, REG_MAX_DISCHARGE_POWER)
+        assert deckel[-1] == 5000
+        assert set(deckel[:-1]) <= {0, 1}
+        assert len(deckel[:-1]) >= 2
 
     async def test_stopp_schreibt_1040_zurueck(self, inverter, mock_modbus_client):
         _register_lesen(mock_modbus_client, {REG_MAX_DISCHARGE_POWER: 5000.0})
@@ -761,13 +766,49 @@ class TestEntladedeckel:
         await inverter.async_disconnect()
 
     async def test_deckel_waehrend_entladung_wird_nur_gemerkt(
-        self, inverter, mock_modbus_client
+        self, inverter, mock_modbus_client, monkeypatch
     ):
+        """Gemerkt waehrend der Entladung, geschrieben erst nach ihrem Ende
+        — und dort erst nach dem Watchdog-Rueckfall (Ansfelden-Regel)."""
+        from datetime import datetime, timedelta, timezone
+        from custom_components.eeg_energy_optimizer.inverter.kostal import (
+            RUECKFALL_MAX_S,
+        )
+        uhr = {"jetzt": datetime(2026, 11, 2, 18, 0, tzinfo=timezone.utc)}
+        monkeypatch.setattr(
+            "custom_components.eeg_energy_optimizer.inverter.kostal._jetzt",
+            lambda: uhr["jetzt"],
+        )
+        monkeypatch.setattr(
+            "custom_components.eeg_energy_optimizer.inverter.kostal.RUECKFALL_ABFRAGE_S",
+            0.01,
+        )
+        _register_lesen(
+            mock_modbus_client,
+            {REG_MAX_DISCHARGE_POWER: 5000.0, REG_MAX_DISCHARGE_BATTERY: 5000.0},
+        )
         await inverter.async_set_discharge(3.0)
         mock_modbus_client.write_registers.reset_mock()
         assert await inverter.async_set_discharge_limit(1.0) is True
+        assert inverter._deckel_w == pytest.approx(1000.0)
         assert mock_modbus_client.write_registers.await_count == 0
+
+        # Ende der Entladung: Das Ladelimit nullt 1034, der Deckel bleibt
+        # gemerkt und wartet wie das Limit auf den Rueckfall.
+        await inverter.async_set_charge_limit(2.0)
+        await asyncio.sleep(0.1)
+        assert inverter._deckel_w == pytest.approx(1000.0)
+        assert _werte(mock_modbus_client, REG_MAX_DISCHARGE_POWER) == []
+        assert inverter.batterie_gesperrt is True
+
+        uhr["jetzt"] += timedelta(seconds=RUECKFALL_MAX_S + 1)
+        await asyncio.sleep(0.3)
+        deckel = _werte(mock_modbus_client, REG_MAX_DISCHARGE_POWER)
+        ladelimit = _werte(mock_modbus_client, REG_MAX_CHARGE_POWER)
         await inverter.async_disconnect()
+        assert deckel and set(deckel) <= {1000, 1001}
+        assert ladelimit and set(ladelimit) <= {2000, 2001}
+        assert inverter.batterie_gesperrt is False
 
 
 class TestDeckelNachSollwert:
@@ -827,9 +868,12 @@ class TestDeckelNachSollwert:
         uhr["jetzt"] += timedelta(seconds=60)
         self._messung(inv, 1500, uhr["jetzt"])
         await asyncio.sleep(0.5)
+        assert inv.batterie_gesperrt is False
         await inv.async_disconnect()
-        assert _werte(mock_modbus_client, REG_MAX_DISCHARGE_POWER)
-        assert set(_werte(mock_modbus_client, REG_MAX_DISCHARGE_POWER)) <= {500, 501}
+        deckel = _werte(mock_modbus_client, REG_MAX_DISCHARGE_POWER)
+        assert deckel[-1] == 5000
+        assert deckel[:-1]
+        assert set(deckel[:-1]) <= {500, 501}
         assert _written(mock_modbus_client, REG_BATTERY_SETPOINT) == []
 
     async def test_deckel_nach_netzladung_wartet(self, inv, mock_modbus_client):
@@ -959,6 +1003,9 @@ class TestNetzladung:
         # Ohne Zahlen — der Grund wird zum message_hash der Telemetrie.
         assert "2000" not in inverter.last_write_error
         assert inverter._active is None
+        # Abgelehnt heisst: Es gilt sicher kein Sollwert — 1038/1040 frei.
+        assert inverter._sollwert_seit is None
+        assert inverter.batterie_gesperrt is False
 
     async def test_entladung_scheitert_an_der_sperre_mit_demselben_grund(
         self, inverter, mock_modbus_client
@@ -970,3 +1017,362 @@ class TestNetzladung:
     async def test_nan_wird_nicht_geschrieben(self, inverter, mock_modbus_client):
         assert await inverter.async_set_grid_charge(float("nan")) is False
         assert mock_modbus_client.write_registers.await_count == 0
+
+
+# ---------------------------------------------------------------------------
+# Review November 2026: Rueckfall, Ziel-Hysterese, Vorwert
+# ---------------------------------------------------------------------------
+
+_K = "custom_components.eeg_energy_optimizer.inverter.kostal"
+_SENSOR = "sensor.kostal_battery_power"
+
+
+@pytest.fixture
+def uhr(monkeypatch):
+    from datetime import datetime, timezone
+    t = {"jetzt": datetime(2026, 11, 2, 18, 0, tzinfo=timezone.utc)}
+    monkeypatch.setattr(f"{_K}._jetzt", lambda: t["jetzt"])
+    return t
+
+
+@pytest.fixture
+def inv(mock_hass, kostal_config, mock_modbus_client, uhr):
+    """Kostal mit Batteriesensor (ohne Messung) und lesbaren Registern."""
+    mock_hass.states.get = MagicMock(return_value=None)
+    inv = KostalInverter(
+        mock_hass, {**kostal_config, "battery_power_sensor": _SENSOR}
+    )
+    inv._client = mock_modbus_client
+    return inv
+
+
+@pytest.fixture
+def register(mock_modbus_client):
+    werte = {
+        REG_SOC: 50.0,
+        REG_MAX_CHARGE_POWER: 6000.0,
+        REG_MAX_DISCHARGE_POWER: 5000.0,
+        REG_MAX_DISCHARGE_BATTERY: 5000.0,
+    }
+    _register_lesen(mock_modbus_client, werte)
+    return werte
+
+
+def _messung(inv, watt, um):
+    state = MagicMock()
+    state.state = str(watt)
+    state.attributes = {"unit_of_measurement": "W"}
+    state.last_reported = um
+    state.last_updated = um
+    inv._hass.states.get = MagicMock(return_value=state)
+
+
+class TestBatterieGesperrt:
+    """Nach 1034 = 0 steht die Batterie bis zum Rueckfall. Der Executor
+    darf sie dann nicht als Luft der Spitzenkappung rechnen — er fragt
+    ``getattr(inverter, "batterie_gesperrt", False)``."""
+
+    async def test_ohne_sollwert_nicht_gesperrt(self, inv, register):
+        assert inv.batterie_gesperrt is False
+        await inv.async_set_charge_limit(2.0)
+        await inv.async_set_discharge_limit(1.0)
+        assert inv.batterie_gesperrt is False
+        await inv.async_disconnect()
+
+    async def test_nach_entladung_gesperrt_bis_zur_bewegung(
+        self, inv, register, uhr
+    ):
+        from datetime import timedelta
+        await inv.async_set_discharge(3.0)
+        # Waehrend des eigenen Befehls weiss es der Executor selbst.
+        assert inv.batterie_gesperrt is False
+        await inv.async_stop_forcible()
+        assert inv.batterie_gesperrt is True
+        # Der vorgemerkte Deckel meldet Erfolg — die Batterie steht trotzdem.
+        assert await inv.async_set_discharge_limit(1.0) is True
+        assert inv.batterie_gesperrt is True
+
+        uhr["jetzt"] += timedelta(seconds=60)
+        _messung(inv, 1200, uhr["jetzt"])
+        assert inv.batterie_gesperrt is False
+        await inv.async_disconnect()
+
+    async def test_nach_netzladung_am_ziel_gesperrt(self, inv, register):
+        await inv.async_set_grid_charge(2.0, target_soc=80.0)
+        register[REG_SOC] = 80.0
+        await inv.async_set_grid_charge(2.0, target_soc=80.0)
+        assert inv._active is None
+        assert inv.batterie_gesperrt is True
+        await inv.async_disconnect()
+
+
+class TestNetzladungZielHysterese:
+    """Am Ziel angehalten, im Rueckfall ein Zehntelprozent ans Haus — und
+    jede neue Leistung des Executors startete 1034 neu."""
+
+    async def test_knapp_unter_dem_ziel_kein_neustart(
+        self, inv, register, mock_modbus_client
+    ):
+        assert await inv.async_set_grid_charge(2.0, target_soc=80.0) is True
+        register[REG_SOC] = 80.2
+        assert await inv.async_set_grid_charge(2.5, target_soc=80.0) is True
+        assert _werte(mock_modbus_client, REG_BATTERY_SETPOINT) == [-2000, 0]
+
+        mock_modbus_client.write_registers.reset_mock()
+        register[REG_SOC] = 79.4
+        assert await inv.async_set_grid_charge(2.5, target_soc=80.0) is True
+        assert _written(mock_modbus_client, REG_BATTERY_SETPOINT) == []
+        assert inv._active is None
+
+        # Erst zwei Prozent darunter gilt es wieder.
+        register[REG_SOC] = 77.9
+        assert await inv.async_set_grid_charge(2.5, target_soc=80.0) is True
+        assert _werte(mock_modbus_client, REG_BATTERY_SETPOINT) == [-2500]
+        assert inv._active == ("grid_charge", 2500.0)
+        await inv.async_disconnect()
+
+    async def test_unbekannter_ladestand_startet_nicht_neu(
+        self, inv, register, mock_modbus_client
+    ):
+        await inv.async_set_grid_charge(2.0, target_soc=80.0)
+        register[REG_SOC] = 80.0
+        await inv.async_set_grid_charge(2.0, target_soc=80.0)
+        mock_modbus_client.write_registers.reset_mock()
+        register[REG_SOC] = None
+        assert await inv.async_set_grid_charge(2.0, target_soc=80.0) is True
+        assert _written(mock_modbus_client, REG_BATTERY_SETPOINT) == []
+        await inv.async_disconnect()
+
+    async def test_anderes_ziel_ist_ein_neuer_befehl(
+        self, inv, register, mock_modbus_client
+    ):
+        await inv.async_set_grid_charge(2.0, target_soc=80.0)
+        register[REG_SOC] = 80.0
+        await inv.async_set_grid_charge(2.0, target_soc=80.0)
+        mock_modbus_client.write_registers.reset_mock()
+        register[REG_SOC] = 79.5
+        assert await inv.async_set_grid_charge(2.0, target_soc=90.0) is True
+        assert _werte(mock_modbus_client, REG_BATTERY_SETPOINT) == [-2000]
+        await inv.async_disconnect()
+
+    async def test_entladung_loescht_das_erreichte_ziel(
+        self, inv, register, mock_modbus_client
+    ):
+        await inv.async_set_grid_charge(2.0, target_soc=80.0)
+        register[REG_SOC] = 80.0
+        await inv.async_set_grid_charge(2.0, target_soc=80.0)
+        await inv.async_set_discharge(1.0)
+        mock_modbus_client.write_registers.reset_mock()
+        register[REG_SOC] = 79.5
+        assert await inv.async_set_grid_charge(2.0, target_soc=80.0) is True
+        assert _werte(mock_modbus_client, REG_BATTERY_SETPOINT) == [-2000]
+        await inv.async_disconnect()
+
+    async def test_keepalive_merkt_das_ziel(
+        self, inv, register, mock_modbus_client, monkeypatch
+    ):
+        monkeypatch.setattr(f"{_K}.KEEPALIVE_INTERVAL", 0.01)
+        await inv.async_set_grid_charge(2.0, target_soc=80.0)
+        register[REG_SOC] = 80.3
+        await asyncio.sleep(0.3)
+        assert inv._active is None
+        assert inv._netz_ziel_erreicht_pct == pytest.approx(80.0)
+
+        mock_modbus_client.write_registers.reset_mock()
+        register[REG_SOC] = 79.6
+        assert await inv.async_set_grid_charge(3.0, target_soc=80.0) is True
+        assert _written(mock_modbus_client, REG_BATTERY_SETPOINT) == []
+        await inv.async_disconnect()
+
+
+class TestVorwert1040:
+    """Nach einem HA-Neustart kann ein alter Deckel in 1040 stehen."""
+
+    async def test_alter_deckel_ist_kein_vorwert(
+        self, inverter, mock_modbus_client
+    ):
+        _register_lesen(
+            mock_modbus_client,
+            {REG_MAX_DISCHARGE_POWER: 500.0, REG_MAX_DISCHARGE_BATTERY: 5000.0},
+        )
+        await inverter.async_set_discharge_limit(1.0)
+        assert inverter._max_discharge_pre_deckel == pytest.approx(5000.0)
+        assert inverter.get_max_discharge_power_kw() == pytest.approx(5.0)
+        assert await inverter.async_set_discharge_limit(None) is True
+        assert _werte(mock_modbus_client, REG_MAX_DISCHARGE_POWER) == [1000, 5000]
+
+    async def test_hoeherer_vorwert_bleibt_grenze_ist_1078(
+        self, inverter, mock_modbus_client
+    ):
+        _register_lesen(
+            mock_modbus_client,
+            {REG_MAX_DISCHARGE_POWER: 6000.0, REG_MAX_DISCHARGE_BATTERY: 5000.0},
+        )
+        await inverter.async_set_discharge_limit(1.0)
+        assert inverter._max_discharge_pre_deckel == pytest.approx(6000.0)
+        assert inverter.get_max_discharge_power_kw() == pytest.approx(5.0)
+        await inverter.async_set_discharge_limit(None)
+        assert _werte(mock_modbus_client, REG_MAX_DISCHARGE_POWER) == [1000, 6000]
+
+    async def test_steuerwerte_nehmen_1078_als_grenze(
+        self, inverter, mock_modbus_client
+    ):
+        _register_lesen(
+            mock_modbus_client,
+            {REG_MAX_DISCHARGE_POWER: 500.0, REG_MAX_DISCHARGE_BATTERY: 4800.0},
+        )
+        await inverter.async_get_control_values()
+        assert inverter.get_max_discharge_power_kw() == pytest.approx(4.8)
+
+
+class TestSollwertAblehnung:
+    async def test_ablehnung_sperrt_die_register_nicht(
+        self, inv, register, mock_modbus_client
+    ):
+        """Gradientensperre: 1034 abgelehnt, also gilt kein Sollwert — ein
+        Ladelimit danach wird sofort geschrieben, nicht vorgemerkt."""
+        async def _write(address, values, **kwargs):
+            if address == REG_BATTERY_SETPOINT:
+                return _err_response()
+            return _ok_response()
+
+        mock_modbus_client.write_registers = AsyncMock(side_effect=_write)
+        assert await inv.async_set_discharge(3.0) is False
+        assert inv._sollwert_seit is None
+        assert await inv.async_set_charge_limit(2.0) is True
+        assert _werte(mock_modbus_client, REG_MAX_CHARGE_POWER) == [2000]
+        await inv.async_disconnect()
+
+    async def test_ablehnung_laesst_einen_geltenden_sollwert_stehen(
+        self, inv, register, mock_modbus_client
+    ):
+        await inv.async_set_discharge(3.0)
+        seit = inv._sollwert_seit
+        mock_modbus_client.write_registers = AsyncMock(return_value=_err_response())
+        assert await inv.async_stop_forcible() is False
+        assert inv._sollwert_seit == seit
+        await inv.async_disconnect()
+
+    async def test_verbindungsabbruch_merkt_den_sollwert(
+        self, inv, register, mock_modbus_client
+    ):
+        mock_modbus_client.write_registers = AsyncMock(
+            side_effect=ConnectionError("weg")
+        )
+        assert await inv.async_set_discharge(3.0) is False
+        # Ob der Wert ankam, ist offen — lieber auf den Rueckfall warten.
+        assert inv._sollwert_seit is not None
+
+
+class TestLadelimitErsatz:
+    """Netzladung nach einem Ladelimit ohne gesicherten 1038-Vorwert."""
+
+    async def _limit_ohne_vorwert(self, inv, client, werte):
+        werte[REG_MAX_CHARGE_POWER] = None
+        _register_lesen(client, werte)
+        await inv.async_set_charge_limit(0.0)
+        assert inv._max_charge_pre_block is None
+        assert inv._max_charge_hw is None
+        client.write_registers.reset_mock()
+
+    async def test_1076_der_batterie(self, inverter, mock_modbus_client):
+        werte = {REG_SOC: 50.0, 1076: 7000.0}
+        await self._limit_ohne_vorwert(inverter, mock_modbus_client, werte)
+        assert await inverter.async_set_grid_charge(2.0, target_soc=80.0) is True
+        assert _werte(mock_modbus_client, REG_MAX_CHARGE_POWER) == [7000]
+        assert _werte(mock_modbus_client, REG_BATTERY_SETPOINT) == [-2000]
+        await inverter.async_disconnect()
+
+    async def test_eingestellte_batterieleistung(
+        self, mock_hass, kostal_config, mock_modbus_client
+    ):
+        inv = KostalInverter(
+            mock_hass, {**kostal_config, "discharge_power_kw": 4.0}
+        )
+        inv._client = mock_modbus_client
+        werte = {REG_SOC: 50.0, 1076: None}
+        await self._limit_ohne_vorwert(inv, mock_modbus_client, werte)
+        assert await inv.async_set_grid_charge(2.0, target_soc=80.0) is True
+        assert _werte(mock_modbus_client, REG_MAX_CHARGE_POWER) == [4000]
+        await inv.async_disconnect()
+
+    async def test_ohne_jeden_wert_fehler_mit_grund(
+        self, inverter, mock_modbus_client
+    ):
+        werte = {REG_SOC: 50.0, 1076: None}
+        await self._limit_ohne_vorwert(inverter, mock_modbus_client, werte)
+        assert await inverter.async_set_grid_charge(2.0) is False
+        assert inverter.last_write_error == "Ladelimit-Vorwert unbekannt"
+        await inverter.async_disconnect()
+
+
+class TestDisconnectDeckel:
+    async def _deckel_bleibt_beruehrt(self, inv, client):
+        """Deckel gesetzt, Zuruecksetzen vor der Entladung scheitert, Stopp
+        im Rueckfall delegiert es an den Keepalive."""
+        await inv.async_set_discharge_limit(1.0)
+
+        async def _write(address, values, **kwargs):
+            if address == REG_MAX_DISCHARGE_POWER:
+                return _err_response()
+            return _ok_response()
+
+        client.write_registers = AsyncMock(side_effect=_write)
+        await inv.async_set_discharge(3.0)
+        assert inv._deckel_beruehrt is True
+        assert await inv.async_stop_forcible() is True
+        assert inv.batterie_gesperrt is True
+        client.write_registers = AsyncMock(return_value=_ok_response())
+
+    async def test_ohne_rueckfall_wird_zurueckgesetzt(
+        self, inv, register, mock_modbus_client
+    ):
+        await inv.async_set_discharge_limit(1.0)
+        mock_modbus_client.write_registers.reset_mock()
+        await inv.async_disconnect()
+        assert _werte(mock_modbus_client, REG_MAX_DISCHARGE_POWER) == [5000]
+        assert inv._deckel_beruehrt is False
+
+    async def test_im_rueckfall_nichts_schreiben_aber_laut(
+        self, inv, register, mock_modbus_client, caplog
+    ):
+        await self._deckel_bleibt_beruehrt(inv, mock_modbus_client)
+        await inv.async_disconnect()
+        assert mock_modbus_client.write_registers.await_count == 0
+        assert "bleibt beim Entladen" in caplog.text
+
+    async def test_nach_dem_rueckfall_zurueckgesetzt(
+        self, inv, register, mock_modbus_client, uhr
+    ):
+        from datetime import timedelta
+        await self._deckel_bleibt_beruehrt(inv, mock_modbus_client)
+        inv._cancel_keepalive()
+        uhr["jetzt"] += timedelta(seconds=60)
+        _messung(inv, -1500, uhr["jetzt"])
+        await inv.async_disconnect()
+        assert _werte(mock_modbus_client, REG_MAX_DISCHARGE_POWER) == [5000]
+        assert _written(mock_modbus_client, REG_BATTERY_SETPOINT) == []
+
+
+class TestVorgemerktIstErfolg:
+    """Ein vorgemerkter Befehl ist ein angenommener — ein alter Fehlergrund
+    darf nicht stehen bleiben (er landete sonst in der Telemetrie)."""
+
+    async def test_ladelimit_und_deckel_vorgemerkt(self, inv, register):
+        await inv.async_set_discharge(3.0)
+        await inv.async_stop_forcible()
+        inv.last_write_error = "alt"
+        assert await inv.async_set_charge_limit(2.0) is True
+        assert inv.last_write_error is None
+        inv.last_write_error = "alt"
+        assert await inv.async_set_discharge_limit(1.0) is True
+        assert inv.last_write_error is None
+        await inv.async_disconnect()
+
+    async def test_aufheben_vorgemerkt(self, inv, register, mock_modbus_client):
+        await TestDisconnectDeckel()._deckel_bleibt_beruehrt(inv, mock_modbus_client)
+        inv.last_write_error = "alt"
+        assert await inv.async_set_discharge_limit(None) is True
+        assert inv.last_write_error is None
+        assert mock_modbus_client.write_registers.await_count == 0
+        inv._cancel_keepalive()

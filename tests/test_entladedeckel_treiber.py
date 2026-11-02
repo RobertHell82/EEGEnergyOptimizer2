@@ -737,6 +737,21 @@ async def test_kostal_aufheben_ohne_deckel_ist_noop(kostal):
     assert client.write_registers.await_count == 0
 
 
+async def test_kostal_stehende_batterie_ist_keine_luft(kostal):
+    """Nach 1034 = 0 steht die Batterie bis zum Watchdog-Rückfall; ein
+    Deckel wird nur vorgemerkt und meldet trotzdem True. Der Executor liest
+    ``getattr(inverter, "batterie_gesperrt", False)`` und rechnet dann keine
+    Luft — sonst schaltete die Verbraucher-Stufe nichts ab."""
+    inv, client = kostal
+    assert getattr(inv, "batterie_gesperrt", False) is False
+    await inv.async_set_discharge(3.0)
+    await inv.async_stop_forcible()
+    client.write_registers.reset_mock()
+    assert await inv.async_set_discharge_limit(0.0) is True
+    assert client.write_registers.await_count == 0
+    assert getattr(inv, "batterie_gesperrt", False) is True
+
+
 # ---------------------------------------------------------------------------
 # Victron — „Max. Wechselrichterleistung" (Settings/CGwacs/MaxDischargePower)
 # ---------------------------------------------------------------------------
