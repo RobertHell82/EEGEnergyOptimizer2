@@ -100,6 +100,12 @@ from .spitzenreserve import SICHERHEIT_KW, entladedeckel_kw, reserve_zu
 
 _LOGGER = logging.getLogger(__name__)
 
+# Gegenrichtung der Deckel-Wirkungskontrolle (``_deckel_steht``): ab diesem
+# geschriebenen Deckel soll die Batterie sichtbar etwas abgeben, und unter
+# dieser Entladung gilt sie als stehend.
+DECKEL_STEHT_MIN_KW = 0.5
+DECKEL_STEHT_MAX_ENTLADUNG_KW = 0.1
+
 # LP-Rauschen: |Werte| unterhalb dieser Schwelle gelten als 0.
 _EPS_KW = 0.001
 # Klartext der Freigabe bei voller Batterie. Der Executor fragt ihn ab
@@ -398,9 +404,14 @@ class ScheduleExecutor:
         self._netzladung_runs = 0
         self._netzladung_wirkungslos = False
         self._netzladung_ist_kw: float | None = None
-        # Wirkungskontrolle des Entladedeckels (nur melden, _deckel_pruefen).
+        # Wirkungskontrolle des Entladedeckels (nur melden, _deckel_pruefen),
+        # in beide Richtungen: „zu_viel" (entlädt über dem Deckel) und
+        # „steht" (gibt trotz Deckel nichts, obwohl das Netz über der Grenze
+        # liegt).
         self._deckel_runs = 0
+        self._deckel_steht_runs = 0
         self._deckel_wirkungslos = False
+        self._deckel_richtung: str | None = None
         self._deckel_ist_kw: float | None = None
 
         # Not-Aus (Guard 2): anhaltender Netzbezug während einer Entladung.
@@ -467,6 +478,34 @@ class ScheduleExecutor:
     @property
     def stillgelegt(self) -> bool:
         return self._stillgelegt
+
+    def _stillgelegt_abbruch(self) -> bool:
+        """Wurde während dieses Laufs stillgelegt? Dann nichts mehr schreiben.
+
+        ``async_guard_cycle`` prüft ``_stillgelegt`` nur am Anfang. Ein Lauf,
+        der schon im ersten Treiberaufruf wartet (Sigenergy-Schritte bis
+        60 s, ``_stilllegen`` wartet nur 20 s), überholte sonst die
+        Freigabe beim Entladen: Danach rief er noch etwa
+        ``_spitzenkappung_schritt`` → ``async_set_discharge_limit`` und
+        schaltete Remote EMS wieder ein — und niemand gab mehr frei. Deshalb
+        vor jedem weiteren Schreibbefehl erneut fragen. Stopps und Freigaben
+        brauchen das nicht, sie sind genau das, was das Entladen will.
+        """
+        if self._stillgelegt:
+            self.last_status = "Integration wird gestoppt — keine Steuerbefehle"
+            return True
+        return False
+
+    def _batterie_gesperrt(self) -> bool:
+        """Steht die Batterie gerade geräteseitig (Kostal-Rückfall)?
+
+        Der Kostal-Treiber meldet ``batterie_gesperrt``, solange die Batterie
+        nach einem 1034-Sollwert bis zum Watchdog-Rückfall steht. Dann gibt
+        sie nichts für Spitzen her, egal was der Deckel sagt. ``is True``
+        statt Wahrheitswert: Ein Treiber ohne das Merkmal (oder ein Mock)
+        darf nicht als gesperrt gelten.
+        """
+        return getattr(self._inverter, "batterie_gesperrt", False) is True
 
     @property
     def hat_eingriff(self) -> bool:
@@ -647,19 +686,27 @@ class ScheduleExecutor:
         als das Anderthalbfache über dem Deckel, ``GUARD_WIRKUNG_RUNS`` Läufe
         lang — beide Schwellen, damit weder Messrauschen beim Halten (0 kW)
         noch eine knappe Regelung bei großem Deckel anschlagen.
+
+        Die Gegenrichtung (``_deckel_steht``): Ein Gerät, das jeden Deckel
+        als „halten" liest, fällt hier nie auf — es entlädt ja nicht zu viel.
+        Teuer wird es trotzdem: Die Spitze, die die Batterie decken sollte,
+        kommt aus dem Netz.
         """
         deckel = self._written_entladedeckel_kw
         if deckel is None or self._active_kind not in ("release", "charge_limit"):
-            self._deckel_runs = 0
-            self._deckel_wirkungslos = False
+            self._deckel_zuruecksetzen()
             return
         batterie = compute_battery_now_kw(self._hass, self._config)
         if batterie is None:
             return
         entladung = max(0.0, -float(batterie))
+        if self._deckel_steht(deckel, entladung):
+            return
         if entladung <= deckel + GUARD_WIRKUNG_MIN_LUECKE_KW or entladung <= deckel * 1.5:
             self._deckel_runs = 0
-            self._deckel_wirkungslos = False
+            if self._deckel_richtung == "zu_viel":
+                self._deckel_wirkungslos = False
+                self._deckel_richtung = None
             return
         self._deckel_runs += 1
         if self._deckel_runs >= GUARD_WIRKUNG_RUNS and not self._deckel_wirkungslos:
@@ -668,7 +715,66 @@ class ScheduleExecutor:
                 "%.2f kW Entladung über %d Läufe", deckel, entladung, self._deckel_runs,
             )
             self._deckel_wirkungslos = True
+            self._deckel_richtung = "zu_viel"
             self._deckel_ist_kw = round(entladung, 2)
+
+    def _deckel_steht(self, deckel: float, entladung: float) -> bool:
+        """Gibt die Batterie trotz Deckel nichts her? Zählt mit; True = Befund.
+
+        Alle Bedingungen zusammen, ``GUARD_WIRKUNG_RUNS`` Läufe lang: ein
+        Deckel ab ``DECKEL_STEHT_MIN_KW`` (darunter ist Halten gemeint oder
+        Rauschen), ein Netzbezug über der Grenze der Spitzenkappung (sonst
+        muss die Batterie nichts decken), weniger als
+        ``DECKEL_STEHT_MAX_ENTLADUNG_KW`` aus der Batterie und ein Ladestand
+        über dem Mindest-Ladestand (``basis_pct``; dort hält sie zu Recht,
+        auch gegen Spitzen). Die Schwelle ``basis + reserve`` selbst taugt
+        nicht als Bedingung: Ein Deckel über 0 steht überhaupt nur, solange
+        der Ladestand IN der Reserve liegt (``entladedeckel_kw``). Nicht
+        während ``batterie_gesperrt`` (Kostal bis zum Watchdog-Rückfall) —
+        dort steht sie bekannt und aus einem anderen Grund.
+        """
+        info = self.spitzenkappung or {}
+        grenze = info.get("grenze_kw")
+        basis = info.get("basis_pct")
+        export = compute_grid_export_kw(self._hass, self._config)
+        soc = self._batterie_soc_pct()
+        steht = (
+            deckel >= DECKEL_STEHT_MIN_KW
+            and not self._batterie_gesperrt()
+            and isinstance(grenze, (int, float))
+            and isinstance(basis, (int, float))
+            and export is not None
+            and -export > float(grenze)
+            and entladung < DECKEL_STEHT_MAX_ENTLADUNG_KW
+            and soc is not None
+            and soc > float(basis) + GUARD_WIRKUNG_SOC_ABSTAND_PCT
+        )
+        if not steht:
+            self._deckel_steht_runs = 0
+            if self._deckel_richtung == "steht":
+                self._deckel_wirkungslos = False
+                self._deckel_richtung = None
+            return False
+        self._deckel_runs = 0
+        self._deckel_steht_runs += 1
+        if self._deckel_steht_runs >= GUARD_WIRKUNG_RUNS and not self._deckel_wirkungslos:
+            _LOGGER.warning(
+                "Executor: Entladedeckel wirkungslos — %.2f kW erlaubt, Netzbezug "
+                "%.2f kW über %.2f kW, die Batterie gibt %.2f kW über %d Läufe",
+                deckel, -export, float(grenze), entladung, self._deckel_steht_runs,
+            )
+            self._deckel_wirkungslos = True
+            self._deckel_richtung = "steht"
+            self._deckel_ist_kw = round(entladung, 2)
+        return True
+
+    def _deckel_zuruecksetzen(self) -> None:
+        """Wirkungskontrolle des Deckels zurück auf null (kein Deckel mehr)."""
+        self._deckel_runs = 0
+        self._deckel_steht_runs = 0
+        self._deckel_wirkungslos = False
+        self._deckel_richtung = None
+        self._deckel_ist_kw = None
 
     def _wirkung_zuruecksetzen(self) -> None:
         """Zähler von Guard 3 zurückstellen (Slotwechsel, Ende der Entladung)."""
@@ -680,9 +786,7 @@ class ScheduleExecutor:
         self._netzladung_wirkungslos = False
         self._netzladung_ist_kw: float | None = None
         # Wirkungskontrolle des Entladedeckels (nur melden, _deckel_pruefen).
-        self._deckel_runs = 0
-        self._deckel_wirkungslos = False
-        self._deckel_ist_kw: float | None = None
+        self._deckel_zuruecksetzen()
 
     async def async_release(self) -> bool:
         """Wechselrichter freigeben: erzwungene Modi stoppen, Automatik läuft.
@@ -723,6 +827,11 @@ class ScheduleExecutor:
         await self._entladedeckel_aufheben(bremse=False)
         self._kappung_aktiv = False
         self.spitzenkappung = None
+        # Ohne Deckel gibt es nichts mehr zu melden. Failsafe, Not-Aus und
+        # Modus Aus kehren vor ``_deckel_pruefen`` zurück — ohne das hier
+        # stünde ein „wirkungslos" sonst weiter im Status und in der
+        # Telemetrie, obwohl der Deckel längst weg ist.
+        self._deckel_zuruecksetzen()
         self._written_charge_limit_kw = None
         self._written_discharge_kw = None
         self._written_grid_charge_kw = None
@@ -1126,6 +1235,8 @@ class ScheduleExecutor:
             self.last_status = "Not-Aus aktiv — Entladung bis zum Slotwechsel gesperrt"
             return
 
+        if self._stillgelegt_abbruch():
+            return
         if action.kind in ("grid_charge", "discharge"):
             # Eine erzwungene Entladung oder Netzladung liefe gegen den
             # Deckel (Huawei: Number-Entität „Maximale Entladeleistung").
@@ -1136,6 +1247,8 @@ class ScheduleExecutor:
             self._kappung_aktiv = False
             self.spitzenkappung = None
             await self._entladedeckel_aufheben()
+            if self._stillgelegt_abbruch():
+                return
         if action.kind == "release":
             await self._apply_release(action.reason or "Normalbetrieb")
         elif action.kind == "charge_limit":
@@ -1150,6 +1263,8 @@ class ScheduleExecutor:
             # Nur, wenn die Absicht auch angekommen ist: Scheiterte etwa der
             # Stopp einer Entladung, läuft sie noch, und ein Deckel
             # daneben würde vom späteren Stopp still mitgenommen.
+            if self._stillgelegt_abbruch():
+                return
             await self._spitzenkappung_schritt(schedule_state, now)
         self._deckel_pruefen()
 
@@ -1190,7 +1305,11 @@ class ScheduleExecutor:
             "netzladung_wirkungslos": self._netzladung_wirkungslos,
             "netzladung_ist_kw": self._netzladung_ist_kw,
             "deckel_wirkungslos": self._deckel_wirkungslos,
+            # "zu_viel" (entlädt über dem Deckel) oder "steht" (gibt trotz
+            # Deckel und Netzbezug über der Grenze nichts) — None ohne Befund.
+            "deckel_richtung": self._deckel_richtung,
             "deckel_ist_kw": self._deckel_ist_kw,
+            "batterie_gesperrt": self._batterie_gesperrt(),
             "heizstab": None if self._heizstab is None else self._heizstab.status(),
             "written_entladedeckel_kw": self._written_entladedeckel_kw,
             "spitzenkappung": self.spitzenkappung,
@@ -1259,6 +1378,7 @@ class ScheduleExecutor:
         if not getattr(self._inverter, "supports_discharge_limit", False):
             self._written_entladedeckel_kw = None
             self._entladedeckel_offen = False
+            self._deckel_zuruecksetzen()
             return True
         if bremse and self._deckel_warten > 0:
             self._deckel_warten -= 1
@@ -1268,6 +1388,7 @@ class ScheduleExecutor:
         if ok:
             self._written_entladedeckel_kw = None
             self._entladedeckel_offen = False
+            self._deckel_zuruecksetzen()
         else:
             # Was jetzt am Gerät steht, weiß niemand — freigeben bleibt das Ziel.
             self._entladedeckel_offen = True
@@ -1355,8 +1476,14 @@ class ScheduleExecutor:
             bisher_kw=self._written_entladedeckel_kw,
         )
         self._kappung_aktiv = aktiv
+        gesperrt = self._batterie_gesperrt()
+        if gesperrt:
+            # Kurz in der Statuszeile: Der Deckel sagt dann nichts — die
+            # Batterie steht bis zum Watchdog-Rückfall des Geräts.
+            grund = f"{grund} — Batterie gesperrt bis zum Rückfall des Wechselrichters"
         self.spitzenkappung = {
             "aktiv": aktiv,
+            "batterie_gesperrt": gesperrt,
             "grenze_kw": round(grenze, 2),
             "reserve_pct": round(reserve, 1),
             "schwelle_pct": round(float(basis) + reserve, 1),
@@ -1389,6 +1516,8 @@ class ScheduleExecutor:
                 f"{deckel:.2f} kW nicht gesetzt — nächster Versuch in "
                 f"{self._deckel_warten + 1} Läufen"
             )
+            return
+        if self._stillgelegt_abbruch():
             return
         ok = await self._inverter.async_set_discharge_limit(deckel)
         # Eigene Bremse statt _write_quittieren: Ein Erfolg des Ladelimits im
@@ -1432,6 +1561,12 @@ class ScheduleExecutor:
         if self._stillgelegt or self.spitzenkappung is None:
             return 0.0
         if not spitzenkappung_batterie_aktiv(self._config, self._inverter):
+            return 0.0
+        if self._batterie_gesperrt():
+            # Kostal nach einem 1034-Sollwert: Die Batterie steht bis zum
+            # Watchdog-Rückfall, auch für eine Spitze. Mit ihr zu rechnen
+            # hieße, Verbraucher anzulassen, deren Spitze dann aus dem Netz
+            # kommt.
             return 0.0
         batt = compute_battery_now_kw(self._hass, self._config)
         if batt is None:
@@ -1623,6 +1758,10 @@ class ScheduleExecutor:
         hz = self._heizstab
         if hz is None or not hz.enabled:
             return
+        if self._stillgelegt:
+            # Stilllegen hat den Controller selbst schon angehalten
+            # (``HeizstabController.stilllegen``) — kein Sollwert mehr.
+            return
         try:
             if pause_bis is not None or mode != MODE_EIN:
                 await hz.async_set_sollwert(0.0, "Optimierung aus")
@@ -1765,6 +1904,8 @@ class ScheduleExecutor:
             )
             return
 
+        if self._stillgelegt_abbruch():
+            return
         ok = await self._inverter.async_set_charge_limit(ziel)
         self.last_write_ok = ok
         self._write_quittieren(ok, "charge_limit")
@@ -1897,6 +2038,8 @@ class ScheduleExecutor:
             )
             return
 
+        if self._stillgelegt_abbruch():
+            return
         ok = await self._inverter.async_set_grid_charge(power, target_soc=ziel_soc)
         self.last_write_ok = ok
         self._write_quittieren(ok, "grid_charge")
@@ -2077,6 +2220,8 @@ class ScheduleExecutor:
             )
             return
 
+        if self._stillgelegt_abbruch():
+            return
         ok = await self._inverter.async_set_discharge(power, target_soc=ziel_soc)
         self.last_write_ok = ok
         self._write_quittieren(ok, "discharge")

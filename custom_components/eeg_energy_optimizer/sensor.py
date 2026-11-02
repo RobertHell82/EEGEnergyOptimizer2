@@ -1332,6 +1332,8 @@ def _kappung_batterie(data: dict) -> dict[str, Any] | None:
             "schwelle_pct": lauf.get("schwelle_pct"),
             "deckel_kw": lauf.get("deckel_kw"),
             "grund": lauf.get("grund"),
+            # Kostal: Batterie steht bis zum Watchdog-Rückfall des Geräts.
+            "batterie_gesperrt": bool(lauf.get("batterie_gesperrt")),
         })
     return ergebnis
 

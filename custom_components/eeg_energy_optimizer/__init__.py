@@ -561,14 +561,20 @@ def _check_schedule_health(schedule_state, status, mode, config, dedup, emit):
             },
         )
     if status.get("deckel_wirkungslos"):
+        # Zwei Richtungen, zwei Kennungen: „deckel" — die Batterie entlädt
+        # über dem Deckel; „deckel_steht" — sie gibt trotz Deckel nichts,
+        # während das Netz über der Grenze liegt. Getrennt, damit die eine
+        # die andere im Dedup nicht verschluckt; die Ursachen sind andere.
+        richtung = status.get("deckel_richtung")
         emit(
             category="guard_wirkung",
             severity="warning",
-            message_hash="deckel",
+            message_hash="deckel_steht" if richtung == "steht" else "deckel",
             context={
                 "inverter_type": config.get(CONF_INVERTER_TYPE),
                 "deckel_kw": status.get("written_entladedeckel_kw"),
                 "ist_kw": status.get("deckel_ist_kw"),
+                "richtung": richtung,
                 "slot": action.get("slot"),
             },
         )
@@ -669,9 +675,15 @@ def _check_abendladung_health(schedule_state, mode, config, soc, merker, jetzt, 
     gemessener Ladestand mehr als ``ABENDLADUNG_TOLERANZ_PCT`` unter dem
     Schwellwert → ``abendladung`` mit dem, was der Plan dort erwartet hatte.
 
+    Ein gemerkter, noch ungeprüfter Termin wird nur durch einen Termin
+    desselben Kalendertags ersetzt (die PV-Zeit verschiebt sich), nie durch
+    einen späteren Tag.
+
     Nur im Modus Ein (eine Pause kommt hier schon als Aus an): Ohne
     Steuerung lädt niemand aus dem Netz, ein verfehlter Wert ist dann kein
-    Versagen. Erklärt, warum eine Anlage abends leerer ist als eingestellt —
+    Versagen. Der Guard-Lauf ruft diese Prüfung nur im Telemetrie-Block auf,
+    und der läuft im Modus Aus gar nicht — das Leeren des Merkers dort
+    übernimmt ``_abendladung_merker_ruhe``. Erklärt, warum eine Anlage abends leerer ist als eingestellt —
     zu optimistische Prognose, keine Viertelstunde mehr frei, Netzgrenze,
     oder ein Ladebefehl ohne Wirkung (der kommt zusätzlich als
     ``guard_wirkung``/``netzladung``).
@@ -704,18 +716,49 @@ def _check_abendladung_health(schedule_state, mode, config, soc, merker, jetzt, 
                 )
             merker.clear()
     abend = (schedule_state or {}).get("netzladen_abend") or {}
+    gemerkt = None
+    if merker.get("t") is not None:
+        try:
+            gemerkt = datetime.fromisoformat(merker["t"]).date()
+        except (TypeError, ValueError):
+            gemerkt = None
     for eintrag in abend.get("termine") or []:
         try:
-            if datetime.fromisoformat(eintrag["t"]) + timedelta(minutes=15) <= jetzt:
+            neu = datetime.fromisoformat(eintrag["t"])
+            if neu + timedelta(minutes=15) <= jetzt:
                 continue
         except (KeyError, TypeError, ValueError):
             continue
+        if gemerkt is not None and neu.date() > gemerkt:
+            # Der gemerkte Termin ist noch ungeprüft, und der Plan nennt
+            # schon morgen. Genau das ist der Fehlerfall: Endet die PV früher
+            # als prognostiziert, fällt der heutige Termin aus dem Plan (er
+            # liegt nicht mehr vor dem Ende der Erzeugung), und der Merker
+            # sprang bisher auf morgen — geprüft wurde dann nie. Also bleibt
+            # der heutige stehen, bis er vorbei ist.
+            break
         merker.update(
             t=eintrag["t"], geplant_pct=eintrag.get("geplant_pct"), ziel_pct=abend.get("ziel_pct")
         )
         break
     else:
         if not abend:
+            merker.clear()
+
+
+def _abendladung_merker_ruhe(data: dict, mode: str) -> None:
+    """Merker der Mindestladung leeren, solange nicht gesteuert wird.
+
+    Läuft in jedem Guard-Lauf, außerhalb des Telemetrie-Blocks: Der ruft
+    ``_check_abendladung_health`` nur mit ``mode != MODE_AUS`` auf, deren
+    eigener Zweig für „nicht Ein" war dort also tot. Ging die Anlage mit einem
+    gemerkten Termin in Pause oder Aus und kam erst nach ihm zurück, prüfte
+    der erste Lauf im Modus Ein einen Termin, für den niemand geladen hatte —
+    ein Fehlalarm.
+    """
+    if mode != MODE_EIN:
+        merker = data.get("telemetry_abend_merker")
+        if merker:
             merker.clear()
 
 
@@ -2422,6 +2465,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     _collect_snapshot(schedule_state, status, mode, _read_soc())
                 except Exception:  # pragma: no cover
                     _LOGGER.exception("Telemetry: snapshot collect failed")
+            # Außerhalb des Blocks: Aus und Pause kommen dort nie an.
+            _abendladung_merker_ruhe(data, mode)
 
             # Profile-Drift-Self-Heal: Wenn der Kapazitäts-Sensor beim Boot
             # noch unknown war, hat _boot_telemetry_send den manuellen

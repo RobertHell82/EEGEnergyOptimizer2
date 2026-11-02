@@ -450,3 +450,90 @@ async def test_schwelle_wie_im_plan_gedeckelt(mock_hass, inverter):
         await ex.async_guard_cycle(_state(basis=70.0, reserve_pct=30.0), MODE_EIN, now=NOW)
     assert ex.spitzenkappung["schwelle_pct"] == 80.0
     assert ex.spitzenkappung["aktiv"] is False
+
+
+# ---------------------------------------------------------------------------
+# Entladen der Integration mitten im Lauf
+# ---------------------------------------------------------------------------
+
+
+async def test_stilllegen_waehrend_des_ladelimits_setzt_keinen_deckel(mock_hass, inverter):
+    """Ein Lauf hängt im ersten Treiberaufruf (Sigenergy bis 60 s), derweil
+    gibt ``_stilllegen`` frei. Danach darf er keinen Deckel mehr schreiben —
+    der schaltete Remote EMS wieder an, und niemand gäbe mehr frei."""
+    ex = _executor(_hass(mock_hass, soc=25.0), inverter)
+
+    async def langsam(_kw):
+        ex.stilllegen()
+        return True
+
+    inverter.async_set_charge_limit = AsyncMock(side_effect=langsam)
+    laden = _state(_slot(battery_p=-1.0, grid_p=1.0, soc=26.0))
+    with _messung(export=1.0, batt=1.0):
+        await ex.async_guard_cycle(laden, MODE_EIN, now=NOW)
+    inverter.async_set_charge_limit.assert_awaited_once()
+    inverter.async_set_discharge_limit.assert_not_awaited()
+    assert "gestoppt" in ex.last_status
+
+
+async def test_stilllegen_waehrend_des_aufhebens_entlaedt_nicht(mock_hass, inverter):
+    """Vor einer Entladung wird der Deckel aufgehoben — wird dabei
+    stillgelegt, folgt kein Entladebefehl mehr."""
+    ex = _executor(_hass(mock_hass, soc=25.0), inverter)
+    ex._written_entladedeckel_kw = 0.0
+
+    async def aufheben(_kw):
+        ex.stilllegen()
+        return True
+
+    inverter.async_set_discharge_limit = AsyncMock(side_effect=aufheben)
+    entladung = _state(_slot(battery_p=3.0, grid_p=2.0, soc=35.0))
+    with _messung():
+        await ex.async_guard_cycle(entladung, MODE_EIN, now=NOW)
+    inverter.async_set_discharge_limit.assert_awaited_once_with(None)
+    inverter.async_set_discharge.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# Kostal: Batterie bis zum Watchdog-Rückfall gesperrt
+# ---------------------------------------------------------------------------
+
+
+def test_gesperrte_batterie_hat_keine_luft(mock_hass, inverter):
+    ex = _executor(_hass(mock_hass, soc=50.0), inverter)
+    ex.spitzenkappung = {"basis_pct": 10.0, "aktiv": False}
+    with _messung(batt=1.5):
+        assert ex.batterie_luft_kw() == pytest.approx(6.5)
+    inverter.batterie_gesperrt = True
+    with _messung(batt=1.5):
+        assert ex.batterie_luft_kw() == 0.0
+
+
+async def test_gesperrte_batterie_steht_in_der_statuszeile(mock_hass, inverter):
+    inverter.batterie_gesperrt = True
+    ex = _executor(_hass(mock_hass, soc=25.0), inverter)
+    with _messung(export=-1.0, batt=0.0):
+        await ex.async_guard_cycle(_state(), MODE_EIN, now=NOW)
+    assert ex.spitzenkappung["batterie_gesperrt"] is True
+    assert "gesperrt" in ex.spitzenkappung["grund"]
+    assert "gesperrt" in ex.last_status
+    assert ex.status()["batterie_gesperrt"] is True
+
+
+async def test_eigene_entladung_zaehlt_nie_als_luft(mock_hass, inverter):
+    """Während einer eigenen Entladung meldet Kostal ``batterie_gesperrt``
+    bewusst False (die eigene Bewegung ist kein Rückfall). Luft gibt es dort
+    trotzdem keine — der Lauf setzt die Batterie-Stufe aus."""
+    inverter.batterie_gesperrt = False
+    ex = _executor(_hass(mock_hass, soc=50.0), inverter)
+    entladung = _state(_slot(battery_p=3.0, grid_p=2.0, soc=45.0))
+    with _messung(batt=-3.0):
+        await ex.async_guard_cycle(entladung, MODE_EIN, now=NOW)
+        assert ex._active_kind == "discharge"
+        assert ex.batterie_luft_kw() == 0.0
+
+
+def test_ohne_merkmal_ist_nichts_gesperrt(mock_hass, inverter):
+    """Ein MagicMock-Attribut ist wahr — gesperrt heißt nur ``True``."""
+    ex = _executor(_hass(mock_hass, soc=50.0), inverter)
+    assert ex.status()["batterie_gesperrt"] is False

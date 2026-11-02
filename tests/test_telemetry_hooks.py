@@ -949,6 +949,24 @@ def test_schedule_health_meldet_wirkungslosen_entladedeckel():
     assert m["context"]["inverter_type"] == "kostal_plenticore"
 
 
+def test_schedule_health_meldet_stehende_batterie_trotz_deckel():
+    """Gegenrichtung mit eigener Kennung — sonst verschluckte das Dedup der
+    einen Richtung die andere."""
+    from custom_components.eeg_energy_optimizer import _check_schedule_health
+
+    calls, emit = _sammler()
+    _check_schedule_health(
+        {"error": None},
+        {"supported": True, "deckel_wirkungslos": True, "deckel_richtung": "steht",
+         "written_entladedeckel_kw": 1.2, "deckel_ist_kw": 0.0, "plan_action": {}},
+        MODE_EIN, {CONF_INVERTER_TYPE: "sigenergy"}, {}, emit,
+    )
+    [m] = calls
+    assert (m["category"], m["message_hash"]) == ("guard_wirkung", "deckel_steht")
+    assert m["context"]["richtung"] == "steht"
+    assert m["context"]["deckel_kw"] == 1.2
+
+
 def _spitze(monat, kw):
     return SimpleNamespace(monat=monat, spitze={"kw": kw, "start": "2026-11-01T06:30:00+00:00"})
 
@@ -1076,3 +1094,54 @@ def test_abendladung_knapp_darunter_oder_modus_aus_meldet_nichts():
     _check_abendladung_health(_abend_plan(), MODE_EIN, {}, 20.0, merker, vorher, emit)
     _check_abendladung_health(_abend_plan(), MODE_AUS, {}, 10.0, merker, danach, emit)
     assert calls == [] and merker == {}
+
+
+def test_abendladung_heutiger_termin_bleibt_wenn_der_plan_schon_morgen_nennt():
+    """Endet die PV früher als prognostiziert, fällt der heutige Termin aus dem
+    Plan, und der erste offene ist morgen. Der Merker sprang bisher dorthin —
+    genau der Fehlerfall wurde nie geprüft."""
+    from custom_components.eeg_energy_optimizer import _check_abendladung_health
+
+    calls, emit = _sammler()
+    merker = {}
+    vorher = datetime(2026, 11, 2, 13, 0, tzinfo=ABEND_TZ)
+    _check_abendladung_health(_abend_plan(), MODE_EIN, {}, 20.0, merker, vorher, emit)
+    morgen = _abend_plan(t="2026-11-03T15:00:00+01:00")
+    _check_abendladung_health(morgen, MODE_EIN, {}, 20.0, merker,
+                              datetime(2026, 11, 2, 13, 30, tzinfo=ABEND_TZ), emit)
+    assert merker["t"] == "2026-11-02T14:00:00+01:00"
+    # Derselbe Tag darf ihn verschieben (die PV-Zeit wandert mit der Prognose).
+    spaeter = _abend_plan(t="2026-11-02T14:30:00+01:00")
+    _check_abendladung_health(spaeter, MODE_EIN, {}, 20.0, merker,
+                              datetime(2026, 11, 2, 13, 45, tzinfo=ABEND_TZ), emit)
+    assert merker["t"] == "2026-11-02T14:30:00+01:00"
+    # Vorbei: geprüft, gemeldet, dann erst morgen.
+    _check_abendladung_health(morgen, MODE_EIN, {}, 25.0, merker,
+                              datetime(2026, 11, 2, 14, 46, tzinfo=ABEND_TZ), emit)
+    assert [c["category"] for c in calls] == ["abendladung"]
+    assert merker["t"] == "2026-11-03T15:00:00+01:00"
+
+
+def test_abendladung_merker_wird_in_aus_und_pause_geleert():
+    """Der Guard-Lauf ruft die Prüfung nur im Telemetrie-Block mit Modus ≠ Aus
+    auf; ihr eigener Zweig für „nicht Ein" war dort tot. Ohne das Leeren
+    außerhalb meldete der erste Lauf nach einer Pause über den Termin hinweg
+    eine verfehlte Mindestladung, für die niemand zuständig war."""
+    from custom_components.eeg_energy_optimizer import (
+        _abendladung_merker_ruhe,
+        _check_abendladung_health,
+    )
+
+    calls, emit = _sammler()
+    data = {"telemetry_abend_merker": {}}
+    merker = data["telemetry_abend_merker"]
+    vorher = datetime(2026, 11, 2, 13, 0, tzinfo=ABEND_TZ)
+    _check_abendladung_health(_abend_plan(), MODE_EIN, {}, 20.0, merker, vorher, emit)
+    _abendladung_merker_ruhe(data, MODE_EIN)
+    assert merker  # im Modus Ein bleibt er
+    _abendladung_merker_ruhe(data, MODE_AUS)  # Pause kommt als Aus an
+    assert merker == {}
+    danach = datetime(2026, 11, 2, 14, 16, tzinfo=ABEND_TZ)
+    _check_abendladung_health({}, MODE_EIN, {}, 10.0, merker, danach, emit)
+    assert calls == []
+    _abendladung_merker_ruhe({}, MODE_AUS)  # ohne Merker kein Fehler
