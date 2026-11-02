@@ -157,6 +157,17 @@ test("Reserve > 0: Ladestand-Zeile nennt „Reserve bis x %“", async () => {
   const html = p._renderSpitzeKarte();
   assert.match(html, /Reserve bis 35 %/);
   assert.match(html, /unter <strong>35 %<\/strong> Ladestand/);
+  // Woher die 35 % kommen: sichtbar im Satz (Handy) und als Tooltip am Strich.
+  assert.match(html, /\(20 % Mindest-Ladestand \+ 15 % Spitzenreserve\) deckt sie nur noch Spitzen/);
+  assert.match(html, /title="Reserve bis 35 % = 20 % Mindest-Ladestand \+ 15 % Spitzenreserve — darunter deckt die Batterie nur noch, was über/);
+  assert.match(html, /title="Mindest-Ladestand 20 % — darunter entlädt die Batterie nie"/);
+});
+
+test("Einstellungen: Zustandssatz nennt die Formel der Schwelle", () => {
+  const p = panel(aufzeichnendesHass());
+  const satz = p._kappungBatterieZustand(
+    { reserve_pct: 5, basis_pct: 20, schwelle_pct: 25, schwelle_kw: 3, statistik: true, tage: 25 }, 3);
+  assert.match(satz, /unter <strong>25 %<\/strong> Ladestand \(20 % Mindest-Ladestand \+ 5 % Spitzenreserve\) deckt/);
 });
 
 test("Blättern: ein Monat zurück fragt den Monat an, 0 springt zurück", async () => {

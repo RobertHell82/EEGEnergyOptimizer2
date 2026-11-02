@@ -5872,19 +5872,28 @@ class EegOptimizerPanel extends HTMLElement {
     } else {
       const basis = b.basis_pct != null ? Number(b.basis_pct) : Number(b.schwelle_pct) - Number(b.reserve_pct);
       const schwelleP = Number(b.schwelle_pct);
+      // Der Strich ist 2 px breit — zum Zeigen mit der Maus zu schmal, deshalb
+      // eine 12 px breite, unsichtbare Fläche darum, die den Tooltip trägt.
       const marke = (pct, farbe, titel) => Number.isFinite(pct)
-        ? `<div title="${titel}" style="position:absolute;top:-3px;bottom:-3px;left:${Math.max(0, Math.min(100, pct)).toFixed(1)}%;width:2px;background:${farbe}"></div>`
+        ? `<div title="${esc(titel)}" style="position:absolute;top:-5px;bottom:-5px;left:calc(${Math.max(0, Math.min(100, pct)).toFixed(1)}% - 5px);width:12px;cursor:help;display:flex;justify-content:center"><div style="width:2px;background:${farbe}"></div></div>`
         : "";
       const aktiv = !!b.aktiv;
       // Schwelle in % = Mindest-Ladestand + Reserve; bei Reserve 0 nur der
       // Mindest-Ladestand unter zweitem Namen — dann nicht anzeigen.
       const mitReserve = Number.isFinite(schwelleP) && Number.isFinite(basis) && schwelleP > basis + 0.5;
+      // Die Reserve als Differenz, nicht aus reserve_pct: die Schwelle ist am
+      // höchsten Mindest-Ladestand gedeckelt, und die Formel muss aufgehen.
+      const formel = mitReserve
+        ? `${fmtDe(basis, 0)} % Mindest-Ladestand + ${fmtDe(schwelleP - basis, 0)} % Spitzenreserve`
+        : "";
+      const titelBasis = `Mindest-Ladestand ${fmtDe(basis, 0)} % — darunter entlädt die Batterie nie`;
+      const titelSchwelle = `Reserve bis ${fmtDe(schwelleP, 0)} % = ${formel} — darunter deckt die Batterie nur noch, was ${this._reserveGegen(d.schwelle_kw, d.grenze_kw)} liegt`;
       const balken = Number.isFinite(soc) ? `
         <div style="position:relative;height:10px;border-radius:5px;background:var(--divider-color,#e0e0e0);margin:6px 0 4px">
           <div style="position:absolute;left:0;top:0;bottom:0;border-radius:5px;width:${Math.max(0, Math.min(100, soc)).toFixed(1)}%;background:${aktiv ? "#fb8c00" : "var(--success-color,#43a047)"}"></div>
-          ${Number.isFinite(schwelleP) && schwelleP > basis ? `<div title="Spitzenreserve" style="position:absolute;top:0;bottom:0;left:${Math.max(0, basis).toFixed(1)}%;width:${Math.max(0, schwelleP - basis).toFixed(1)}%;background:repeating-linear-gradient(135deg,rgba(251,140,0,.35) 0 3px,transparent 3px 6px)"></div>` : ""}
-          ${marke(basis, "#e53935", "Mindest-Ladestand")}
-          ${mitReserve ? marke(schwelleP, "#fb8c00", "Obergrenze der Spitzenreserve") : ""}
+          ${Number.isFinite(schwelleP) && schwelleP > basis ? `<div title="${esc(mitReserve ? titelSchwelle : "Spitzenreserve")}" style="cursor:help;position:absolute;top:0;bottom:0;left:${Math.max(0, basis).toFixed(1)}%;width:${Math.max(0, schwelleP - basis).toFixed(1)}%;background:repeating-linear-gradient(135deg,rgba(251,140,0,.35) 0 3px,transparent 3px 6px)"></div>` : ""}
+          ${marke(basis, "#e53935", titelBasis)}
+          ${mitReserve ? marke(schwelleP, "#fb8c00", titelSchwelle) : ""}
         </div>
         <div style="display:flex;justify-content:space-between;font-size:11px">
           <span>Ladestand <strong style="color:var(--primary-text-color)">${fmtDe(soc, 0)} %</strong></span>
@@ -5910,7 +5919,8 @@ class EegOptimizerPanel extends HTMLElement {
           ? `Keine Reserve: Die Statistik reicht noch nicht (${b.tage ?? 0} von 7 Tagen). Die Batterie arbeitet normal und hält erst am Mindest-Ladestand.`
           : `Keine Reserve nötig — in den letzten vier Wochen lag kein Verbrauch ${this._reserveGegen(d.schwelle_kw, d.grenze_kw)}. Die Batterie arbeitet normal und hält erst am Mindest-Ladestand.`;
       } else {
-        satz = `Arbeitet normal. Reserve jetzt <strong>${fmtDe(Number(b.reserve_pct), 0)} %</strong> — unter <strong>${fmtDe(schwelleP, 0)} %</strong> Ladestand deckt sie nur noch Spitzen.`;
+        // Die Formel auch sichtbar: ein title-Tooltip erscheint auf dem Handy nie.
+        satz = `Arbeitet normal. Reserve jetzt <strong>${fmtDe(Number(b.reserve_pct), 0)} %</strong> — unter <strong>${fmtDe(schwelleP, 0)} %</strong> Ladestand${formel ? ` (${formel})` : ""} deckt sie nur noch Spitzen.`;
       }
       batterie = `${balken}<div style="margin-top:4px">${satz}</div>`;
     }
@@ -9709,7 +9719,11 @@ class EegOptimizerPanel extends HTMLElement {
     if (b.reserve_pct != null && b.schwelle_pct != null && Number(b.reserve_pct) <= 0) {
       teile.push(`Keine Reserve nötig — in den letzten vier Wochen lag kein Verbrauch ${this._reserveGegen(b.schwelle_kw, grenzeKw)}. Die Batterie arbeitet normal und hält erst am Mindest-Ladestand (<strong>${pct(b.basis_pct ?? b.schwelle_pct)} %</strong>).`);
     } else if (b.reserve_pct != null && b.schwelle_pct != null) {
-      teile.push(`Reserve jetzt <strong>${pct(b.reserve_pct)} %</strong> — unter <strong>${pct(b.schwelle_pct)} %</strong> Ladestand deckt die Batterie nur noch, was ${this._reserveGegen(b.schwelle_kw, grenzeKw)} liegt.`);
+      const basis = b.basis_pct != null ? Number(b.basis_pct) : Number(b.schwelle_pct) - Number(b.reserve_pct);
+      const formel = Number.isFinite(basis) && Number(b.schwelle_pct) > basis + 0.5
+        ? ` (${pct(basis)} % Mindest-Ladestand + ${pct(Number(b.schwelle_pct) - basis)} % Spitzenreserve)`
+        : "";
+      teile.push(`Reserve jetzt <strong>${pct(b.reserve_pct)} %</strong> — unter <strong>${pct(b.schwelle_pct)} %</strong> Ladestand${formel} deckt die Batterie nur noch, was ${this._reserveGegen(b.schwelle_kw, grenzeKw)} liegt.`);
     } else if (b.plan_pct != null) {
       teile.push(`Der Fahrplan hält <strong>${pct(b.plan_wirksam_pct ?? b.plan_pct)} %</strong> für Spitzen zurück.`);
     }
