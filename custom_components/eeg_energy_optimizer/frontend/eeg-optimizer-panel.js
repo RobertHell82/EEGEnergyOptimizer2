@@ -8406,6 +8406,7 @@ class EegOptimizerPanel extends HTMLElement {
     const vorteilRoh = d.schedule_netzladen_vorteil;
     const vorteil = (vorteilRoh === undefined || vorteilRoh === null || vorteilRoh === "") ? 0.02 : Number(vorteilRoh);
     const maxKw = Number(d.schedule_netzladen_max_kw) > 0 ? d.schedule_netzladen_max_kw : "";
+    const abendPct = Number(d.schedule_netzladen_abend_pct) > 0 ? d.schedule_netzladen_abend_pct : "";
     const batterieKw = Number(d.discharge_power_kw) > 0 ? fmtDe(Number(d.discharge_power_kw), 1) : "der Batterie";
     // Ohne günstigeren Bezugspreis lässt sich der Schalter nicht einschalten
     // (toggle-settings-feature) — hier steht, was dafür fehlt.
@@ -8420,7 +8421,7 @@ class EegOptimizerPanel extends HTMLElement {
       feature: "schedule_netzladen",
       icon: "mdi:battery-charging-high",
       titel: "Batterie aus dem Netz laden",
-      beschreibung: "Schafft die Sonne das Ladeziel bis zum Ende der PV-Zeit nicht, darf der Fahrplan Strom zukaufen — aber nur in Viertelstunden, in denen Netzstrom billiger ist als der Strom, den die Batterie danach in der Nacht ersetzt. Gerechnet wird je Kilowattstunde, nach den Verlusten beim Laden und Entladen, mit den Bezugspreisen aus dem Reiter Tarife. Was die Nacht nicht braucht, speist der Fahrplan später ein, wenn es sich lohnt; das kann Geld kosten und ist der Preis für eine abends volle Batterie. Nur mit Ladeziel (Reiter Anlage).",
+      beschreibung: "Schafft die Sonne das Ladeziel bis zum Ende der PV-Zeit nicht, darf der Fahrplan Strom zukaufen — aber nur in Viertelstunden, in denen Netzstrom billiger ist als der Strom, den die Batterie danach in der Nacht ersetzt. Gerechnet wird je Kilowattstunde, nach den Verlusten beim Laden und Entladen, mit den Bezugspreisen aus dem Reiter Tarife. Was die Nacht nicht braucht, speist der Fahrplan später ein, wenn es sich lohnt; das kann Geld kosten und ist der Preis für eine abends volle Batterie. Nur mit Ladeziel (Reiter Anlage); unabhängig vom Preis lädt allein die Mindestladung am Abend unten.",
       params: `
       <div class="field-group">
         <label>Höchster Netzbezug beim Laden aus dem Netz (kW)</label>
@@ -8433,6 +8434,12 @@ class EegOptimizerPanel extends HTMLElement {
         <input type="number" data-field="${prefix}schedule_netzladen_vorteil" data-unit="ct"
                value="${ctAus(vorteil)}" min="0" max="20" step="0.5">
         <div class="help-text">Um so viel muss Netzstrom billiger sein als der Strom, den er später ersetzt. Vorgabe 2 ct. Die PV-Prognose ist unsicher: Ein Kauf um einen Zehntelcent Vorteil, den die Sonne dann doch geliefert hätte, ist ein Verlust.</div>
+      </div>
+      <div class="field-group">
+        <label>Mindestladung am Abend (%)</label>
+        <input type="number" data-field="${prefix}schedule_netzladen_abend_pct"
+               value="${abendPct}" min="0" max="100" step="5" placeholder="aus">
+        <div class="help-text">So voll soll die Batterie am Ende der PV-Zeit auf jeden Fall sein. Schafft die Sonne das laut Prognose nicht, lädt der Fahrplan den Rest aus dem Netz — unabhängig vom Preis, aber in den günstigsten Viertelstunden davor, also bevorzugt, wenn die Gemeinschaft Strom übrig hat. Gekauft wird nur bis zu diesem Wert; was darüber bis zum Ladeziel fehlt, bleibt der Sonne und dem Mindestvorteil oben überlassen. Leer heißt aus.</div>
       </div>`,
     }) + sperre;
   }

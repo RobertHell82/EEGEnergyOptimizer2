@@ -655,6 +655,7 @@ TELEMETRY_SETTINGS_KEYS = (
     "schedule_netzladen",
     "schedule_netzladen_max_kw",
     "schedule_netzladen_vorteil",
+    "schedule_netzladen_abend_pct",
     "schedule_bezug_quelle",
     "peakshare_bezug_ebene",
     "peakshare_bezug_ebene_2",

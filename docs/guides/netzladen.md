@@ -22,6 +22,7 @@ Spot- und Gemeinschaftsbezug brauchen einen **Netzbereich** (Karte **Bezug**), s
 |---|---|
 | **Höchster Netzbezug beim Laden aus dem Netz (kW)** | Gilt am Zähler, Haus und Batterie zusammen. Plan und Steuerung rechnen mit Hausverbrauch und PV (die Steuerung alle 30 s mit den Messwerten) und lassen die Batterie nur so schnell laden, dass der Bezug darunter bleibt. Das Haus wird nie begrenzt. Leer = keine Grenze, die Batterie lädt mit ihrer vollen Leistung. Ist die **Spitzenkappung** mit Batterie an, bleibt jede Netzladung ohnehin 0,3 kW unter deren Grenzwert |
 | **Mindestvorteil (ct/kWh)** | Um so viel muss der Netzstrom billiger sein als die Nacht. Vorgabe 2 ct |
+| **Mindestladung am Abend (%)** | So voll soll die Batterie am Ende der PV-Zeit auf jeden Fall sein, unabhängig vom Preis (siehe unten). Leer = aus |
 
 Während der Netzladung lädt der Wechselrichter mit der geplanten Leistung bis zum geplanten Ladestand, der Statussensor zeigt „Netzladung x kW bis y %“, im Diagramm ist sie violett gestrichelt. Der Heizstab bleibt dabei aus.
 
@@ -31,3 +32,11 @@ Während der Netzladung lädt der Wechselrichter mit der geplanten Leistung bis 
 ## Gemeinschaft statt fester Zeitfenster
 
 Mit **Bezug aus der Gemeinschaft** lädt der Fahrplan genau in den Viertelstunden, in denen die Gemeinschaft laut PeakShare Strom übrig hat, und nur so viel, wie dein Anteil davon hergibt. Das ersetzt feste Ladezeiten am Wechselrichter, etwa das „Geplante Laden“ eines Victron-GX-Geräts, das für die Steuerung ohnehin aus sein muss. Wie viel geladen wird, bestimmt das **Ladeziel** (Reiter **Anlage**, Expertenmodus).
+
+## Mindestladung am Abend
+
+Das Ladeziel kauft nur zu, wenn sich das rechnet. Willst du am Abend auf jeden Fall einen bestimmten Ladestand haben, etwa für die Nacht oder als Reserve, trag ihn bei **Mindestladung am Abend** ein. Der Termin ist derselbe wie beim Ladeziel: das Ende der PV-Zeit, also der letzte Moment des Tages, an dem die Sonne mehr liefert, als das Haus braucht.
+
+Bei jeder Neuberechnung prüft der Fahrplan, ob die erwartete PV die Batterie bis dahin auf diesen Wert bringt. Fehlt etwas, lädt er den Rest aus dem Netz, egal was der Strom kostet, aber in den günstigsten Viertelstunden vor dem Termin. Mit Bezug aus der Gemeinschaft sind das die Viertelstunden, in denen die Gemeinschaft Strom übrig hat; gibt es an dem Tag keine, nimmt er die günstigste andere. Wird es trüber als vorhergesagt, kauft der nächste Lauf entsprechend mehr.
+
+Gekauft wird nur bis zur Mindestladung. Was darüber bis zum **Ladeziel** fehlt, kommt weiter nur von der Sonne oder aus Viertelstunden, in denen sich der Zukauf rechnet (Mindestvorteil). Die Grenze am Zähler und die der Spitzenkappung gelten auch hier.

@@ -20,6 +20,7 @@ from custom_components.eeg_energy_optimizer.const import (
     CONF_FORECAST_SOURCE,
     CONF_INVERTER_TYPE,
     CONF_TELEMETRY_ENABLED,
+    MODE_AUS,
     MODE_EIN,
 )
 from custom_components.eeg_energy_optimizer.schedule_executor import ScheduleExecutor
@@ -1006,3 +1007,55 @@ def test_kappung_schaltfehler_ohne_entitaet():
     assert calls[0]["category"] == "peak_switch"
     assert "switch." not in str(calls[0])
     assert calls[0]["context"]["grund"] == "Service not found"
+
+
+# ---------------------------------------------------------------------------
+# Mindestladung am Abend verfehlt
+# ---------------------------------------------------------------------------
+
+ABEND_TZ = timezone(timedelta(hours=1))
+
+
+def _abend_plan(t="2026-11-02T14:00:00+01:00", ziel=40.0, geplant=40.0):
+    return {"netzladen_abend": {"ziel_pct": ziel, "termine": [{"t": t, "geplant_pct": geplant}]}}
+
+
+def test_abendladung_verfehlt_wird_einmal_gemeldet():
+    from custom_components.eeg_energy_optimizer import _check_abendladung_health
+
+    calls, emit = _sammler()
+    merker = {}
+    vorher = datetime(2026, 11, 2, 13, 0, tzinfo=ABEND_TZ)
+    _check_abendladung_health(_abend_plan(), MODE_EIN, {"inverter_type": "huawei_sun2000"},
+                              20.0, merker, vorher, emit)
+    assert calls == [] and merker["t"] == "2026-11-02T14:00:00+01:00"
+    # Slot 14:00–14:15 vorbei, der Plan hat schon den nächsten Tag.
+    danach = datetime(2026, 11, 2, 14, 16, tzinfo=ABEND_TZ)
+    morgen = _abend_plan(t="2026-11-03T14:00:00+01:00")
+    _check_abendladung_health(morgen, MODE_EIN, {"inverter_type": "huawei_sun2000"},
+                              31.0, merker, danach, emit)
+    assert len(calls) == 1
+    m = calls[0]
+    assert m["category"] == "abendladung" and m["message_hash"] == "verfehlt"
+    assert m["context"]["ziel_pct"] == 40.0 and m["context"]["soc"] == 31.0
+    assert m["context"]["geplant_pct"] == 40.0
+    assert merker["t"] == "2026-11-03T14:00:00+01:00"
+    # Derselbe Termin meldet nicht noch einmal.
+    _check_abendladung_health(morgen, MODE_EIN, {}, 31.0, merker, danach, emit)
+    assert len(calls) == 1
+
+
+def test_abendladung_knapp_darunter_oder_modus_aus_meldet_nichts():
+    from custom_components.eeg_energy_optimizer import _check_abendladung_health
+
+    calls, emit = _sammler()
+    vorher = datetime(2026, 11, 2, 13, 0, tzinfo=ABEND_TZ)
+    danach = datetime(2026, 11, 2, 14, 16, tzinfo=ABEND_TZ)
+    merker = {}
+    _check_abendladung_health(_abend_plan(), MODE_EIN, {}, 20.0, merker, vorher, emit)
+    _check_abendladung_health({}, MODE_EIN, {}, 38.0, merker, danach, emit)  # 2 Punkte darunter
+    assert calls == []
+    merker = {}
+    _check_abendladung_health(_abend_plan(), MODE_EIN, {}, 20.0, merker, vorher, emit)
+    _check_abendladung_health(_abend_plan(), MODE_AUS, {}, 10.0, merker, danach, emit)
+    assert calls == [] and merker == {}

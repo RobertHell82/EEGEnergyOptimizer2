@@ -641,6 +641,72 @@ def _check_spitzenkappung_health(status, mode, config, spitze, kappung, merker, 
         )
 
 
+# Spielraum unter der Mindestladung am Abend, bevor sie als verfehlt gilt
+# (Prozentpunkte): SOC-Sensoren melden ganze Prozent, und der Plan rechnet
+# mit Prognose — ein Punkt daneben ist kein Versagen.
+ABENDLADUNG_TOLERANZ_PCT = 3.0
+
+
+def _check_abendladung_health(schedule_state, mode, config, soc, merker, jetzt, emit):
+    """Mindestladung am Abend verfehlt — gemeldet einmal je Termin.
+
+    Reine Funktion wie ``_check_schedule_health``. ``merker`` hält den
+    nächsten Termin aus dem jüngsten Plan (``netzladen_abend``): Jeder
+    Planlauf kann ihn verschieben, weil sich das Ende der PV-Zeit mit der
+    Prognose bewegt. Ist er vorbei (Ende seines Slots), wird einmal geprüft:
+    gemessener Ladestand mehr als ``ABENDLADUNG_TOLERANZ_PCT`` unter dem
+    Schwellwert → ``abendladung`` mit dem, was der Plan dort erwartet hatte.
+
+    Nur im Modus Ein (eine Pause kommt hier schon als Aus an): Ohne
+    Steuerung lädt niemand aus dem Netz, ein verfehlter Wert ist dann kein
+    Versagen. Erklärt, warum eine Anlage abends leerer ist als eingestellt —
+    zu optimistische Prognose, keine Viertelstunde mehr frei, Netzgrenze,
+    oder ein Ladebefehl ohne Wirkung (der kommt zusätzlich als
+    ``guard_wirkung``/``netzladung``).
+    """
+    if mode != MODE_EIN:
+        merker.clear()
+        return
+    termin = merker.get("t")
+    if termin is not None:
+        try:
+            ende = datetime.fromisoformat(termin) + timedelta(minutes=15)
+        except (TypeError, ValueError):
+            ende = None
+        if ende is None:
+            merker.clear()
+        elif jetzt >= ende:
+            ziel = float(merker.get("ziel_pct") or 0.0)
+            if soc is not None and float(soc) < ziel - ABENDLADUNG_TOLERANZ_PCT:
+                emit(
+                    category="abendladung",
+                    severity="warning",
+                    message_hash="verfehlt",
+                    context={
+                        "ziel_pct": ziel,
+                        "soc": round(float(soc), 1),
+                        "geplant_pct": merker.get("geplant_pct"),
+                        "termin": termin,
+                        "inverter_type": config.get(CONF_INVERTER_TYPE),
+                    },
+                )
+            merker.clear()
+    abend = (schedule_state or {}).get("netzladen_abend") or {}
+    for eintrag in abend.get("termine") or []:
+        try:
+            if datetime.fromisoformat(eintrag["t"]) + timedelta(minutes=15) <= jetzt:
+                continue
+        except (KeyError, TypeError, ValueError):
+            continue
+        merker.update(
+            t=eintrag["t"], geplant_pct=eintrag.get("geplant_pct"), ziel_pct=abend.get("ziel_pct")
+        )
+        break
+    else:
+        if not abend:
+            merker.clear()
+
+
 PLATFORMS: list[str] = ["sensor", "select"]
 
 async def async_backfill_hausverbrauch_stats(
@@ -2331,6 +2397,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     )
                 except Exception:  # pragma: no cover
                     _LOGGER.exception("Telemetry: Spitzenkappung watchdog failed")
+                try:
+                    _check_abendladung_health(
+                        schedule_state, mode, config, _read_soc(),
+                        data.setdefault("telemetry_abend_merker", {}),
+                        dt_util.now() if dt_util is not None else _now_utc(),
+                        _emit_failure_dedup,
+                    )
+                except Exception:  # pragma: no cover
+                    _LOGGER.exception("Telemetry: Abendladung watchdog failed")
                 try:
                     _collect_snapshot(schedule_state, status, mode, _read_soc())
                 except Exception:  # pragma: no cover

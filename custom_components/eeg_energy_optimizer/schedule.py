@@ -289,9 +289,15 @@ CONF_SCHEDULE_NETZLADEN_MAX_KW = "schedule_netzladen_max_kw"
 # die PV-Prognose unsicher ist — ein Kauf um einen Zehntelcent Vorteil, den
 # die Sonne dann doch hereingebracht hätte, ist ein Verlust.
 CONF_SCHEDULE_NETZLADEN_VORTEIL = "schedule_netzladen_vorteil"
+# Mindestladung am Abend (%, 0/leer = aus): Am Ende der PV-Zeit soll die
+# Batterie mindestens so voll sein — reicht die erwartete PV nicht, wird der
+# Rest unabhängig vom Preis aus dem Netz geladen, in den günstigsten
+# Viertelstunden davor (HAConfig._netz_untergrenze). Nur mit „aus dem Netz
+# laden" (CONF_SCHEDULE_NETZLADEN).
+CONF_SCHEDULE_NETZLADEN_ABEND_PCT = "schedule_netzladen_abend_pct"
 # Spitzenkappung: Die Reserve der Batterie notfalls aus dem Netz nachladen —
 # unabhängig vom Preis, aber in den günstigsten Viertelstunden vor dem
-# Bedarf (HAConfig._reserve_netz_untergrenze). Nur mit einem Treiber, der
+# Bedarf (HAConfig._netz_untergrenze). Nur mit einem Treiber, der
 # die Entladung deckeln UND aus dem Netz laden kann (Huawei, Fronius).
 CONF_SPITZENKAPPUNG_RESERVE_NETZ = "spitzenkappung_reserve_netz"
 # Unter diesem Anteil einer Viertelstunde an der Reservekurve (kWh) zählt sie
@@ -547,6 +553,8 @@ class ScheduleInputs:
     netzladen_max_kw: float = 0.0
     netzladen_netzgrenze_kw: float = 0.0
     netzladen_vorteil: float = DEFAULT_NETZLADEN_VORTEIL
+    # Mindestladung am Abend in Prozent (0 = aus), nur mit Netzladen.
+    netzladen_abend_pct: float = 0.0
     # Spitzenreserve notfalls aus dem Netz (kW, AC, = Batterieleistung);
     # 0 = aus. Grenze am Zähler ist die der Spitzenkappung, je Slot in
     # ``spitzenreserve["grenzen"]``.
@@ -787,6 +795,17 @@ class HAConfig:
             if inputs.ladeziel_pct > 0 and ziel_pct > boden_pct
             else 0.0
         )
+        # Mindestladung am Abend, im selben Fenster gezählt wie das Ladeziel.
+        abend_pct = min(float(inputs.netzladen_abend_pct or 0.0), float(inputs.max_soc_pct))
+        self.abend_kwh = (
+            min(
+                self.battery_capacity,
+                inputs.battery_capacity_kwh * (abend_pct - boden_pct) / 100.0,
+            )
+            if abend_pct > boden_pct
+            else 0.0
+        )
+        self._netz_cache = None
 
 
         self._consumption_series = None
@@ -991,9 +1010,10 @@ class HAConfig:
         import pandas as pd
 
         ziel = pd.Series(0.0, index=ueberschuss.index)
-        # Spitzenreserve aus dem Netz: dieselbe Untergrenze wie ein Ladeziel,
-        # erreichbar über die Slots, die ``netzladen`` dafür freigibt.
-        reserve = self._reserve_netz_forderung(ueberschuss)
+        # Spitzenreserve und Mindestladung am Abend aus dem Netz: dieselbe
+        # Untergrenze wie ein Ladeziel, erreichbar über die Slots, die
+        # ``netzladen`` dafür freigibt.
+        reserve = self._netz_forderung(parameters, ueberschuss)
         if reserve is not None:
             ziel[:] = reserve
         termine = self.ladeziel_termine(parameters, ueberschuss)
@@ -1032,13 +1052,58 @@ class HAConfig:
                 if bedarf <= 0.0:
                     break
                 forderung[k] = max(forderung[k], bedarf)
+        wirtschaftlich, pflicht = self._netz_grenzen(parameters, ueberschuss)
+        if pflicht is not None:
+            # Die Pflicht-Slots gehören der Pflicht: opt() kappt das Ziel
+            # auf das mit ALLEN freigegebenen Slots Erreichbare, das Ladeziel
+            # selbst darf aber nur, was ohne Zukauf oder mit dem
+            # wirtschaftlichen Netzladen geht. Sonst füllte es über die für
+            # 0,75 kWh Reserve gewählten Slots bis 100 % aus dem Netz
+            # (Traun 02.11.2026).
+            erreichbar = self._erreichbar(parameters, ueberschuss, wirtschaftlich)
+            forderung = [min(f, e) for f, e in zip(forderung, erreichbar)]
         if reserve is not None:
             forderung = [max(f, r) for f, r in zip(forderung, reserve)]
         ziel[:] = forderung
         return ziel
 
-    def ladeziel_termine(self, parameters, ueberschuss) -> list[int]:
+    def _erreichbar(self, parameters, ueberschuss, untergrenze) -> list[float]:
+        """Stand am Ende jedes Slots, wenn jede Gelegenheit zum Laden genutzt wird.
+
+        Wie die Erreichbarkeit in ``opt_highs`` (mit denselben gestuften
+        Verlusten): Überschuss lädt, Defizit entlädt, und wo ``untergrenze``
+        unter null liegt, lädt die Batterie aus PV plus Netz. Ohne
+        ``untergrenze`` also das ohne Zukauf Erreichbare.
+        """
+        p2e = self.time_res / 3600.0
+        kapazitaet = float(self.battery_capacity)
+        grenze = float(self.battery_power_limit)
+        werte = [float(v) for v in ueberschuss.values]
+        pv = [float(v) for v in parameters["dc_production"].values]
+        lb = (
+            [float(v) for v in untergrenze.values] if untergrenze is not None
+            else [0.0] * len(werte)
+        )
+        stand = kapazitaet - float(self.battery_free)
+        ergebnis = []
+        for w, p, u in zip(werte, pv, lb):
+            if u < 0:
+                schritt = min(_ladeleistung_aus_dc(p - u, kapazitaet), grenze)
+            elif w > 0:
+                schritt = min(_ladeleistung_aus_dc(w, kapazitaet), grenze)
+            else:
+                schritt = -min(_entladeleistung_fuer_dc(-w, kapazitaet), grenze)
+            stand = min(kapazitaet, max(0.0, stand + schritt * p2e))
+            ergebnis.append(stand)
+        return ergebnis
+
+    def ladeziel_termine(
+        self, parameters, ueberschuss, ziel_kwh: float | None = None
+    ) -> list[int]:
         """Slots, an denen das Ladeziel gilt (Positionen in ``ueberschuss``).
+
+        ``ziel_kwh`` prüft statt des Ladeziels einen anderen Stand am selben
+        Termin — die Mindestladung am Abend (``_abend_forderung``).
 
         Der Zeitpunkt ist je Kalendertag der letzte Slot mit Überschuss, also
         das Ende der PV-Zeit. Nur wenn danach am selben Tag noch ein Slot im
@@ -1055,7 +1120,8 @@ class HAConfig:
         weiter nach vorn, dann gilt es wieder.
         """
         termine: list[int] = []
-        if self.ladeziel_kwh <= 0 or len(ueberschuss) == 0:
+        ziel = self.ladeziel_kwh if ziel_kwh is None else float(ziel_kwh)
+        if ziel <= 0 or len(ueberschuss) == 0:
             return termine
 
         p2e = self.time_res / 3600.0
@@ -1098,7 +1164,7 @@ class HAConfig:
 
         tage = [stempel.date() for stempel in ueberschuss.index]
         for i in pv_enden(werte, tage):
-            if self.ladeziel_kwh - ende_halb > rest[i + 1] + 1e-9:
+            if ziel - ende_halb > rest[i + 1] + 1e-9:
                 continue  # vom Ziel käme der Plan nicht mehr auf halb
             termine.append(i)
         return termine
@@ -1107,16 +1173,31 @@ class HAConfig:
         """Untergrenze von ``dc_p`` je Slot (kW, DC, ≤ 0) — oder None.
 
         Zwei Quellen, je Slot die tiefere Grenze: das wirtschaftliche
-        Netzladen (``_netzladen_wirtschaftlich``) und das Nachladen der
-        Spitzenreserve (``_reserve_netz_untergrenze``). Ohne beide None.
+        Netzladen (``_netzladen_wirtschaftlich``) und die Pflichtladung für
+        Spitzenreserve und Mindestladung am Abend (``_netz_untergrenze``).
+        Ohne beide None.
         """
-        wirtschaftlich = self._netzladen_wirtschaftlich(parameters, ueberschuss)
-        reserve = self._reserve_netz_untergrenze(parameters, ueberschuss)
-        if reserve is None:
+        wirtschaftlich, pflicht = self._netz_grenzen(parameters, ueberschuss)
+        if pflicht is None:
             return wirtschaftlich
         if wirtschaftlich is None:
-            return reserve
-        return wirtschaftlich.combine(reserve, min)
+            return pflicht
+        return wirtschaftlich.combine(pflicht, min)
+
+    def _netz_grenzen(self, parameters, ueberschuss):
+        """(wirtschaftlich, pflicht) — einmal je ``opt()``-Lauf gerechnet.
+
+        ``opt_highs`` ruft ``netzladen`` und ``ladeziel`` mit denselben
+        Reihen; beide brauchen beide Grenzen.
+        """
+        schluessel = (id(parameters), id(ueberschuss))
+        if self._netz_cache is None or self._netz_cache[0] != schluessel:
+            self._netz_cache = (
+                schluessel,
+                self._netzladen_wirtschaftlich(parameters, ueberschuss),
+                self._netz_untergrenze(parameters, ueberschuss),
+            )
+        return self._netz_cache[1], self._netz_cache[2]
 
     def _netzladen_wirtschaftlich(self, parameters, ueberschuss):
         """Untergrenze von ``dc_p`` je Slot (kW, DC, ≤ 0) — oder None.
@@ -1237,11 +1318,46 @@ class HAConfig:
             forderung[k] = min(float(self.battery_capacity), max(0.0, kwh))
         return forderung if any(f > 0 for f in forderung) else None
 
-    def _reserve_netz_untergrenze(self, parameters, ueberschuss):
-        """Netzladung je Slot für die Spitzenreserve (kW, DC, ≤ 0) — oder None.
+    def _abend_forderung(self, parameters, ueberschuss) -> list[float] | None:
+        """Mindestinhalt am Ende der PV-Zeit (kWh im Modellfenster) — oder None.
 
+        Die Mindestladung am Abend steht am selben Termin wie das Ladeziel
+        (``ladeziel_termine``, mit derselben Prüfung, dass der Plan von dort
+        noch auf Haralds Endstand zurückkommt) und nur dort: Ob die Sonne sie
+        schafft, rechnet ``_netz_untergrenze`` mit der erwarteten PV; was
+        fehlt, kommt aus den günstigsten Slots davor. Jeder Planlauf rechnet
+        neu — wird es trüber, kauft der nächste mehr.
+        """
+        if self.abend_kwh <= 0 or len(ueberschuss) == 0:
+            return None
+        termine = self.ladeziel_termine(parameters, ueberschuss, self.abend_kwh)
+        if not termine:
+            return None
+        forderung = [0.0] * len(ueberschuss)
+        for i in termine:
+            forderung[i] = self.abend_kwh
+        return forderung
+
+    def _netz_forderung(self, parameters, ueberschuss) -> list[float] | None:
+        """Was aus dem Netz notfalls erreicht werden muss (kWh je Slot) — oder None.
+
+        Spitzenreserve (``_reserve_netz_forderung``) und Mindestladung am
+        Abend (``_abend_forderung``), je Slot die höhere.
+        """
+        reserve = self._reserve_netz_forderung(ueberschuss)
+        abend = self._abend_forderung(parameters, ueberschuss)
+        if reserve is None:
+            return abend
+        if abend is None:
+            return reserve
+        return [max(a, b) for a, b in zip(reserve, abend)]
+
+    def _netz_untergrenze(self, parameters, ueberschuss):
+        """Pflichtladung aus dem Netz je Slot (kW, DC, ≤ 0) — oder None.
+
+        Für Spitzenreserve und Mindestladung am Abend (``_netz_forderung``).
         Unabhängig vom Preis, aber so günstig wie möglich: Für die erste
-        Forderung (``_reserve_netz_forderung``), die der Stand ohne Zukauf
+        Forderung, die der Stand ohne Zukauf
         nicht erreicht, wird der günstigste noch freie Slot davor gewählt —
         bei gleichem Preis der späteste —, dann neu gerechnet, bis alles
         erreicht ist oder kein Slot mehr hilft. Der Preis ist der Bezugspreis
@@ -1250,17 +1366,23 @@ class HAConfig:
 
         Je Slot darf die Ladung den Zähler nicht über die Grenze der
         Spitzenkappung heben (minus ``SICHERHEIT_KW``); sonst schüfe das
-        Nachladen die Spitze, gegen die es vorsorgt. Nur gewählte Slots
-        bekommen eine Grenze — so kauft das LP nicht nebenbei auf Vorrat.
+        Nachladen die Spitze, gegen die es vorsorgt. Mit Netzladen gilt
+        auch dessen Grenze am Zähler (``netzladen_netzgrenze_kw``). Nur
+        gewählte Slots bekommen eine Grenze — so kauft das LP nicht nebenbei
+        auf Vorrat.
         """
-        forderung = self._reserve_netz_forderung(ueberschuss)
+        forderung = self._netz_forderung(parameters, ueberschuss)
         if forderung is None:
             return None
         import pandas as pd
 
         from .spitzenreserve import SICHERHEIT_KW
 
-        max_kw = float(self._inputs.spitzenreserve_netz_kw or 0.0)
+        max_kw = max(
+            float(self._inputs.spitzenreserve_netz_kw or 0.0),
+            float(self._inputs.netzladen_max_kw or 0.0),
+        )
+        netzgrenze = float(self._inputs.netzladen_netzgrenze_kw or 0.0)
         p2e = self.time_res / 3600.0
         preise = [float(v) / p2e for v in parameters["consumption_price"].values]
         haus = [float(v) for v in parameters["consumption"].values]
@@ -1279,8 +1401,13 @@ class HAConfig:
         standard = float(info.get("grenze_kw") or 0.0)
         netz = []
         for k in range(n):
-            grenze = grenze_je_t.get(int(stempel[k].timestamp()), standard)
-            netz.append(min(max_kw, max(0.0, grenze - SICHERHEIT_KW - haus[k])))
+            erlaubt = max_kw
+            if info:
+                grenze = grenze_je_t.get(int(stempel[k].timestamp()), standard)
+                erlaubt = min(erlaubt, grenze - SICHERHEIT_KW - haus[k])
+            if netzgrenze > 0:
+                erlaubt = min(erlaubt, netzgrenze - haus[k])
+            netz.append(max(0.0, erlaubt))
 
         kapazitaet = float(self.battery_capacity)
         grenze_leistung = float(self.battery_power_limit)
@@ -1715,6 +1842,17 @@ def netzladen_netzgrenze_kw(config: dict) -> float:
     return wert if wert is not None else 0.0
 
 
+def netzladen_abend_pct(config: dict) -> float:
+    """Mindestladung am Abend in Prozent, geklemmt auf [0, 100]; leer oder 0 = aus."""
+    try:
+        zahl = float(config.get(CONF_SCHEDULE_NETZLADEN_ABEND_PCT) or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+    if not math.isfinite(zahl):
+        return 0.0
+    return max(0.0, min(100.0, zahl))
+
+
 def netzladen_vorteil(config: dict) -> float:
     """Mindestvorteil je kWh (€/kWh), gekappt; leer heißt Vorgabe, 0 ist erlaubt."""
     roh = config.get(CONF_SCHEDULE_NETZLADEN_VORTEIL)
@@ -1952,7 +2090,7 @@ def _spitzenreserve_fuer_plan(
         "entlade_kw": round(float(entlade), 2),
         "kurve": [[t.isoformat(), p] for t, p in zip(viertel, kurve_pct)],
         # Grenze je Viertelstunde, gleich lang wie die Kurve — das Nachladen
-        # aus dem Netz bleibt darunter (HAConfig._reserve_netz_untergrenze).
+        # aus dem Netz bleibt darunter (HAConfig._netz_untergrenze).
         "grenzen": [round(g, 2) for g in grenzen],
         "plan_pct": round(plan_pct, 1),
         # Liegt der erste Slot im Überschuss, ist plan_pct die Reserve, mit
@@ -3293,6 +3431,7 @@ async def async_collect_inputs(
         netzladen_max_kw=netzlade_kw,
         netzladen_netzgrenze_kw=netzladen_netzgrenze_kw(config) if netzlade_kw > 0 else 0.0,
         netzladen_vorteil=netzladen_vorteil(config),
+        netzladen_abend_pct=netzladen_abend_pct(config) if netzlade_kw > 0 else 0.0,
         spitzenreserve_netz_kw=reserve_netz_kw,
         # Wie bei den übrigen Fahrplan-Zahlen zählt auch hier ein leeres Feld
         # als „nicht gesetzt": das Panel speicherte leere Zahlenfelder als 0,
@@ -3472,6 +3611,27 @@ def _ladeziel_termine(
     return {"ziel_pct": ziel_pct, "termine": termine}
 
 
+def _abend_termine(
+    config: "HAConfig", table, slots: list[dict[str, Any]], inputs: ScheduleInputs
+) -> dict[str, Any] | None:
+    """Mindestladung am Abend: Termine und geplanter Stand — für Anzeige und
+    die Telemetrie-Prüfung (``__init__._check_abendladung_health``).
+
+    Dieselben Termine wie im LP (``HAConfig._abend_forderung``). Ohne
+    Mindestladung None.
+    """
+    if config.abend_kwh <= 0 or table is None or len(table) == 0:
+        return None
+    ueberschuss = table["PV"] - table["consumption"] / config.ac_efficiency
+    ziel_pct = round(min(float(inputs.netzladen_abend_pct), float(inputs.max_soc_pct)), 1)
+    termine = [
+        {"t": slots[i]["t"], "geplant_pct": slots[i]["soc"]}
+        for i in config.ladeziel_termine(table, ueberschuss, config.abend_kwh)
+        if i < len(slots)
+    ]
+    return {"ziel_pct": ziel_pct, "termine": termine}
+
+
 def netzladung_kw(slot: dict, ac_efficiency: float) -> float:
     """Was die Batterie in diesem Slot aus dem Netz lädt (kW, AC).
 
@@ -3561,6 +3721,9 @@ def solve(inputs: ScheduleInputs) -> dict[str, Any]:
     ladeziel = _ladeziel_termine(config, table, slots, inputs)
     if ladeziel is not None:
         result["ladeziel"] = ladeziel
+    abend = _abend_termine(config, table, slots, inputs)
+    if abend is not None:
+        result["netzladen_abend"] = abend
     if slots and slots[0].get("puffer_temp_c") is not None:
         # Nur mit Kurve: die Marke „Maximaltemperatur" im Ladestandsfeld und
         # der Startwert, von dem die Prognose ausgeht.

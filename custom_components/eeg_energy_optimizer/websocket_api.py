@@ -935,6 +935,8 @@ _ZAHLENFELDER: dict[str, tuple[str, float, float]] = {
     "spot_bezug_aufschlag_pct": ("Prozentaufschlag auf den Spot-Bezugspreis", 0.0, 100.0),
     "schedule_netzladen_max_kw": ("Höchster Netzbezug beim Laden aus dem Netz", 0.0, 1000.0),
     "schedule_netzladen_vorteil": ("Mindestvorteil beim Laden aus dem Netz", 0.0, 0.2),
+    # 0 = aus (schedule.netzladen_abend_pct).
+    "schedule_netzladen_abend_pct": ("Mindestladung am Abend", 0.0, 100.0),
     "heizstab_waermewert": ("Wärmewert des Heizstabs", 0.0, 1.0),
     # Leistungen in kW. 1 MW ist weit über jeder Anlage, für die diese
     # Integration gedacht ist, und weit unter einem verrutschten W-Wert.
