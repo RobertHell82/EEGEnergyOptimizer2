@@ -5920,7 +5920,17 @@ class EegOptimizerPanel extends HTMLElement {
           : `Keine Reserve nötig — in den letzten vier Wochen lag kein Verbrauch ${this._reserveGegen(d.schwelle_kw, d.grenze_kw)}. Die Batterie arbeitet normal und hält erst am Mindest-Ladestand.`;
       } else {
         // Die Formel auch sichtbar: ein title-Tooltip erscheint auf dem Handy nie.
-        satz = `Arbeitet normal. Reserve jetzt <strong>${fmtDe(Number(b.reserve_pct), 0)} %</strong> — unter <strong>${fmtDe(schwelleP, 0)} %</strong> Ladestand${formel ? ` (${formel})` : ""} deckt sie nur noch Spitzen.`;
+        // „Reserve jetzt" ist dieselbe gedeckelte Differenz wie in der Formel
+        // (Schwelle − Mindest-Ladestand), nicht reserve_pct: am höchsten
+        // Mindest-Ladestand gedeckelt stünden sonst zwei Werte nebeneinander.
+        const reserveJetzt = Number.isFinite(basis) && Number.isFinite(schwelleP)
+          ? Math.max(0, schwelleP - basis) : Number(b.reserve_pct);
+        satz = `Arbeitet normal. Reserve jetzt <strong>${fmtDe(reserveJetzt, 0)} %</strong> — unter <strong>${fmtDe(schwelleP, 0)} %</strong> Ladestand${formel ? ` (${formel})` : ""} deckt sie nur noch Spitzen.`;
+      }
+      if (b.batterie_gesperrt) {
+        // Kostal nach einem Sollwert: die Batterie steht bis zum
+        // Watchdog-Rückfall des Wechselrichters (schedule_executor).
+        satz += " Die Batterie ist gerade gesperrt, bis der Wechselrichter zurückfällt — Spitzen kommen bis dahin aus dem Netz oder von den Verbrauchern.";
       }
       batterie = `${balken}<div style="margin-top:4px">${satz}</div>`;
     }
@@ -9723,7 +9733,10 @@ class EegOptimizerPanel extends HTMLElement {
       const formel = Number.isFinite(basis) && Number(b.schwelle_pct) > basis + 0.5
         ? ` (${pct(basis)} % Mindest-Ladestand + ${pct(Number(b.schwelle_pct) - basis)} % Spitzenreserve)`
         : "";
-      teile.push(`Reserve jetzt <strong>${pct(b.reserve_pct)} %</strong> — unter <strong>${pct(b.schwelle_pct)} %</strong> Ladestand${formel} deckt die Batterie nur noch, was ${this._reserveGegen(b.schwelle_kw, grenzeKw)} liegt.`);
+      // Wie in der Karte: die gedeckelte Differenz, damit „Reserve jetzt"
+      // und die Formel daneben dieselbe Zahl nennen.
+      const reserveJetzt = Number.isFinite(basis) ? Math.max(0, Number(b.schwelle_pct) - basis) : Number(b.reserve_pct);
+      teile.push(`Reserve jetzt <strong>${pct(reserveJetzt)} %</strong> — unter <strong>${pct(b.schwelle_pct)} %</strong> Ladestand${formel} deckt die Batterie nur noch, was ${this._reserveGegen(b.schwelle_kw, grenzeKw)} liegt.`);
     } else if (b.plan_pct != null) {
       teile.push(`Der Fahrplan hält <strong>${pct(b.plan_wirksam_pct ?? b.plan_pct)} %</strong> für Spitzen zurück.`);
     }
@@ -9733,6 +9746,9 @@ class EegOptimizerPanel extends HTMLElement {
         : "Gerade aktiv: Die Batterie hält ihre Reserve, die Grundlast kommt aus dem Netz.");
     } else if (b.aktiv) {
       teile.push("Gerade aktiv, aber der Entladedeckel ist noch nicht gesetzt — wird wiederholt.");
+    }
+    if (b.batterie_gesperrt) {
+      teile.push("Die Batterie ist gerade gesperrt, bis der Wechselrichter zurückfällt.");
     }
     return teile.join(" ");
   }

@@ -170,6 +170,39 @@ test("Einstellungen: Zustandssatz nennt die Formel der Schwelle", () => {
   assert.match(satz, /unter <strong>25 %<\/strong> Ladestand \(20 % Mindest-Ladestand \+ 5 % Spitzenreserve\) deckt/);
 });
 
+test("gedeckelte Reserve: „Reserve jetzt“ und Formel nennen dieselbe Zahl", async () => {
+  // Mindest-Ladestand 70 %, Kurve 30 %, aber die Schwelle ist am höchsten
+  // Mindest-Ladestand (80 %) gedeckelt: wirksam sind 10 %, nicht 30 %.
+  const b = { unterstuetzt: true, aktiv: false, reserve_pct: 30, basis_pct: 70, schwelle_pct: 80, deckel_kw: null, statistik: true, tage: 25 };
+  const hass = aufzeichnendesHass();
+  const p = panel(hass);
+  p._loadSpitze();
+  const a = antwort();
+  a.kappung.batterie = b;
+  spitzeAnfragen(hass)[0].antworten(a);
+  await warten();
+  const html = p._renderSpitzeKarte();
+  assert.match(html, /Reserve jetzt <strong>10 %<\/strong>/);
+  assert.match(html, /70 % Mindest-Ladestand \+ 10 % Spitzenreserve/);
+  assert.doesNotMatch(html, /Reserve jetzt <strong>30 %/);
+  const satz = p._kappungBatterieZustand(b, 3);
+  assert.match(satz, /Reserve jetzt <strong>10 %<\/strong>/);
+  assert.match(satz, /70 % Mindest-Ladestand \+ 10 % Spitzenreserve/);
+});
+
+test("gesperrte Batterie (Kostal-Rückfall) wird kurz genannt", async () => {
+  const b = { unterstuetzt: true, aktiv: true, reserve_pct: 10, basis_pct: 20, schwelle_pct: 30, deckel_kw: 0, statistik: true, tage: 25, batterie_gesperrt: true };
+  const hass = aufzeichnendesHass();
+  const p = panel(hass);
+  p._loadSpitze();
+  const a = antwort();
+  a.kappung.batterie = b;
+  spitzeAnfragen(hass)[0].antworten(a);
+  await warten();
+  assert.match(p._renderSpitzeKarte(), /gerade gesperrt/);
+  assert.match(p._kappungBatterieZustand(b, 3), /gerade gesperrt/);
+});
+
 test("Blättern: ein Monat zurück fragt den Monat an, 0 springt zurück", async () => {
   const hass = aufzeichnendesHass();
   const p = panel(hass);
