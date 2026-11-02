@@ -398,6 +398,10 @@ class ScheduleExecutor:
         self._netzladung_runs = 0
         self._netzladung_wirkungslos = False
         self._netzladung_ist_kw: float | None = None
+        # Wirkungskontrolle des Entladedeckels (nur melden, _deckel_pruefen).
+        self._deckel_runs = 0
+        self._deckel_wirkungslos = False
+        self._deckel_ist_kw: float | None = None
 
         # Not-Aus (Guard 2): anhaltender Netzbezug während einer Entladung.
         self._emergency_runs = 0
@@ -630,6 +634,42 @@ class ScheduleExecutor:
             self._netzladung_wirkungslos = True
             self._netzladung_ist_kw = round(float(ist), 2)
 
+    def _deckel_pruefen(self) -> None:
+        """Hält der Entladedeckel? Nur zum Melden, wie ``_netzladung_pruefen``.
+
+        Ein „True" des Treibers heißt nur, dass das Gerät den Wert
+        angenommen hat. Ob es die Batterie danach wirklich drosselt, sieht nur
+        die Messung — und genau das ist bei den meisten Treibern am Gerät noch
+        unbelegt (Kostal 1040, Sigenergy im Eigenverbrauch, Victron über die
+        Wechselrichterleistung). Ohne diese Prüfung fiele ein wirkungsloser
+        Deckel erst auf, wenn die Monatsspitze schon da ist (peak_exceeded).
+        Wirkungslos heißt: mehr als ``GUARD_WIRKUNG_MIN_LUECKE_KW`` UND mehr
+        als das Anderthalbfache über dem Deckel, ``GUARD_WIRKUNG_RUNS`` Läufe
+        lang — beide Schwellen, damit weder Messrauschen beim Halten (0 kW)
+        noch eine knappe Regelung bei großem Deckel anschlagen.
+        """
+        deckel = self._written_entladedeckel_kw
+        if deckel is None or self._active_kind not in ("release", "charge_limit"):
+            self._deckel_runs = 0
+            self._deckel_wirkungslos = False
+            return
+        batterie = compute_battery_now_kw(self._hass, self._config)
+        if batterie is None:
+            return
+        entladung = max(0.0, -float(batterie))
+        if entladung <= deckel + GUARD_WIRKUNG_MIN_LUECKE_KW or entladung <= deckel * 1.5:
+            self._deckel_runs = 0
+            self._deckel_wirkungslos = False
+            return
+        self._deckel_runs += 1
+        if self._deckel_runs >= GUARD_WIRKUNG_RUNS and not self._deckel_wirkungslos:
+            _LOGGER.warning(
+                "Executor: Entladedeckel wirkungslos — gedeckelt %.2f kW, gemessen "
+                "%.2f kW Entladung über %d Läufe", deckel, entladung, self._deckel_runs,
+            )
+            self._deckel_wirkungslos = True
+            self._deckel_ist_kw = round(entladung, 2)
+
     def _wirkung_zuruecksetzen(self) -> None:
         """Zähler von Guard 3 zurückstellen (Slotwechsel, Ende der Entladung)."""
         self._wirkung_runs = 0
@@ -639,6 +679,10 @@ class ScheduleExecutor:
         self._netzladung_runs = 0
         self._netzladung_wirkungslos = False
         self._netzladung_ist_kw: float | None = None
+        # Wirkungskontrolle des Entladedeckels (nur melden, _deckel_pruefen).
+        self._deckel_runs = 0
+        self._deckel_wirkungslos = False
+        self._deckel_ist_kw: float | None = None
 
     async def async_release(self) -> bool:
         """Wechselrichter freigeben: erzwungene Modi stoppen, Automatik läuft.
@@ -1107,6 +1151,7 @@ class ScheduleExecutor:
             # Stopp einer Entladung, läuft sie noch, und ein Deckel
             # daneben würde vom späteren Stopp still mitgenommen.
             await self._spitzenkappung_schritt(schedule_state, now)
+        self._deckel_pruefen()
 
     def status(self) -> dict[str, Any]:
         """Zustand für Panel, Statussensor und WebSocket."""
@@ -1144,6 +1189,8 @@ class ScheduleExecutor:
             "wirkung_wirkungslos": self._wirkung_wirkungslos,
             "netzladung_wirkungslos": self._netzladung_wirkungslos,
             "netzladung_ist_kw": self._netzladung_ist_kw,
+            "deckel_wirkungslos": self._deckel_wirkungslos,
+            "deckel_ist_kw": self._deckel_ist_kw,
             "heizstab": None if self._heizstab is None else self._heizstab.status(),
             "written_entladedeckel_kw": self._written_entladedeckel_kw,
             "spitzenkappung": self.spitzenkappung,

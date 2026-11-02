@@ -560,6 +560,18 @@ def _check_schedule_health(schedule_state, status, mode, config, dedup, emit):
                 "slot": action.get("slot"),
             },
         )
+    if status.get("deckel_wirkungslos"):
+        emit(
+            category="guard_wirkung",
+            severity="warning",
+            message_hash="deckel",
+            context={
+                "inverter_type": config.get(CONF_INVERTER_TYPE),
+                "deckel_kw": status.get("written_entladedeckel_kw"),
+                "ist_kw": status.get("deckel_ist_kw"),
+                "slot": action.get("slot"),
+            },
+        )
     if status.get("netzladung_wirkungslos"):
         emit(
             category="guard_wirkung",

@@ -932,6 +932,23 @@ def test_schedule_health_meldet_wirkungslose_entladung_und_netzladung():
     assert netz["context"]["inverter_type"] == "fronius_gen24"
 
 
+def test_schedule_health_meldet_wirkungslosen_entladedeckel():
+    from custom_components.eeg_energy_optimizer import _check_schedule_health
+
+    calls, emit = _sammler()
+    _check_schedule_health(
+        {"error": None},
+        {"supported": True, "deckel_wirkungslos": True, "written_entladedeckel_kw": 0.0,
+         "deckel_ist_kw": 2.0, "plan_action": {"slot": "2026-11-01T02:00:00+01:00"}},
+        MODE_EIN, {CONF_INVERTER_TYPE: "kostal_plenticore"}, {}, emit,
+    )
+    [m] = calls
+    assert (m["category"], m["message_hash"]) == ("guard_wirkung", "deckel")
+    assert m["context"]["deckel_kw"] == 0.0
+    assert m["context"]["ist_kw"] == 2.0
+    assert m["context"]["inverter_type"] == "kostal_plenticore"
+
+
 def _spitze(monat, kw):
     return SimpleNamespace(monat=monat, spitze={"kw": kw, "start": "2026-11-01T06:30:00+00:00"})
 
