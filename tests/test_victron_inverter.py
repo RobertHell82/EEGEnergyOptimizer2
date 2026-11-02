@@ -102,6 +102,10 @@ class Anlage:
             if eid in self.werte
         })
         self.schreibfehler = False
+        # Verzögertes MQTT-Echo: Geschriebenes landet erst mit echo() im
+        # Zustand — bis dahin zeigt die Entität den alten Wert.
+        self.echo_verzoegert = False
+        self.ausstehend: list[tuple[str, str]] = []
         hass.states.get.side_effect = self.get
         hass.services.async_call = AsyncMock(side_effect=self.call)
 
@@ -115,7 +119,17 @@ class Anlage:
         if self.schreibfehler:
             raise RuntimeError("MQTT getrennt")
         assert (domain, service) == ("number", "set_value")
+        if self.echo_verzoegert:
+            self.ausstehend.append((data["entity_id"], str(data["value"])))
+            return
         self.werte[data["entity_id"]][0] = str(data["value"])
+
+    def echo(self) -> None:
+        """Ausstehende Echos ankommen lassen, Verzögerung aus."""
+        self.echo_verzoegert = False
+        for eid, wert in self.ausstehend:
+            self.werte[eid][0] = wert
+        self.ausstehend.clear()
 
     def wert(self, entity_id) -> float:
         return float(self.werte[entity_id][0])
@@ -691,6 +705,43 @@ class TestFreigabe:
         anlage.schreibfehler = False
         assert await inv.async_stop_forcible() is True
         assert anlage.wert(LADESTROM) == 125.0
+
+    async def test_verspaetetes_echo_wird_nicht_zum_vorwert(self, mock_hass, anlage, soc_beobachter):
+        """Freigabe schreibt 0 zurück, das Echo hängt: Die Entität zeigt noch
+        −2000. Die nächste Entladung darf das nicht als Vorwert sichern —
+        sonst entlüde danach jede Freigabe mit 2 kW."""
+        inv = _treiber(mock_hass)
+        await inv.async_set_discharge(2.0, 30)
+        anlage.echo_verzoegert = True
+        assert await inv.async_stop_forcible() is True
+        assert anlage.wert(SOLLWERT) == -2000.0  # Echo steht aus
+        assert await inv.async_set_discharge(1.5, 30) is True
+        assert inv._state_store.vorwert("netzsollwert") == 0.0
+        anlage.echo()
+        assert await inv.async_stop_forcible() is True
+        assert anlage.wert(SOLLWERT) == 0.0
+
+    async def test_verspaetetes_echo_beim_ladestrom(self, mock_hass, anlage, soc_beobachter):
+        inv = _treiber(mock_hass)
+        await inv.async_set_charge_limit(0)
+        anlage.echo_verzoegert = True
+        await inv.async_stop_forcible()
+        assert anlage.wert(LADESTROM) == 0.0  # Echo steht aus
+        await inv.async_set_charge_limit(1.0)
+        assert inv._state_store.vorwert("ladestrom") == 125.0
+        anlage.echo()
+        await inv.async_stop_forcible()
+        assert anlage.wert(LADESTROM) == 125.0
+
+    async def test_betreiberwert_nach_der_freigabe_gilt(self, mock_hass, anlage, soc_beobachter):
+        """Ein fremder Wert nach der Freigabe ist der neue des Betreibers —
+        der zurückgeschriebene alte im Speicher gilt dann nicht mehr."""
+        inv = _treiber(mock_hass)
+        await inv.async_set_discharge(2.0, 30)
+        await inv.async_stop_forcible()
+        anlage.setze(SOLLWERT, "50")
+        await inv.async_set_discharge(2.0, 30)
+        assert inv._state_store.vorwert("netzsollwert") == 50.0
 
     async def test_freigabe_beendet_die_beobachtung(self, mock_hass, anlage, soc_beobachter):
         inv = _treiber(mock_hass)

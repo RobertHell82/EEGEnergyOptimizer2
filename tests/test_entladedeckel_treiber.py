@@ -715,6 +715,7 @@ async def test_kostal_aufheben_ohne_deckel_ist_noop(kostal):
 
 from .test_victron_inverter import (  # noqa: E402
     DC_PV,
+    LADESTROM,
     SOLLWERT,
     WR_GRENZE,
     Anlage,
@@ -799,6 +800,41 @@ async def test_victron_neustart_im_halten_sichert_die_eigene_null_nicht(
     assert neu._state_store.vorwert("entladedeckel") == -1.0
     assert await neu.async_set_discharge_limit(None) is True
     assert anlage.wert(WR_GRENZE) == -1.0
+    assert store.data == {}
+
+    # Und ohne Store: Nach dem Aufheben ist er leer, das Echo von −1 hängt,
+    # die Entität zeigt noch unser 50-W-Halten. Der nächste Deckel darf es
+    # nicht sichern — der Schutz kommt dann aus der Sitzung allein.
+    assert await neu.async_set_discharge_limit(0.0) is True
+    anlage.echo_verzoegert = True
+    assert await neu.async_set_discharge_limit(None) is True
+    assert anlage.wert(WR_GRENZE) == 50.0  # Echo steht aus
+    assert store.data == {}
+    assert await neu.async_set_discharge_limit(0.0) is True
+    assert neu._state_store.vorwert("entladedeckel") == -1.0
+    anlage.echo()
+    assert await neu.async_set_discharge_limit(None) is True
+    assert anlage.wert(WR_GRENZE) == -1.0
+
+
+async def test_victron_freigabe_und_neuer_deckel_im_selben_lauf(mock_hass, anlage, soc_beobachter):
+    """Befund aus dem Review: Executor wechselt charge_limit → release, die
+    Freigabe hebt den Deckel auf (−1), im selben Lauf kommt ein neuer Deckel —
+    das MQTT-Echo zeigt noch den alten (2150 W). Als „Betreiberwert"
+    gesichert, schriebe danach jede Freigabe 2150 statt −1."""
+    anlage.setze(DC_PV, "2000")
+    inv = _treiber(mock_hass)
+    await inv.async_set_charge_limit(0.0)
+    assert await inv.async_set_discharge_limit(0.0) is True
+    assert anlage.wert(WR_GRENZE) == 2150.0
+    anlage.echo_verzoegert = True
+    assert await inv.async_stop_forcible() is True
+    assert await inv.async_set_discharge_limit(0.5) is True
+    assert inv._state_store.vorwert("entladedeckel") == -1.0
+    anlage.echo()
+    assert await inv.async_stop_forcible() is True
+    assert anlage.wert(WR_GRENZE) == -1.0
+    assert anlage.wert(LADESTROM) == 125.0
 
 
 async def test_victron_ohne_entitaet_kein_deckel(mock_hass, registry_patch):
@@ -842,12 +878,18 @@ async def test_victron_minus_eins_unschreibbar_beim_aufheben_scheitert_laut(
     assert inv._state_store.vorwert("entladedeckel") == -1.0
 
 
-async def test_victron_dc_pv_unlesbar_wird_nicht_geraten(mock_hass, anlage, soc_beobachter):
+async def test_victron_dc_pv_unbekannt_zaehlt_null(mock_hass, anlage, soc_beobachter, caplog):
+    """Nachts schlafen die Laderegler womöglich ohne Wert — die Batterie-Stufe
+    darf dann nicht ausfallen. Mit 0 W PV ist der Deckel knapper, greift aber."""
     anlage.setze(DC_PV, "unavailable")
     inv = _treiber(mock_hass)
-    assert await inv.async_set_discharge_limit(0.0) is False
-    assert inv.last_write_error == "DC-PV-Leistung unbekannt"
-    assert _deckel_schreibvorgaenge(mock_hass) == []
+    with caplog.at_level("DEBUG"):
+        assert await inv.async_set_discharge_limit(1.0) is True
+    assert _deckel_schreibvorgaenge(mock_hass) == [1100.0]  # 1000 × 1,05 + 50
+    assert "DC-PV-Leistung unbekannt" in caplog.text
+    anlage.setze(DC_PV, "unknown")
+    assert await inv.async_set_discharge_limit(0.0) is True
+    assert anlage.wert(WR_GRENZE) == 50.0
 
 
 async def test_victron_ohne_laderegler_zaehlt_keine_pv(mock_hass, registry_patch, soc_beobachter):
@@ -873,10 +915,57 @@ async def test_victron_entladung_hebt_den_deckel_selbst_auf(mock_hass, anlage, s
     assert await inv.async_set_discharge(2.0, 30) is True
     assert anlage.wert(WR_GRENZE) == -1.0
     assert anlage.wert(SOLLWERT) == -2000.0
-    # Während der Entladung wird kein Deckel geschrieben.
+    # Während der Entladung wird kein Deckel geschrieben — und das ist kein
+    # stilles True: Der Executor hielte „Deckel steht" sonst im Totband fest.
     mock_hass.services.async_call.reset_mock()
-    assert await inv.async_set_discharge_limit(0.0) is True
+    assert await inv.async_set_discharge_limit(0.0) is False
+    assert inv.last_write_error == "Entladung läuft — kein Entladedeckel"
     mock_hass.services.async_call.assert_not_called()
+
+
+async def test_victron_entladung_trotz_klemmendem_deckel(mock_hass, anlage, soc_beobachter):
+    """Wie im Executor: Scheitert das Aufheben, wird trotzdem entladen."""
+    inv = _treiber(mock_hass)
+    await inv.async_set_discharge_limit(0.0)
+    anlage.werte[WR_GRENZE][1] = {"min": 0, "max": 100}
+    assert await inv.async_set_discharge(2.0, 30) is True
+    assert anlage.wert(SOLLWERT) == -2000.0
+    assert anlage.wert(WR_GRENZE) == 50.0
+    assert inv.last_write_error.startswith("Entladedeckel nicht aufgehoben")
+    assert inv._state_store.vorwert("entladedeckel") == -1.0
+
+
+async def test_victron_freigabe_scheitert_nicht_am_deckel(mock_hass, anlage, soc_beobachter, caplog):
+    """Bereich ohne −1 nach einem Update: Sollwert und Ladestrom sind zurück,
+    die Freigabe gilt — der Deckel-Vorwert bleibt für einen späteren Versuch."""
+    inv = _treiber(mock_hass)
+    await inv.async_set_charge_limit(0.0)
+    await inv.async_set_discharge_limit(0.0)
+    anlage.werte[WR_GRENZE][1] = {"min": 0, "max": 100}
+    assert inv.supports_discharge_limit is False
+    with caplog.at_level("WARNING"):
+        assert await inv.async_stop_forcible() is True
+    assert anlage.wert(LADESTROM) == 125.0
+    assert inv.last_write_error == "Entladedeckel nicht aufgehoben: Entladedeckel −1 nicht schreibbar"
+    assert inv._state_store.vorwert("entladedeckel") == -1.0
+    assert "Entladedeckel" in caplog.text
+    # Bereich wieder da: Die nächste Freigabe holt es nach.
+    anlage.werte[WR_GRENZE][1] = {"min": -1, "max": 1000000}
+    assert await inv.async_stop_forcible() is True
+    assert inv.last_write_error is None
+    assert anlage.wert(WR_GRENZE) == -1.0
+
+
+async def test_victron_freigabe_ohne_deckel_entitaet(mock_hass, anlage, soc_beobachter):
+    """Entität zur Laufzeit verschwunden: die Freigabe gilt trotzdem."""
+    inv = _treiber(mock_hass)
+    await inv.async_set_discharge_limit(0.0)
+    await inv.async_set_charge_limit(0.0)
+    del anlage.registry.entities[WR_GRENZE]
+    assert await inv.async_stop_forcible() is True
+    assert anlage.wert(LADESTROM) == 125.0
+    assert inv.last_write_error == "Entladedeckel nicht aufgehoben: Entität entladedeckel nicht gefunden"
+    assert inv._state_store.vorwert("entladedeckel") == -1.0
 
 
 async def test_victron_deckel_neben_ladelimit(mock_hass, anlage, soc_beobachter):
@@ -909,6 +998,74 @@ async def test_victron_nachfuehrung_folgt_der_dc_pv(mock_hass, anlage, soc_beoba
     anlage.setze(DC_PV, "unavailable")
     await takt(None)
     assert anlage.wert(WR_GRENZE) == 3200.0
+
+
+class _Uhr:
+    def __init__(self):
+        self.t = 1000.0
+
+    def __call__(self):
+        return self.t
+
+
+async def test_victron_fallende_pv_senkt_erst_nach_vier_takten(mock_hass, anlage, soc_beobachter):
+    """Asymmetrisch: Steigen sofort (sonst Netzbezug), Fallen erst, wenn der
+    Überhang 4 Takte steht — ein zu hoher Deckel kostet kurz nur etwas
+    Reserve, jedes Schreiben dagegen den Einstellungsspeicher."""
+    uhr = _Uhr()
+    anlage.setze(DC_PV, "3000")
+    inv = _treiber(mock_hass)
+    inv._uhr = uhr
+    await inv.async_set_discharge_limit(0.0)
+    assert anlage.wert(WR_GRENZE) == 3200.0
+    [(takt, _)] = soc_beobachter.takte
+    anlage.setze(DC_PV, "1000")  # → 1100 W
+    for _ in range(3):
+        uhr.t += 30
+        await takt(None)
+    assert _deckel_schreibvorgaenge(mock_hass) == [3200.0]
+    # Eine Wolke geht, die PV ist wieder da: der Zähler beginnt neu.
+    anlage.setze(DC_PV, "3000")
+    uhr.t += 30
+    await takt(None)
+    anlage.setze(DC_PV, "1000")
+    for _ in range(3):
+        uhr.t += 30
+        await takt(None)
+    assert _deckel_schreibvorgaenge(mock_hass) == [3200.0]
+    uhr.t += 30
+    await takt(None)
+    assert _deckel_schreibvorgaenge(mock_hass) == [3200.0, 1100.0]
+    # Steigen dagegen sofort.
+    anlage.setze(DC_PV, "2000")
+    uhr.t += 30
+    await takt(None)
+    assert _deckel_schreibvorgaenge(mock_hass) == [3200.0, 1100.0, 2150.0]
+
+
+async def test_victron_schreibvorrat_begrenzt_die_nachfuehrung(mock_hass, anlage, soc_beobachter):
+    """Steigt die PV jeden Takt um 300 W, schriebe die Nachführung zweimal je
+    Minute. Der Vorrat (5, einer je Minute nach) hält das im Mittel bei
+    höchstens einem je Minute."""
+    uhr = _Uhr()
+    inv = _treiber(mock_hass)
+    inv._uhr = uhr
+    await inv.async_set_discharge_limit(0.0)  # Befehl: nimmt einen
+    [(takt, _)] = soc_beobachter.takte
+    pv = 0
+    for _ in range(40):  # 20 Minuten
+        pv += 300
+        anlage.setze(DC_PV, str(pv))
+        uhr.t += 30
+        await takt(None)
+    schreiben = len(_deckel_schreibvorgaenge(mock_hass))
+    # 5 auf Vorrat + 20 nachgefüllt, der Befehl am Anfang eingeschlossen
+    assert schreiben <= 1 + 5 + 20
+    assert schreiben >= 20
+    # Ein neuer Befehl des Executors geht trotz leerem Vorrat durch.
+    vorher = schreiben
+    assert await inv.async_set_discharge_limit(2.0) is True
+    assert len(_deckel_schreibvorgaenge(mock_hass)) == vorher + 1
 
 
 async def test_victron_takt_nach_dem_aufheben_schreibt_nichts(mock_hass, anlage, soc_beobachter):

@@ -345,7 +345,7 @@ Ladelimit = DVCC „Max. Ladestrom“ (Leistung ÷ Batteriespannung, gilt für
 Multiplus und Laderegler zusammen), Entladung = ESS-Netzsollwert negativ.
 Wie bei SMA ist die Entladung ein **Netz-Sollwert** — der Multiplus legt die
 Hauslast selbst obendrauf, die Steuerung gibt die geplante Einspeisung vor
-(`discharge_is_grid_setpoint`). Beide Werte sind gespeicherte Einstellungen
+(`discharge_is_grid_setpoint`). Beide Werte (und der Entladedeckel, unten) sind gespeicherte Einstellungen
 des GX-Geräts: Der Wert vor dem ersten Eingriff wird gesichert und bei der
 Freigabe zurückgeschrieben, auch über einen Neustart hinweg.
 
@@ -409,16 +409,26 @@ unbegrenzt). Sie deckelt den ganzen Wandler des Multiplus, Summe aller
 Phasen, und die Leistung der MPPT-Laderegler läuft mit durch. Ein Deckel
 von 0 W ließe deshalb auch die Sonne vom Dach nicht mehr ins Haus. Der
 Treiber schreibt Deckel + gemessene DC-PV + Verluste (5 % und 50 W) und
-führt das alle 30 s an der DC-PV nach; neu geschrieben wird erst ab 200 W
-Abweichung, weil jede Änderung im Einstellungsspeicher des GX landet.
+führt das alle 30 s an der DC-PV nach — asymmetrisch, weil jede Änderung im
+Einstellungsspeicher des GX landet: steigende DC-PV ab 200 W sofort (sonst
+Netzbezug), fallende erst nach vier Takten mit Überhang, darüber ein
+Schreibvorrat (5, einer je Minute nach), also im Mittel höchstens ein
+Schreiben je Minute statt bis zu 2880 am Tag. Befehle des Executors gehen
+immer durch. Unbekannte DC-PV (Laderegler nachts ohne Wert) zählt als 0 W —
+der Deckel ist knapper, greift aber; ein stehender wird gehalten.
 AC-gekoppelte PV ist nicht betroffen. Der Wert vor dem ersten Eingriff
 (meist −1) wird gesichert und bei der Freigabe zurückgeschrieben; eine
-eigene Grenze des Betreibers bleibt die Obergrenze. Auch dieser Deckel hat
+eigene Grenze des Betreibers bleibt die Obergrenze. Ein Wert, den der
+Treiber selbst geschrieben hat, wird nie Vorwert (das MQTT-Echo kommt
+verzögert — Freigabe und neuer Deckel im selben Lauf hätten sonst den alten
+Deckel als „Betreiberwert“ gesichert); dasselbe gilt für Netzsollwert und
+Ladestrom. Scheitert das Aufheben des Deckels, gelten Freigabe und
+Entladung trotzdem, der Vorwert bleibt für den nächsten Versuch. Auch dieser Deckel hat
 keine Rückfallzeit: Bleibt Home Assistant stehen, bleibt er stehen — die
 Freigabe beim Start, „Aus“ und das Entladen der Integration heben ihn auf.
 Fehlt die Entität, kappt die Spitzenkappung nur über Verbraucher. Kann die
-Integration −1 nicht schreiben (ältere Stände, Bereich 0–100), meldet der
-Assistent ein Problem.
+Integration −1 nicht schreiben (ältere Stände, Bereich 0–100), gibt der
+Assistent einen Hinweis, und es bleibt ebenfalls bei den Verbrauchern.
 
 Batterie aus dem Netz laden (Beta) geht wie bei Huawei: DVCC-Ladestrom als
 Ladeleistung, dazu ein positiver Netzsollwert, den der Treiber an der
