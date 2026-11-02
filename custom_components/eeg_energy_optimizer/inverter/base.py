@@ -178,6 +178,28 @@ class InverterBase(ABC):
         """
         return False
 
+    @property
+    def supports_forced_discharge(self) -> bool:
+        """Kann der Treiber eine Zwangsentladung (``async_set_discharge``)?
+
+        Default True — alle Treiber außer SolaX ohne Mode 1 (Gen6). Ist es
+        False, macht der Executor aus einer geplanten Entladung eine Freigabe
+        („Treiber kann nicht zwangsentladen"): kein Schreibversuch, der jeden
+        Lauf scheitern müsste, kein Fehler, keine Telemetrie.
+        """
+        return True
+
+    @property
+    def netzladung_am_ziel(self) -> bool:
+        """Hat der Treiber die Netzladung angehalten, weil das Ziel erreicht ist?
+
+        Für Treiber, die den Ziel-Ladestand selbst beobachten (Kostal). Der
+        Executor zählt die Netzladung dann nicht als wirkungslos
+        (``ScheduleExecutor._netzladung_pruefen``) — der Befehl steht bei
+        ihm noch, die Batterie lädt aber zu Recht nicht mehr. Default False.
+        """
+        return False
+
     async def async_set_grid_charge(
         self, power_kw: float, target_soc: float | None = None
     ) -> bool:

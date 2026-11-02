@@ -112,6 +112,9 @@ _EPS_KW = 0.001
 # (``_batterie_gesaettigt``): Nur DIESE Freigabe heißt „die Batterie nimmt
 # nichts mehr auf" — die Freigabe für die Entladung fürs Haus heißt es nicht.
 RELEASE_GRUND_BATTERIE_VOLL = "Normalbetrieb (Batterie voll)"
+# Freigabe statt Zwangsentladung, wenn der Treiber keine kann
+# (``InverterBase.supports_forced_discharge``).
+RELEASE_GRUND_KEINE_ZWANGSENTLADUNG = "Normalbetrieb (Treiber kann nicht zwangsentladen)"
 # Freigabe, weil der Slot den ganzen Überschuss laden will (``_laedt_alles``).
 RELEASE_GRUND_ALLES_LADEN = "Normalbetrieb (Plan lädt den ganzen Überschuss)"
 # Freigabe, weil der Slot gar keinen PV-Überschuss erwartet
@@ -660,6 +663,12 @@ class ScheduleExecutor:
             ziel is not None and soc is not None
             and soc >= ziel - GUARD_WIRKUNG_SOC_ABSTAND_PCT
         )
+        # Hat der Treiber die Netzladung selbst angehalten, weil das Ziel
+        # erreicht ist (Kostal: ``netzladung_am_ziel``), steht der Befehl
+        # bei uns noch, die Batterie lädt aber zu Recht nicht mehr. Der
+        # SOC-Vergleich oben fängt das nicht immer: Der Treiber hält mit
+        # eigener Hysterese an, und der Sensor kann einen Punkt nachhinken.
+        am_ziel = am_ziel or getattr(self._inverter, "netzladung_am_ziel", False) is True
         if soll < 0.5 or ist is None or am_ziel or self._wirkung_erfuellt(soll, max(0.0, ist)):
             self._netzladung_runs = 0
             self._netzladung_wirkungslos = False
@@ -709,7 +718,10 @@ class ScheduleExecutor:
                 self._deckel_richtung = None
             return
         self._deckel_runs += 1
-        if self._deckel_runs >= GUARD_WIRKUNG_RUNS and not self._deckel_wirkungslos:
+        # Nach der Richtung fragen, nicht nach dem Flag: Stand der Befund
+        # schon auf „steht", gilt jetzt das Gegenteil — sonst bliebe die
+        # alte Richtung (und ihre Telemetrie-Kennung) stehen.
+        if self._deckel_runs >= GUARD_WIRKUNG_RUNS and self._deckel_richtung != "zu_viel":
             _LOGGER.warning(
                 "Executor: Entladedeckel wirkungslos — gedeckelt %.2f kW, gemessen "
                 "%.2f kW Entladung über %d Läufe", deckel, entladung, self._deckel_runs,
@@ -732,6 +744,16 @@ class ScheduleExecutor:
         der Ladestand IN der Reserve liegt (``entladedeckel_kw``). Nicht
         während ``batterie_gesperrt`` (Kostal bis zum Watchdog-Rückfall) —
         dort steht sie bekannt und aus einem anderen Grund.
+
+        Ein geräteeigener Mindest-Ladestand über ``basis + 1`` (Backup-SOC am
+        Wechselrichter höher als der Mindest-Ladestand der Integration) meldet
+        hier ebenfalls „steht" — gewollt: Die Batterie hält dann an einem
+        Boden, den der Plan nicht kennt, und genau diesen Konfigurations-
+        widerspruch soll die Meldung zeigen.
+
+        Wechselt der Befund die Richtung (erst „zu_viel", dann „steht" oder
+        umgekehrt), werden Flag und Richtung umgestellt; gemeldet wird die
+        neue Richtung unter ihrer eigenen Kennung.
         """
         info = self.spitzenkappung or {}
         grenze = info.get("grenze_kw")
@@ -757,7 +779,7 @@ class ScheduleExecutor:
             return False
         self._deckel_runs = 0
         self._deckel_steht_runs += 1
-        if self._deckel_steht_runs >= GUARD_WIRKUNG_RUNS and not self._deckel_wirkungslos:
+        if self._deckel_steht_runs >= GUARD_WIRKUNG_RUNS and self._deckel_richtung != "steht":
             _LOGGER.warning(
                 "Executor: Entladedeckel wirkungslos — %.2f kW erlaubt, Netzbezug "
                 "%.2f kW über %.2f kW, die Batterie gibt %.2f kW über %d Läufe",
@@ -951,6 +973,24 @@ class ScheduleExecutor:
                 slot_t=action.slot_t,
                 consumption_kw=action.consumption_kw,
                 reason="Normalbetrieb (Heizstab unter Mindesttemperatur — keine Entladung ins Netz)",
+            )
+        if (
+            action is not None
+            and action.kind == "discharge"
+            and getattr(self._inverter, "supports_forced_discharge", True) is False
+        ):
+            # Der Treiber kann nicht zwangsentladen (SolaX Gen6 ohne Mode 1).
+            # Der Plan rechnet trotzdem mit der Entladung — er weiß nichts von
+            # Treibergrenzen. Statt eines Befehls, der scheitern muss (jeder
+            # Lauf ein Schreibfehler, eine Telemetrie-Meldung, die Bremse),
+            # gibt der Executor frei: Die Automatik deckt das Haus aus der
+            # Batterie, nur die Einspeisung aus ihr entfällt. Das ist kein
+            # Fehler, sondern die Grenze des Geräts.
+            action = PlanAction(
+                "release",
+                slot_t=action.slot_t,
+                consumption_kw=action.consumption_kw,
+                reason=RELEASE_GRUND_KEINE_ZWANGSENTLADUNG,
             )
         self.last_action = action
 

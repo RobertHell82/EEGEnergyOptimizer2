@@ -158,3 +158,23 @@ async def test_aufgehobener_deckel_loescht_den_befund(ex):
     assert ex.status()["deckel_wirkungslos"] is True
     assert await ex._entladedeckel_aufheben(bremse=False) is True
     assert ex.status()["deckel_wirkungslos"] is False
+
+
+def test_richtungswechsel_stellt_flag_und_richtung_um(steht):
+    """Erst entlädt sie zu viel, dann steht sie: Der Befund folgt der neuen
+    Richtung, statt beim alten stehen zu bleiben (eigene Telemetrie-Kennung)."""
+    with patch.object(sx, "compute_grid_export_kw", return_value=-6.0):
+        _laeufe(steht, -4.0, GUARD_WIRKUNG_RUNS)
+    assert steht.status()["deckel_richtung"] == "zu_viel"
+    _steht_laeufe(steht, GUARD_WIRKUNG_RUNS)
+    status = steht.status()
+    assert status["deckel_wirkungslos"] is True
+    assert status["deckel_richtung"] == "steht"
+    assert status["deckel_ist_kw"] == 0.0
+    # Und zurück.
+    with patch.object(sx, "compute_grid_export_kw", return_value=-6.0):
+        _laeufe(steht, -4.0, GUARD_WIRKUNG_RUNS)
+    status = steht.status()
+    assert status["deckel_wirkungslos"] is True
+    assert status["deckel_richtung"] == "zu_viel"
+    assert status["deckel_ist_kw"] == 4.0

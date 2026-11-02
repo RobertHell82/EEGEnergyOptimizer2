@@ -2191,3 +2191,36 @@ def test_geraete_reserve_lesefehler_bricht_status_nicht(mock_hass, mock_inverter
     mock_inverter.get_backup_reserve_soc_pct.side_effect = RuntimeError("Modbus")
     ex = _make_executor(mock_hass, mock_inverter, {**CFG_BASE, "schedule_min_soc_pct": 20})
     assert ex.status()["geraete_reserve"] is None
+
+
+
+# ---------------------------------------------------------------------------
+# Treiber ohne Zwangsentladung (SolaX Gen6 ohne Mode 1)
+# ---------------------------------------------------------------------------
+
+
+async def test_ohne_zwangsentladung_wird_freigegeben(mock_hass, mock_inverter):
+    """``supports_forced_discharge = False``: Der Entladeslot wird zur
+    Freigabe — kein Schreibversuch, kein Fehler."""
+    mock_inverter.supports_forced_discharge = False
+    ex = _make_executor(mock_hass, mock_inverter)
+    with _messwerte(haus=0.8):
+        await ex.async_guard_cycle(
+            _state(_slot(0, battery_p=2.6, grid_p=2.0, soc=43.0)), MODE_EIN, now=NOW
+        )
+    mock_inverter.async_set_discharge.assert_not_called()
+    assert ex.last_action.kind == "release"
+    assert "Treiber kann nicht zwangsentladen" in ex.last_action.reason
+    assert "Treiber kann nicht zwangsentladen" in ex.last_status
+    assert ex.write_failures == 0
+
+
+async def test_unbekannte_eigenschaft_heisst_zwangsentladung_moeglich(mock_hass, mock_inverter):
+    """Ein Treiber (oder Mock) ohne die Eigenschaft entlädt wie bisher —
+    nur ein ausdrückliches False schaltet ab."""
+    ex = _make_executor(mock_hass, mock_inverter)
+    with _messwerte(haus=0.8):
+        await ex.async_guard_cycle(
+            _state(_slot(0, battery_p=2.6, grid_p=2.0, soc=43.0)), MODE_EIN, now=NOW
+        )
+    mock_inverter.async_set_discharge.assert_called_once()

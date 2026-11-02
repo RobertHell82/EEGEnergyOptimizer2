@@ -622,3 +622,23 @@ def test_beg_bekommt_immer_die_volle_netzgebuehr():
     beg, eeg = sched.eeg_bezug_aus_config(config)
     assert beg["reduktion"] == sched.EEG_BEZUG_REDUKTION["beg"]
     assert eeg["reduktion"] == sched.EEG_BEZUG_REDUKTION["lokal"]
+
+
+
+async def test_treiber_am_ziel_ist_nicht_wirkungslos(mock_hass, mock_inverter):
+    """Kostal hält die Netzladung selbst an, wenn das Ziel erreicht ist
+    (``netzladung_am_ziel``), mit eigener Hysterese — der SOC-Sensor liegt
+    dann womöglich noch mehr als einen Punkt darunter. Kein Fehlalarm."""
+    from unittest.mock import patch
+
+    from custom_components.eeg_energy_optimizer.const import GUARD_WIRKUNG_RUNS
+
+    mock_inverter.supports_grid_charge = True
+    mock_inverter.netzladung_am_ziel = True
+    ex = _make_executor(mock_hass, mock_inverter)
+    with patch.object(ex, "_batterie_soc_pct", return_value=50.0):
+        for i in range(GUARD_WIRKUNG_RUNS + 2):
+            with _messwerte(haus=0.6, pv=0.5, batt=0.0):
+                await ex.async_guard_cycle(_state(_netzslot(soc=80.0)), MODE_EIN,
+                                           now=NOW + timedelta(seconds=30 * i))
+    assert ex.status()["netzladung_wirkungslos"] is False
