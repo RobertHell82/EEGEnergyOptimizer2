@@ -4,8 +4,16 @@
 
 Nur **Gen4, Gen5 und Gen6**. Ältere Geräte (Gen2/Gen3) haben keine Remote Control (Fernsteuerung).
 
+Voll steuerbar sind **Gen4 und Gen5**. Gen6 kennt die Fernsteuerung Mode 1 nicht, die der Optimizer für die gezielte Einspeisung braucht:
+
+| | Gen4 / Gen5 | Gen6 |
+|---|---|---|
+| Laden begrenzen (Überschuss ins Netz statt in die Batterie) | ja | ja |
+| Gezielte Einspeisung aus der Batterie | ja | **nein** |
+| Batterie aus dem Netz laden (Beta, Expertenmodus) | ja | **nein** |
+
 > [!NOTE]
-> **Batterie aus dem Netz laden** (Beta, Expertenmodus) gibt es nur bei **Gen4 und Gen5**. Gen6 kennt die dafür nötige Fernsteuerung (Mode 1) nicht — dort bietet der Optimizer die Funktion gar nicht an.
+> Bei Gen6 erscheint der Reiter **Netzladen** in den Einstellungen trotzdem — die Funktion wirkt dort aber nicht, der Optimizer plant keine Netzladung. Eine geplante Einspeisung meldet er als fehlgeschlagen („Mode 1 nicht verfügbar“), statt so zu tun, als liefe sie.
 
 ## 2. Wechselrichter-Einstellungen
 

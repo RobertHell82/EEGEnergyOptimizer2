@@ -288,7 +288,7 @@ class TestAsyncSetDischarge:
         """Ohne Absenken stoppt der Wechselrichter an seinem eigenen Boden —
         der Entladebefehl laeuft weiter, die Batterie liefert 0,00 kW."""
         mock_hass.states.get = MagicMock(
-            side_effect=_states({FLOOR_ENTITY: "30.0"})
+            side_effect=_states(_mode1_vorhanden(**{FLOOR_ENTITY: "30.0"}))
         )
         result = await inverter.async_set_discharge(2.0, target_soc=20)
         assert result is True
@@ -301,7 +301,7 @@ class TestAsyncSetDischarge:
     ):
         """Kein Ziel, kein Eingriff — sonst senkten wir ins Blaue."""
         mock_hass.states.get = MagicMock(
-            side_effect=_states({FLOOR_ENTITY: "30.0"})
+            side_effect=_states(_mode1_vorhanden(**{FLOOR_ENTITY: "30.0"}))
         )
         await inverter.async_set_discharge(2.0)
         assert FLOOR_ENTITY not in _calls_by_entity(mock_hass)
@@ -318,7 +318,7 @@ class TestAsyncSetDischarge:
     async def test_boden_wird_im_store_gesichert(self, inverter, mock_hass):
         noop = _install_noop_store(inverter)
         mock_hass.states.get = MagicMock(
-            side_effect=_states({FLOOR_ENTITY: "30.0"})
+            side_effect=_states(_mode1_vorhanden(**{FLOOR_ENTITY: "30.0"}))
         )
         await inverter.async_set_discharge(2.0, target_soc=20)
         assert any(
@@ -332,11 +332,11 @@ class TestAsyncSetDischarge:
         Original zu sichern hiesse, den echten zu verlieren."""
         _install_noop_store(inverter)
         mock_hass.states.get = MagicMock(
-            side_effect=_states({FLOOR_ENTITY: "30.0"})
+            side_effect=_states(_mode1_vorhanden(**{FLOOR_ENTITY: "30.0"}))
         )
         await inverter.async_set_discharge(2.0, target_soc=20)
         mock_hass.states.get = MagicMock(
-            side_effect=_states({FLOOR_ENTITY: "15.0"})
+            side_effect=_states(_mode1_vorhanden(**{FLOOR_ENTITY: "15.0"}))
         )
         await inverter.async_set_discharge(2.0, target_soc=20)
         assert inverter._state_store.original_discharge_floor == 30.0
@@ -753,7 +753,7 @@ class TestEntladebodenRestore:
 
     async def test_stop_restauriert_den_boden(self, inverter, mock_hass):
         _install_noop_store(inverter)
-        mock_hass.states.get = MagicMock(side_effect=_states({FLOOR_ENTITY: "30.0"}))
+        mock_hass.states.get = MagicMock(side_effect=_states(_mode1_vorhanden(**{FLOOR_ENTITY: "30.0"})))
         await inverter.async_set_discharge(2.0, target_soc=20)
 
         mock_hass.services.async_call.reset_mock()
@@ -764,7 +764,7 @@ class TestEntladebodenRestore:
 
     async def test_store_wird_nach_restore_geleert(self, inverter, mock_hass):
         _install_noop_store(inverter)
-        mock_hass.states.get = MagicMock(side_effect=_states({FLOOR_ENTITY: "30.0"}))
+        mock_hass.states.get = MagicMock(side_effect=_states(_mode1_vorhanden(**{FLOOR_ENTITY: "30.0"})))
         await inverter.async_set_discharge(2.0, target_soc=20)
         await inverter.async_stop_forcible()
         assert inverter._state_store.original_discharge_floor is None
@@ -830,7 +830,7 @@ class TestScheduleControlInterface:
         Gemeldet werden muss der Vorwert, sonst plant der Fahrplan mit jeder
         Entladung tiefer."""
         _install_noop_store(inverter)
-        mock_hass.states.get = MagicMock(side_effect=_states({FLOOR_ENTITY: "30.0"}))
+        mock_hass.states.get = MagicMock(side_effect=_states(_mode1_vorhanden(**{FLOOR_ENTITY: "30.0"})))
         await inverter.async_set_discharge(2.0, target_soc=20)
 
         mock_hass.states.get = MagicMock(side_effect=_states({FLOOR_ENTITY: "15.0"}))
@@ -905,7 +905,19 @@ def takt():
     modul = ModuleType("homeassistant.helpers.event")
     modul.async_track_time_interval = _intervall
     modul.async_track_state_change_event = _track
-    with patch.dict(sys.modules, {"homeassistant.helpers.event": modul}):
+    # Andere Testmodule legen unter homeassistant.core einen MagicMock ab,
+    # dessen ``callback`` den Rückruf verschlucken würde — hier eines, das
+    # ihn nur markiert, wie das echte (Muster: test_victron_inverter.py).
+    core = ModuleType("homeassistant.core")
+
+    def _callback(func):
+        func._hass_callback = True
+        return func
+
+    core.callback = _callback
+    with patch.dict(
+        sys.modules, {"homeassistant.helpers.event": modul, "homeassistant.core": core}
+    ):
         yield SimpleNamespace(
             takte=takte, abmelder=abmelder,
             beobachter=beobachter, soc_abmelder=soc_abmelder,
@@ -984,7 +996,7 @@ class TestMode1Keepalive:
         assert inverter._mode1_watt is None
 
     async def test_ladelimit_beendet_den_takt(self, inverter, mock_hass, takt):
-        mock_hass.states.get = MagicMock(return_value=None)
+        mock_hass.states.get = MagicMock(side_effect=_states(_mode1_vorhanden()))
         await inverter.async_set_discharge(2.0)
         await inverter.async_set_charge_limit(0)
         takt.abmelder.assert_called_once()
@@ -1153,6 +1165,11 @@ class TestNetzladung:
         await inv.async_set_grid_charge(2.0, target_soc=80)
         assert takt.beobachter[0][0] == [SOC_SENSOR]
 
+        # Ohne @callback führte HA den Rückruf im Executor-Thread aus, und
+        # ``async_create_task`` von dort weist HA ab — der Stopp am Ziel
+        # käme nie, Mode 1 lüde bis zum nächsten Takt weiter aus dem Netz.
+        assert getattr(takt.beobachter[0][1], "_hass_callback", False) is True
+
         werte[SOC_SENSOR] = "70"
         takt.beobachter[0][1](None)
         mock_hass.async_create_task.assert_not_called()
@@ -1235,3 +1252,122 @@ class TestNetzladung:
         assert takt.beobachter == []
         geschrieben = [c.args[2] for c in mock_hass.services.async_call.call_args_list]
         assert {"entity_id": SELECT_ENTITY, "option": "Disabled"} in geschrieben
+
+    async def test_gescheiterter_stopp_wird_auch_unter_dem_ziel_wiederholt(
+        self, mock_hass, takt
+    ):
+        """Fällt der SOC nach dem gescheiterten Stopp wieder unter das Ziel
+        (die Hauslast zieht mit), sähe der Takt ohne eigenes Flag weder ein
+        Ziel noch einen Befehl — und Mode 1 lüde weiter aus dem Netz."""
+        werte = _mode1_vorhanden(**{SOC_SENSOR: "60"})
+        inv = _netzlade_treiber(mock_hass, werte)
+        await inv.async_set_grid_charge(2.0, target_soc=80)
+
+        werte[SOC_SENSOR] = "80"
+        mock_hass.services.async_call = AsyncMock(side_effect=Exception("boom"))
+        await takt.takte[0][0](None)
+        assert inv._stopp_offen is True
+
+        werte[SOC_SENSOR] = "78"
+        mock_hass.services.async_call = AsyncMock(return_value=None)
+        await takt.takte[0][0](None)
+        payloads = _calls_by_entity(mock_hass)
+        assert payloads[SELECT_ENTITY]["option"] == "Disabled"
+        assert payloads[ACTIVE_POWER_ENTITY]["value"] == 0
+        takt.abmelder.assert_called_once()
+        assert inv._stopp_offen is False
+
+    async def test_neuer_befehl_erledigt_den_offenen_stopp(self, mock_hass, takt):
+        werte = _mode1_vorhanden(**{SOC_SENSOR: "60"})
+        inv = _netzlade_treiber(mock_hass, werte)
+        await inv.async_set_grid_charge(2.0, target_soc=80)
+        werte[SOC_SENSOR] = "80"
+        mock_hass.services.async_call = AsyncMock(side_effect=Exception("boom"))
+        await takt.takte[0][0](None)
+
+        mock_hass.services.async_call = AsyncMock(return_value=None)
+        werte[SOC_SENSOR] = "70"
+        assert await inv.async_set_discharge(1.0) is True
+        assert inv._stopp_offen is False
+        mock_hass.services.async_call.reset_mock()
+        await takt.takte[-1][0](None)
+        assert _calls_by_entity(mock_hass)[ACTIVE_POWER_ENTITY]["value"] == -1000
+
+    async def test_unlesbarer_soc_warnt_einmal_je_befehl(self, mock_hass, takt, caplog):
+        """Ohne SOC kein Stopp am Ziel — das soll im Log stehen, aber nicht
+        alle vier Minuten."""
+        werte = _mode1_vorhanden(**{SOC_SENSOR: "unavailable"})
+        inv = _netzlade_treiber(mock_hass, werte)
+
+        def _warnungen():
+            return [r for r in caplog.records if "Ladestand nicht lesbar" in r.getMessage()]
+
+        assert await inv.async_set_grid_charge(2.0, target_soc=80) is True
+        await takt.takte[0][0](None)
+        await takt.takte[0][0](None)
+        assert len(_warnungen()) == 1
+
+        await inv.async_set_grid_charge(3.0, target_soc=80)
+        assert len(_warnungen()) == 2
+
+    async def test_soc_erst_im_takt_unlesbar_warnt(self, mock_hass, takt, caplog):
+        werte = _mode1_vorhanden(**{SOC_SENSOR: "60"})
+        inv = _netzlade_treiber(mock_hass, werte)
+        await inv.async_set_grid_charge(2.0, target_soc=80)
+        assert not [r for r in caplog.records if "Ladestand nicht lesbar" in r.getMessage()]
+
+        werte[SOC_SENSOR] = "unavailable"
+        await takt.takte[0][0](None)
+        assert [r for r in caplog.records if "Ladestand nicht lesbar" in r.getMessage()]
+
+
+class TestEntladungFehlerpfade:
+    """Was nach einem gescheiterten Entladebefehl im Gerät stehen bleibt."""
+
+    async def test_ohne_mode1_scheitert_die_entladung_ehrlich(self, mock_hass):
+        """Gen6: Ohne Mode-1-Entitäten gingen die Schreibvorgänge an
+        Standard-IDs, die es nicht gibt. HA warnt dann nur — der Treiber
+        meldete Erfolg, und erst Guard 3 merkte, dass nichts kommt."""
+        werte = _mode1_vorhanden(**{FLOOR_ENTITY: "30.0"})
+        del werte[TRIGGER_ENTITY]
+        mock_hass.states.get = MagicMock(side_effect=_states(werte))
+        inv = SolaXInverter(mock_hass, {})
+        _install_noop_store(inv)
+
+        assert await inv.async_set_discharge(2.0, target_soc=20) is False
+        assert inv.last_write_error == "Mode 1 nicht verfügbar"
+        mock_hass.services.async_call.assert_not_called()
+        assert inv._state_store.original_discharge_floor is None
+
+    async def test_erfolg_verwirft_den_alten_fehlergrund(self, inverter, mock_hass):
+        inverter.last_write_error = "RuntimeError"
+        assert await inverter.async_set_discharge(2.0) is True
+        assert inverter.last_write_error is None
+
+    async def test_gescheiterter_neuer_befehl_stoppt_den_alten(
+        self, inverter, mock_hass, takt
+    ):
+        """Der Takt ist beim neuen Befehl schon abgemeldet. Ohne Stopp liefe
+        der alte Mode-1-Befehl ungetaktet bis zum Ablauf der Wiederholung
+        weiter — über den zurückgesetzten Boden hinweg."""
+        werte = _mode1_vorhanden(**{FLOOR_ENTITY: "30.0"})
+        mock_hass.states.get = MagicMock(side_effect=_states(werte))
+        assert await inverter.async_set_discharge(2.0, target_soc=40) is True
+        werte[FLOOR_ENTITY] = "35.0"
+
+        async def _call(domain, service, daten, blocking=True):
+            if daten.get("entity_id") == ACTIVE_POWER_ENTITY and daten.get("value") == -3000:
+                raise RuntimeError("Modbus")
+
+        mock_hass.services.async_call = AsyncMock(side_effect=_call)
+        assert await inverter.async_set_discharge(3.0, target_soc=20) is False
+        assert inverter.last_write_error == "RuntimeError"
+
+        geschrieben = [c.args[2] for c in mock_hass.services.async_call.call_args_list]
+        assert {"entity_id": SELECT_ENTITY, "option": "Disabled"} in geschrieben
+        assert {"entity_id": ACTIVE_POWER_ENTITY, "value": 0} in geschrieben
+        assert {"entity_id": TRIGGER_ENTITY} in geschrieben
+        assert _calls_by_entity(mock_hass)[FLOOR_ENTITY]["value"] == 30.0
+        assert inverter._discharge_active is False
+        assert len(takt.takte) == 1                 # kein neuer Takt
+        assert inverter._mode1_watt is None

@@ -44,6 +44,11 @@ Zeit nach dem letzten Schreiben.
 positiver Leistung, nur auf Gen4/Gen5 (Gen6 hat keinen Mode 1). Das Gerät
 kennt dabei keinen Ziel-Ladestand; den beobachtet der Treiber selbst, siehe
 ``async_set_grid_charge``.
+
+**Gen6 ohne Mode 1:** Dort bleibt nur das Ladelimit über
+``battery_charge_max_current``. Zwangsentladung und Netzladung brauchen
+Mode 1; fehlen dessen Entitäten, scheitern beide mit einem Grund, statt
+Befehle an Entitäten zu schicken, die es nicht gibt (siehe ``_entladung``).
 """
 
 from __future__ import annotations
@@ -245,6 +250,15 @@ class SolaXInverter(InverterBase):
         # SOC-Beobachters — siehe _beobachte_ziel_soc().
         self._ziel_soc: float | None = None
         self._ziel_abmelden: Any = None
+        # Ein Stopp am Ziel-SOC ist gescheitert und noch nicht nachgeholt.
+        # Eigenes Flag, weil der Takt ihn sonst nur wiederholte, solange der
+        # SOC am Ziel steht — fällt er danach darunter (die Hauslast zieht
+        # mit), sähe der Takt weder ein Ziel noch einen Befehl, und Mode 1
+        # kaufte bis zum Ablauf der Wiederholung weiter Netzstrom.
+        self._stopp_offen: bool = False
+        # Unlesbarer SOC während einer Netzladung: nur einmal je Befehl
+        # warnen, nicht in jedem Takt.
+        self._soc_warnung_gegeben: bool = False
         # Executor (30-s-Lauf) und Keepalive-Takt schreiben nebenläufig. Ohne
         # Sperre könnte ein Takt zwischen die Schritte eines Stopps fallen und
         # Mode 1 danach wieder einschalten — unbeobachtet, bis der Rückfall im
@@ -389,6 +403,14 @@ class SolaXInverter(InverterBase):
             return await self._entladung(power_kw, target_soc)
 
     async def _entladung(self, power_kw: float, target_soc: float | None) -> bool:
+        # Ohne Mode-1-Entitäten (Gen6) ginge jeder Schreibversuch an die
+        # Standard-IDs, die es nicht gibt. HA weist das nicht ab, es warnt
+        # nur — der Treiber meldete Erfolg, der Executor hielte die Entladung
+        # für befohlen, und erst Guard 3 merkte nach drei Minuten, dass
+        # nichts kommt. Ob Gen6 eine Zwangsentladung anders kann, ist am
+        # Gerät nicht belegt; bis dahin lieber ehrlich scheitern.
+        if not self._mode1_vorhanden():
+            return self._fehler("Mode 1 nicht verfügbar")
         self._keepalive_beenden()
         try:
             # Entladeboden absenken, BEVOR der Befehl läuft — sonst stoppt der
@@ -400,12 +422,24 @@ class SolaXInverter(InverterBase):
             await self._mode1_schreiben(power_w)
             self._discharge_active = True
             self._starte_keepalive(power_w)
-            return True
+            return self._erfolg()
         except Exception as exc:
             _LOGGER.exception("SolaX: Failed to set discharge")
-            # Steht unser abgesenkter Boden schon im Gerät, muss er weg:
-            # Sonst entlädt der Wechselrichter im Automatikbetrieb tiefer,
-            # als der Anlagenbetreiber eingestellt hat.
+            # Der Takt ist schon abgemeldet. Bliebe ein früherer Mode-1-Befehl
+            # (andere Leistung, oder eine Netzladung) im Gerät stehen, liefe
+            # er ohne Takt und ohne Ziel bis zum Ablauf der Wiederholung
+            # weiter — und das über dem zurückgesetzten Boden hinweg, den er
+            # nicht kennt. Darum wie bei der Netzladung: alles freigeben.
+            try:
+                await self._stopp_schreiben()
+            except Exception:  # noqa: BLE001 — der Fehlerpfad darf nie werfen
+                _LOGGER.debug("SolaX: Stopp nach gescheiterter Entladung", exc_info=True)
+            # Der Stopp schreibt den Boden erst am Ende zurück; scheiterte er
+            # vorher, muss der Boden trotzdem weg: Sonst entlädt der
+            # Wechselrichter im Automatikbetrieb tiefer, als der
+            # Anlagenbetreiber eingestellt hat. Hat der Stopp ihn schon
+            # zurückgeschrieben, ist kein Vorwert mehr gesichert, und hier
+            # passiert nichts.
             try:
                 await self._restauriere_entladeboden()
             except Exception:  # noqa: BLE001 — der Fehlerpfad darf nie werfen
@@ -492,8 +526,13 @@ class SolaXInverter(InverterBase):
         )
 
     def _keepalive_beenden(self) -> None:
-        """Takt und SOC-Beobachtung beenden — jeder neue Befehl tut das."""
+        """Takt und SOC-Beobachtung beenden — jeder neue Befehl tut das.
+
+        Auch ein offener Stopp am Ziel erledigt sich damit: Der neue Befehl
+        ersetzt den alten Mode-1-Befehl, oder er ist selbst ein Stopp.
+        """
         self._mode1_watt = None
+        self._stopp_offen = False
         self._beobachtung_beenden()
         if self._keepalive_abmelden is not None:
             try:
@@ -514,12 +553,15 @@ class SolaXInverter(InverterBase):
             # Netzladung am Ziel: zurücknehmen statt erneuern — auch als
             # Wiederholung eines gescheiterten Stopps, denn am Ziel ändert
             # sich der SOC womöglich nicht mehr, und der Beobachter bliebe
-            # stumm.
-            if self._am_ziel():
+            # stumm. Ein offener Stopp gilt auch, wenn der SOC inzwischen
+            # wieder unter dem Ziel liegt.
+            if self._stopp_offen or self._am_ziel():
                 await self._ziel_erreicht()
                 return
             if self._mode1_watt is None:
                 return
+            if self._ziel_soc is not None:
+                self._warne_soc_unlesbar()
             try:
                 await self._mode1_schreiben(self._mode1_watt)
             except Exception:  # noqa: BLE001
@@ -616,6 +658,13 @@ class SolaXInverter(InverterBase):
     # ------------------------------------------------------------------
     # Batterie aus dem Netz laden (Beta)
     # ------------------------------------------------------------------
+    def _mode1_vorhanden(self) -> bool:
+        """Sind alle Mode-1-Entitäten auffindbar? Auf Gen6 nicht."""
+        return all(
+            self._hass.states.get(self._resolve_entity(key)) is not None
+            for key in _MODE1_ENTITAETEN
+        )
+
     @property
     def supports_grid_charge(self) -> bool:
         """„Batterie aus dem Netz laden" (Beta) — Mode 1 mit positiver Leistung.
@@ -624,10 +673,7 @@ class SolaXInverter(InverterBase):
         Mode 1; dort bliebe ein Netzladebefehl ohne Wirkung, und der Plan
         kaufte Strom für eine Ladung, die nie kommt.
         """
-        return all(
-            self._hass.states.get(self._resolve_entity(key)) is not None
-            for key in _MODE1_ENTITAETEN
-        )
+        return self._mode1_vorhanden()
 
     async def async_set_grid_charge(
         self, power_kw: float, target_soc: float | None = None
@@ -650,6 +696,11 @@ class SolaXInverter(InverterBase):
           schreibt nur bei einer Änderung — zwischen zwei Befehlen hielte
           niemand an. Der Treiber beobachtet den SOC-Sensor und gibt am Ziel
           frei wie ``async_stop_forcible``. Ohne Ziel lädt er bis 100 %.
+          **Ist der SOC nicht lesbar** (kein Sensor konfiguriert, Sensor
+          ``unavailable``), gibt es keinen Stopp am Ziel: Die Ladung läuft,
+          bis der Executor einen anderen Befehl schreibt, im schlimmsten
+          Fall bis zum Ablauf der Wiederholung im Gerät. Der Treiber warnt
+          dann einmal je Befehl im Log.
 
         ``remotecontrol_import_limit`` bleibt unberührt: Die Netzgrenze führt
         der Executor in jedem Lauf über die Leistung nach.
@@ -689,6 +740,7 @@ class SolaXInverter(InverterBase):
         self._discharge_active = False
         self._beobachte_ziel_soc(ziel)
         self._starte_keepalive(power_w)
+        self._warne_soc_unlesbar()
         return self._erfolg()
 
     def _ladeleistung_w(self, leistung_kw: float) -> int:
@@ -753,9 +805,22 @@ class SolaXInverter(InverterBase):
         soc = self._soc()
         return soc is not None and soc >= self._ziel_soc
 
+    def _warne_soc_unlesbar(self) -> None:
+        """Ohne lesbaren SOC kein Stopp am Ziel — einmal je Befehl sagen."""
+        if self._soc_warnung_gegeben or self._soc() is not None:
+            return
+        self._soc_warnung_gegeben = True
+        _LOGGER.warning(
+            "SolaX: Ladestand nicht lesbar (%s) — die Netzladung endet nicht "
+            "am Ziel-SOC %.0f %%, sondern erst mit dem nächsten Befehl",
+            self._config.get(CONF_BATTERY_SOC_SENSOR) or "kein Sensor",
+            self._ziel_soc or 0.0,
+        )
+
     def _beobachte_ziel_soc(self, ziel: float) -> None:
         """Am SOC-Sensor anmelden und am Ziel freigeben (Muster: Victron)."""
         self._ziel_soc = ziel
+        self._soc_warnung_gegeben = False
         if self._ziel_abmelden is not None:
             return
         sensor = self._config.get(CONF_BATTERY_SOC_SENSOR)
@@ -765,7 +830,20 @@ class SolaXInverter(InverterBase):
             from homeassistant.helpers.event import async_track_state_change_event
         except ImportError:  # pragma: no cover — Testumgebung
             return
+        try:
+            from homeassistant.core import callback
+        except ImportError:  # pragma: no cover — Testumgebung
+            def callback(func: Any) -> Any:
+                func._hass_callback = True
+                return func
 
+        # @callback ist Pflicht: Eine schlichte Funktion führt HA im
+        # Executor-Thread aus, und ``hass.async_create_task`` aus einem
+        # fremden Thread weist HA ab — die Rücknahme am Ziel-SOC liefe nie,
+        # Mode 1 lüde bis zum nächsten Takt (bis 240 s) über das Ziel hinaus
+        # aus dem Netz. Dasselbe Muster wie im Victron-Treiber und in
+        # leistungsspitze.py (Grünbach, 25.09.2026).
+        @callback
         def _soc_geaendert(_event: Any) -> None:
             if self._am_ziel():
                 self._hass.async_create_task(self._ziel_erreicht_gesperrt())
@@ -795,7 +873,8 @@ class SolaXInverter(InverterBase):
 
         Scheitert der Stopp, bleiben Beobachtung und Takt stehen — der Takt
         erneuert dann nicht mehr den Ladebefehl, sondern wiederholt den
-        Stopp. Ein stehender Mode-1-Befehl kaufte sonst bis zum Ablauf der
+        Stopp (``_stopp_offen``), gleich wo der SOC inzwischen steht. Ein
+        stehender Mode-1-Befehl kaufte sonst bis zum Ablauf der
         Wiederholung weiter Netzstrom.
         """
         ziel = self._ziel_soc
@@ -804,6 +883,7 @@ class SolaXInverter(InverterBase):
             self._keepalive_beenden()
             _LOGGER.info("SolaX: Ziel-SOC %.0f %% erreicht — Netzladung beendet", ziel or 0.0)
         else:
+            self._stopp_offen = True
             _LOGGER.warning(
                 "SolaX: Netzladung am Ziel-SOC nicht beendet — wird wiederholt"
             )

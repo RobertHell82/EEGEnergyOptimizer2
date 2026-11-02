@@ -4,7 +4,34 @@
 <h2 class="guide-title">SolaX Modbus einrichten</h2>
 <h3>1. Unterstützte Wechselrichter</h3>
 <p>Nur <strong>Gen4, Gen5 und Gen6</strong>. Ältere Geräte (Gen2/Gen3) haben keine Remote Control (Fernsteuerung).</p>
-<div class="guide-alert note"><p><strong>Batterie aus dem Netz laden</strong> (Beta, Expertenmodus) gibt es nur bei <strong>Gen4 und Gen5</strong>. Gen6 kennt die dafür nötige Fernsteuerung (Mode 1) nicht — dort bietet der Optimizer die Funktion gar nicht an.</p></div>
+<p>Voll steuerbar sind <strong>Gen4 und Gen5</strong>. Gen6 kennt die Fernsteuerung Mode 1 nicht, die der Optimizer für die gezielte Einspeisung braucht:</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>Gen4 / Gen5</th>
+<th>Gen6</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Laden begrenzen (Überschuss ins Netz statt in die Batterie)</td>
+<td>ja</td>
+<td>ja</td>
+</tr>
+<tr>
+<td>Gezielte Einspeisung aus der Batterie</td>
+<td>ja</td>
+<td><strong>nein</strong></td>
+</tr>
+<tr>
+<td>Batterie aus dem Netz laden (Beta, Expertenmodus)</td>
+<td>ja</td>
+<td><strong>nein</strong></td>
+</tr>
+</tbody>
+</table>
+<div class="guide-alert note"><p>Bei Gen6 erscheint der Reiter <strong>Netzladen</strong> in den Einstellungen trotzdem — die Funktion wirkt dort aber nicht, der Optimizer plant keine Netzladung. Eine geplante Einspeisung meldet er als fehlgeschlagen („Mode 1 nicht verfügbar“), statt so zu tun, als liefe sie.</p></div>
 
 <h3>2. Wechselrichter-Einstellungen</h3>
 <p>Stelle am Wechselrichter oder in der SolaX-App ein:</p>

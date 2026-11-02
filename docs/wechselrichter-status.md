@@ -291,6 +291,14 @@ Einstellung nötig. Wer den Wert im SolaX-Portal ändert, verschiebt damit die
 Untergrenze der Planung — nach unten bringt das Ertrag, nach oben kostet es
 welchen.
 
+**Gen6 ohne Mode 1:** Gen6 kennt RemoteControl Mode 1 nicht. Dort wirkt nur
+das Ladelimit (`battery_charge_max_current`); Zwangsentladung und Netzladen
+nicht. Fehlen die Mode-1-Entitäten, scheitert eine Entladung mit dem Grund
+„Mode 1 nicht verfügbar“ (bis 2.1.63 schrieb der Treiber an Entitäten, die es
+nicht gibt, und meldete Erfolg), und Netzladen bietet der Treiber nicht an —
+der Reiter **Netzladen** erscheint im Panel trotzdem, wirkt aber nicht. Ob
+Gen6 eine Zwangsentladung auf anderem Weg kann, ist am Gerät nicht geklärt.
+
 **Ladelimit in Ampere:** SolaX begrenzt die Ladung über einen Strom, der
 Fahrplan rechnet in Leistung. Umgerechnet wird über die Batteriespannung
 (Rückfallwert 400 V, wenn der Spannungssensor fehlt) — bei einer fehlenden
@@ -303,7 +311,11 @@ Mode-1-Befehl wie die Entladung, mit positiver Leistung
 Integration nimmt zuerst die PV und den Rest aus dem Netz. Ein stehendes
 Ladelimit (`battery_charge_max_current`) stellt der Treiber vorher auf den
 gesicherten Vorwert zurück. Einen Ziel-Ladestand kennt Mode 1 nicht: Der
-Treiber beobachtet den SOC-Sensor und gibt am Ziel frei.
+Treiber beobachtet den SOC-Sensor und gibt am Ziel frei; scheitert diese
+Freigabe, wiederholt er sie im 240-s-Takt, auch wenn der Ladestand inzwischen
+wieder unter dem Ziel liegt. Ist der SOC-Sensor nicht lesbar, gibt es keinen
+Stopp am Ziel — die Ladung endet erst mit dem nächsten Befehl der Steuerung,
+und der Treiber warnt einmal je Befehl im Log.
 `remotecontrol_import_limit` bleibt unberührt — die Netzgrenze führt die
 Steuerung über die Ladeleistung nach. **Noch nicht am Gerät geprüft:** ob
 die Batterie mit der befohlenen Leistung lädt und PV dabei Vorrang hat, ob
