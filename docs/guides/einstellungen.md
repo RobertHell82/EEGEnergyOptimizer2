@@ -6,11 +6,11 @@ Die Einstellungen öffnest du über das Zahnrad oben rechts im Dashboard. Die Ta
 
 | Tab | Inhalt |
 |---|---|
-| **Tarife** | Karten **Einspeisung** (Standardvergütung, Nachtsatz), **Bezug** (Arbeitspreis, Netzbereich, zeitvariable Netzentgelte; bei Huawei, Victron und Fronius der Bezugstarif **beim Laden aus dem Netz**) und **Energiegemeinschaft** (je Gemeinschaft Einspeisung und, bei Huawei, Victron und Fronius, Bezug). Wie der Assistentenschritt „Tarife & Gemeinschaft“, plus die Bezugsfelder fürs Laden aus dem Netz |
+| **Tarife** | Karten **Einspeisung** (Standardvergütung, Nachtsatz), **Bezug** (Arbeitspreis, Netzbereich, zeitvariable Netzentgelte, dazu der Bezugstarif **beim Laden aus dem Netz**) und **Energiegemeinschaft** (je Gemeinschaft Einspeisung und Bezug). Wie der Assistentenschritt „Tarife & Gemeinschaft“, plus die Bezugsfelder fürs Laden aus dem Netz |
 | **Anlage** | Karten **Anlage** (Einspeisegrenze) und **Batterie** (Mindest- und Maximum-Ladestand). Wie der Assistentenschritt „Anlage & Batterie“ |
 | **Prognose** | Steuernde Quelle der PV-Prognose mit Sensoren, Schalter **Prognosevergleich** und – wenn die eigene Berechnung steuert oder mitläuft – die Flächentabelle. Wie der Assistentenschritt „PV-Prognose“ |
-| **Spitzenkappung** (Beta) | Bezugsspitzen kappen: Grenzwert, Mindest- und Maximalreserve der Batterie (Huawei, Fronius, SMA, SolaX), bei Huawei und Fronius *Reserve notfalls aus dem Netz nachladen*, und Verbraucher, die abgeschaltet werden dürfen (siehe Anleitung „Spitzenkappung“) |
-| **Netzladen** (Beta) | *Batterie aus dem Netz laden*: Schalter, Grenze am Zähler, Mindestvorteil und Mindestladung am Abend (siehe Anleitung „Batterie aus dem Netz laden“). Die Bezugspreise dazu stehen im Tab **Tarife**; ohne einen günstigeren Bezugspreis lässt sich der Schalter nicht einschalten. **Nur im Expertenmodus** und nur bei Huawei, Victron und Fronius |
+| **Spitzenkappung** (Beta) | Bezugsspitzen kappen: Grenzwert, Mindest- und Maximalreserve der Batterie, *Reserve notfalls aus dem Netz nachladen*, und Verbraucher, die abgeschaltet werden dürfen (siehe Anleitung „Spitzenkappung“) |
+| **Netzladen** (Beta) | *Batterie aus dem Netz laden*: Schalter, Grenze am Zähler, Mindestvorteil und Mindestladung am Abend (siehe Anleitung „Batterie aus dem Netz laden“). Die Bezugspreise dazu stehen im Tab **Tarife**; ohne einen günstigeren Bezugspreis lässt sich der Schalter nicht einschalten. **Nur im Expertenmodus.** Bei SolaX nur Gen4/Gen5 wirksam |
 | **Verbraucher** | Karten **Heizstab** (Fronius Ohmpilot, siehe Anleitung „Heizstab“) und **Wallbox** (siehe Anleitung „Wallbox“). **Nur im Expertenmodus**, nicht im Assistenten |
 | **System** | Karte **Dashboard** (Karten ausblenden), Übersicht über Anlage und Sensoren, EEG-Statistik, **Verlauf vergangener Tage**, Fahrplan-Archiv und ganz unten der Schalter **Expertenmodus** |
 
@@ -21,7 +21,7 @@ Der Schalter steht ganz unten im Tab **System**. Er zeigt zusätzliche Optionen 
 Zusätzlich sichtbar werden:
 
 - **Tab Tarife:** *Alterungskosten der Batterie (ct/kWh)*
-- **Tab Netzladen** als Ganzes, bei Huawei, Victron und Fronius (Beta, siehe Anleitung „Batterie aus dem Netz laden“)
+- **Tab Netzladen** als Ganzes (Beta, siehe Anleitung „Batterie aus dem Netz laden“)
 - **Tab Anlage:** die Gerätedaten *AC-Grenzleistung des Wechselrichters*, *PV-Spitzenleistung* und *Batterie-Leistungsgrenze*, dazu *Sicherheitspuffer auf die Prognose (%)*, *Ladeziel am Abend (%)* und *Vormittags bevorzugt netzdienlich* (siehe Anleitung „Anlage & Batterie“)
 - **Tab Prognose:** bei Solcast die *Weiteren Prognose-Sensoren* (PV-Prognose heute gesamt, Tag 3 bis Tag 7)
 - **Tab Verbraucher** als Ganzes, mit Heizstab und Wallbox

@@ -35,6 +35,33 @@ Auswahl, läuft aber erst an einer Anlage und wird dort begleitet. Ein neu
 hinzukommender Wechselrichter läuft zunächst so, bis er die Prüfungen oben
 bestanden hat (siehe `docs/DEVELOPMENT.md`).
 
+### Funktionen je Wechselrichter
+
+Über Ladelimit und Entladung hinaus gibt es zwei Wege, die jeder Treiber
+eigens können muss: **Batterie aus dem Netz laden** (Beta, Expertenmodus,
+dazu die Mindestladung am Abend) und den **Entladedeckel** für die
+Batterie-Stufe der Spitzenkappung. Beide zusammen ergeben „Reserve notfalls
+aus dem Netz nachladen“. Seit November 2026 können das alle sieben, mit zwei
+Ausnahmen: SolaX lädt nur als Gen4/Gen5 aus dem Netz (Gen6 hat keinen
+Mode 1), und Victron deckelt nur, wenn die Integration für „Max.
+Wechselrichterleistung“ den Wert −1 schreiben kann. Fehlt der Deckel, schaltet
+die Spitzenkappung nur Verbraucher.
+
+| Wechselrichter | Aus dem Netz laden (Beta) | Entladedeckel der Spitzenkappung |
+|---|---|---|
+| **Fronius Gen24** | Ladepunkt im Model 124 mit `ChaGriSet` = 1 | `OutWRte` mit `StorCtl_Mod` |
+| **Huawei SUN2000** | `forcible_charge_soc` — **am Gerät geprüft** | Number „Maximale Entladeleistung“ |
+| **Kostal Plenticore** | negativer Sollwert in Register 1034 | Register 1040 (Beta) |
+| **Sigenergy SigenStor** | „Command Charging (PV First)“ | ESS Max Discharging Limit (Beta) |
+| **SMA Smart Energy** | CmpBMS-Betriebsart 2289 | `BatDschMaxW` im CmpBMS-Block |
+| **SolaX Gen4+** | Mode 1 mit positiver Leistung, nur Gen4/Gen5 | `battery_discharge_max_current` |
+| **Victron ESS** | DVCC-Ladestrom + positiver Netzsollwert | „Max. Wechselrichterleistung“ (Beta, nur mit −1) |
+
+Das Netzladen ist außer bei Huawei an keinem Gerät geprüft. Wo das Gerät
+keinen Ziel-Ladestand kennt (alle außer Huawei), beobachtet der Treiber den
+Ladestand selbst und gibt am Ziel frei. Was je Gerät offen ist, steht in den
+Abschnitten unten.
+
 ## Was je Wechselrichter noch zu klären ist
 
 Alphabetisch. Die Einrichtung selbst beschreibt jeweils der verlinkte Guide.
@@ -75,7 +102,7 @@ Steuerung über die [Huawei Solar](https://github.com/wlcrs/huawei_solar)
 Integration. Direkte Anbindung an Wechselrichter/Dongle oder über das
 EMMA-Energiemanagement (`sensor.emma_*`-Sensoren, Netz-Vorzeichen wird
 automatisch korrigiert).
-**Beta: Batterie aus dem Netz laden** (Huawei und Victron, Expertenmodus):
+**Beta: Batterie aus dem Netz laden** (Expertenmodus):
 Zwangsladung über `forcible_charge_soc` mit Leistung und Ziel-Ladestand aus
 dem Fahrplan. Am Gerät geprüft (Traun, 12.10.2026): lädt auch mit
 ausgeschaltetem „Laden aus dem Netz“, 3 s nach dem Befehl. Beschreibung: [tarife.md](guides/tarife.md).

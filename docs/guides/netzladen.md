@@ -4,7 +4,7 @@ Schafft die Sonne das **Ladeziel** nicht, darf der Fahrplan Strom aus dem Netz z
 
 ## Wo du es einschaltest
 
-Der Schalter steht im eigenen Reiter **Netzladen** (Beta). Er erscheint nur mit eingeschaltetem Expertenmodus (Reiter **System**) und nur mit einem Huawei-Wechselrichter, einem Victron-System oder einem Fronius Gen24 (Victron und Fronius im Feldtest). Ist der Schalter **Batterie aus dem Netz laden** aus, rechnet der Fahrplan genau wie vorher.
+Der Schalter steht im eigenen Reiter **Netzladen** (Beta). Er erscheint nur mit eingeschaltetem Expertenmodus (Reiter **System**) und bei allen Wechselrichtern. Bei SolaX wirkt er nur mit Gen4 und Gen5; Gen6 hat die nötige Fernsteuerung nicht, dort bleibt der Schalter ohne Wirkung. Ist der Schalter **Batterie aus dem Netz laden** aus, rechnet der Fahrplan genau wie vorher.
 
 Die **Bezugspreise** stehen nicht hier, sondern im Reiter **Tarife**: der Bezugstarif deines Lieferanten in der Karte **Bezug** (Abschnitt **Beim Laden aus dem Netz**) und der Bezug aus der Gemeinschaft im Block jeder Gemeinschaft. Einschalten lässt sich der Schalter erst, wenn dort ein günstigerer Bezugspreis eingerichtet ist (siehe unten); bis dahin steht unter der Karte, was noch fehlt.
 
@@ -27,7 +27,17 @@ Spot- und Gemeinschaftsbezug brauchen einen **Netzbereich** (Karte **Bezug**), s
 Während der Netzladung lädt der Wechselrichter mit der geplanten Leistung bis zum geplanten Ladestand, der Statussensor zeigt „Netzladung x kW bis y %“, im Diagramm ist sie violett gestrichelt. Der Heizstab bleibt dabei aus.
 
 > [!WARNING]
-> **Beta.** Bei Huawei ist die Zwangsladung an einem SUN2000 geprüft, sie braucht die Einstellung „Laden aus dem Netz“ nicht. Bei Victron lädt der DVCC-Ladestrom mit der geplanten Leistung, und ein positiver Netzsollwert erlaubt den Bezug; den führt der Optimizer alle 30 Sekunden nach (Anleitung „Victron einrichten“), am Gerät ist das noch nicht erprobt. Beim Fronius Gen24 legt der Optimizer einen festen Ladepunkt fest und erlaubt dafür das Laden aus dem Netz; danach stellt er die Erlaubnis zurück, wie sie vorher war. Am Gerät ist auch das noch nicht erprobt, und ob im Webinterface zusätzlich „Laden aus dem Netz“ erlaubt sein muss, ist offen. Der Betrieb über den Fahrplan ist noch im Feldtest.
+> **Beta.** Geprüft ist das Laden aus dem Netz bisher nur bei Huawei. Bei allen anderen Wechselrichtern ist es am Gerät noch nicht erprobt. Wer es ausprobiert: Bitte melden, was Batterie- und Netzleistung während einer Netzladung zeigen.
+>
+> - **Huawei:** Die Zwangsladung ist an einem SUN2000 geprüft, sie braucht die Einstellung „Laden aus dem Netz“ nicht.
+> - **Victron:** Der DVCC-Ladestrom lädt mit der geplanten Leistung, und ein positiver Netzsollwert erlaubt den Bezug; den führt der Optimizer alle 30 Sekunden nach (Anleitung „Victron einrichten“).
+> - **Fronius Gen24:** Der Optimizer legt einen festen Ladepunkt fest und erlaubt dafür das Laden aus dem Netz; danach stellt er die Erlaubnis zurück, wie sie vorher war. Ob im Webinterface zusätzlich „Laden aus dem Netz“ erlaubt sein muss, ist offen.
+> - **SMA:** Der Optimizer schaltet die Batteriesteuerung auf die Betriebsart **Laden** mit der geplanten Leistung. Mit einem Sunny Home Manager 2.0 braucht es Firmware ab 2.15.5 und ausgeschaltetes prognosebasiertes Laden.
+> - **SolaX (Gen4/Gen5):** Die Fernsteuerung (Mode 1) bekommt eine positive Batterieleistung; die Integration nimmt die PV heraus und holt den Rest aus dem Netz.
+> - **Kostal:** Ein negativer Batterie-Sollwert lädt die Batterie. In Österreich nimmt der Kostal nach jeder Netzzuschaltung rund 10 Minuten lang keinen Sollwert an. Ob er dafür zusätzlich das Laden aus dem Netz freigegeben haben will, ist offen.
+> - **Sigenergy:** Der Optimizer schaltet auf „Command Charging (PV First)“ mit der geplanten Leistung. Das Gerät hat kein eigenes Sicherheitsnetz: Stürzt Home Assistant während einer Netzladung ab, lädt die Anlage weiter, bis die Batterie voll ist (Anleitung „Sigenergy einrichten“).
+>
+> Bis auf Huawei kennt keines dieser Geräte einen Ziel-Ladestand. Den Ladestand beobachtet dort der Optimizer selbst und beendet die Ladung am Ziel.
 
 ## Gemeinschaft statt fester Zeitfenster
 

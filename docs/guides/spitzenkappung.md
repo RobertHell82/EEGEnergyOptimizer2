@@ -14,7 +14,7 @@ Schon eine einzige Viertelstunde zählt: Laufen Auto, Herd und Wärmepumpe gleic
 2. **Verbraucher abschalten.** Reicht die Batterie nicht, schaltet die Integration die Verbraucher ab, die du einträgst, einen nach dem anderen. Das passiert etwa, wenn die Batterie leer ist oder das Auto mehr zieht, als sie liefern kann. Sobald wieder Platz ist, schaltet sie die Verbraucher wieder ein.
 
 > [!NOTE]
-> Die erste Stufe gibt es derzeit mit **Huawei**, **Fronius**, **SMA** und **SolaX**. Mit den anderen Wechselrichtern kappt die Integration derzeit nur über das Abschalten von Verbrauchern.
+> Die erste Stufe gibt es mit allen Wechselrichtern. Bei **Kostal**, **Sigenergy** und **Victron** ist sie neu und am Gerät noch nicht geprüft (Beta). Victron braucht dafür eine aktuelle Victron-Integration in Home Assistant, die „Max. Wechselrichterleistung“ auf −1 zurückschreiben kann; sonst meldet das der Assistent, und die Integration kappt dort nur über das Abschalten von Verbrauchern.
 
 ## Wie es funktioniert
 
@@ -58,7 +58,7 @@ Auch der Fahrplan rechnet die Reserve mit ein:
 - Im Modus **Aus** und während einer **Pause** rechnet der Plan ohne Reserve.
 
 > [!NOTE]
-> Hast du das Ladeziel ausgeschaltet, erscheint tagsüber trotzdem eine Ladeziel-Marke im Ladestandsdiagramm: Das ist die Abendreserve. Mit **Batterie aus dem Netz laden** (Beta, Huawei, Victron und Fronius) darf der Plan sie auch mit günstigem Netzstrom erreichen, wie jedes andere Ladeziel.
+> Hast du das Ladeziel ausgeschaltet, erscheint tagsüber trotzdem eine Ladeziel-Marke im Ladestandsdiagramm: Das ist die Abendreserve. Mit **Batterie aus dem Netz laden** (Beta) darf der Plan sie auch mit günstigem Netzstrom erreichen, wie jedes andere Ladeziel.
 
 ### Reserve notfalls aus dem Netz nachladen (Beta)
 
@@ -68,7 +68,7 @@ Ohne diese Option holt die Batterie ihre Reserve nur aus der Sonne. Nach einem t
 - **Wie viel:** nur, was zur Reserve fehlt und die Sonne bis dahin nicht bringt.
 - **Nie über der Grenze:** Haus und Ladung zusammen bleiben 0,3 kW unter dem Grenzwert. Sonst schüfe das Nachladen genau die Spitze, gegen die es vorsorgt.
 
-Die Option gibt es nur bei Wechselrichtern, die beides können: die Entladung begrenzen und aus dem Netz laden. Derzeit sind das **Huawei** und **Fronius**. Sie kostet die Lade- und Entladeverluste und Strom, der auch gekauft ist, wenn die Spitze ausbleibt. Die Reserve deckt die Nacht mit dem höchsten Bedarf der letzten Wochen ab, nicht eine durchschnittliche.
+Die Option braucht einen Wechselrichter, der beides kann: die Entladung begrenzen und aus dem Netz laden. Das können alle, außer SolaX Gen6 (lädt nicht aus dem Netz) und Victron ohne aktuelle Integration (begrenzt die Entladung nicht). Geprüft ist das Laden aus dem Netz bisher nur bei Huawei. Sie kostet die Lade- und Entladeverluste und Strom, der auch gekauft ist, wenn die Spitze ausbleibt. Die Reserve deckt die Nacht mit dem höchsten Bedarf der letzten Wochen ab, nicht eine durchschnittliche.
 
 ### Verbraucher abschalten
 
@@ -78,7 +78,7 @@ Die Option gibt es nur bei Wechselrichtern, die beides können: die Entladung be
 - Nur, wenn die Batterie die Spitze nicht mehr decken kann.
 - Nur, wenn der Verbraucher gerade läuft (ab 0,2 kW).
 
-Ob die Batterie noch mehr könnte, weiß die Integration derzeit nur bei Huawei, Fronius, SMA und SolaX. Bei den anderen Wechselrichtern rechnet sie ohne die Batterie. Sie schaltet dann ab, sobald die Viertelstunde über die Grenze zu gehen droht.
+Ob die Batterie noch mehr könnte, weiß die Integration nur, wenn sie die Entladung selbst begrenzt, also bei allen Wechselrichtern außer Victron ohne aktuelle Integration. Dort rechnet sie ohne die Batterie. Sie schaltet dann ab, sobald die Viertelstunde über die Grenze zu gehen droht.
 
 Nach jedem Abschalten wartet sie 60 Sekunden, denn ein Auto regelt langsam herunter und meldet seine Leistung oft verzögert.
 
@@ -107,9 +107,9 @@ Die Spitzenkappung findest du in den **Einstellungen** im Tab **Spitzenkappung**
 |---|---|
 | **Bezugsspitzen kappen** | Schaltet die Funktion ein oder aus |
 | **Grenzwert (kW)** | 2 bis 20 kW, Vorgabe 5. Darunter wird nichts gekappt |
-| **Mindestreserve (%)** | Derzeit nur mit Huawei, Fronius, SMA oder SolaX. So viel hält die Batterie immer für Spitzen zurück, auch wenn die Statistik weniger verlangt. Vorgabe 0 |
-| **Maximalreserve (%)** | Derzeit nur mit Huawei, Fronius, SMA oder SolaX. Mehr hält die Batterie nie zurück. Vorgabe 30. Ein leeres Feld heißt ebenfalls 30, 0 schaltet die Reserve ab |
-| **Reserve notfalls aus dem Netz nachladen** | Beta, nur mit Huawei oder Fronius. Lädt die fehlende Reserve vor der nächsten erwarteten Spitze aus dem Netz nach, in den günstigsten Viertelstunden. Vorgabe aus |
+| **Mindestreserve (%)** | So viel hält die Batterie immer für Spitzen zurück, auch wenn die Statistik weniger verlangt. Vorgabe 0 |
+| **Maximalreserve (%)** | Mehr hält die Batterie nie zurück. Vorgabe 30. Ein leeres Feld heißt ebenfalls 30, 0 schaltet die Reserve ab |
+| **Reserve notfalls aus dem Netz nachladen** | Beta, nicht mit SolaX Gen6. Lädt die fehlende Reserve vor der nächsten erwarteten Spitze aus dem Netz nach, in den günstigsten Viertelstunden. Vorgabe aus |
 | **Verbraucher** | Bis zu zehn, in der Reihenfolge, in der abgeschaltet wird. Je Verbraucher brauchst du einen **Leistungssensor** (W oder kW) und einen **Schalter** (`switch.` oder `input_boolean.`). Optional trägst du die **Nennleistung** in kW ein |
 
 Ohne Batterie-Stufe (andere Wechselrichter) brauchst du mindestens einen Verbraucher. Sonst täte die Funktion nichts.
@@ -137,7 +137,8 @@ _Alle Felder wirken ohne Neustart der Integration._
 
 - **Optimierung aus oder Pause:** Die Spitzenkappung tut nichts. Die Batterie läuft im Automatikbetrieb, abgeschaltete Verbraucher kommen zurück.
 - **Absturz von Home Assistant:**
-  - **Fronius** und **SMA** geben die Batterie nach spätestens fünf Minuten von selbst frei.
+  - **Fronius** und **SMA** geben die Batterie nach spätestens fünf Minuten von selbst frei, **Kostal** nach höchstens 15 Minuten. Ob der Kostal dabei auch den Deckel zurücksetzt, ist noch nicht geprüft.
+  - Bei **Sigenergy** und **Victron** bleibt der Deckel stehen, bis Home Assistant wieder läuft und ihn aufhebt. Bleibt Home Assistant länger aus, stell ihn von Hand zurück: bei Sigenergy Remote EMS aus und das Entladelimit auf die Nennleistung, bei Victron die **Max. Wechselrichterleistung** (Einstellungen → ESS) auf den alten Wert, meist −1.
   - Bei **Huawei** bleibt die gesetzte Entladeleistung im Wechselrichter stehen, bis Home Assistant wieder läuft. Ist die Spitzenkappung beim Start eingeschaltet, setzt die Integration sie auf das Maximum zurück. Hast du die Spitzenkappung in der Zwischenzeit ausgeschaltet, prüf die Entität **Maximale Entladeleistung** und stell sie von Hand zurück.
 - **SolaX:** Die Integration stellt den maximalen Entladestrom (`battery_discharge_max_current`). Wie bei Huawei bleibt er bei einem Absturz stehen. Den Wert, der vorher eingestellt war, sichert die Integration und stellt ihn beim Aufheben wieder her. Am Gerät ist das noch nicht geprüft. Wer es testet, schaut auf diese Entität.
 - **Huawei, Entladeleistung:** Die Integration stellt die Number-Entität **Maximale Entladeleistung**. Gibt sie die Batterie frei, setzt sie diesen Wert auf das Maximum des Geräts zurück. Ein eigener, niedrigerer Wert, der dort vorher stand, geht dabei verloren.

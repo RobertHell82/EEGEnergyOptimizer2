@@ -169,8 +169,12 @@ class InverterBase(ABC):
 
         Nur dann bietet der Fahrplan „Batterie aus dem Netz laden" an
         (``schedule.netzladen_max_kw``). Default False — derzeit können es
-        Huawei (``forcible_charge_soc``) und Victron (DVCC-Ladestrom +
-        positiver Netzsollwert).
+        alle sieben Treiber: Huawei (``forcible_charge_soc``, am Gerät
+        geprüft), Fronius (Ladefenster mit ``ChaGriSet``), Victron
+        (DVCC-Ladestrom + positiver Netzsollwert), SMA (CmpBMS OpMod 2289),
+        SolaX (Mode 1 mit positiver Leistung; nur Gen4/Gen5, Gen6 hat keinen
+        Mode 1 → False), Kostal (negativer 1034-Sollwert) und Sigenergy
+        („Command Charging (PV First)"). Außer Huawei am Gerät ungeprüft.
         """
         return False
 
@@ -179,7 +183,9 @@ class InverterBase(ABC):
     ) -> bool:
         """Batterie mit ``power_kw`` laden, PV zuerst, Rest aus dem Netz.
 
-        Bis ``target_soc`` (Prozent), dann hört das Gerät selbst auf. Beendet
+        Bis ``target_soc`` (Prozent). Nur Huawei hört dort von selbst auf;
+        alle anderen Geräte kennen keinen Ziel-Ladestand, dort beobachtet der
+        Treiber den Ladestand selbst (ohne Ziel: 100 %). Beendet
         wird wie jede Zwangsladung mit ``async_stop_forcible()``. Default:
         nicht unterstützt.
         """
@@ -192,7 +198,11 @@ class InverterBase(ABC):
         Grundlage der Spitzenkappung mit der Batterie (schedule_executor.py):
         Unterhalb der Spitzenreserve deckt die Batterie nur noch den Teil des
         Verbrauchs über der Grenze, den Rest das Netz. Default False — dann
-        schaltet die Spitzenkappung nur Verbraucher ab.
+        schaltet die Spitzenkappung nur Verbraucher ab. Derzeit können es alle
+        sieben Treiber: Huawei, Fronius, SMA, SolaX, Kostal (Register 1040),
+        Sigenergy (ESS Max Discharging Limit) und Victron („Max.
+        Wechselrichterleistung", nur wenn die Integration −1 schreiben kann,
+        sonst False).
         """
         return False
 

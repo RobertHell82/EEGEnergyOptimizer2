@@ -262,7 +262,8 @@ MAX_NETZDIENLICH_BONUS = 0.20
 # Batterie, und Bonus und Ziel ringen Minute für Minute um den Vormittag.
 NETZDIENLICH_UEBERSCHUSS_FAKTOR = 1.2
 
-# „Batterie aus dem Netz laden" (Beta, Huawei, Victron und Fronius, Expertenmodus): Bringt die
+# „Batterie aus dem Netz laden" (Beta, alle Treiber mit ``supports_grid_charge``,
+# SolaX nur Gen4/Gen5; Expertenmodus): Bringt die
 # PV die Batterie bis zum Ende der PV-Zeit nicht aufs Ladeziel, darf der Plan
 # zukaufen — aber nur in Slots, in denen Netzstrom billiger ist als der Strom,
 # den die Batterie danach ersetzt (die Nacht bis zur nächsten PV-Zeit). Der
@@ -299,7 +300,9 @@ CONF_SCHEDULE_NETZLADEN_ABEND_PCT = "schedule_netzladen_abend_pct"
 # Spitzenkappung: Die Reserve der Batterie notfalls aus dem Netz nachladen —
 # unabhängig vom Preis, aber in den günstigsten Viertelstunden vor dem
 # Bedarf (HAConfig._netz_untergrenze). Nur mit einem Treiber, der
-# die Entladung deckeln UND aus dem Netz laden kann (Huawei, Fronius).
+# die Entladung deckeln UND aus dem Netz laden kann (``supports_discharge_limit``
+# und ``supports_grid_charge`` — alle sieben, SolaX nur Gen4/Gen5, Victron nur
+# mit schreibbarer „Max. Wechselrichterleistung" −1).
 CONF_SPITZENKAPPUNG_RESERVE_NETZ = "spitzenkappung_reserve_netz"
 # Unter diesem Anteil einer Viertelstunde an der Reservekurve (kWh) zählt sie
 # nicht als Bedarf — die Kurve ist ein Quantil über Summen und nie ganz glatt.
@@ -1796,7 +1799,8 @@ def netzladen_max_kw(config: dict, inverter: Any = None) -> float:
     """Netzbezugsleistung in die Batterie (kW) — 0 heißt „aus dem Netz laden" aus.
 
     Nur mit dem Schalter und nur, wenn der Treiber Netzladen kann
-    (``supports_grid_charge``, derzeit Huawei, Victron und Fronius). Das ist die Batterieleistung;
+    (``supports_grid_charge``: alle sieben Treiber, SolaX nur Gen4/Gen5). Das ist
+    die Batterieleistung;
     die Grenze am Zähler ist ``netzladen_netzgrenze_kw``.
     """
     if not NETZLADEN_FREIGEGEBEN or not config.get(CONF_SCHEDULE_NETZLADEN):

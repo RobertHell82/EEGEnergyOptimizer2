@@ -59,8 +59,8 @@ Was die Felder im Einrichtungsassistenten und in den Einstellungen bedeuten:
 
 ## ⚡ Spitzenkappung (optional)
 
-- **[Batterie aus dem Netz laden](guides/netzladen.md)** (Beta, Huawei, Victron und Fronius) — erreicht das Ladeziel mit günstigem Netzstrom, mit Bezug aus der Gemeinschaft dann, wenn sie Strom übrig hat.
-- **[Spitzenkappung](guides/spitzenkappung.md)** — hält die Bezugsspitze des Monats niedrig. Die Batterie hält eine Reserve für Spitzen zurück, berechnet aus deinem Verbrauch (Huawei, Fronius, SMA, SolaX). Reicht sie nicht, werden Verbraucher abgeschaltet.
+- **[Batterie aus dem Netz laden](guides/netzladen.md)** (Beta, alle Wechselrichter, bei SolaX nur Gen4/Gen5) — erreicht das Ladeziel mit günstigem Netzstrom, mit Bezug aus der Gemeinschaft dann, wenn sie Strom übrig hat.
+- **[Spitzenkappung](guides/spitzenkappung.md)** — hält die Bezugsspitze des Monats niedrig. Die Batterie hält eine Reserve für Spitzen zurück, berechnet aus deinem Verbrauch (alle Wechselrichter, bei Victron nur mit aktueller Integration). Reicht sie nicht, werden Verbraucher abgeschaltet.
 
 ## 🔥 Heizstab (optional)
 

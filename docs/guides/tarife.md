@@ -92,7 +92,7 @@ Nur sichtbar, wenn im Tab **System** der Expertenmodus eingeschaltet ist. **Alte
 
 ### Beim Laden aus dem Netz
 
-Nur bei Wechselrichtern, die aus dem Netz laden können (Huawei, Victron und Fronius), steht am Ende der Karte **Bezug** ein eigener Abschnitt. Er zählt nur, wenn die Batterie tatsächlich aus dem Netz lädt: mit **Batterie aus dem Netz laden** (Reiter **Netzladen**) oder mit **Reserve notfalls aus dem Netz nachladen** (Reiter **Spitzenkappung**). Sonst rechnet der Fahrplan mit dem Bezugspreis oben.
+Am Ende der Karte **Bezug** steht ein eigener Abschnitt. Er zählt nur, wenn die Batterie tatsächlich aus dem Netz lädt: mit **Batterie aus dem Netz laden** (Reiter **Netzladen**) oder mit **Reserve notfalls aus dem Netz nachladen** (Reiter **Spitzenkappung**). Sonst rechnet der Fahrplan mit dem Bezugspreis oben.
 
 | Feld | Bedeutung |
 |---|---|
@@ -129,7 +129,7 @@ Je Gemeinschaft:
 | **Gewichtung (ct/kWh)** | Ein Zuschlag ohne Geldfluss, siehe unten |
 | **Abnahmequote Tag (%)** / **Nacht (%)** | Nur im Quotenmodus, Tag ist Pflicht. Welcher Teil deiner Einspeisung erfahrungsgemäß in der Gemeinschaft landet — steht in der EEG-Monatsabrechnung. Nacht leer = wie am Tag |
 
-Gemeinschaft und **Anteil** stehen oben im Block, darunter zwei getrennte Abschnitte: **Einspeisung in die Gemeinschaft** (Vergütung, Gewichtung, Abnahmequote) und, bei Huawei, Victron und Fronius, **Bezug aus der Gemeinschaft**:
+Gemeinschaft und **Anteil** stehen oben im Block, darunter zwei getrennte Abschnitte: **Einspeisung in die Gemeinschaft** (Vergütung, Gewichtung, Abnahmequote) und **Bezug aus der Gemeinschaft**:
 
 | Feld | Bedeutung |
 |---|---|
@@ -154,4 +154,4 @@ Unter jeder Gemeinschaft steht, was sie bewirkt: der höchste Aufschlag zur Beda
 
 ## Wo du die Felder später findest
 
-Alle Felder stehen in den **Einstellungen**, Tab **Tarife**: Karten **Einspeisung**, **Bezug** und **Energiegemeinschaft**. Die Alterungskosten erscheinen dort nur im Expertenmodus (Tab **System**), der Abschnitt **Beim Laden aus dem Netz** und der **Bezug aus der Gemeinschaft** nur bei Huawei, Victron und Fronius. Im Einrichtungsassistenten fehlen diese beiden; du findest sie danach in den Einstellungen.
+Alle Felder stehen in den **Einstellungen**, Tab **Tarife**: Karten **Einspeisung**, **Bezug** und **Energiegemeinschaft**. Die Alterungskosten erscheinen dort nur im Expertenmodus (Tab **System**). Der Abschnitt **Beim Laden aus dem Netz** und der **Bezug aus der Gemeinschaft** fehlen im Einrichtungsassistenten; du findest sie danach in den Einstellungen.

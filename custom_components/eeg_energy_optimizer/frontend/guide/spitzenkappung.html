@@ -14,7 +14,7 @@
 <li><strong>Die Batterie.</strong> Solange sie genug Energie hat, deckt sie Spitzen ohnehin. Wird sie knapp, hält sie eine <strong>Reserve</strong> zurück. Aus dieser Reserve gibt sie nur noch ab, was über deiner Grenze liegt. Den Grundverbrauch holt sich das Haus dann aus dem Netz.</li>
 <li><strong>Verbraucher abschalten.</strong> Reicht die Batterie nicht, schaltet die Integration die Verbraucher ab, die du einträgst, einen nach dem anderen. Das passiert etwa, wenn die Batterie leer ist oder das Auto mehr zieht, als sie liefern kann. Sobald wieder Platz ist, schaltet sie die Verbraucher wieder ein.</li>
 </ol>
-<div class="guide-alert note"><p>Die erste Stufe gibt es derzeit mit <strong>Huawei</strong>, <strong>Fronius</strong>, <strong>SMA</strong> und <strong>SolaX</strong>. Mit den anderen Wechselrichtern kappt die Integration derzeit nur über das Abschalten von Verbrauchern.</p></div>
+<div class="guide-alert note"><p>Die erste Stufe gibt es mit allen Wechselrichtern. Bei <strong>Kostal</strong>, <strong>Sigenergy</strong> und <strong>Victron</strong> ist sie neu und am Gerät noch nicht geprüft (Beta). Victron braucht dafür eine aktuelle Victron-Integration in Home Assistant, die „Max. Wechselrichterleistung“ auf −1 zurückschreiben kann; sonst meldet das der Assistent, und die Integration kappt dort nur über das Abschalten von Verbrauchern.</p></div>
 
 <h3>Wie es funktioniert</h3>
 <h4>Die Grenze</h4>
@@ -50,7 +50,7 @@
 <li>Liegt die Batterie unter der Reserve, etwa morgens nach einer Nacht mit Spitzen, rechnet der Plan vom tatsächlichen Ladestand aus und lädt sie wieder auf.</li>
 <li>Im Modus <strong>Aus</strong> und während einer <strong>Pause</strong> rechnet der Plan ohne Reserve.</li>
 </ul>
-<div class="guide-alert note"><p>Hast du das Ladeziel ausgeschaltet, erscheint tagsüber trotzdem eine Ladeziel-Marke im Ladestandsdiagramm: Das ist die Abendreserve. Mit <strong>Batterie aus dem Netz laden</strong> (Beta, Huawei, Victron und Fronius) darf der Plan sie auch mit günstigem Netzstrom erreichen, wie jedes andere Ladeziel.</p></div>
+<div class="guide-alert note"><p>Hast du das Ladeziel ausgeschaltet, erscheint tagsüber trotzdem eine Ladeziel-Marke im Ladestandsdiagramm: Das ist die Abendreserve. Mit <strong>Batterie aus dem Netz laden</strong> (Beta) darf der Plan sie auch mit günstigem Netzstrom erreichen, wie jedes andere Ladeziel.</p></div>
 
 <h4>Reserve notfalls aus dem Netz nachladen (Beta)</h4>
 <p>Ohne diese Option holt die Batterie ihre Reserve nur aus der Sonne. Nach einem trüben Tag kann sie dann leer in eine Nacht mit Spitze gehen. Mit <strong>Reserve notfalls aus dem Netz nachladen</strong> lädt der Fahrplan nach, was zur Reserve fehlt, und zwar unabhängig vom Preis.</p>
@@ -59,7 +59,7 @@
 <li><strong>Wie viel:</strong> nur, was zur Reserve fehlt und die Sonne bis dahin nicht bringt.</li>
 <li><strong>Nie über der Grenze:</strong> Haus und Ladung zusammen bleiben 0,3 kW unter dem Grenzwert. Sonst schüfe das Nachladen genau die Spitze, gegen die es vorsorgt.</li>
 </ul>
-<p>Die Option gibt es nur bei Wechselrichtern, die beides können: die Entladung begrenzen und aus dem Netz laden. Derzeit sind das <strong>Huawei</strong> und <strong>Fronius</strong>. Sie kostet die Lade- und Entladeverluste und Strom, der auch gekauft ist, wenn die Spitze ausbleibt. Die Reserve deckt die Nacht mit dem höchsten Bedarf der letzten Wochen ab, nicht eine durchschnittliche.</p>
+<p>Die Option braucht einen Wechselrichter, der beides kann: die Entladung begrenzen und aus dem Netz laden. Das können alle, außer SolaX Gen6 (lädt nicht aus dem Netz) und Victron ohne aktuelle Integration (begrenzt die Entladung nicht). Geprüft ist das Laden aus dem Netz bisher nur bei Huawei. Sie kostet die Lade- und Entladeverluste und Strom, der auch gekauft ist, wenn die Spitze ausbleibt. Die Reserve deckt die Nacht mit dem höchsten Bedarf der letzten Wochen ab, nicht eine durchschnittliche.</p>
 <h4>Verbraucher abschalten</h4>
 <p><strong>Wann schaltet die Integration ab?</strong></p>
 <ul>
@@ -67,7 +67,7 @@
 <li>Nur, wenn die Batterie die Spitze nicht mehr decken kann.</li>
 <li>Nur, wenn der Verbraucher gerade läuft (ab 0,2 kW).</li>
 </ul>
-<p>Ob die Batterie noch mehr könnte, weiß die Integration derzeit nur bei Huawei, Fronius, SMA und SolaX. Bei den anderen Wechselrichtern rechnet sie ohne die Batterie. Sie schaltet dann ab, sobald die Viertelstunde über die Grenze zu gehen droht.</p>
+<p>Ob die Batterie noch mehr könnte, weiß die Integration nur, wenn sie die Entladung selbst begrenzt, also bei allen Wechselrichtern außer Victron ohne aktuelle Integration. Dort rechnet sie ohne die Batterie. Sie schaltet dann ab, sobald die Viertelstunde über die Grenze zu gehen droht.</p>
 <p>Nach jedem Abschalten wartet sie 60 Sekunden, denn ein Auto regelt langsam herunter und meldet seine Leistung oft verzögert.</p>
 <p><strong>Wann schaltet sie wieder ein?</strong></p>
 <ul>
@@ -103,15 +103,15 @@
 </tr>
 <tr>
 <td><strong>Mindestreserve (%)</strong></td>
-<td>Derzeit nur mit Huawei, Fronius, SMA oder SolaX. So viel hält die Batterie immer für Spitzen zurück, auch wenn die Statistik weniger verlangt. Vorgabe 0</td>
+<td>So viel hält die Batterie immer für Spitzen zurück, auch wenn die Statistik weniger verlangt. Vorgabe 0</td>
 </tr>
 <tr>
 <td><strong>Maximalreserve (%)</strong></td>
-<td>Derzeit nur mit Huawei, Fronius, SMA oder SolaX. Mehr hält die Batterie nie zurück. Vorgabe 30. Ein leeres Feld heißt ebenfalls 30, 0 schaltet die Reserve ab</td>
+<td>Mehr hält die Batterie nie zurück. Vorgabe 30. Ein leeres Feld heißt ebenfalls 30, 0 schaltet die Reserve ab</td>
 </tr>
 <tr>
 <td><strong>Reserve notfalls aus dem Netz nachladen</strong></td>
-<td>Beta, nur mit Huawei oder Fronius. Lädt die fehlende Reserve vor der nächsten erwarteten Spitze aus dem Netz nach, in den günstigsten Viertelstunden. Vorgabe aus</td>
+<td>Beta, nicht mit SolaX Gen6. Lädt die fehlende Reserve vor der nächsten erwarteten Spitze aus dem Netz nach, in den günstigsten Viertelstunden. Vorgabe aus</td>
 </tr>
 <tr>
 <td><strong>Verbraucher</strong></td>
@@ -139,7 +139,8 @@
 <ul>
 <li><strong>Optimierung aus oder Pause:</strong> Die Spitzenkappung tut nichts. Die Batterie läuft im Automatikbetrieb, abgeschaltete Verbraucher kommen zurück.</li>
 <li><strong>Absturz von Home Assistant:</strong></li>
-<li><strong>Fronius</strong> und <strong>SMA</strong> geben die Batterie nach spätestens fünf Minuten von selbst frei.</li>
+<li><strong>Fronius</strong> und <strong>SMA</strong> geben die Batterie nach spätestens fünf Minuten von selbst frei, <strong>Kostal</strong> nach höchstens 15 Minuten. Ob der Kostal dabei auch den Deckel zurücksetzt, ist noch nicht geprüft.</li>
+<li>Bei <strong>Sigenergy</strong> und <strong>Victron</strong> bleibt der Deckel stehen, bis Home Assistant wieder läuft und ihn aufhebt. Bleibt Home Assistant länger aus, stell ihn von Hand zurück: bei Sigenergy Remote EMS aus und das Entladelimit auf die Nennleistung, bei Victron die <strong>Max. Wechselrichterleistung</strong> (Einstellungen → ESS) auf den alten Wert, meist −1.</li>
 <li>Bei <strong>Huawei</strong> bleibt die gesetzte Entladeleistung im Wechselrichter stehen, bis Home Assistant wieder läuft. Ist die Spitzenkappung beim Start eingeschaltet, setzt die Integration sie auf das Maximum zurück. Hast du die Spitzenkappung in der Zwischenzeit ausgeschaltet, prüf die Entität <strong>Maximale Entladeleistung</strong> und stell sie von Hand zurück.</li>
 <li><strong>SolaX:</strong> Die Integration stellt den maximalen Entladestrom (<code>battery_discharge_max_current</code>). Wie bei Huawei bleibt er bei einem Absturz stehen. Den Wert, der vorher eingestellt war, sichert die Integration und stellt ihn beim Aufheben wieder her. Am Gerät ist das noch nicht geprüft. Wer es testet, schaut auf diese Entität.</li>
 <li><strong>Huawei, Entladeleistung:</strong> Die Integration stellt die Number-Entität <strong>Maximale Entladeleistung</strong>. Gibt sie die Batterie frei, setzt sie diesen Wert auf das Maximum des Geräts zurück. Ein eigener, niedrigerer Wert, der dort vorher stand, geht dabei verloren.</li>
