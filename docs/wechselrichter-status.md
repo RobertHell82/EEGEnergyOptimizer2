@@ -137,6 +137,15 @@ Firmware **SPC113**; auf älterer Firmware bleibt es wirkungslos (die Anlage
 lädt dann mit Überschuss weiter, aus dem Netz lädt sie nicht). Den
 Entlade-Cut-Off (40048) liest der Optimizer als Untergrenze, schreibt ihn aber
 nicht.
+
+**Lade- und Entladelimit wirken global.** Laut Spezifikation V2.9 gelten
+„ESS Max Charging Limit“ (40032) und „ESS Max Discharging Limit“ (40034) in
+jedem Betriebsmodus — auch nach dem Ausschalten des Remote EMS im eigenen EMS
+des Geräts. Bis 2.1.62 blieben sie bei der Freigabe stehen (ein Ladelimit 0
+hätte das Laden weiter gesperrt). Seitdem setzt jede Freigabe beide auf die
+Nennleistung zurück, bevor Remote EMS ausgeht, und jeder Befehl stellt das
+Limit, das er nicht braucht, ebenfalls auf die Nennleistung. Offen am Gerät:
+ob die Limits nach dem Ausschalten wirklich auf der Nennleistung stehen.
 Guide: [sigenergy.md](guides/sigenergy.md)
 
 ### SMA Smart Energy

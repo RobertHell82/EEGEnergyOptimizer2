@@ -109,9 +109,12 @@ Während der Optimizer steuert, ist der Schalter „Remote EMS" **an**. Gibt er 
 
 | Fahrplan will | Am Gerät |
 |---|---|
-| **Laden begrenzen** (auch 0 kW = Laden sperren) | Remote EMS an, Modus bleibt „Maximum Self Consumption“ — nur das Ladelimit wird gesetzt |
-| **Entladen ins Netz** | Remote EMS an → „Command Discharging (ESS First)" mit Entladelimit |
-| **Freigabe** (Normalbetrieb) | „Maximum Self Consumption" → Remote EMS **aus** |
+| **Laden begrenzen** (auch 0 kW = Laden sperren) | Remote EMS an, Modus bleibt „Maximum Self Consumption“ — das Ladelimit wird gesetzt, das Entladelimit steht auf der Nennleistung |
+| **Entladen ins Netz** | Remote EMS an → „Command Discharging (ESS First)" mit Entladelimit, das Ladelimit steht auf der Nennleistung |
+| **Freigabe** (Normalbetrieb) | „Maximum Self Consumption" → beide Limits auf die Nennleistung → Remote EMS **aus** |
+
+> [!NOTE]
+> Lade- und Entladelimit gelten am Gerät **in jedem Modus**, auch nachdem Remote EMS aus ist. Deshalb stellt der Optimizer beide bei der Freigabe auf die Nennleistung zurück — sonst bliebe zum Beispiel ein „Laden gesperrt“ stehen.
 
 > [!WARNING]
 > **Kein Sicherheitsnetz im Gerät.** Anders als Fronius, Kostal oder SMA hat Sigenergy keine Rückfallzeit: Ein Befehl läuft weiter, bis er zurückgenommen wird. Der Optimizer gibt bei „Aus", bei fehlendem Plan und beim Neustart selbst frei. Stürzt Home Assistant **hart** ab (Stromausfall, eingefroren), bleibt der letzte Befehl stehen. Dann schalte „Remote EMS" in Home Assistant oder in der Sigen-App von Hand aus.

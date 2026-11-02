@@ -4,7 +4,8 @@ Der Treiber stellt über Standardentitäten der HACS-Integration
 TypQxQ/Sigenergy-Local-Modbus: Schalter „Remote EMS", Auswahl
 „Remote EMS Control Mode", Zahlen „ESS Max Charging/Discharging Limit".
 Die Tests prüfen den Ablauf (einschalten → auf Verfügbarkeit warten →
-Limit → Modus), die Freigabe (Eigenverbrauch → Schalter aus), die
+Limit → Modus → das andere Limit auf Nennleistung), die Freigabe
+(Eigenverbrauch → beide Limits auf Nennleistung → Schalter aus), die
 Registry-Auflösung der ab Werk deaktivierten Steuerentitäten und die
 Vorzeichenkonvention der Sensoren.
 """
@@ -74,6 +75,11 @@ def _calls(mock_hass) -> list[tuple[str, str, dict]]:
     return out
 
 
+# Nennleistungen der Testanlage (SigenStor EC 25.0 TP) und ihre Einheit.
+NENN = {RATED_CHARGE: "20.0", RATED_DISCHARGE: "21.6"}
+NENN_ATTR = {RATED_CHARGE: {"unit_of_measurement": "kW"}, RATED_DISCHARGE: {"unit_of_measurement": "kW"}}
+
+
 @pytest.fixture
 def inverter(mock_hass):
     # Alles da, Schalter an, Auswahl verfügbar — der Normalfall im Betrieb.
@@ -82,7 +88,8 @@ def inverter(mock_hass):
         MODE: MODE_SELF_CONSUMPTION,
         CHARGE_LIMIT: "20.0",
         DISCHARGE_LIMIT: "21.6",
-    })
+        **NENN,
+    }, NENN_ATTR)
     mock_hass.states.async_all.return_value = []
     return SigenergyInverter(mock_hass, {})
 
@@ -107,6 +114,10 @@ class TestLadelimit:
         assert all(c[1] != "turn_on" for c in calls)
         assert calls[0] == ("number", "set_value", {"entity_id": CHARGE_LIMIT, "value": 2.5})
         assert calls[1] == ("select", "select_option", {"entity_id": MODE, "option": MODE_SELF_CONSUMPTION})
+        # Das Entladelimit wirkt global (V2.9) — ein Rest aus einer Entladung
+        # deckelte sonst den Eigenverbrauch. Erst nach dem Moduswechsel.
+        assert calls[2] == ("number", "set_value", {"entity_id": DISCHARGE_LIMIT, "value": 21.6})
+        assert len(calls) == 3
 
     async def test_ladelimit_schaltet_nie_in_einen_ladebefehl(self, inverter, mock_hass):
         """Die Lehre aus dem Feldbefund vom 11.09.2026.
@@ -143,6 +154,25 @@ class TestLadelimit:
     async def test_fehler_liefert_false(self, inverter, mock_hass):
         mock_hass.services.async_call = AsyncMock(side_effect=RuntimeError("modbus"))
         assert await inverter.async_set_charge_limit(1.0) is False
+        assert inverter.last_write_error == "RuntimeError"
+
+    async def test_ohne_nennleistung_das_maximum_der_entitaet(self, mock_hass):
+        """Nennleistungs-Sensoren deaktiviert: zurück auf das ``max`` der
+        Zahl-Entität — das Gerät beschneidet es selbst auf seine Nennleistung."""
+        mock_hass.states.async_all.return_value = []
+        mock_hass.states.get.side_effect = _states(
+            {SWITCH: "on", MODE: MODE_SELF_CONSUMPTION, DISCHARGE_LIMIT: "3.0"},
+            {DISCHARGE_LIMIT: {"max": 100.0}},
+        )
+        assert await SigenergyInverter(mock_hass, {}).async_set_charge_limit(1.0) is True
+        assert _calls(mock_hass)[-1] == ("number", "set_value", {"entity_id": DISCHARGE_LIMIT, "value": 100.0})
+
+    async def test_nennleistung_unbekannt_scheitert_laut(self, mock_hass):
+        mock_hass.states.async_all.return_value = []
+        mock_hass.states.get.side_effect = _states({SWITCH: "on", MODE: MODE_SELF_CONSUMPTION})
+        inv = SigenergyInverter(mock_hass, {})
+        assert await inv.async_set_charge_limit(1.0) is False
+        assert inv.last_write_error == "Nennleistung unbekannt"
 
 
 class TestRemoteEmsEinschalten:
@@ -150,8 +180,8 @@ class TestRemoteEmsEinschalten:
         """HA überspringt Service-Calls an nicht verfügbare Entitäten still.
         Der Treiber schaltet deshalb ein und wartet, bis die Auswahl
         verfügbar ist, bevor er den Modus setzt."""
-        zustand = {SWITCH: "off", MODE: "unavailable", CHARGE_LIMIT: "0"}
-        mock_hass.states.get.side_effect = _states(zustand)
+        zustand = {SWITCH: "off", MODE: "unavailable", CHARGE_LIMIT: "0", **NENN}
+        mock_hass.states.get.side_effect = _states(zustand, NENN_ATTR)
         mock_hass.states.async_all.return_value = []
         inv = SigenergyInverter(mock_hass, {})
 
@@ -195,6 +225,9 @@ class TestEntladung:
         calls = _calls(mock_hass)
         assert calls[0] == ("number", "set_value", {"entity_id": DISCHARGE_LIMIT, "value": 4.2})
         assert calls[1] == ("select", "select_option", {"entity_id": MODE, "option": MODE_COMMAND_DISCHARGING_ESS_FIRST})
+        # Ein Ladelimit 0 aus dem Slot davor gilt global weiter — zurück auf
+        # die Nennleistung, erst im Entlademodus.
+        assert calls[2] == ("number", "set_value", {"entity_id": CHARGE_LIMIT, "value": 20.0})
 
     async def test_ziel_soc_wird_nicht_ans_geraet_geschrieben(self, inverter, mock_hass):
         """Den Cut-Off (40048) schreiben wir nicht, solange sein Verhalten am
@@ -208,17 +241,39 @@ class TestEntladung:
         payload = [c for c in _calls(mock_hass) if c[1] == "set_value"][0][2]
         assert payload["value"] == 3.0
 
+    async def test_nan_schreibt_nichts(self, inverter, mock_hass):
+        assert await inverter.async_set_discharge(float("nan"), 30.0) is False
+        assert _calls(mock_hass) == []
+
 
 class TestFreigabe:
-    async def test_eigenverbrauch_dann_schalter_aus(self, inverter, mock_hass):
-        """Erst der Modus, dann der Schalter: schlägt das Ausschalten fehl,
-        steht das Gerät wenigstens im Eigenverbrauch statt in einem Befehl."""
+    async def test_eigenverbrauch_limits_dann_schalter_aus(self, inverter, mock_hass):
+        """Erst der Modus, dann beide Limits auf Nennleistung, dann der
+        Schalter. Die Limits wirken laut V2.9 global — auch im eigenen EMS
+        des Geräts nach dem Ausschalten. Ein Ladelimit 0 aus dem Fahrplan
+        sperrte sonst das Laden weiter, ein Entladelimit deckelte den
+        Eigenverbrauch."""
         assert await inverter.async_stop_forcible() is True
         calls = _calls(mock_hass)
         assert calls == [
             ("select", "select_option", {"entity_id": MODE, "option": MODE_SELF_CONSUMPTION}),
+            ("number", "set_value", {"entity_id": CHARGE_LIMIT, "value": 20.0}),
+            ("number", "set_value", {"entity_id": DISCHARGE_LIMIT, "value": 21.6}),
             ("switch", "turn_off", {"entity_id": SWITCH}),
         ]
+
+    async def test_limit_fehlschlag_laesst_remote_ems_an(self, inverter, mock_hass):
+        """Scheitert das Zurücksetzen eines Limits, bleibt der Schalter an:
+        Aus brächte bei stehenden Limits nichts, und der Executor wiederholt
+        die Freigabe."""
+        async def _aufruf(domain, service, data, **kw):
+            if domain == "number":
+                raise RuntimeError("modbus")
+
+        mock_hass.services.async_call = AsyncMock(side_effect=_aufruf)
+        assert await inverter.async_stop_forcible() is False
+        assert inverter.last_write_error == "RuntimeError"
+        assert all(c[1] != "turn_off" for c in _calls(mock_hass))
 
     async def test_schalter_schon_aus_nichts_zu_tun(self, mock_hass):
         mock_hass.states.get.side_effect = _states({SWITCH: "off", MODE: "unavailable"})
@@ -230,11 +285,15 @@ class TestFreigabe:
     async def test_auswahl_nicht_verfuegbar_trotzdem_ausschalten(self, mock_hass):
         """Schalter an, Auswahl (noch) nicht verfügbar → kein select_option
         (ginge ins Leere), aber das Ausschalten muss passieren."""
-        mock_hass.states.get.side_effect = _states({SWITCH: "on", MODE: "unavailable"})
+        mock_hass.states.get.side_effect = _states({SWITCH: "on", MODE: "unavailable", **NENN}, NENN_ATTR)
         mock_hass.states.async_all.return_value = []
         inv = SigenergyInverter(mock_hass, {})
         assert await inv.async_stop_forcible() is True
-        assert _calls(mock_hass) == [("switch", "turn_off", {"entity_id": SWITCH})]
+        assert _calls(mock_hass) == [
+            ("number", "set_value", {"entity_id": CHARGE_LIMIT, "value": 20.0}),
+            ("number", "set_value", {"entity_id": DISCHARGE_LIMIT, "value": 21.6}),
+            ("switch", "turn_off", {"entity_id": SWITCH}),
+        ]
 
 
 class TestVerfuegbarkeit:

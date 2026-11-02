@@ -14,11 +14,14 @@ Geschrieben wird per ``switch.turn_on`` / ``select.select_option`` /
 Modbus, kein Keepalive, keine Skalierungsfaktoren. Die drei Absichten des
 Fahrplan-Executors werden so abgebildet:
 
-  Ladelimit X kW  → Ladelimit = X im Modus „Maximum Self Consumption"
+  Ladelimit X kW  → Ladelimit = X im Modus „Maximum Self Consumption",
+                    Entladelimit auf Nennleistung
                     (siehe „Warum kein Command Charging" unten)
-  Entladung X kW  → Modus „Command Discharging (ESS First)", Entladelimit = X
-  Freigabe        → Modus „Maximum Self Consumption", danach Remote EMS AUS —
-                    das Gerät läuft wieder in seinem eigenen EMS-Arbeitsmodus.
+  Entladung X kW  → Modus „Command Discharging (ESS First)", Entladelimit = X,
+                    Ladelimit auf Nennleistung
+  Freigabe        → Modus „Maximum Self Consumption", beide Limits auf
+                    Nennleistung, danach Remote EMS AUS — das Gerät läuft
+                    wieder in seinem eigenen EMS-Arbeitsmodus.
 
 Zwei Eigenheiten der Integration bestimmen den Ablauf:
 
@@ -34,7 +37,20 @@ Zwei Eigenheiten der Integration bestimmen den Ablauf:
    — ein ``select_option`` direkt nach dem Einschalten ginge ins Leere, ohne
    Fehler. Der Treiber schaltet deshalb zuerst ein und wartet, bis die
    Auswahl verfügbar ist; die Integration stößt nach jedem Schreibvorgang
-   sofort einen Refresh an, das dauert typisch unter einer Sekunde.
+   sofort einen Refresh an, das dauert typisch unter einer Sekunde. Seit
+   ``sigen`` 1.3.0 wartet jedes Schreiben von Schalter und Modus außerdem auf
+   die Rückmeldung des Geräts, bis zu 60 s.
+
+**Die Limits wirken global.** Laut Spezifikation V2.9 (Tab. 5-2-1) gelten
+40032 und 40034 „regardless of the EMS operating mode" — in jedem Modus und
+auch, wenn Remote EMS wieder aus ist. Bis 2.1.62 ging der Treiber nach V2.7
+davon aus, dass sie nur in den Befehlsmodi greifen, und ließ sie bei der
+Freigabe stehen: Ein Ladelimit 0 aus dem Fahrplan hätte dann das Laden auch
+im eigenen EMS des Geräts weiter gesperrt, ein altes Entladelimit den
+Eigenverbrauch gedeckelt. Deshalb setzt jede Freigabe beide auf die
+Nennleistung zurück, BEVOR Remote EMS ausgeht (danach ist die Auswahl weg und
+der Zustand nicht mehr unser), und jeder Befehl stellt das Limit, das er
+selbst nicht braucht, ebenfalls auf die Nennleistung.
 
 **Warum kein Command Charging.** Bis 2.1.0-dev6 wurde für ein Ladelimit in
 den Modus „Command Charging (PV First)" geschaltet, weil Register 40032 laut
@@ -47,30 +63,28 @@ begrenzt auf 3,8 kW" anzeigte. Aus „höchstens X" war „genau X, notfalls aus
 dem Netz" geworden.
 
 Deshalb bleibt der Eigenverbrauchsmodus stehen und nur das Limit wird
-geschrieben. Ab Firmware SPC113 greift 40032 laut Anwenderberichten auch
-dort; greift es nicht, ist die Folge ein wirkungsloses Limit — die Anlage
-lädt dann mit Überschuss weiter. Das ist der richtige Ausgang eines Zweifels:
-keine Steuerwirkung ist harmlos, Netzladen kostet Geld. **Am Gerät zu
-verifizieren:** ob das Limit im Eigenverbrauch greift (Firmwarestand prüfen).
+geschrieben. V2.9 bestätigt, dass 40032 dort greift; ältere Firmware (vor
+SPC113) tat es laut Anwenderberichten nicht. Greift es nicht, ist die Folge
+ein wirkungsloses Limit — die Anlage lädt dann mit Überschuss weiter. Das ist
+der richtige Ausgang eines Zweifels: keine Steuerwirkung ist harmlos,
+Netzladen kostet Geld.
 
-**Kein geräteseitiges Failsafe.** Die Sigenergy-Modbus-Spezifikation (V2.7)
-kennt weder Watchdog noch Rückfallzeit — anders als Fronius (``RvrtTms``),
-Kostal und SMA. Bleibt Home Assistant mitten in einem Befehl stehen, läuft
-er am Gerät weiter. Deshalb ist die Freigabe hier das AUSSCHALTEN des Remote
-EMS und nicht nur ein Moduswechsel, und deshalb gibt die Integration beim
-Entladen und beim Umschalten auf „Aus" immer aktiv frei.
+**Kein geräteseitiges Failsafe.** Die Sigenergy-Modbus-Spezifikation (auch
+V2.9) kennt weder Watchdog noch Rückfallzeit — anders als Fronius
+(``RvrtTms``), Kostal und SMA. Bleibt Home Assistant mitten in einem Befehl
+stehen, läuft er am Gerät weiter. Deshalb ist die Freigabe hier das
+AUSSCHALTEN des Remote EMS und nicht nur ein Moduswechsel, und deshalb gibt
+die Integration beim Entladen und beim Umschalten auf „Aus" immer aktiv frei.
 
 **Am Gerät zu verifizieren (Feldtest):**
 
-- Sperrt „Command Charging (PV First)" mit Limit 0 wirklich nur das Laden
-  und die Hauslast kommt weiter aus der Batterie — oder entlädt der Speicher
-  in diesem Modus gar nicht (dann käme sie aus dem Netz; Alternative wäre
-  „Command Discharging (PV First)" mit vollem Entladelimit)?
 - Liefert „Command Discharging (ESS First)" ins Netz oder deckt es nur die
   Hauslast?
 - Stoppt der Entlade-Cut-Off (Register 40048, ``ESS Discharge Cut-Off State
   of Charge``) eine befohlene Entladung wie der Entladeboden bei SolaX? Der
   Treiber liest ihn als Untergrenze für den Fahrplan, schreibt ihn aber nicht.
+- Stehen beide Limits nach dem Ausschalten des Remote EMS wirklich auf der
+  geschriebenen Nennleistung (V2.9 sagt global — an der Anlage ablesen)?
 
 Vorzeichen der Sensoren (Register 30037 / 30005, von der Integration roh
 durchgereicht): Batterieleistung positiv = laden — wie bei uns, an der
@@ -103,6 +117,23 @@ MODE_COMMAND_DISCHARGING_ESS_FIRST = "Command Discharging (ESS First)"
 # Grenze fängt nur den Fall ab, dass das Gerät den Schalter nicht annimmt.
 REMOTE_EMS_READY_TIMEOUT_S = 10.0
 REMOTE_EMS_POLL_INTERVAL_S = 0.5
+
+# Limit-Entität -> Sensor mit ihrer Nennleistung. Auf diesen Wert gehen die
+# Limits zurück, wenn wir sie nicht mehr brauchen (siehe „Die Limits wirken
+# global" im Modulkopf).
+NENNWERT_ZU_LIMIT: dict[str, str] = {
+    "ess_max_charging_limit": "ess_rated_charging_power",
+    "ess_max_discharging_limit": "ess_rated_discharging_power",
+}
+
+
+class SigenFehler(Exception):
+    """Ein Schreibschritt ist nicht möglich; der Text wird ``last_write_error``."""
+
+
+def _grund(exc: Exception) -> str:
+    """Kurzer Fehlergrund: eigener Text, sonst der Name der Ausnahme."""
+    return str(exc) if isinstance(exc, SigenFehler) else type(exc).__name__
 
 # Entity-Key -> Default-Entity-ID. Die IDs entstehen in der Integration aus
 # Gerätename („Sigen Plant") + Entitätsname; wer das Gerät umbenennt, bekommt
@@ -276,6 +307,35 @@ class SigenergyInverter(InverterBase):
             blocking=True,
         )
 
+    def _nennwert_kw(self, limit_key: str) -> float | None:
+        """Nennleistung zum Limit; ohne Sensor das Maximum der Zahl-Entität.
+
+        Die Nennleistungs-Sensoren können deaktiviert sein — das ``max`` der
+        Zahl-Entität (laut Integration 100 kW) ist dann die Obergrenze, die
+        das Gerät selbst auf seine Nennleistung beschneidet.
+        """
+        nenn = read_power_kw(self._hass, self._resolve_entity(NENNWERT_ZU_LIMIT[limit_key]))
+        if nenn is not None and nenn > 0:
+            return nenn
+        state = self._hass.states.get(self._resolve_entity(limit_key))
+        try:
+            maximum = float(state.attributes.get("max")) if state is not None else None
+        except (AttributeError, TypeError, ValueError):
+            maximum = None
+        return maximum if maximum is not None and maximum > 0 else None
+
+    async def _limit_auf_nennwert(self, limit_key: str) -> None:
+        """Ein Limit freigeben: auf die Nennleistung schreiben.
+
+        Unbekannte Nennleistung ist ein Fehler, kein Überspringen — ein
+        stehendes Limit wirkt global weiter (Modulkopf), und das soll laut
+        scheitern, nicht still.
+        """
+        nenn = self._nennwert_kw(limit_key)
+        if nenn is None:
+            raise SigenFehler("Nennleistung unbekannt")
+        await self._set_number(limit_key, nenn)
+
     async def _ensure_remote_ems(self) -> None:
         """Remote EMS einschalten und warten, bis die Modus-Auswahl da ist.
 
@@ -318,7 +378,11 @@ class SigenergyInverter(InverterBase):
         begrenzen, nie laden.
 
         Reihenfolge: erst das Limit, dann der Modus — sonst liefe ein
-        Moduswechsel einen Moment mit einem alten, höheren Limit.
+        Moduswechsel einen Moment mit einem alten, höheren Limit. Das
+        Entladelimit geht danach auf die Nennleistung: Es wirkt global, ein
+        Rest aus einer vorherigen Entladung deckelte sonst den Eigenverbrauch
+        (die Hauslast käme aus dem Netz). Erst NACH dem Moduswechsel — davor
+        liefe die Entladung einen Moment mit voller Leistung.
         """
         if self._nicht_endlich(power_kw):
             return False
@@ -326,10 +390,11 @@ class SigenergyInverter(InverterBase):
             await self._ensure_remote_ems()
             await self._set_number("ess_max_charging_limit", max(0.0, float(power_kw)))
             await self._set_mode(MODE_SELF_CONSUMPTION)
-            return True
+            await self._limit_auf_nennwert("ess_max_discharging_limit")
+            return self._erfolg()
         except Exception as exc:  # noqa: BLE001
             _LOGGER.exception("Sigenergy: Ladelimit konnte nicht gesetzt werden")
-            return self._fehler(type(exc).__name__)
+            return self._fehler(_grund(exc))
 
     async def async_set_discharge(
         self, power_kw: float, target_soc: float | None = None
@@ -339,6 +404,9 @@ class SigenergyInverter(InverterBase):
         ``target_soc`` setzt der Executor selbst durch (er stoppt am Ziel);
         das Gerät bekommt keinen SOC — den Cut-Off (40048) schreiben wir
         bewusst nicht, solange sein Verhalten am Gerät nicht geprüft ist.
+
+        Ein Ladelimit aus dem Slot davor (oft 0) geht nach dem Moduswechsel
+        auf die Nennleistung — es wirkt global und gehört nicht zur Entladung.
         """
         if self._nicht_endlich(power_kw, target_soc):
             return False
@@ -346,29 +414,39 @@ class SigenergyInverter(InverterBase):
             await self._ensure_remote_ems()
             await self._set_number("ess_max_discharging_limit", max(0.0, abs(float(power_kw))))
             await self._set_mode(MODE_COMMAND_DISCHARGING_ESS_FIRST)
-            return True
+            await self._limit_auf_nennwert("ess_max_charging_limit")
+            return self._erfolg()
         except Exception as exc:  # noqa: BLE001
             _LOGGER.exception("Sigenergy: Entladung konnte nicht gestartet werden")
-            return self._fehler(type(exc).__name__)
+            return self._fehler(_grund(exc))
 
     async def async_stop_forcible(self) -> bool:
-        """Freigeben: Eigenverbrauchsmodus setzen, dann Remote EMS ausschalten.
+        """Freigeben: Eigenverbrauch, beide Limits auf Nennleistung, Remote EMS aus.
 
-        Der Moduswechsel zuerst: schlägt das Ausschalten fehl, steht das
-        Gerät wenigstens im Eigenverbrauch statt in einem Befehl. Ist der
-        Schalter schon aus, ist die Auswahl nicht verfügbar — dann gibt es
-        nichts zurückzunehmen.
+        Der Moduswechsel zuerst: schlägt danach etwas fehl, steht das Gerät
+        wenigstens im Eigenverbrauch statt in einem Befehl — und erst im
+        Eigenverbrauch dürfen die Limits hoch, sonst liefe eine Entladung
+        einen Moment mit voller Leistung. Dann die Limits, weil sie global
+        wirken und nach dem Ausschalten im eigenen EMS des Geräts weiter
+        gälten. Scheitert das, bleibt Remote EMS an: Aus brächte bei
+        stehenden Limits nichts, und der nächste Versuch des Executors findet
+        die Entitäten so vor, wie er sie braucht.
+
+        Ist der Schalter schon aus, gibt es nichts zurückzunehmen — ein Befehl
+        von uns hätte ihn angelassen.
         """
         try:
             schalter = self._state_str(self._resolve_entity("remote_ems_switch"))
             if schalter != "off":
                 if self._ist_verfuegbar(self._state_str(self._resolve_entity("remote_ems_mode"))):
                     await self._set_mode(MODE_SELF_CONSUMPTION)
+                await self._limit_auf_nennwert("ess_max_charging_limit")
+                await self._limit_auf_nennwert("ess_max_discharging_limit")
                 await self._switch(False)
-            return True
+            return self._erfolg()
         except Exception as exc:  # noqa: BLE001
             _LOGGER.exception("Sigenergy: Freigabe fehlgeschlagen")
-            return self._fehler(type(exc).__name__)
+            return self._fehler(_grund(exc))
 
     @property
     def is_available(self) -> bool:
@@ -385,8 +463,9 @@ class SigenergyInverter(InverterBase):
     async def async_get_charge_limit_kw(self) -> float | None:
         """Gesetztes Ladelimit — im Eigenverbrauchsmodus eine Aussage.
 
-        In den Entlademodi ist Register 40032 wirkungslos, sein Wert wäre
-        dann kein Limit. None lässt den Executor auf den zuletzt
+        In den Befehlsmodi gehört Register 40032 dem Befehl (bei der
+        Entladung steht es auf der Nennleistung), sein Wert wäre dann kein
+        Ladelimit des Fahrplans. None lässt den Executor auf den zuletzt
         geschriebenen Wert bzw. den Planwert zurückfallen.
         """
         if self._state_str(self._resolve_entity("remote_ems_mode")) != MODE_SELF_CONSUMPTION:
