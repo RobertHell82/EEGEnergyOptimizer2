@@ -695,6 +695,48 @@ def pv_enden(werte: list[float], tage: list) -> list[int]:
     return enden
 
 
+# Ab welcher erwarteten PV-Leistung (kW, DC) ein Slot an einem Tag ohne
+# Überschuss noch als „Erzeugung" zählt — darunter ist es Dämmerung, und
+# deren Prognose sagt nichts über das Ende des Tages.
+PV_ERZEUGUNG_MIN_KW = 0.05
+
+
+def pv_erzeugung_enden(pv: list[float], werte: list[float], tage: list) -> list[int]:
+    """Termine der Mindestladung an Tagen ohne Überschuss-Slot.
+
+    ``pv_enden`` kennt nur Tage, an denen die PV das Haus wenigstens eine
+    Viertelstunde übersteigt. An einem dunklen Novembertag (PV ganztags unter
+    der Hauslast) gibt es keinen solchen Slot, also keinen Termin — und damit
+    keine Mindestladung, genau an dem Tag, für den sie gedacht ist
+    (nachgerechnet: Mindestladung 50 %, PV-Faktor 0,03 → 0 kWh gekauft, der
+    Plan blieb bei 27,6 %).
+
+    Für solche Tage gilt als Termin der letzte Slot mit erwarteter Erzeugung
+    über ``PV_ERZEUGUNG_MIN_KW`` — das Ende der Erzeugung statt des Endes
+    des Überschusses. Wie bei ``pv_enden`` nur, wenn danach am selben Tag noch
+    ein Slot im Horizont liegt. Ein Tag ganz ohne PV (Prognose 0, Schnee auf
+    den Modulen) hat keinen Termin: Ohne Erzeugung gibt es keinen Abend, an
+    dem man ihn festmachen könnte, und ein frei gewählter Zeitpunkt wäre eine
+    Erfindung.
+
+    Nur für die Mindestladung, nicht fürs Ladeziel: Das Ladeziel lässt sich
+    ohnehin nur aus Überschuss erreichen — an einem Tag ohne ihn gibt es für
+    es nichts zu planen.
+    """
+    mit_ueberschuss = {tage[i] for i, w in enumerate(werte) if w > 0}
+    letzte: dict = {}
+    for i, p in enumerate(pv):
+        if tage[i] not in mit_ueberschuss and p > PV_ERZEUGUNG_MIN_KW:
+            letzte[tage[i]] = i
+    enden: list[int] = []
+    for i in sorted(letzte.values()):
+        naechster = i + 1
+        if naechster >= len(werte) or tage[naechster] != tage[i]:
+            continue  # Horizont- oder Tagesende, kein Ende der Erzeugung
+        enden.append(i)
+    return enden
+
+
 class HAConfig:
     """Config-Provider für ``opt()``, gefüttert aus ScheduleInputs.
 
@@ -1078,6 +1120,11 @@ class HAConfig:
         Verlusten): Überschuss lädt, Defizit entlädt, und wo ``untergrenze``
         unter null liegt, lädt die Batterie aus PV plus Netz. Ohne
         ``untergrenze`` also das ohne Zukauf Erreichbare.
+
+        Gedeckelt wird wie dort nur das Laden, nicht die Entladung
+        (``min(step, max_step)`` in ``opt_highs``): Eine hier gedeckelte
+        Entladung hielt den Stand höher als das LP und ließ eine Forderung
+        stehen, die ``opt()`` danach doch kappen musste.
         """
         p2e = self.time_res / 3600.0
         kapazitaet = float(self.battery_capacity)
@@ -1096,18 +1143,21 @@ class HAConfig:
             elif w > 0:
                 schritt = min(_ladeleistung_aus_dc(w, kapazitaet), grenze)
             else:
-                schritt = -min(_entladeleistung_fuer_dc(-w, kapazitaet), grenze)
+                schritt = -_entladeleistung_fuer_dc(-w, kapazitaet)
             stand = min(kapazitaet, max(0.0, stand + schritt * p2e))
             ergebnis.append(stand)
         return ergebnis
 
     def ladeziel_termine(
-        self, parameters, ueberschuss, ziel_kwh: float | None = None
+        self, parameters, ueberschuss, ziel_kwh: float | None = None, pv=None
     ) -> list[int]:
         """Slots, an denen das Ladeziel gilt (Positionen in ``ueberschuss``).
 
         ``ziel_kwh`` prüft statt des Ladeziels einen anderen Stand am selben
-        Termin — die Mindestladung am Abend (``_abend_forderung``).
+        Termin — die Mindestladung am Abend (``_abend_forderung``). Mit ``pv``
+        (erwartete Erzeugung je Slot) bekommen auch Tage ohne Überschuss-Slot
+        einen Termin, am Ende der Erzeugung (``pv_erzeugung_enden``) — nur
+        für die Mindestladung, das Ladeziel ruft ohne.
 
         Der Zeitpunkt ist je Kalendertag der letzte Slot mit Überschuss, also
         das Ende der PV-Zeit. Nur wenn danach am selben Tag noch ein Slot im
@@ -1167,7 +1217,12 @@ class HAConfig:
         ende_halb = min(self.battery_capacity / 2.0, stand)
 
         tage = [stempel.date() for stempel in ueberschuss.index]
-        for i in pv_enden(werte, tage):
+        kandidaten = pv_enden(werte, tage)
+        if pv is not None:
+            kandidaten = sorted(
+                kandidaten + pv_erzeugung_enden([float(v) for v in pv], werte, tage)
+            )
+        for i in kandidaten:
             if ziel - ende_halb > rest[i + 1] + 1e-9:
                 continue  # vom Ziel käme der Plan nicht mehr auf halb
             termine.append(i)
@@ -1193,15 +1248,20 @@ class HAConfig:
 
         ``opt_highs`` ruft ``netzladen`` und ``ladeziel`` mit denselben
         Reihen; beide brauchen beide Grenzen.
+
+        Der Cache hält die Objekte selbst und vergleicht mit ``is``: Eine
+        ``id()`` kann nach dem Freigeben eines Objekts an ein neues gehen,
+        und dann bekäme ein anderer Lauf die Grenzen des vorigen.
         """
-        schluessel = (id(parameters), id(ueberschuss))
-        if self._netz_cache is None or self._netz_cache[0] != schluessel:
-            self._netz_cache = (
-                schluessel,
+        cache = self._netz_cache
+        if cache is None or cache[0] is not parameters or cache[1] is not ueberschuss:
+            cache = self._netz_cache = (
+                parameters,
+                ueberschuss,
                 self._netzladen_wirtschaftlich(parameters, ueberschuss),
                 self._netz_untergrenze(parameters, ueberschuss),
             )
-        return self._netz_cache[1], self._netz_cache[2]
+        return cache[2], cache[3]
 
     def _netzladen_wirtschaftlich(self, parameters, ueberschuss):
         """Untergrenze von ``dc_p`` je Slot (kW, DC, ≤ 0) — oder None.
@@ -1331,16 +1391,32 @@ class HAConfig:
         schafft, rechnet ``_netz_untergrenze`` mit der erwarteten PV; was
         fehlt, kommt aus den günstigsten Slots davor. Jeder Planlauf rechnet
         neu — wird es trüber, kauft der nächste mehr.
+
+        An einem Tag ohne Überschuss-Slot steht sie am Ende der Erzeugung
+        (``pv_erzeugung_enden``) — sonst fiele sie genau an den dunklen Tagen
+        weg, für die sie da ist. ``_abend_termine`` (Plan-Ausgabe) rechnet
+        dieselben Termine aus der Ergebnistabelle.
         """
         if self.abend_kwh <= 0 or len(ueberschuss) == 0:
             return None
-        termine = self.ladeziel_termine(parameters, ueberschuss, self.abend_kwh)
+        termine = self.abend_termine(parameters, ueberschuss, parameters["dc_production"])
         if not termine:
             return None
         forderung = [0.0] * len(ueberschuss)
         for i in termine:
             forderung[i] = self.abend_kwh
         return forderung
+
+    def abend_termine(self, parameters, ueberschuss, pv) -> list[int]:
+        """Termine der Mindestladung — dieselben für LP und Plan-Ausgabe.
+
+        ``pv`` ist die erwartete Erzeugung je Slot: im LP
+        ``dc_production``, in der Ergebnistabelle die Spalte ``PV`` (dieselbe
+        Reihe unter anderem Namen).
+        """
+        if self.abend_kwh <= 0 or len(ueberschuss) == 0:
+            return []
+        return self.ladeziel_termine(parameters, ueberschuss, self.abend_kwh, pv=pv.values)
 
     def _netz_forderung(self, parameters, ueberschuss) -> list[float] | None:
         """Was aus dem Netz notfalls erreicht werden muss (kWh je Slot) — oder None.
@@ -3644,7 +3720,7 @@ def _abend_termine(
     ziel_pct = round(min(float(inputs.netzladen_abend_pct), float(inputs.max_soc_pct)), 1)
     termine = [
         {"t": slots[i]["t"], "geplant_pct": slots[i]["soc"]}
-        for i in config.ladeziel_termine(table, ueberschuss, config.abend_kwh)
+        for i in config.abend_termine(table, ueberschuss, table["PV"])
         if i < len(slots)
     ]
     return {"ziel_pct": ziel_pct, "termine": termine}

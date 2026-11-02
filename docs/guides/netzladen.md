@@ -47,6 +47,8 @@ Mit **Bezug aus der Gemeinschaft** lädt der Fahrplan genau in den Viertelstunde
 
 Das Ladeziel kauft nur zu, wenn sich das rechnet. Willst du am Abend auf jeden Fall einen bestimmten Ladestand haben, etwa für die Nacht oder als Reserve, trag ihn bei **Mindestladung am Abend** ein. Der Termin ist derselbe wie beim Ladeziel: das Ende der PV-Zeit, also der letzte Moment des Tages, an dem die Sonne mehr liefert, als das Haus braucht.
 
+An einem dunklen Tag liefert die Sonne nie mehr, als das Haus braucht — dann gibt es kein Ende der PV-Zeit. Für die Mindestladung gilt an so einem Tag das Ende der Erzeugung: die letzte Viertelstunde, in der die Anlage laut Prognose noch nennenswert Strom macht (mehr als 50 W). Gerade an diesen Tagen wird also aus dem Netz nachgeladen. Sagt die Prognose für einen Tag gar keine Erzeugung voraus, etwa bei Schnee auf den Modulen, gibt es keinen Termin und keine Mindestladung. Das Ladeziel bleibt davon unberührt: An einem Tag ohne Sonnenüberschuss hat es nichts zu planen.
+
 Bei jeder Neuberechnung prüft der Fahrplan, ob die erwartete PV die Batterie bis dahin auf diesen Wert bringt. Fehlt etwas, lädt er den Rest aus dem Netz, egal was der Strom kostet, aber in den günstigsten Viertelstunden vor dem Termin. Mit Bezug aus der Gemeinschaft sind das die Viertelstunden, in denen die Gemeinschaft Strom übrig hat; gibt es an dem Tag keine, nimmt er die günstigste andere. Wird es trüber als vorhergesagt, kauft der nächste Lauf entsprechend mehr.
 
 Gekauft wird nur bis zur Mindestladung. Was darüber bis zum **Ladeziel** fehlt, kommt weiter nur von der Sonne oder aus Viertelstunden, in denen sich der Zukauf rechnet (Mindestvorteil). Die Grenze am Zähler und die der Spitzenkappung gelten auch hier.
