@@ -359,15 +359,17 @@ class TestAssistent:
         p = victron_pruefung(mock_hass)
         assert len(p["probleme"]) == 1 and "−1" in p["probleme"][0]
 
-    def test_entladedeckel_minus_eins_nicht_schreibbar_ist_ein_problem(
+    def test_entladedeckel_minus_eins_nicht_schreibbar_ist_ein_hinweis(
         self, mock_hass, anlage
     ):
         """Ersatzbereich 0–100 W: Die Freigabe könnte −1 nie zurückschreiben,
-        und jeder Deckel über 100 W wäre abgeschnitten."""
+        und jeder Deckel über 100 W wäre abgeschnitten. Kein Problem, das den
+        Assistenten aufhält — der Treiber bietet den Deckel nur nicht an."""
         anlage.werte[WR_GRENZE][1] = {"min": 0, "max": 100}
         p = victron_pruefung(mock_hass)
-        assert len(p["probleme"]) == 1
-        assert "Spitzenkappung" in p["probleme"][0] and "−1" in p["probleme"][0]
+        assert p["probleme"] == []
+        assert any("Spitzenkappung" in h and "−1" in h for h in p["hinweise"])
+        assert _treiber(mock_hass).supports_discharge_limit is False
 
     def test_entladedeckel_fehlt_ist_ein_hinweis(self, mock_hass, registry_patch):
         a = Anlage(mock_hass, **{WR_GRENZE: None})

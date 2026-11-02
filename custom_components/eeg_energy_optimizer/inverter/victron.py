@@ -428,6 +428,9 @@ def victron_pruefung(hass: Any) -> dict[str, Any]:
     # Hinweis. Ist sie da, muss −1 schreibbar sein: Die Freigabe schreibt
     # −1 („unbegrenzt") zurück, und im Ersatzbereich 0–100 W wäre jeder
     # Deckel über 100 W abgeschnitten — ein Haus ohne Strom aus der DC-PV.
+    # Auch das nur ein Hinweis, kein Problem: Der Treiber bietet den Deckel
+    # dann nicht an (``supports_discharge_limit``), und der Assistent darf
+    # einen Betreiber ohne Spitzenkappung nicht deswegen aufhalten.
     deckel = _victron_eintrag(hass, *VICTRON_METRIKEN["entladedeckel"])
     if deckel is None or getattr(deckel, "disabled_by", None):
         hinweise.append(
@@ -439,11 +442,12 @@ def victron_pruefung(hass: Any) -> dict[str, Any]:
     else:
         deckel_min = _attribut_zahl(hass, deckel.entity_id, "min")
         if deckel_min is not None and deckel_min > -1:
-            probleme.append(
+            hinweise.append(
                 "Die Batterie-Stufe der Spitzenkappung braucht die "
                 "ESS-Einstellung „Max. Wechselrichterleistung“ mit dem Wert "
                 "−1 (nicht begrenzen), diese Version der Integration kann −1 "
-                "aber nicht schreiben. Bitte Home Assistant aktualisieren"
+                "aber nicht schreiben — die Spitzenkappung schaltet dann nur "
+                "Verbraucher ab. Für die Batterie-Stufe Home Assistant aktualisieren"
             )
     return {
         "entities": entities,
@@ -1068,7 +1072,13 @@ class VictronInverter(InverterBase):
         keine Reserve, die Spitzenkappung schaltet nur Verbraucher.
         """
         eintrag = _victron_eintrag(self._hass, *VICTRON_METRIKEN["entladedeckel"])
-        return eintrag is not None and not getattr(eintrag, "disabled_by", None)
+        if eintrag is None or getattr(eintrag, "disabled_by", None):
+            return False
+        # Ist der Bereich schon bekannt und −1 nicht schreibbar, ließe sich
+        # ein Deckel nie wieder aufheben — dann keine Batterie-Stufe. Ohne
+        # Zustand (MQTT noch nicht da) gilt die Registry.
+        minimum = _attribut_zahl(self._hass, eintrag.entity_id, "min")
+        return minimum is None or minimum <= -1
 
     async def async_set_discharge_limit(self, power_kw: float | None) -> bool:
         """Entladung der Batterie im Automatikbetrieb auf ``power_kw`` deckeln.
