@@ -1145,3 +1145,48 @@ def test_abendladung_merker_wird_in_aus_und_pause_geleert():
     _check_abendladung_health({}, MODE_EIN, {}, 10.0, merker, danach, emit)
     assert calls == []
     _abendladung_merker_ruhe({}, MODE_AUS)  # ohne Merker kein Fehler
+
+
+def test_abendladung_hoechstens_eine_meldung_je_tag():
+    """Nach der Prüfung bekommt derselbe Tag einen späteren Termin (die
+    Prognose verschiebt das PV-Ende): kein zweiter Merker, keine zweite
+    Meldung — ``geprueft_datum``."""
+    from custom_components.eeg_energy_optimizer import _check_abendladung_health
+
+    calls, emit = _sammler()
+    merker = {}
+    _check_abendladung_health(_abend_plan(), MODE_EIN, {}, 20.0, merker,
+                              datetime(2026, 11, 2, 13, 0, tzinfo=ABEND_TZ), emit)
+    spaeter = _abend_plan(t="2026-11-02T16:30:00+01:00")
+    _check_abendladung_health(spaeter, MODE_EIN, {}, 20.0, merker,
+                              datetime(2026, 11, 2, 14, 16, tzinfo=ABEND_TZ), emit)
+    assert len(calls) == 1
+    assert merker.get("t") is None and merker["geprueft_datum"] == "2026-11-02"
+    _check_abendladung_health(spaeter, MODE_EIN, {}, 20.0, merker,
+                              datetime(2026, 11, 2, 16, 50, tzinfo=ABEND_TZ), emit)
+    assert len(calls) == 1
+    # Auch ein Aus/Ein dazwischen öffnet den Tag nicht wieder.
+    _check_abendladung_health(spaeter, MODE_AUS, {}, 20.0, merker,
+                              datetime(2026, 11, 2, 15, 0, tzinfo=ABEND_TZ), emit)
+    assert merker == {"geprueft_datum": "2026-11-02"}
+    # Morgen wird wieder gemerkt.
+    morgen = _abend_plan(t="2026-11-03T14:00:00+01:00")
+    _check_abendladung_health(morgen, MODE_EIN, {}, 20.0, merker,
+                              datetime(2026, 11, 2, 17, 0, tzinfo=ABEND_TZ), emit)
+    assert merker["t"] == "2026-11-03T14:00:00+01:00"
+
+
+def test_abendladung_alter_merker_nach_telemetrie_pause_meldet_nicht():
+    """Gemerkt um 13:00, dann lief die Prüfung nicht (Telemetrie aus) und kam
+    erst um 18:00 zurück: Der Ladestand von 18:00 sagt nichts über 14:00."""
+    from custom_components.eeg_energy_optimizer import _check_abendladung_health
+
+    calls, emit = _sammler()
+    merker = {}
+    _check_abendladung_health(_abend_plan(), MODE_EIN, {}, 20.0, merker,
+                              datetime(2026, 11, 2, 13, 0, tzinfo=ABEND_TZ), emit)
+    _check_abendladung_health({}, MODE_EIN, {}, 10.0, merker,
+                              datetime(2026, 11, 2, 18, 0, tzinfo=ABEND_TZ), emit)
+    assert calls == []
+    assert merker.get("t") is None
+    assert "geprueft_datum" not in merker

@@ -663,6 +663,9 @@ def _check_spitzenkappung_health(status, mode, config, spitze, kappung, merker, 
 # (Prozentpunkte): SOC-Sensoren melden ganze Prozent, und der Plan rechnet
 # mit Prognose — ein Punkt daneben ist kein Versagen.
 ABENDLADUNG_TOLERANZ_PCT = 3.0
+# Ein gemerkter Termin, der länger als das vorbei ist, wurde nicht geprüft,
+# weil die Prüfung nicht lief (Telemetrie aus) — er wird verworfen.
+ABENDLADUNG_VERFALL = timedelta(hours=1)
 
 
 def _check_abendladung_health(schedule_state, mode, config, soc, merker, jetzt, emit):
@@ -689,7 +692,7 @@ def _check_abendladung_health(schedule_state, mode, config, soc, merker, jetzt, 
     ``guard_wirkung``/``netzladung``).
     """
     if mode != MODE_EIN:
-        merker.clear()
+        _abend_merker_leeren(merker)
         return
     termin = merker.get("t")
     if termin is not None:
@@ -698,7 +701,13 @@ def _check_abendladung_health(schedule_state, mode, config, soc, merker, jetzt, 
         except (TypeError, ValueError):
             ende = None
         if ende is None:
-            merker.clear()
+            _abend_merker_leeren(merker)
+        elif jetzt >= ende + ABENDLADUNG_VERFALL:
+            # Längst vorbei und nie geprüft: Diese Prüfung lief in der
+            # Zwischenzeit nicht (Telemetrie aus, später eingeschaltet). Der
+            # Ladestand von jetzt sagt nichts über den Termin — prüfen wäre
+            # ein Fehlalarm.
+            _abend_merker_leeren(merker)
         elif jetzt >= ende:
             ziel = float(merker.get("ziel_pct") or 0.0)
             if soc is not None and float(soc) < ziel - ABENDLADUNG_TOLERANZ_PCT:
@@ -714,7 +723,9 @@ def _check_abendladung_health(schedule_state, mode, config, soc, merker, jetzt, 
                         "inverter_type": config.get(CONF_INVERTER_TYPE),
                     },
                 )
-            merker.clear()
+            _abend_merker_leeren(merker)
+            # Höchstens eine Prüfung je Tag (Datum des Termins, Ortszeit).
+            merker["geprueft_datum"] = termin[:10]
     abend = (schedule_state or {}).get("netzladen_abend") or {}
     gemerkt = None
     if merker.get("t") is not None:
@@ -728,6 +739,11 @@ def _check_abendladung_health(schedule_state, mode, config, soc, merker, jetzt, 
             if neu + timedelta(minutes=15) <= jetzt:
                 continue
         except (KeyError, TypeError, ValueError):
+            continue
+        if neu.date().isoformat() == merker.get("geprueft_datum"):
+            # Dieser Tag ist schon geprüft. Verschiebt die Prognose das Ende
+            # der PV-Zeit danach noch (oder bekommt der Tag einen zweiten
+            # Termin), gäbe es sonst eine zweite Meldung für denselben Abend.
             continue
         if gemerkt is not None and neu.date() > gemerkt:
             # Der gemerkte Termin ist noch ungeprüft, und der Plan nennt
@@ -743,7 +759,20 @@ def _check_abendladung_health(schedule_state, mode, config, soc, merker, jetzt, 
         break
     else:
         if not abend:
-            merker.clear()
+            _abend_merker_leeren(merker)
+
+
+def _abend_merker_leeren(merker: dict) -> None:
+    """Gemerkten Termin verwerfen — ``geprueft_datum`` bleibt.
+
+    Das geprüfte Datum überlebt jedes Leeren, auch Pause und Modus Aus:
+    Sonst prüfte ein Wechsel Aus → Ein am selben Abend einen zweiten Termin
+    desselben Tages, und es gäbe zwei Meldungen für einen Tag.
+    """
+    geprueft = merker.get("geprueft_datum")
+    merker.clear()
+    if geprueft is not None:
+        merker["geprueft_datum"] = geprueft
 
 
 def _abendladung_merker_ruhe(data: dict, mode: str) -> None:
@@ -759,7 +788,7 @@ def _abendladung_merker_ruhe(data: dict, mode: str) -> None:
     if mode != MODE_EIN:
         merker = data.get("telemetry_abend_merker")
         if merker:
-            merker.clear()
+            _abend_merker_leeren(merker)
 
 
 PLATFORMS: list[str] = ["sensor", "select"]
@@ -3279,6 +3308,12 @@ async def _stilllegen(data: dict) -> None:
                 "EEG Energy Optimizer: Guard-Lauf nach %.0f s nicht beendet — "
                 "es wird trotzdem freigegeben", GUARD_STOPP_WARTEN_S,
             )
+            # Der Lauf steckt in einem Treiberaufruf (Sigenergy bis 60 s).
+            # Weitere Befehle hält ``_stillgelegt_abbruch`` auf, den einen,
+            # der gerade unterwegs ist, nicht: Er kann nach unserer Freigabe
+            # ankommen. ``_freigeben`` wartet deshalb danach noch einmal und
+            # gibt ein zweites Mal frei.
+            data["guard_lauf_offen"] = True
 
 
 async def _freigeben(data: dict, *, nur_bei_eingriff: bool) -> None:
@@ -3300,6 +3335,8 @@ async def _freigeben(data: dict, *, nur_bei_eingriff: bool) -> None:
             _LOGGER.exception(
                 "EEG Energy Optimizer: error releasing schedule executor"
             )
+        if data.pop("guard_lauf_offen", False):
+            await _nach_offenem_lauf_freigeben(data, executor)
     # Heizstab: 0 W schreiben und die Modbus-Verbindung schließen — sonst
     # heizt er bis zum Watchdog des Ohmpilot (50 s) weiter.
     heizstab = data.get("heizstab")
@@ -3316,6 +3353,35 @@ async def _freigeben(data: dict, *, nur_bei_eingriff: bool) -> None:
             await ambibox.async_shutdown()
         except Exception:
             _LOGGER.exception("EEG Energy Optimizer: error shutting down ambibox")
+
+
+async def _nach_offenem_lauf_freigeben(data: dict, executor: Any) -> None:
+    """Noch einmal auf den hängenden Guard-Lauf warten, dann erneut freigeben.
+
+    ``_stilllegen`` gab nach ``GUARD_STOPP_WARTEN_S`` auf; der Lauf steckte in
+    einem Treiberaufruf, dessen Befehl nach der ersten Freigabe ankommen
+    kann. Ist er jetzt durch, nimmt die zweite Freigabe zurück, was er noch
+    geschrieben hat. Bekannte Grenze: Hängt er auch nach dem zweiten Warten
+    noch, wird trotzdem freigegeben — ein Befehl, der danach ankommt, bleibt
+    bis zum Watchdog des Geräts oder zum nächsten Start stehen. Länger zu
+    warten hielte das Herunterfahren von Home Assistant auf.
+    """
+    lock = data.get("guard_lock")
+    if lock is not None and lock.locked():
+        async def _warten() -> None:
+            async with lock:
+                pass
+        try:
+            await asyncio.wait_for(_warten(), timeout=GUARD_STOPP_WARTEN_S)
+        except (asyncio.TimeoutError, TimeoutError):
+            _LOGGER.warning(
+                "EEG Energy Optimizer: Guard-Lauf auch nach weiteren %.0f s nicht "
+                "beendet — zweite Freigabe ohne Gewähr", GUARD_STOPP_WARTEN_S,
+            )
+    try:
+        await executor.async_release()
+    except Exception:
+        _LOGGER.exception("EEG Energy Optimizer: error releasing schedule executor")
 
 
 async def _stilllegen_und_freigeben(hass: Any, data: dict) -> None:

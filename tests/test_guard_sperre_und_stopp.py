@@ -233,3 +233,33 @@ async def test_unload_legt_still_bevor_die_plattformen_entladen(frontend_stub):
     hass.config_entries.async_unload_platforms = _unload_platforms
     await integration.async_unload_entry(hass, MagicMock(entry_id="e1"))
     assert beim_entladen["stopping"] is True
+
+
+
+async def test_haengender_lauf_bekommt_eine_zweite_freigabe(monkeypatch):
+    """``_stilllegen`` gibt nach dem Timeout auf; der Lauf steckt noch im
+    Treiber. Nach der ersten Freigabe wird noch einmal gewartet und — wenn er
+    durch ist — erneut freigegeben, damit sein letzter Befehl nicht stehen
+    bleibt."""
+    monkeypatch.setattr(integration, "GUARD_STOPP_WARTEN_S", 0.05)
+    data = _data(eingriff=True)
+    lock = data["guard_lock"]
+    await lock.acquire()
+    await integration._stilllegen(data)
+    assert data["guard_lauf_offen"] is True
+
+    async def lauf_endet():
+        await asyncio.sleep(0.01)
+        lock.release()
+
+    asyncio.get_running_loop().create_task(lauf_endet())
+    await integration._freigeben(data, nur_bei_eingriff=True)
+    assert data["executor"].async_release.await_count == 2
+    assert "guard_lauf_offen" not in data
+
+
+async def test_ohne_haengenden_lauf_nur_eine_freigabe():
+    data = _data(eingriff=True)
+    await integration._stilllegen(data)
+    await integration._freigeben(data, nur_bei_eingriff=True)
+    data["executor"].async_release.assert_awaited_once()
