@@ -164,9 +164,14 @@ Guide: [sma.md](guides/sma.md)
 Integration (RemoteControl Mode 1).
 
 **Rückfall:** Die Zwangsentladung ist ein Mode-1-Befehl mit 300 s Laufzeit
-(`remotecontrol_duration`), den die SolaX-Modbus-Integration 60 s lang selbst
-wiederholt (`remotecontrol_autorepeat_duration`); kommt kein neuer Befehl,
-endet er am Gerät nach Ablauf der Laufzeit. Das Ladelimit dagegen ist ein
+(`remotecontrol_duration`), den die SolaX-Modbus-Integration 600 s lang selbst
+wiederholt (`remotecontrol_autorepeat_duration`). Seit etwa solax_modbus
+2026.10 schreibt die Integration bei Ablauf dieser Wiederholung ausdrücklich
+„Disabled" — der Treiber löst den Befehl deshalb alle 240 s selbst erneut
+aus, solange er läuft (bis 2.1.62 nicht: Mit den damaligen 60 s Wiederholung
+endete eine geplante Entladung nach etwa einer Minute). Fällt Home Assistant
+aus, fehlen beide Wiederholungen, und der Befehl endet am Gerät spätestens
+300 s nach dem letzten Schreiben. Das Ladelimit dagegen ist ein
 Ladestrom (`battery_charge_max_current`) ohne Rückfallzeit: Nach einem harten
 Absturz von Home Assistant bleibt es stehen, bis die Freigabe beim nächsten
 Start den gesicherten Vorwert zurückschreibt.

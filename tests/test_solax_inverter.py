@@ -6,13 +6,18 @@ restoriert den Originalwert aus einem Store. async_set_discharge bleibt
 unverändert auf Mode 1 mit negativer active_power.
 """
 
-from unittest.mock import AsyncMock, MagicMock
+import sys
+from types import ModuleType, SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from custom_components.eeg_energy_optimizer.inverter.base import InverterBase
 from custom_components.eeg_energy_optimizer.inverter.solax import (
     DISCHARGE_FLOOR_MARGIN_PCT,
+    MODE1_AUTOREPEAT_S,
+    MODE1_DAUER_S,
+    MODE1_KEEPALIVE_S,
     SOLAX_DOMAIN,
     SOLAX_ENTITY_DEFAULTS,
     SolaXInverter,
@@ -269,7 +274,7 @@ class TestAsyncSetDischarge:
         assert calls[3].args == (
             "number",
             "set_value",
-            {"entity_id": AUTOREPEAT_ENTITY, "value": 60},
+            {"entity_id": AUTOREPEAT_ENTITY, "value": 600},
         )
         assert calls[4].args == (
             "button",
@@ -717,7 +722,7 @@ class TestSolaXEntityResolution:
         assert payloads["select.solax_inverter_remotecontrol_power_control_mode_1"]["option"] == "Enabled Battery Control"
         assert payloads["number.solax_inverter_remotecontrol_active_power_mode_1"]["value"] == -3000
         assert payloads["number.solax_inverter_remotecontrol_duration_mode_1_8"]["value"] == 300
-        assert payloads["number.solax_inverter_remotecontrol_autorepeat_duration_mode_1_9"]["value"] == 60
+        assert payloads["number.solax_inverter_remotecontrol_autorepeat_duration_mode_1_9"]["value"] == 600
         assert "button.solax_inverter_remotecontrol_trigger_mode_1_7" in payloads
 
 
@@ -876,3 +881,131 @@ class TestEntladebodenNachFehlschlag:
 
         assert ok is False
         assert 20.0 in zurueckgeschrieben, "Vorwert zurückgeschrieben"
+
+
+@pytest.fixture
+def takt():
+    """``async_track_time_interval`` abfangen: liefert Rückruf und Abmelder."""
+    takte = []
+    abmelder = MagicMock()
+
+    def _intervall(hass, callback, intervall):
+        takte.append((callback, intervall))
+        return abmelder
+
+    beobachter = []
+    soc_abmelder = MagicMock()
+
+    def _track(hass, entities, callback):
+        beobachter.append((list(entities), callback))
+        return soc_abmelder
+
+    modul = ModuleType("homeassistant.helpers.event")
+    modul.async_track_time_interval = _intervall
+    modul.async_track_state_change_event = _track
+    with patch.dict(sys.modules, {"homeassistant.helpers.event": modul}):
+        yield SimpleNamespace(
+            takte=takte, abmelder=abmelder,
+            beobachter=beobachter, soc_abmelder=soc_abmelder,
+        )
+
+
+def _mode1_schreibvorgaenge(mock_hass) -> list[tuple]:
+    return [c.args for c in mock_hass.services.async_call.call_args_list]
+
+
+class TestMode1Keepalive:
+    """Ein Mode-1-Befehl hält sich nicht selbst.
+
+    Ab solax_modbus ~2026.10 schreibt die Integration bei Ablauf der
+    Wiederholung ausdrücklich „Disabled". Der Executor schreibt nur bei einer
+    Änderung — ohne eigenen Takt endete jede Entladung nach der
+    Wiederholungszeit, mit den früheren 60 s also nach einer Minute.
+    """
+
+    def test_zeiten_passen_zusammen(self):
+        """Die Wiederholung der Integration muss den Takt überdecken, sonst
+        endet der Befehl zwischen zwei Auslösungen."""
+        assert MODE1_KEEPALIVE_S < MODE1_AUTOREPEAT_S
+        assert MODE1_KEEPALIVE_S < MODE1_DAUER_S
+
+    async def test_entladung_meldet_den_takt_an(self, inverter, mock_hass, takt):
+        assert await inverter.async_set_discharge(2.0) is True
+        assert len(takt.takte) == 1
+        assert takt.takte[0][1].total_seconds() == MODE1_KEEPALIVE_S
+
+    async def test_takt_loest_denselben_befehl_erneut_aus(self, inverter, mock_hass, takt):
+        await inverter.async_set_discharge(2.0)
+        mock_hass.services.async_call.reset_mock()
+
+        await takt.takte[0][0](None)
+
+        assert _mode1_schreibvorgaenge(mock_hass) == [
+            ("select", "select_option",
+             {"entity_id": SELECT_ENTITY, "option": "Enabled Battery Control"}),
+            ("number", "set_value", {"entity_id": ACTIVE_POWER_ENTITY, "value": -2000}),
+            ("number", "set_value", {"entity_id": DURATION_ENTITY, "value": MODE1_DAUER_S}),
+            ("number", "set_value", {"entity_id": AUTOREPEAT_ENTITY, "value": MODE1_AUTOREPEAT_S}),
+            ("button", "press", {"entity_id": TRIGGER_ENTITY}),
+        ]
+
+    async def test_neuer_befehl_meldet_keinen_zweiten_takt_an(self, inverter, mock_hass, takt):
+        """Eine geänderte Leistung erneuert den Takt nicht doppelt — sie wird
+        sein neuer Inhalt."""
+        await inverter.async_set_discharge(2.0)
+        await inverter.async_set_discharge(3.0)
+        mock_hass.services.async_call.reset_mock()
+        # Erster Befehl beendet den Takt beim Start des zweiten, also zwei
+        # Anmeldungen, aber nur die zweite ist aktiv.
+        assert takt.abmelder.call_count == 1
+        await takt.takte[-1][0](None)
+        assert _calls_by_entity(mock_hass)[ACTIVE_POWER_ENTITY]["value"] == -3000
+
+    async def test_stopp_beendet_den_takt(self, inverter, mock_hass, takt):
+        await inverter.async_set_discharge(2.0)
+        assert await inverter.async_stop_forcible() is True
+        takt.abmelder.assert_called_once()
+
+        mock_hass.services.async_call.reset_mock()
+        await takt.takte[0][0](None)    # ein Takt, der schon unterwegs war
+        assert mock_hass.services.async_call.call_count == 0
+
+    async def test_gescheiterter_stopp_beendet_den_takt_trotzdem(
+        self, inverter, mock_hass, takt
+    ):
+        """Was wir beenden wollen, darf niemand mehr erneuern — er läuft im
+        Gerät dann höchstens noch bis zum Rückfall aus."""
+        await inverter.async_set_discharge(2.0)
+        mock_hass.services.async_call = AsyncMock(side_effect=Exception("boom"))
+        assert await inverter.async_stop_forcible() is False
+        takt.abmelder.assert_called_once()
+        assert inverter._mode1_watt is None
+
+    async def test_ladelimit_beendet_den_takt(self, inverter, mock_hass, takt):
+        mock_hass.states.get = MagicMock(return_value=None)
+        await inverter.async_set_discharge(2.0)
+        await inverter.async_set_charge_limit(0)
+        takt.abmelder.assert_called_once()
+        assert inverter._mode1_watt is None
+
+    async def test_gescheiterte_entladung_meldet_keinen_takt_an(
+        self, inverter, mock_hass, takt
+    ):
+        mock_hass.services.async_call = AsyncMock(side_effect=Exception("boom"))
+        assert await inverter.async_set_discharge(2.0) is False
+        assert takt.takte == []
+
+    async def test_entladen_der_integration_meldet_ab(self, inverter, mock_hass, takt):
+        await inverter.async_set_discharge(2.0)
+        await inverter.async_disconnect()
+        takt.abmelder.assert_called_once()
+        assert inverter._mode1_watt is None
+
+    async def test_fehler_im_takt_wirft_nicht(self, inverter, mock_hass, takt):
+        """Der nächste Takt versucht es wieder; bis zum Ablauf der
+        Wiederholung läuft der Befehl im Gerät ohnehin weiter."""
+        await inverter.async_set_discharge(2.0)
+        mock_hass.services.async_call = AsyncMock(side_effect=Exception("boom"))
+        await takt.takte[0][0](None)
+        assert inverter._mode1_watt == -2000
+        takt.abmelder.assert_not_called()

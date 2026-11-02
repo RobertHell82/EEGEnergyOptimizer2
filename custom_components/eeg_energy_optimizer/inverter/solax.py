@@ -27,10 +27,23 @@ Der Vorwert liegt im ``SolaXStateStore`` und überlebt damit einen Neustart
 mitten in der Entladung. Ohne Restore bliebe eine abgesenkte Reserve dauerhaft
 stehen: Der Wechselrichter würde die Batterie auch im Automatikbetrieb tiefer
 entladen, als der Betreiber es eingestellt hat.
+
+**Ein Mode-1-Befehl hält sich nicht selbst.** Die Integration wiederholt ihn
+nur für ``remotecontrol_autorepeat_duration`` und schreibt seit etwa
+solax_modbus 2026.10 bei deren Ablauf ausdrücklich „Disabled"
+(``BUTTONREPEAT_POST``). Der Executor schreibt nur bei einer Änderung — mit
+den früheren 60 s endete eine Entladung also nach einer Minute, auch wenn der
+Plan sie für eine Stunde vorsah. Der Treiber löst den Befehl deshalb selbst
+alle ``MODE1_KEEPALIVE_S`` erneut aus, solange er aktiv ist; die Wiederholung
+der Integration (``MODE1_AUTOREPEAT_S``) überbrückt die Zeit dazwischen mit
+Abstand. ``remotecontrol_duration`` (``MODE1_DAUER_S``) bleibt der Rückfall
+im Gerät: Fällt Home Assistant aus, endet der Befehl dort spätestens diese
+Zeit nach dem letzten Schreiben.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from typing import Any
@@ -54,6 +67,15 @@ SOLAX_DOMAIN = "solax_modbus"
 # soll immer der Fahrplan; der Boden ist nur das Netz darunter (gleiche
 # Begründung wie _MINRSV_SAFETY_MARGIN_PCT im Fronius-Treiber).
 DISCHARGE_FLOOR_MARGIN_PCT = 5.0
+
+# Mode-1-Zeiten (Sekunden). Die Laufzeit ist der Rückfall im Gerät; die
+# Wiederholung der Integration muss den Keepalive-Takt sicher überdecken — ein
+# verspäteter Takt (HA ausgelastet, Modbus langsam) darf den Befehl nicht
+# zwischen zwei Auslösungen enden lassen. 240 s Takt bei 600 s Wiederholung
+# lassen einen verpassten Takt Luft.
+MODE1_DAUER_S = 300
+MODE1_AUTOREPEAT_S = 600
+MODE1_KEEPALIVE_S = 240
 
 # Entity Key -> Default Entity ID Mapping
 SOLAX_ENTITY_DEFAULTS = {
@@ -193,6 +215,15 @@ class SolaXInverter(InverterBase):
         # unseren Eingriff nicht gibt.
         self._discharge_floor_idle: float | None = None
         self._discharge_active: bool = False
+        # Laufender Mode-1-Befehl (W, negativ = Entladung), den der
+        # Keepalive-Takt erneuert, und dessen Abmelder. None = kein Befehl.
+        self._mode1_watt: int | None = None
+        self._keepalive_abmelden: Any = None
+        # Executor (30-s-Lauf) und Keepalive-Takt schreiben nebenläufig. Ohne
+        # Sperre könnte ein Takt zwischen die Schritte eines Stopps fallen und
+        # Mode 1 danach wieder einschalten — unbeobachtet, bis der Rückfall im
+        # Gerät greift.
+        self._sperre = asyncio.Lock()
 
     def _resolve_entity(self, config_key: str) -> str:
         """Löse die Steuer-Entity auf: Config → Suffix-Scan → Default.
@@ -247,6 +278,13 @@ class SolaXInverter(InverterBase):
         """
         if self._nicht_endlich(power_kw):
             return False
+        async with self._sperre:
+            return await self._ladelimit(power_kw)
+
+    async def _ladelimit(self, power_kw: float) -> bool:
+        # Ein Ladelimit ist kein Mode-1-Befehl: Der Takt darf nichts mehr
+        # erneuern, sonst schaltete er Mode 1 gleich wieder ein.
+        self._keepalive_beenden()
         try:
             await self._ensure_original_cached()
 
@@ -315,10 +353,17 @@ class SolaXInverter(InverterBase):
     ) -> bool:
         """Start forced battery discharge at given power.
 
-        Uses "Enabled Battery Control" with negative active_power.
+        Uses "Enabled Battery Control" with negative active_power. Der Befehl
+        läuft, bis ein anderer kommt — der Keepalive-Takt hält ihn am Leben
+        (siehe Modulkopf).
         """
         if self._nicht_endlich(power_kw, target_soc):
             return False
+        async with self._sperre:
+            return await self._entladung(power_kw, target_soc)
+
+    async def _entladung(self, power_kw: float, target_soc: float | None) -> bool:
+        self._keepalive_beenden()
         try:
             # Entladeboden absenken, BEVOR der Befehl läuft — sonst stoppt der
             # Wechselrichter an seinem eigenen Wert, ohne das zu melden.
@@ -326,12 +371,9 @@ class SolaXInverter(InverterBase):
                 await self._senke_entladeboden(float(target_soc))
 
             power_w = -abs(int(power_kw * 1000))
-            await self._set_select("remotecontrol_power_control", "Enabled Battery Control")
-            await self._set_number("remotecontrol_active_power", power_w)
-            await self._set_number("remotecontrol_duration", 300)
-            await self._set_number("remotecontrol_autorepeat_duration", 60)
-            await self._press_trigger()
+            await self._mode1_schreiben(power_w)
             self._discharge_active = True
+            self._starte_keepalive(power_w)
             return True
         except Exception as exc:
             _LOGGER.exception("SolaX: Failed to set discharge")
@@ -351,7 +393,16 @@ class SolaXInverter(InverterBase):
         Beendet Mode 1 (Disabled + active_power=0 + autorepeat=0 + trigger)
         UND restoriert battery_charge_max_current aus dem Store. Fallback wenn
         Store leer: attributes.max des Entities (typisch 30 A).
+
+        Der Keepalive-Takt endet zuerst, auch wenn der Stopp danach scheitert:
+        Einen Befehl, den wir beenden wollen, darf niemand mehr erneuern. Er
+        läuft im Gerät dann höchstens noch bis zum Rückfall aus.
         """
+        async with self._sperre:
+            return await self._stopp()
+
+    async def _stopp(self) -> bool:
+        self._keepalive_beenden()
         try:
             await self._set_select("remotecontrol_power_control", "Disabled")
             await self._set_number("remotecontrol_active_power", 0)
@@ -369,6 +420,79 @@ class SolaXInverter(InverterBase):
         except Exception as exc:
             _LOGGER.exception("SolaX: Failed to stop forcible mode")
             return self._fehler(type(exc).__name__)
+
+    # ------------------------------------------------------------------
+    # Mode 1 schreiben und wachhalten
+    # ------------------------------------------------------------------
+    async def _mode1_schreiben(self, power_w: int) -> None:
+        """Mode 1 „Enabled Battery Control" mit ``power_w`` setzen und auslösen.
+
+        Dieselbe Folge für den ersten Befehl und jeden Takt: Die Parameter
+        liegen nur lokal in der Integration (DATA_LOCAL) und sind nach deren
+        Neuladen wieder auf den Standardwerten — ein bloßer Trigger schriebe
+        dann diese ins Gerät.
+        """
+        await self._set_select("remotecontrol_power_control", "Enabled Battery Control")
+        await self._set_number("remotecontrol_active_power", power_w)
+        await self._set_number("remotecontrol_duration", MODE1_DAUER_S)
+        await self._set_number("remotecontrol_autorepeat_duration", MODE1_AUTOREPEAT_S)
+        await self._press_trigger()
+
+    def _starte_keepalive(self, power_w: int) -> None:
+        """Den laufenden Befehl merken und den Takt anmelden (nur einmal)."""
+        self._mode1_watt = power_w
+        if self._keepalive_abmelden is not None:
+            return
+        try:
+            from datetime import timedelta
+
+            from homeassistant.helpers.event import async_track_time_interval
+        except ImportError:  # pragma: no cover — Testumgebung
+            return
+
+        async def _takt(_jetzt: Any) -> None:
+            await self._keepalive_takt()
+
+        self._keepalive_abmelden = async_track_time_interval(
+            self._hass, _takt, timedelta(seconds=MODE1_KEEPALIVE_S)
+        )
+
+    def _keepalive_beenden(self) -> None:
+        self._mode1_watt = None
+        if self._keepalive_abmelden is not None:
+            try:
+                self._keepalive_abmelden()
+            except Exception:  # noqa: BLE001 — Abmelden darf nie werfen
+                pass
+            self._keepalive_abmelden = None
+
+    async def _keepalive_takt(self) -> None:
+        """Ein Takt: den laufenden Befehl unverändert erneut auslösen.
+
+        Unter der Sperre und erst nach erneuter Prüfung — ein Stopp kann
+        zwischen Anmeldung und Takt gekommen sein. Ein Fehlschlag wird nur
+        protokolliert: Der nächste Takt versucht es wieder, und bis zum Ablauf
+        der Wiederholung läuft der Befehl ohnehin weiter.
+        """
+        async with self._sperre:
+            if self._mode1_watt is None:
+                return
+            try:
+                await self._mode1_schreiben(self._mode1_watt)
+            except Exception:  # noqa: BLE001
+                _LOGGER.warning(
+                    "SolaX: Mode-1-Befehl nicht erneuert — nächster Versuch "
+                    "im nächsten Takt", exc_info=True,
+                )
+
+    async def async_disconnect(self) -> None:
+        """Beim Entladen der Integration: den Takt abmelden.
+
+        Den Befehl selbst nimmt vorher die Freigabe des Executors zurück
+        (``async_stop_forcible``); hier geht es nur darum, dass kein Takt
+        eines entladenen Eintrags weiterläuft.
+        """
+        self._keepalive_beenden()
 
     async def _resolve_original_charge_current(self) -> float | None:
         """Liefert gecachten Originalwert; Fallback ist attributes.max des Entities."""
