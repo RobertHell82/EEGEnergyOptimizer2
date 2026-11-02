@@ -12,6 +12,32 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+## [2.1.64] - 2026-11-02
+
+### Hinzugefügt
+
+- **„Batterie aus dem Netz laden“ und die Mindestladung am Abend für alle Wechselrichter** (Beta). Neu dabei sind SMA (CmpBMS-Betriebsart „Laden“ mit der geplanten Batterieleistung), SolaX Gen4/Gen5 (Fernsteuerung Mode 1 mit positiver Leistung; Gen6 hat diese Fernsteuerung nicht), Kostal (negativer Batterie-Sollwert, Register 1034; in Österreich nach jeder Netzzuschaltung zehn Minuten gesperrt) und Sigenergy („Command Charging (PV First)“). Die Sonne lädt zuerst, der Rest kommt aus dem Netz. Kennt das Gerät keinen Ziel-Ladestand, beobachtet der Treiber ihn selbst und gibt am Ziel frei. Am Gerät erprobt ist das Laden aus dem Netz weiterhin nur bei Huawei.
+- **Spitzenkappung mit der Batterie für alle Wechselrichter** (Beta). Neu sind Kostal (Register 1040, wartet nach einem Sollwert den Rückfall des Wechselrichters ab), Sigenergy („ESS Max Discharging Limit“, „halten“ als 0,01 kW) und Victron („Max. Wechselrichterleistung“ = Batteriedeckel plus gemessene DC-PV, nachgeführt, damit die Sonne der MPPT-Laderegler weiter ins Haus kommt; nur mit einer Integration, die −1 schreiben kann). Damit gibt es auch „Reserve notfalls aus dem Netz nachladen“ für alle.
+- **Telemetrie: Ein Entladedeckel, der nicht wirkt, wird gemeldet** (`guard_wirkung`). Gibt die Batterie trotz Deckel über sechs Läufe deutlich mehr ab, oder steht sie trotz Netzbezug über der Grenze, kommt das in der täglichen Prüfung an — nicht erst, wenn die Monatsspitze schon da ist. Die neuen Deckel sind bei Kostal, Sigenergy und Victron am Gerät noch unbelegt.
+- **Spitzenkappungs-Karte erklärt die Reserve-Schwelle**: „unter 35 % (20 % Mindest-Ladestand + 15 % Spitzenreserve)“, als Satz und als Tooltip an den Strichen im Balken.
+
+### Behoben
+
+- **Mindestladung am Abend an dunklen Tagen.** Liegt die PV den ganzen Tag unter der Hauslast, gab es kein „Ende der PV-Zeit“ und damit keinen Termin — die Mindestladung wirkte genau an den Tagen nicht, für die sie gedacht ist. Jetzt gilt dann das Ende der erwarteten Erzeugung. Ein Tag, dessen Überschuss schon vorbei ist, bekommt keinen zweiten Termin, und ein winziger Überschuss zu Mittag zieht den Termin nicht mehr auf Mittag.
+- **Telemetrie der Mindestladung**: Endet die PV früher als prognostiziert, wird der heutige Termin trotzdem geprüft; nach einer Pause, „Aus“ oder ausgeschalteter Telemetrie kommt kein Fehlalarm, und gemeldet wird höchstens einmal am Tag.
+- **Das Ladeziel füllt die Batterie nicht über Pflicht-Viertelstunden aus dem Netz.** Gab die Reserve der Spitzenkappung Viertelstunden zum Nachladen frei, nutzte das Ladeziel sie mit und lud bis 100 %. Diese Viertelstunden gehören jetzt allein der Reserve und der Mindestladung.
+- **Victron: eigene Werte nie als Einstellung des Betreibers.** Kam das MQTT-Echo verzögert, konnte ein eigener Wert — etwa ein Entlade-Sollwert — als Wert „von vorher“ gesichert werden, und jede spätere Freigabe hätte ihn zurückgeschrieben. Betraf auch Netzsollwert und DVCC-Ladestrom. Eine echte Änderung am GX bleibt dagegen erhalten.
+- **Sigenergy: Freigabe vervollständigt (Nachtrag zu 2.1.63).** Die Freigabe setzt Lade- und Entladelimit auch bei ausgeschaltetem Remote EMS zurück — aber nur Werte, die nachweislich vom Optimizer stammen; ein vom Betreiber gesetztes Limit bleibt. Scheitert nach dem Moduswechsel nur ein Nebenschritt, gilt der Befehl und bleibt überwacht; ein verspäteter Befehlsmodus wird zurückgerollt.
+- **SolaX und SMA: Rücknahme am Ziel-Ladestand.** Der Rückruf lief im falschen Thread, die Netzladung endete erst mit dem nächsten Takt (bis vier Minuten bzw. eine Minute später). Scheitert die Rücknahme, wiederholt der Treiber nur sie, statt weiterzuladen.
+- **SolaX Gen6** (ohne Mode 1) meldet keine Zwangsentladung mehr an, die nie stattfand; die Steuerung gibt in solchen Slots frei.
+- **Kostal**: Eine nach Entladung oder Netzladung stillstehende Batterie gilt nicht mehr als Reserve der Spitzenkappung; die Netzladung pendelt nicht mehr am Ziel; ein nach einem Neustart stehen gebliebener Deckel gilt nicht als Grenze der Batterie.
+- **Beim Entladen der Integration** setzt ein noch laufender Steuerlauf nach der Freigabe keine neuen Befehle mehr.
+
+### Geändert
+
+- **Die Anleitungen nennen einen Meldeweg** (GitHub-Issues mit dem Diagnose-ZIP aus Einstellungen → System → Fahrplan-Archiv), sagen je Wechselrichter, was bei einem Absturz von Home Assistant stehen bleibt, und erklären Mindestladung und Reserve aus dem Netz mit Zahlenbeispielen. Neue Übersicht „Funktionen je Wechselrichter“.
+- **Spitzenkappung im Panel**: Kann der Wechselrichter die Entladung nicht begrenzen, verlangt das Panel mindestens einen Verbraucher.
+
 ## [2.1.63] - 2026-11-02
 
 ### Behoben
