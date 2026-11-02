@@ -435,19 +435,27 @@ von 0 W ließe deshalb auch die Sonne vom Dach nicht mehr ins Haus. Der
 Treiber schreibt Deckel + gemessene DC-PV + Verluste (5 % und 50 W) und
 führt das alle 30 s an der DC-PV nach — asymmetrisch, weil jede Änderung im
 Einstellungsspeicher des GX landet: steigende DC-PV ab 200 W sofort (sonst
-Netzbezug), fallende erst nach vier Takten mit Überhang, darüber ein
-Schreibvorrat (5, einer je Minute nach), also im Mittel höchstens ein
-Schreiben je Minute statt bis zu 2880 am Tag. Befehle des Executors gehen
-immer durch. Unbekannte DC-PV (Laderegler nachts ohne Wert) zählt als 0 W —
-der Deckel ist knapper, greift aber; ein stehender wird gehalten.
+Netzbezug, auch mit leerem Vorrat), fallende erst nach vier Takten mit
+Überhang und nur aus einem Schreibvorrat (5, einer je Minute nach). Befehle
+des Executors gehen immer durch. Ehrlich gerechnet: Senken im Mittel
+höchstens einmal je Minute, jedes Anheben folgt einem Senken oder echtem
+PV-Zuwachs — bei Wolken also bis zu etwa zwei Schreibvorgänge je Minute,
+sonst weit weniger. Fehlt die DC-PV kurz (MQTT-Aussetzer), gilt bis zu
+10 min die letzte Messung, ein stehender Deckel wird gehalten; erst danach
+(Laderegler nachts ohne Wert) zählt sie als 0 W — der Deckel ist knapper,
+greift aber.
 AC-gekoppelte PV ist nicht betroffen. Der Wert vor dem ersten Eingriff
 (meist −1) wird gesichert und bei der Freigabe zurückgeschrieben; eine
 eigene Grenze des Betreibers bleibt die Obergrenze. Ein Wert, den der
 Treiber selbst geschrieben hat, wird nie Vorwert (das MQTT-Echo kommt
 verzögert — Freigabe und neuer Deckel im selben Lauf hätten sonst den alten
 Deckel als „Betreiberwert“ gesichert); dasselbe gilt für Netzsollwert und
-Ladestrom. Scheitert das Aufheben des Deckels, gelten Freigabe und
-Entladung trotzdem, der Vorwert bleibt für den nächsten Versuch. Auch dieser Deckel hat
+Ladestrom. Als eigen zählt nach einer Freigabe nur der letzte
+Eingriffswert, und auch der nur, bis das Echo des zurückgeschriebenen
+Werts ankommt — sonst gälte nach Tagen fast jeder Wert als eigen, und eine
+Änderung des Betreibers am GX würde still überschrieben. Scheitert das
+Aufheben des Deckels, gelten Freigabe und Entladung trotzdem, der Vorwert
+bleibt für den nächsten Versuch, und der Deckel folgt weiter der DC-PV. Auch dieser Deckel hat
 keine Rückfallzeit: Bleibt Home Assistant stehen, bleibt er stehen — die
 Freigabe beim Start, „Aus“ und das Entladen der Integration heben ihn auf.
 Fehlt die Entität, kappt die Spitzenkappung nur über Verbraucher. Kann die

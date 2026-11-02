@@ -1089,29 +1089,99 @@ async def test_victron_fallende_pv_senkt_erst_nach_vier_takten(mock_hass, anlage
     assert _deckel_schreibvorgaenge(mock_hass) == [3200.0, 1100.0, 2150.0]
 
 
-async def test_victron_schreibvorrat_begrenzt_die_nachfuehrung(mock_hass, anlage, soc_beobachter):
-    """Steigt die PV jeden Takt um 300 W, schriebe die Nachführung zweimal je
-    Minute. Der Vorrat (5, einer je Minute nach) hält das im Mittel bei
-    höchstens einem je Minute."""
+async def test_victron_steigende_pv_hebt_trotz_leerem_vorrat(mock_hass, anlage, soc_beobachter):
+    """Anheben wartet nie auf den Vorrat: Ein aufgehaltenes Anheben regelte
+    die neue Sonne ab, und das Haus kaufte zu — gerade nach einem Befehl, der
+    den Vorrat geleert hat (Review 2)."""
     uhr = _Uhr()
     inv = _treiber(mock_hass)
     inv._uhr = uhr
-    await inv.async_set_discharge_limit(0.0)  # Befehl: nimmt einen
+    await inv.async_set_discharge_limit(0.0)
     [(takt, _)] = soc_beobachter.takte
+    inv._vorrat = 0.0
     pv = 0
-    for _ in range(40):  # 20 Minuten
+    for _ in range(10):  # die Uhr steht: nichts kommt nach
         pv += 300
         anlage.setze(DC_PV, str(pv))
-        uhr.t += 30
         await takt(None)
-    schreiben = len(_deckel_schreibvorgaenge(mock_hass))
-    # 5 auf Vorrat + 20 nachgefüllt, der Befehl am Anfang eingeschlossen
-    assert schreiben <= 1 + 5 + 20
-    assert schreiben >= 20
+    assert len(_deckel_schreibvorgaenge(mock_hass)) == 1 + 10
+    assert anlage.wert(WR_GRENZE) == 3200.0  # 3000 × 1,05 + 50
+
+
+async def test_victron_schreibvorrat_begrenzt_das_senken(mock_hass, anlage, soc_beobachter):
+    """Senken dagegen hängt am Vorrat: leer und ohne Nachschub bleibt der zu
+    hohe Deckel stehen, eine Minute später kommt er nach."""
+    uhr = _Uhr()
+    anlage.setze(DC_PV, "3000")
+    inv = _treiber(mock_hass)
+    inv._uhr = uhr
+    await inv.async_set_discharge_limit(0.0)
+    [(takt, _)] = soc_beobachter.takte
+    inv._vorrat = 0.0
+    inv._vorrat_zeit = uhr.t
+    anlage.setze(DC_PV, "1000")
+    for _ in range(8):
+        await takt(None)
+    assert _deckel_schreibvorgaenge(mock_hass) == [3200.0]
+    uhr.t += 60
+    await takt(None)
+    assert _deckel_schreibvorgaenge(mock_hass) == [3200.0, 1100.0]
     # Ein neuer Befehl des Executors geht trotz leerem Vorrat durch.
-    vorher = schreiben
     assert await inv.async_set_discharge_limit(2.0) is True
-    assert len(_deckel_schreibvorgaenge(mock_hass)) == vorher + 1
+    assert _deckel_schreibvorgaenge(mock_hass)[-1] == 3200.0
+
+
+async def test_victron_dc_pv_aussetzer_nimmt_die_letzte_messung(mock_hass, anlage, soc_beobachter):
+    """MQTT-Aussetzer tagsüber: Ein neuer Deckel rechnet mit der letzten
+    DC-PV (höchstens 10 min alt) statt mit 0 W — sonst kaufte das Haus die
+    Sonne vom Dach aus dem Netz. Danach erst 0 W."""
+    uhr = _Uhr()
+    anlage.setze(DC_PV, "2000")
+    inv = _treiber(mock_hass)
+    inv._uhr = uhr
+    await inv.async_set_discharge_limit(0.0)
+    assert anlage.wert(WR_GRENZE) == 2150.0
+    await inv.async_set_discharge_limit(None)
+    anlage.setze(DC_PV, "unavailable")
+    uhr.t += 300
+    await inv.async_set_discharge_limit(0.0)
+    assert anlage.wert(WR_GRENZE) == 2150.0
+    await inv.async_set_discharge_limit(None)
+    uhr.t += 301  # jetzt über 10 min alt
+    await inv.async_set_discharge_limit(0.0)
+    assert anlage.wert(WR_GRENZE) == 50.0
+
+
+async def test_victron_gescheitertes_aufheben_laesst_den_takt_laufen(
+    mock_hass, anlage, soc_beobachter
+):
+    """Steht der Deckel nach einem gescheiterten Aufheben noch im Gerät, muss
+    er der DC-PV weiter folgen — der Takt endet erst nach dem Zurückschreiben."""
+    inv = _treiber(mock_hass)
+    await inv.async_set_discharge_limit(0.0)
+    [(takt, _)] = soc_beobachter.takte
+    anlage.werte[WR_GRENZE][1] = {"min": 0, "max": 1000000}
+    assert await inv.async_set_discharge_limit(None) is False
+    soc_beobachter.takt_abmelder.assert_not_called()
+    anlage.setze(DC_PV, "2000")
+    await takt(None)
+    assert anlage.wert(WR_GRENZE) == 2150.0
+    anlage.werte[WR_GRENZE][1] = {"min": -1, "max": 1000000}
+    assert await inv.async_set_discharge_limit(None) is True
+    soc_beobachter.takt_abmelder.assert_called_once()
+    assert anlage.wert(WR_GRENZE) == -1.0
+
+
+async def test_victron_entladung_am_ziel_behaelt_den_deckelfehler(
+    mock_hass, anlage, soc_beobachter
+):
+    """Steht der SOC schon am Ziel, ist die Entladung erfüllt — ein
+    gescheitertes Aufheben des Deckels bleibt trotzdem gemeldet."""
+    inv = _treiber(mock_hass)
+    await inv.async_set_discharge_limit(0.0)
+    anlage.werte[WR_GRENZE][1] = {"min": 0, "max": 1000000}
+    assert await inv.async_set_discharge(2.0, 95) is True  # SOC 91 ≤ 95
+    assert inv.last_write_error.startswith("Entladedeckel nicht aufgehoben")
 
 
 async def test_victron_takt_nach_dem_aufheben_schreibt_nichts(mock_hass, anlage, soc_beobachter):

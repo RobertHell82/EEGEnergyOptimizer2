@@ -743,6 +743,39 @@ class TestFreigabe:
         await inv.async_set_discharge(2.0, 30)
         assert inv._state_store.vorwert("netzsollwert") == 50.0
 
+    async def test_frueherer_eingriffswert_ist_ein_betreiberwert(
+        self, mock_hass, anlage, soc_beobachter
+    ):
+        """Nur der LETZTE Eingriffswert kann noch ein Echo sein (Review 2):
+        Stellt der Betreiber einen Wert ein, den wir früher in der Sitzung
+        einmal geschrieben haben, ist es seiner — als Echo verworfen, schriebe
+        jede Freigabe still den veralteten Vorwert zurück."""
+        inv = _treiber(mock_hass)
+        await inv.async_set_discharge(2.0, 30)
+        await inv.async_stop_forcible()
+        await inv.async_set_discharge(1.0, 30)
+        await inv.async_stop_forcible()
+        anlage.setze(SOLLWERT, "-2000")
+        await inv.async_set_discharge(1.5, 30)
+        assert inv._state_store.vorwert("netzsollwert") == -2000.0
+        assert inv._eigene_werte["netzsollwert"] == {-1500.0}
+
+    async def test_nach_dem_echo_ist_auch_der_letzte_wert_vergessen(
+        self, mock_hass, anlage, soc_beobachter
+    ):
+        """Zeigt die Entität den zurückgeschriebenen Wert, ist das Echo da —
+        danach gleicht ein Betreiberwert unserem letzten nur noch zufällig."""
+        inv = _treiber(mock_hass)
+        await inv.async_set_charge_limit(0)
+        await inv.async_stop_forcible()
+        assert anlage.wert(LADESTROM) == 125.0
+        inv.is_available  # der 30-s-Lauf des Executors prüft die Echos
+        assert "ladestrom" not in inv._eigene_werte
+        assert "ladestrom" not in inv._zurueckgeschrieben
+        anlage.setze(LADESTROM, "0")  # Winter: der Betreiber sperrt DVCC
+        await inv.async_set_charge_limit(1.0)
+        assert inv._state_store.vorwert("ladestrom") == 0.0
+
     async def test_freigabe_beendet_die_beobachtung(self, mock_hass, anlage, soc_beobachter):
         inv = _treiber(mock_hass)
         await inv.async_set_discharge(2.0, 30)

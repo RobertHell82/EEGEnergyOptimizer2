@@ -54,14 +54,24 @@ nachgezogen — sonst bekäme das Haus die zusätzliche Sonne nicht und kaufte
 aus dem Netz, genau die Spitze, die wir kappen wollen. Fällt sie, wird erst
 gesenkt, wenn der Überhang vier Takte (2 min) steht: Ein zu hoher Deckel
 lässt die Batterie für diese Zeit nur etwas mehr abgeben, das ist der
-billigere Fehler. Darüber liegt ein Schreibvorrat (fünf Schreibvorgänge,
-einer je Minute nachgefüllt): Ohne ihn schriebe eine Wolkenlage bis zu 2880
-Mal am Tag, mit ihm im Mittel höchstens einmal je Minute. Befehle des
-Executors (ein neuer Deckel) gehen immer durch, sie zehren nur vom Vorrat —
-sonst wäre ihr ``True`` eine Lüge. Ist die DC-PV unbekannt (Laderegler
-schlafen nachts womöglich ohne Wert), zählt sie als 0 W: Der Deckel ist dann
-knapper, aber er greift. Ein schon stehender Deckel wird in diesem Fall
-gehalten.
+billigere Fehler. Nur dieses Senken (und das Nachziehen eines fremden oder
+fehlenden Deckels) hängt an einem Schreibvorrat (fünf Schreibvorgänge,
+einer je Minute nachgefüllt). Das Anheben bei steigender DC-PV und die
+Befehle des Executors gehen immer durch — sie zehren nur vom Vorrat: Ein
+Anheben aufzuhalten hieße Netzbezug, und das ``True`` eines Befehls wäre
+eine Lüge. Was das kostet, ehrlich gerechnet: Senken im Mittel höchstens
+einmal je Minute; jedes Anheben folgt entweder einem Senken oder echtem
+PV-Zuwachs (≥ 200 W, bei 10 kW also höchstens 50 Mal am Stück). Eine
+Wolkenlage kommt so auf höchstens etwa zwei Schreibvorgänge je Minute statt
+bis zu zwei je Takt, ein gewöhnlicher Tag auf einen Bruchteil davon.
+Executor-Befehle kommen obendrauf.
+
+Ist die DC-PV gerade unbekannt (MQTT-Aussetzer tagsüber, Laderegler, die
+nachts ohne Wert schlafen), gilt der zuletzt gemessene Wert, solange er
+höchstens zehn Minuten alt ist — ein neuer Deckel mit 0 W PV nähme dem Haus
+mitten am Tag die Sonne, es kaufte zu. Ein schon stehender Deckel wird
+ohne Messung gehalten. Erst ohne jeden frischen Wert zählt die DC-PV als
+0 W: Der Deckel ist dann knapper, aber er greift.
 
 **Vorwerte.** Alle Stellgrößen sind gespeicherte Einstellungen des
 GX-Geräts, die der Betreiber selbst gesetzt hat (Netzsollwert oft 0 oder
@@ -81,7 +91,16 @@ zurück, dauerhaft (bei 50 W: ein Haus ohne Batterie und ohne DC-PV). Nach
 jedem Zurückschreiben bleibt der Vorwert deshalb im Speicher und wird beim
 nächsten Eingriff wiederverwendet, solange die Entität nur einen eigenen
 Wert (oder gar keinen) zeigt; ein fremder Wert heißt, der Betreiber hat
-seither selbst etwas eingestellt. Dasselbe gilt für Netzsollwert und
+seither selbst etwas eingestellt.
+
+Als „eigen" zählt dabei nur der LETZTE Eingriffswert vor der Freigabe — nur
+sein Echo kann noch ausstehen. Alle Werte einer langen Sitzung zu merken,
+hieße: Nach Tagen gälte fast jeder Wert als eigen, ein Betreiber, der am GX
+den Netzsollwert von 50 auf 0 W stellt oder den DVCC-Strom für den Winter
+senkt, würde als Echo verworfen, und jede Freigabe schriebe still den
+veralteten Vorwert zurück. Sobald die Entität den zurückgeschriebenen Wert
+zeigt (das Echo ist da) oder ein neuer Eingriff seinen Vorwert frisch
+sichert, ist auch dieser letzte Wert vergessen. Dasselbe gilt für Netzsollwert und
 Ladestrom — beim Netzsollwert wäre es noch teurer: Ein als Vorwert
 gesicherter eigener Entladesollwert ließe jede Freigabe entladen.
 
@@ -263,12 +282,14 @@ ENTLADEDECKEL_VERLUST_ANTEIL = 0.05
 ENTLADEDECKEL_VERLUST_W = 50.0
 ENTLADEDECKEL_SCHRITT_W = 50.0
 # Fallende DC-PV senkt den Deckel erst nach so vielen Takten mit Überhang,
-# steigende hebt ihn sofort (Modulkopf). Darüber ein Schreibvorrat: so viele
-# Schreibvorgänge auf einmal, einer je ``…_NACHSCHUB_S`` kommt nach — im
-# Mittel höchstens einer je Minute statt bis zu zwei.
+# steigende hebt ihn sofort (Modulkopf). Das Senken hängt zusätzlich an einem
+# Schreibvorrat: so viele Schreibvorgänge auf einmal, einer je
+# ``…_NACHSCHUB_S`` kommt nach. Ohne DC-PV-Messung gilt die letzte, solange
+# sie höchstens ``…_PV_ALTER_S`` alt ist.
 ENTLADEDECKEL_SENKEN_TAKTE = 4
 ENTLADEDECKEL_VORRAT = 5
 ENTLADEDECKEL_NACHSCHUB_S = 60.0
+ENTLADEDECKEL_PV_ALTER_S = 600.0
 
 # Halbe Schrittweite je Stellgröße: So nah an einem selbst geschriebenen Wert
 # gilt ein gelesener Zustand als „unser eigener" (siehe _vorwert_ermitteln).
@@ -580,16 +601,22 @@ class VictronInverter(InverterBase):
         # Zuletzt selbst geschriebener Wert je Stellgröße: Der Zustand der
         # Entität kommt per MQTT verzögert zurück.
         self._geschrieben: dict[str, float] = {}
-        # Alle Werte, die wir in dieser Sitzung als EINGRIFF geschrieben haben
-        # (nicht die zurückgeschriebenen Vorwerte), und der zuletzt
-        # zurückgeschriebene Vorwert je Stellgröße — siehe _vorwert_ermitteln.
+        # Die Werte des laufenden Eingriffs (nicht die zurückgeschriebenen
+        # Vorwerte) — nach der Freigabe nur noch der letzte —, der zuletzt
+        # zurückgeschriebene Vorwert je Stellgröße und der Wert, den die
+        # Entität dafür zeigen wird (``_zurueck_ziel``, Ersatzgrenze beim
+        # Ladestrom). Siehe _vorwert_ermitteln und _echos_pruefen.
         self._eigene_werte: dict[str, set[float]] = {}
+        self._letzter_eingriff: dict[str, float] = {}
         self._zurueckgeschrieben: dict[str, float] = {}
+        self._zurueck_ziel: dict[str, float] = {}
         # Nachführung des Entladedeckels: Takte mit Überhang nach unten und
         # der Schreibvorrat (Modulkopf, „asymmetrisch").
         self._senken_takte = 0
         self._vorrat = float(ENTLADEDECKEL_VORRAT)
         self._vorrat_zeit: float | None = None
+        # Letzte gelesene DC-PV (W, Uhrzeit) — für einen Aussetzer der Messung.
+        self._dc_pv_letzt: tuple[float, float] | None = None
         self._uhr = time.monotonic
 
     # ------------------------------------------------------------------
@@ -618,6 +645,7 @@ class VictronInverter(InverterBase):
             # Vor dem Aufruf merken: Auch ein Schreiben, dessen Antwort
             # ausbleibt, kann im Gerät angekommen sein.
             self._eigene_werte.setdefault(key, set()).add(float(wert))
+            self._letzter_eingriff[key] = float(wert)
         await self._hass.services.async_call(
             "number", "set_value",
             {"entity_id": entity_id, "value": wert},
@@ -629,6 +657,35 @@ class VictronInverter(InverterBase):
         toleranz = EIGEN_TOLERANZ.get(key, 0.0)
         return any(abs(wert - w) <= toleranz for w in self._eigene_werte.get(key, ()))
 
+    def _echo_vergessen(self, key: str) -> None:
+        self._eigene_werte.pop(key, None)
+        self._letzter_eingriff.pop(key, None)
+        self._zurueckgeschrieben.pop(key, None)
+        self._zurueck_ziel.pop(key, None)
+
+    def _echo_pruefen(self, key: str, aktuell: float | None) -> None:
+        """Zeigt die Entität den zurückgeschriebenen Wert, ist das Echo da.
+
+        Dann kann kein eigener Wert mehr nachkommen — was die Entität danach
+        zeigt, hat der Betreiber eingestellt, auch wenn es zufällig unserem
+        letzten Eingriff gleicht.
+        """
+        ziel = self._zurueck_ziel.get(key)
+        if ziel is None or aktuell is None:
+            return
+        if abs(aktuell - ziel) <= max(EIGEN_TOLERANZ.get(key, 0.0), 1e-6):
+            self._echo_vergessen(key)
+
+    def _echos_pruefen(self) -> None:
+        """Alle ausstehenden Echos prüfen — aus jedem Executor-Lauf.
+
+        Ein eigener Listener je Stellgröße wäre genauer, aber der 30-s-Lauf
+        reicht: Ein Betreiber stellt nicht binnen 30 s nach unserer Freigabe
+        genau unseren letzten Wert ein.
+        """
+        for key in list(self._zurueck_ziel):
+            self._echo_pruefen(key, self._lies(key))
+
     def _vorwert_ermitteln(self, key: str, aktuell: float | None) -> float:
         """Der Wert, den die Freigabe später zurückschreiben soll.
 
@@ -637,8 +694,10 @@ class VictronInverter(InverterBase):
         eines früheren Eingriffs (Modulkopf, „Vorwerte"). Dann gilt der
         zuletzt zurückgeschriebene Vorwert, ebenso, wenn der Zustand gerade
         unlesbar ist. Ein fremder Wert dagegen heißt: Der Betreiber hat seit
-        der letzten Freigabe selbst etwas eingestellt — der gilt.
+        der letzten Freigabe selbst etwas eingestellt — der gilt. „Eigen" ist
+        nach einer Freigabe nur noch der letzte Eingriffswert (Modulkopf).
         """
+        self._echo_pruefen(key, aktuell)
         zurueck = self._zurueckgeschrieben.get(key)
         eigen = aktuell is not None and self._ist_eigen(key, aktuell)
         if zurueck is not None and (aktuell is None or eigen):
@@ -657,6 +716,9 @@ class VictronInverter(InverterBase):
         await self._state_store.async_load()
         if self._state_store.vorwert(key) is None:
             await self._state_store.async_sichern(key, self._vorwert_ermitteln(key, aktuell))
+            # Neuer Eingriff, Vorwert frisch gesichert: Die Echos des alten
+            # zählen nicht mehr, sonst wüchse die Menge über die Sitzung.
+            self._echo_vergessen(key)
 
     async def _setze(self, key: str, wert: float, toleranz: float) -> None:
         """Wert schreiben, Vorwert beim ersten Eingriff sichern.
@@ -720,8 +782,16 @@ class VictronInverter(InverterBase):
             await self._schreibe(key, ziel, eingriff=False)
         await self._state_store.async_loeschen(key)
         # Im Speicher behalten: Der nächste Eingriff liest womöglich noch das
-        # Echo des alten — der Vorwert des Betreibers ist dieser hier.
+        # Echo des alten — der Vorwert des Betreibers ist dieser hier. Als
+        # Echo kann nur noch der letzte Eingriffswert kommen, die früheren
+        # sind vergessen (Modulkopf).
+        letzter = self._letzter_eingriff.get(key)
+        if letzter is None:
+            self._eigene_werte.pop(key, None)
+        else:
+            self._eigene_werte[key] = {letzter}
         self._zurueckgeschrieben[key] = vorwert
+        self._zurueck_ziel[key] = ziel
 
     def _batteriespannung(self) -> float | None:
         spannung = self._lies("batteriespannung")
@@ -903,7 +973,8 @@ class VictronInverter(InverterBase):
             self._beobachte_ziel_soc(target_soc)
             if self._am_ziel():
                 await self._ziel_erreicht()
-                return self._erfolg()
+                # Ein gescheitertes Aufheben des Deckels bleibt gemeldet.
+                return self._erfolg_ausser(deckel_fehler)
             watt = -round(max(0.0, abs(float(power_kw))) * 1000.0 / NETZSOLLWERT_TOLERANZ_W) * NETZSOLLWERT_TOLERANZ_W
             minimum = self._attribut("netzsollwert", "min")
             if minimum is not None:
@@ -1254,7 +1325,18 @@ class VictronInverter(InverterBase):
         attribute = getattr(state, "attributes", None) or {}
         if str(attribute.get("unit_of_measurement") or "W").lower() == "kw":
             wert *= 1000.0
-        return max(0.0, wert)
+        wert = max(0.0, wert)
+        self._dc_pv_letzt = (wert, self._uhr())
+        return wert
+
+    def _dc_pv_zuletzt_w(self) -> float | None:
+        """Letzte gemessene DC-PV, wenn höchstens ``…_PV_ALTER_S`` alt."""
+        if self._dc_pv_letzt is None:
+            return None
+        wert, zeit = self._dc_pv_letzt
+        if self._uhr() - zeit > ENTLADEDECKEL_PV_ALTER_S:
+            return None
+        return wert
 
     def _deckel_w(self, deckel_kw: float, pv_w: float) -> float:
         """Der Wert für die Entität, ohne Schreiben."""
@@ -1280,20 +1362,26 @@ class VictronInverter(InverterBase):
 
         * **neuer Befehl** des Executors (andere Leistung, oder der erste nach
           dem Aufheben): sofort, er zehrt nur vom Vorrat;
+        * **DC-PV gestiegen**: sofort, immer — es zehrt nur vom Vorrat;
+          aufgehalten hieße es Netzbezug;
         * **kein oder ein fremder Deckel im Gerät** (−1, unlesbar, verstellt):
           sobald der Vorrat es erlaubt;
-        * **DC-PV gestiegen**: sofort, sofern Vorrat da ist;
         * **DC-PV gefallen**: erst nach ``ENTLADEDECKEL_SENKEN_TAKTE`` Takten
           mit Überhang, sofern Vorrat da ist.
 
-        Ist die DC-PV unbekannt, wird ein stehender Deckel gehalten; sonst
-        zählt sie als 0 W.
+        Ist die DC-PV unbekannt, wird ein stehender Deckel gehalten; ein neuer
+        rechnet mit der letzten Messung (höchstens zehn Minuten alt), erst
+        danach mit 0 W.
         """
         key = "entladedeckel"
         if self._entity(key) is None:
             raise VictronFehler("Entität entladedeckel nicht gefunden")
         minimum = self._attribut(key, "min")
-        if minimum is not None and minimum > -1:
+        zuletzt = self._geschrieben.get(key)
+        if minimum is not None and minimum > -1 and (zuletzt is None or zuletzt < 0):
+            # Keinen Deckel beginnen, der sich nie wieder aufheben ließe. Steht
+            # schon einer (Aufheben gescheitert), folgt er aber weiter der
+            # DC-PV — ihn einfrieren hieße, steigende Sonne abzuregeln.
             raise VictronFehler("Entladedeckel −1 nicht schreibbar")
         aktuell = self._lies(key)
         await self._vorwert_sichern(key, aktuell)
@@ -1301,7 +1389,6 @@ class VictronInverter(InverterBase):
             self._entladedeckel_kw is None
             or abs(deckel_kw - self._entladedeckel_kw) > 1e-9
         )
-        zuletzt = self._geschrieben.get(key)
         steht = zuletzt is not None and zuletzt >= 0
         pv_w = self._dc_pv_w()
         if pv_w is None:
@@ -1310,8 +1397,10 @@ class VictronInverter(InverterBase):
                 # senken, nähme dem Haus womöglich gerade die Sonne.
                 self._entladedeckel_kw = deckel_kw
                 return
-            _LOGGER.debug("Victron: DC-PV-Leistung unbekannt — Entladedeckel mit 0 W PV")
-            pv_w = 0.0
+            pv_w = self._dc_pv_zuletzt_w()
+            if pv_w is None:
+                _LOGGER.debug("Victron: DC-PV-Leistung unbekannt — Entladedeckel mit 0 W PV")
+                pv_w = 0.0
         watt = self._deckel_w(deckel_kw, pv_w)
         self._entladedeckel_kw = deckel_kw
 
@@ -1330,6 +1419,12 @@ class VictronInverter(InverterBase):
             await self._deckel_schreiben(watt)
             return
         stand = zuletzt if steht else aktuell
+        if stand is not None and stand >= 0 and watt > stand:
+            # Die DC-PV ist gestiegen: sofort, auch mit leerem Vorrat — sonst
+            # regelte der Wandler die neue Sonne ab, und das Haus kaufte zu.
+            self._vorrat_nehmen(erzwungen=True)
+            await self._deckel_schreiben(watt)
+            return
         fremd = (
             stand is None
             or stand < 0
@@ -1337,9 +1432,9 @@ class VictronInverter(InverterBase):
             or aktuell < 0
             or abs(aktuell - stand) >= ENTLADEDECKEL_TOLERANZ_W
         )
-        if fremd or watt > stand:
-            # Kein (oder ein fremder) Deckel im Gerät, oder die PV ist
-            # gestiegen: sobald der Vorrat es erlaubt.
+        if fremd:
+            # Kein (oder ein fremder) Deckel im Gerät: sobald der Vorrat es
+            # erlaubt.
             self._senken_takte = 0
         else:
             self._senken_takte += 1
@@ -1357,7 +1452,7 @@ class VictronInverter(InverterBase):
     def _vorrat_nehmen(self, erzwungen: bool = False) -> bool:
         """Ein Schreiben aus dem Vorrat nehmen (Token-Eimer, Modulkopf).
 
-        ``erzwungen`` (ein Befehl des Executors) schreibt immer und nimmt nur,
+        ``erzwungen`` (ein Befehl des Executors, ein Anheben) schreibt immer und nimmt nur,
         was da ist — leer wird der Vorrat dabei, nicht negativ: Eine Schuld
         hielte danach auch das dringende Anheben bei steigender PV auf.
         """
@@ -1377,9 +1472,14 @@ class VictronInverter(InverterBase):
         return False
 
     async def _deckel_aufheben(self) -> None:
-        """Takt aus, Vorwert zurück. Toleranz 1 W: −1 und 50 W sind nicht „gleich"."""
-        self._deckel_nachfuehrung_beenden()
+        """Vorwert zurück, dann Takt aus. Toleranz 1 W: −1 und 50 W sind nicht „gleich".
+
+        Der Takt endet erst nach dem Zurückschreiben: Scheitert es, steht der
+        Deckel weiter im Gerät — ohne Takt folgte er der DC-PV nicht mehr,
+        und stiege die Sonne, kaufte das Haus zu.
+        """
         await self._zuruecksetzen("entladedeckel", 1.0)
+        self._deckel_nachfuehrung_beenden()
 
     def _deckel_nachfuehrung_beenden(self) -> None:
         self._entladedeckel_kw = None
@@ -1422,6 +1522,9 @@ class VictronInverter(InverterBase):
 
     @property
     def is_available(self) -> bool:
+        # Der eine Aufruf, den der Executor in jedem 30-s-Lauf macht: hier
+        # nebenbei die ausstehenden Echos prüfen (nur Zustände lesen).
+        self._echos_pruefen()
         entries = self._hass.config_entries.async_entries(VICTRON_DOMAIN)
         return any(entry.state.value == "loaded" for entry in entries)
 
