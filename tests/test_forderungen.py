@@ -108,3 +108,24 @@ def test_am_rand_abgesenkt_nicht_gestrichen():
         assert termin in rechnung.am_rand_abgesenkt, reihe
         for k, f in enumerate(werte):
             assert f <= ende + rest[k + 1] + 1e-9, (reihe, k)
+
+
+def test_mindestladung_laedt_mit_puffer_frueher(monkeypatch):
+    """Traun 03.11.2026, 14:21: Mit voller Netzladeleistung gerechnet lud der
+    Plan genau in den letzten Viertelstunden vor dem Termin — braucht das
+    Haus mehr, bleibt unter der Netzgrenze weniger für die Batterie, und
+    nach hinten ist kein Platz. Mit 70 % der Leistung beginnt die
+    Pflichtladung früher, und schon vor dem Termin wird ein Teil gefordert."""
+    def erster_pflicht_slot(anteil):
+        monkeypatch.setattr(fo, "MINDESTLADUNG_LEISTUNG_ANTEIL", anteil)
+        rechnung = _rechnung(abend_kwh=6.0, stand=0.0)
+        return min(i for i, p in enumerate(rechnung.pflicht) if p < 0), rechnung
+
+    anteil = fo.MINDESTLADUNG_LEISTUNG_ANTEIL
+    ohne_puffer, _ = erster_pflicht_slot(1.0)
+    mit_puffer, rechnung = erster_pflicht_slot(anteil)
+    assert mit_puffer < ohne_puffer
+    termin = rechnung.termine_abend[0]
+    assert 0.0 < rechnung.netz_forderung[termin - 4] < rechnung.netz_forderung[termin]
+    # Der Grund nennt auch vor dem Termin die Mindestladung, nicht die Reserve.
+    assert rechnung.abend_termin_je_slot[termin - 4] == termin

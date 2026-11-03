@@ -569,7 +569,11 @@ the event loop is long enough for HA to flag a blocking call.
   before the horizon start): when the surplus ended at noon the termin passed
   at noon and nothing demanded the evening any more — Traun 03.11.2026 sat at
   21 % instead of 60 %. A termin whose slot ends less than 1 h from now is
-  dropped (`MINDESTLADUNG_VORLAUF_H`). The plan carries
+  dropped (`MINDESTLADUNG_VORLAUF_H`). Before the termin a backward chain demands what is
+  still needed with only `MINDESTLADUNG_LEISTUNG_ANTEIL` (70 %) of the allowed grid charge
+  power plus the expected PV (`abend_termin_je_slot` maps chain slots to their termin for the
+  reason text) — without it the plan charged in exactly the last quarter-hours (Traun
+  03.11.2026). The plan carries
   `netzladen_abend` (`ziel_pct`, `termine` with planned SOC) like `ladeziel`;
   a missed evening is reported as telemetry `abendladung`. Tests:
   `tests/test_netzladen_abend.py`. The series replaces scalar and window prices in

@@ -47,6 +47,14 @@ RESERVE_NETZ_BEDARF_MIN_KWH = 0.05
 # solche Termine — es kauft nie und hält die Batterie kurz vor dem PV-Ende
 # davon ab, noch schnell einzuspeisen. Entscheidung 03.11.2026.
 MINDESTLADUNG_VORLAUF_H = 1.0
+# Die Mindestladung rechnet rückwärts vom Termin mit nur diesem Anteil der
+# erlaubten Netzladeleistung (die PV zählt voll). Mit der vollen Leistung
+# lud der Plan genau in den letzten Viertelstunden vor dem Termin — ohne
+# Puffer, wenn das Haus mehr braucht und unter der Netzgrenze weniger für
+# die Batterie bleibt (Traun 03.11.2026: 6 kWh fehlten, geplant 14:45–16:30
+# mit 2,9 kW, keine Viertelstunde Luft). Je größer der Fehlbetrag gegenüber
+# der erwarteten PV, desto früher beginnt das Laden. Entscheidung 03.11.2026.
+MINDESTLADUNG_LEISTUNG_ANTEIL = 0.7
 # Ersatzstandort für den Sonnenuntergang, wenn keiner bekannt ist (alte
 # Archive, Tests): Linz. Innerhalb Österreichs liegt der Untergang damit
 # höchstens etwa 20 Minuten daneben — für den Termin einer Viertelstunde
@@ -524,13 +532,47 @@ class Forderungen:
 
     @cached_property
     def abend_forderung(self) -> list[float] | None:
-        """Mindestladung am Abend: ``abend_kwh`` an jedem Termin, sonst 0."""
+        """Mindestladung am Abend: am Termin ``abend_kwh``, davor rückwärts
+        so viel, dass der Rest mit ``MINDESTLADUNG_LEISTUNG_ANTEIL`` der
+        erlaubten Netzladeleistung plus der erwarteten PV noch hereinkommt.
+
+        Wie die vorsichtige Kette des Ladeziels, nur mit gedrosselter
+        Netzleistung statt gedrosselter Sonne. Welche Kette zu welchem Termin
+        gehört, merkt ``abend_termin_je_slot`` (für den Grund).
+        """
         if self.v.abend_kwh <= 0 or not self.termine_abend:
             return None
+        a = self.akku
+        max_kw = max(float(self.v.spitzenreserve_netz_kw or 0.0),
+                     float(self.v.netzladen_max_kw or 0.0))
+        netz = self.netz_erlaubt_kw(max_kw)
+        schritt = [
+            min(
+                ladeleistung_aus_dc(p + MINDESTLADUNG_LEISTUNG_ANTEIL * n / a.eta, a.kapazitaet),
+                a.leistung,
+            ) * a.p2e
+            for p, n in zip(self.lage.pv, netz)
+        ]
         forderung = [0.0] * self.n
         for i in self.termine_abend:
-            forderung[i] = self.v.abend_kwh
+            bedarf = self.v.abend_kwh
+            if bedarf >= forderung[i]:
+                forderung[i] = bedarf
+                self.abend_termin_je_slot[i] = i
+            # Vom Ende von k auf das Ende von k+1 wirkt der Schritt von k+1.
+            for k in range(i - 1, -1, -1):
+                bedarf -= schritt[k + 1]
+                if bedarf <= 0.0:
+                    break
+                if bedarf > forderung[k]:
+                    forderung[k] = bedarf
+                    self.abend_termin_je_slot[k] = i
         return forderung
+
+    @cached_property
+    def abend_termin_je_slot(self) -> dict[int, int]:
+        """Slot → Termin der Mindestladung, zu dem seine Forderung gehört."""
+        return {}
 
     @cached_property
     def netz_forderung(self) -> list[float] | None:
@@ -755,10 +797,11 @@ class Forderungen:
             for j in range(k, self.n):
                 if netz[j] <= 0:
                     continue
-                if j in self.termine_abend:
-                    text = f"die Mindestladung ({zahl(abend_pct)} % um {uhr(j)})"
-                    if j in self.am_rand_abgesenkt:
-                        text += f", am Planungsrand auf {zahl(pct(netz[j]))} % abgesenkt"
+                if j in self.abend_termin_je_slot:
+                    termin = self.abend_termin_je_slot[j]
+                    text = f"die Mindestladung ({zahl(abend_pct)} % um {uhr(termin)})"
+                    if termin in self.am_rand_abgesenkt:
+                        text += f", am Planungsrand auf {zahl(pct(netz[termin]))} % abgesenkt"
                     return text
                 return f"die Spitzenreserve (Spitze um {uhr(j + 1)})"
             return None
