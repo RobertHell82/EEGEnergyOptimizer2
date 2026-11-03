@@ -37,9 +37,11 @@ from custom_components.eeg_energy_optimizer.const import (
 
 
 def _worte(fmt: str, wert) -> list[int]:
-    """Einen 32-Bit-Wert in seine zwei Register zerlegen (high word zuerst)."""
+    """Einen 32-Bit-Wert in seine zwei Register zerlegen — low word zuerst,
+    wie die Ambibox sie liefert."""
     roh = struct.pack(">" + fmt, wert)
-    return list(struct.unpack(">HH", roh))
+    hoch, niedrig = struct.unpack(">HH", roh)
+    return [niedrig, hoch]
 
 
 def _block(werte: dict) -> list[int]:
@@ -115,6 +117,40 @@ def test_dekodierung_der_datentypen():
     assert mb.read_u32(regs, 4) == 4294967295
     assert mb.read_bool(regs, 6) is True
     assert mb.read_bool(regs, 8) is False
+
+
+def test_wortreihenfolge_wie_an_der_echten_ambibox():
+    """Rohregister, wie eine Ambibox sie geliefert hat (Ansfelden,
+    03.11.2026): das niedrige Wort zuerst. Mit „high word zuerst“ gelesen
+    stand der Sitzungszustand auf 524288 und die höchste Ladeleistung auf
+    668 467 kW, der Ladestand auf 0 %."""
+    regs = [0] * mb.INPUT_LENGTH
+    regs[mb.OFF_SESSION_STATE:mb.OFF_SESSION_STATE + 2] = [0x0008, 0x0000]
+    regs[mb.OFF_MAX_CHARGE_POWER:mb.OFF_MAX_CHARGE_POWER + 2] = [0x27D8, 0x0000]
+    regs[mb.OFF_MAX_DISCHARGE_POWER:mb.OFF_MAX_DISCHARGE_POWER + 2] = [0x2710, 0x0000]
+    # 62,5 % = 0x427A0000 → Register [0x0000, 0x427A]
+    regs[mb.OFF_SOC:mb.OFF_SOC + 2] = [0x0000, 0x427A]
+    assert mb.read_u32(regs, mb.OFF_SESSION_STATE) == 8
+    assert mb.read_u32(regs, mb.OFF_MAX_CHARGE_POWER) == 10200
+    assert mb.read_u32(regs, mb.OFF_MAX_DISCHARGE_POWER) == 10000
+    assert mb.read_f32(regs, mb.OFF_SOC) == pytest.approx(62.5)
+    assert _deute(regs).session_state == 8
+
+
+async def test_sollwert_wird_low_word_zuerst_geschrieben():
+    """Schreiben nutzt dieselbe Reihenfolge wie Lesen — sonst käme ein
+    Sollwert von −3000 W als 0xF448_FFFF an."""
+    treiber = mb.AmbiboxModbus("10.0.0.1")
+    client = MagicMock()
+    client.connected = True
+    ok = MagicMock()
+    ok.isError.return_value = False
+    client.write_registers = AsyncMock(return_value=ok)
+    treiber._client = client
+    assert await treiber.async_write_target_power(-3000)
+    werte = client.write_registers.await_args.kwargs["values"]
+    assert werte == [0xF448, 0xFFFF]
+    assert mb.read_i32(werte, 0) == -3000
 
 
 def test_dekodierung_ausserhalb_des_blocks_ist_none():

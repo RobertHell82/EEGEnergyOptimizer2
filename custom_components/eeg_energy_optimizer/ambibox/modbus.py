@@ -8,8 +8,13 @@ zehn Instanzen. Uns interessiert die Klasse EV Charger:
     Input Register (FC 4):   4000 + (Anschluss − 1) × 200
     Holding Register (FC 16): 3000 + (Anschluss − 1) × 100
 
-Jeder Wert belegt zwei Register (32 bit, high word zuerst). Die Offsets
-unten sind relativ zur Basisadresse.
+Jeder Wert belegt zwei Register (32 bit), und zwar mit dem **niedrigen
+Wort zuerst** — entgegen dem, was man nach dem Dokument erwartet. Gemessen
+an einer Ambibox (Ansfelden, 03.11.2026): mit „high word zuerst“ gelesen
+stand der Sitzungszustand auf 524288 (0x0008_0000 statt 8 = Gestoppt), die
+höchste Ladeleistung auf 668 467 kW (0x27D8_0000 statt 10 200 W), und jeder
+Float — Ladestand, Kapazität — kam als winzige Zahl an, also 0 %. Die
+Offsets unten sind relativ zur Basisadresse.
 
 Geschrieben wird nur auf ausdrückliche Anweisung (manueller Test im Panel).
 Der Fahrplan steuert die Wallbox nicht: Das Dokument beantwortet weder, wie
@@ -121,16 +126,17 @@ def holding_base(connector: int) -> int:
 
 
 # --------------------------------------------------------------------------
-# Dekodierung: zwei Register je Wert, high word zuerst
+# Dekodierung: zwei Register je Wert, low word zuerst (siehe Modulkopf)
 # --------------------------------------------------------------------------
 
 
 def _raw32(regs: list[int], offset: int) -> bytes | None:
-    """Die vier Bytes eines 32-Bit-Werts aus dem gelesenen Block."""
+    """Die vier Bytes eines 32-Bit-Werts aus dem gelesenen Block,
+    big-endian geordnet — das zweite Register ist das hohe Wort."""
     if offset < 0 or offset + 1 >= len(regs):
         return None
     try:
-        return struct.pack(">HH", regs[offset] & 0xFFFF, regs[offset + 1] & 0xFFFF)
+        return struct.pack(">HH", regs[offset + 1] & 0xFFFF, regs[offset] & 0xFFFF)
     except (struct.error, TypeError):
         return None
 
@@ -318,15 +324,18 @@ class AmbiboxModbus:
     # -- Schreiben ---------------------------------------------------------
     #
     # Nur für den manuellen Test aus dem Panel. Jeder Schreibvorgang belegt
-    # zwei Register (32 bit, high word zuerst) und geht über
-    # write_registers (FC 16) — dieselbe Kodierung wie beim Lesen.
+    # zwei Register (32 bit, low word zuerst) und geht über
+    # write_registers (FC 16) — dieselbe Kodierung wie beim Lesen. Mit der
+    # falschen Reihenfolge käme ein Sollwert von 3000 W als 0x0BB8_0000 an,
+    # rund 196 MW.
 
     async def _async_write32(self, offset: int, roh: bytes) -> bool:
         """Einen 32-Bit-Wert in den Holding-Block schreiben."""
         async with self._lock:
             if not await self.async_connect():
                 return False
-            werte = list(struct.unpack(">HH", roh))
+            hoch, niedrig = struct.unpack(">HH", roh)
+            werte = [niedrig, hoch]
             adresse = self.holding_base + offset
             try:
                 result = await self._client.write_registers(
