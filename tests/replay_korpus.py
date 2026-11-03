@@ -22,10 +22,12 @@ import json
 import pathlib
 from datetime import datetime, timedelta
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from custom_components.eeg_energy_optimizer import schedule as sched
 
 KORPUS = pathlib.Path(__file__).parent / "fixtures" / "replay"
+ZONE = ZoneInfo("Europe/Vienna")
 
 # Felder, deren Werte Datumsangaben sind.
 _DATUMSFELDER = ("start",)
@@ -65,7 +67,11 @@ def inputs_aus_eintrag(eintrag: dict[str, Any]) -> sched.ScheduleInputs:
     """Baut die ``ScheduleInputs`` eines archivierten Laufs nach."""
     eingaben = dict(eintrag["eingaben"])
     slots = eintrag["plan"]["slots"]
-    start = datetime.fromisoformat(eingaben["start"])
+    # Das Archiv kennt nur den festen Offset (+01:00/+02:00), nicht die Zone.
+    # Über die Zeitumstellung rechnet opt() den Horizont damit anders (188
+    # statt 192 Slots, 25.10.2026). Alle Anlagen liegen in AT/DE/CH — dieselben
+    # Umstellungsregeln, also genügt eine Zone.
+    start = datetime.fromisoformat(eingaben["start"]).astimezone(ZONE)
 
     felder = {f.name: f for f in dataclasses.fields(sched.ScheduleInputs)}
     werte: dict[str, Any] = {}
@@ -92,10 +98,16 @@ def inputs_aus_eintrag(eintrag: dict[str, Any]) -> sched.ScheduleInputs:
             "consumption_price_series", "consumption_price_fest",
         ) if werte.get(n) is not None
     }
-    if laengen and laengen != {len(stempel)}:
-        raise ValueError(
-            f"Raster passt nicht: {len(stempel)} Stützpunkte, Reihen {sorted(laengen)}"
-        )
+    if len(laengen) > 1:
+        raise ValueError(f"Reihen verschieden lang: {sorted(laengen)}")
+    if laengen:
+        # Die Länge der archivierten Reihen ist die Wahrheit. Über die
+        # Zeitumstellung zählt der Horizont in Stunden anders als die
+        # Stützpunkte (25.10.2026: 95 statt 97) — nur das Raster ist fest.
+        anzahl = laengen.pop()
+        if anzahl > len(stempel):
+            raise ValueError(f"Raster passt nicht: {len(stempel)} Stützpunkte, Reihen {anzahl}")
+        stempel = stempel[:anzahl]
 
     werte["timestamps"] = stempel
     werte["consumption_kw"] = [
@@ -104,6 +116,17 @@ def inputs_aus_eintrag(eintrag: dict[str, Any]) -> sched.ScheduleInputs:
     werte["production_kw"] = [_wert_am(nach_zeit, zeiten, t, "PV") for t in stempel]
     werte.setdefault("min_production_kw", None)
     werte["start"] = start
+    # Seit 30.10.2026 (2.1.53) rechnet async_collect_inputs unter dem
+    # Mindest-Ladestand vom gemessenen Ladestand aus. Ältere Archive tragen
+    # den Boden noch über dem Ladestand — so gebaut, wie der heutige Code sie
+    # bauen würde, nicht wie damals.
+    soc = werte.get("soc_pct")
+    boden = werte.get("min_soc_pct")
+    if isinstance(soc, (int, float)) and isinstance(boden, (int, float)) and soc < boden:
+        werte["min_soc_einstellung_pct"] = boden
+        werte["min_soc_pct"] = max(0.0, float(soc))
+        if werte.get("min_soc_basis_pct") is not None:
+            werte["min_soc_basis_pct"] = werte["min_soc_pct"]
     return sched.ScheduleInputs(**werte)
 
 
@@ -239,7 +262,12 @@ def _mit_spitzenreserve(
         "tage": tage,
         "statistik": True,
     }
-    basis = inputs.min_soc_pct
+    # Hat die Anlage schon eine Reserve, steckt sie in min_soc_pct — die
+    # Variante ersetzt sie, statt sie ein zweites Mal aufzusetzen.
+    basis = (
+        inputs.min_soc_basis_pct if inputs.min_soc_basis_pct is not None
+        else inputs.min_soc_pct
+    )
     reserve = plan_pct
     if inputs.soc_pct is not None:
         reserve = min(reserve, max(0.0, inputs.soc_pct - basis))

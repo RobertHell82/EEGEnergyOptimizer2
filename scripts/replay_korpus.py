@@ -10,8 +10,10 @@ entpackten Ordner davon:
         Schreibt nichts — der Weg, ein frisches Archiv durchzusehen.
 
     python scripts/replay_korpus.py aufnehmen <archiv> --kuerzel fronius-a [--anzahl 12]
+                                              [--eintraege 2026-10-28/1113,…]
         Wählt über die Tage verteilt Pläne aus (morgens, mittags, abends,
-        nachts), anonymisiert sie und legt sie nach tests/fixtures/replay/.
+        nachts), dazu die ausdrücklich genannten (etwa die eines Fundes),
+        anonymisiert sie und legt sie nach tests/fixtures/replay/.
         Von dort rechnet tests/test_replay_korpus.py sie bei jedem Lauf.
 
 Läuft aus dem Repo-Wurzelverzeichnis (wegen der HA-Stubs in conftest.py).
@@ -26,7 +28,6 @@ import pathlib
 import sys
 import tempfile
 import zipfile
-from datetime import datetime
 
 WURZEL = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(WURZEL))
@@ -115,12 +116,21 @@ def aufnehmen(args: argparse.Namespace) -> int:
         eintrag = rk.eintrag_laden(pfad)
         if "eingaben" in eintrag and not eintrag["plan"].get("error"):
             brauchbar.append(pfad)
-    for pfad in _auswaehlen(brauchbar, args.anzahl):
+    auswahl = _auswaehlen(brauchbar, args.anzahl)
+    # Ausdrücklich genannte Einträge (z. B. die eines Fundes) zusätzlich.
+    for name in filter(None, args.eintraege.split(",")):
+        treffer = [p for p in brauchbar if f"{p.parent.name}/{p.name}".startswith(name)]
+        if not treffer:
+            print(f"{name}: nicht im Archiv (oder ohne Eingaben)")
+        auswahl.extend(p for p in treffer[:1] if p not in auswahl)
+    for pfad in auswahl:
         eintrag = rk.eintrag_laden(pfad)
         rk.inputs_aus_eintrag(eintrag)  # wirft, wenn das Raster nicht passt
         korpus = rk.anonymisieren(eintrag, args.kuerzel)
-        zeit = datetime.fromisoformat(eintrag["eingaben"]["start"])
-        datei = ziel / f"{args.kuerzel}_{zeit:%Y-%m-%d_%H%M}.json.gz"
+        # Benannt nach dem Archiv-Eintrag (Tag/HHMMSS), nicht nach dem auf
+        # 15 min gerundeten Planstart — zwei Läufe im selben Viertel
+        # bekämen sonst denselben Namen.
+        datei = ziel / f"{args.kuerzel}_{pfad.parent.name}_{pfad.name[:6]}.json.gz"
         roh = json.dumps(korpus, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
         # mtime=0: dieselbe Aufnahme ergibt dieselbe Datei, kein Git-Rauschen.
         with open(datei, "wb") as roh_datei, gzip.GzipFile(
@@ -144,6 +154,8 @@ def main() -> int:
     a.add_argument("archiv")
     a.add_argument("--kuerzel", required=True)
     a.add_argument("--anzahl", type=int, default=12)
+    a.add_argument("--eintraege", default="",
+                   help="zusätzlich diese Einträge, z. B. 2026-10-28/1113,2026-11-01/1944")
     a.set_defaults(fn=aufnehmen)
     args = parser.parse_args()
     return args.fn(args)
