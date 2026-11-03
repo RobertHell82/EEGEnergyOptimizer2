@@ -12,6 +12,18 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+### Behoben
+
+- **Kein Fahrplan an dunklen Tagen mit „Reserve notfalls aus dem Netz“.** Endete der Planungszeitraum kurz nach der Abendspitze des nächsten Tages, verlangte die Spitzenreserve davor noch Energie, die die Batterie bis zum Ende des Zeitraums nicht mehr abbauen konnte. Der Optimierer fand dann keine Lösung, und nach 15 Minuten gab der Failsafe den Wechselrichter frei — an solchen Tagen jeden Abend für eine Weile. Die Forderung wird jetzt auf das begrenzt, wovon der Plan noch auf seinen Endstand kommt, wie es das Ladeziel schon tat.
+- **Mindestladung am Abend für den nächsten Tag.** Lag der erste Termin so früh, dass er nicht mehr erreichbar war (etwa wenn der PV-Überschuss gerade endete), bekam auch jeder spätere Termin keine Pflichtladung mehr; der Plan entlud dann vor dem Termin, statt auf die Mindestladung zu laden. Jetzt wird nur der unerreichbare Termin übersprungen.
+- **Netzladung unter der Grenze der Spitzenkappung auch im Plan.** Der Executor begrenzte jede Netzladung auf die Grenze der Spitzenkappung, der Plan aber nur die Pflichtladung, nicht das Laden zu günstigen Preisen. Die Batterie lud dann weniger als geplant. Beide rechnen jetzt mit derselben Grenze.
+- **Heizstab im Plan nur, wo das Modell ihn einplant.** Hatte das Modell in einem Slot keine Wärme vorgesehen, etwa weil das Haus die PV braucht oder das Tagesbudget aufgebraucht ist, zeigte der Plan trotzdem Wärme aus abgeregelter PV.
+- **WiNAP nach der endgültigen Verordnung.** Der Winter-Nieder-Arbeitspreis gilt laut Systemnutzungsentgelte-Grundsatzverordnung (BGBl. II Nr. 299/2026) von 23 bis 5 Uhr statt 22 bis 4 Uhr wie im Entwurf, und erstmals ab 1. Oktober 2027 (§ 32 Abs. 4). Wirksam war er bisher nicht, weil die Tarifverordnung noch keinen Satz enthält; jetzt greift er auch dann nicht vor Oktober 2027, wenn eine Tabelle früher einen liefert.
+
+### Geändert
+
+- **Replay-Korpus**: 58 echte Fahrpläne von fünf Anlagen (Fronius, Huawei, Kostal, SolaX, Sigenergy) werden bei jedem Testlauf mit dem aktuellen Code nachgerechnet und gegen feste Regeln geprüft. Die vier Fehler oben hat er gefunden.
+
 ## [2.1.64] - 2026-11-02
 
 ### Hinzugefügt

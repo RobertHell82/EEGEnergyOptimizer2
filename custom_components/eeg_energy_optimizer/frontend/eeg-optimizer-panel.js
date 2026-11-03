@@ -693,7 +693,7 @@ const netzgebuehrDetails = (d, netze) => {
     rechnung += zeile("im SNAP-Fenster (Sommer 10–16 Uhr)", ct(netz.snap));
   }
   if (netz.winap != null && netz.winap < netz.ap) {
-    rechnung += zeile("im WiNAP-Fenster (ab 2027, Winter 22–4 Uhr)", ct(netz.winap));
+    rechnung += zeile("im WiNAP-Fenster (ab Oktober 2027, Winter 23–5 Uhr)", ct(netz.winap));
   }
 
   // Herkunft je Posten — ein Satz aus der eingebauten Kopie ist nicht falsch,
@@ -761,7 +761,7 @@ const bezugspreisText = (d, netze) => {
         text += `<br>Sommer 10–16 Uhr: <strong>${fmtDe(snap * 100, 2)} ct/kWh</strong>`;
       }
       if (winap != null) {
-        text += `${snap != null ? " · " : "<br>"}Winter 22–4 Uhr: <strong>${fmtDe(winap * 100, 2)} ct/kWh</strong>`;
+        text += `${snap != null ? " · " : "<br>"}Winter 23–5 Uhr (ab Oktober 2027): <strong>${fmtDe(winap * 100, 2)} ct/kWh</strong>`;
       }
     }
   }
@@ -8411,7 +8411,7 @@ class EegOptimizerPanel extends HTMLElement {
           <input type="checkbox" data-field="${prefix}schedule_snap_enabled" ${d.schedule_snap_enabled ? "checked" : ""}>
           <div>
             <div style="font-weight:500">Zeitvariable Netzentgelte (SNAP und WiNAP)</div>
-            <div class="help-text" style="margin-top:4px">Österreich: Der <strong>Sommer-Nieder-Arbeitspreis (SNAP)</strong> macht die Netzgebühr vom 1. April bis 30. September täglich zwischen 10 und 16 Uhr um 20 % günstiger. Ab 2027 kommt der <strong>Winter-Nieder-Arbeitspreis (WiNAP)</strong> dazu: 1. Oktober bis 31. März, 22 bis 4 Uhr. Zeiträume, Uhrzeiten und Rabatt stehen in der Verordnung und sind deshalb fest. Voraussetzung ist die viertelstündliche Messung beim Netzbetreiber; für Mengen, die einer Energiegemeinschaft zugeordnet sind, gilt der Rabatt nicht.</div>
+            <div class="help-text" style="margin-top:4px">Österreich: Der <strong>Sommer-Nieder-Arbeitspreis (SNAP)</strong> macht die Netzgebühr vom 1. April bis 30. September täglich zwischen 10 und 16 Uhr günstiger (2026 um 20 %). Ab 1. Oktober 2027 kommt der <strong>Winter-Nieder-Arbeitspreis (WiNAP)</strong> dazu: 1. Oktober bis 31. März, 23 bis 5 Uhr. Zeiträume und Uhrzeiten stehen in der Verordnung und sind deshalb fest, die Sätze kommen aus der Tarifverordnung deines Netzbereichs. Voraussetzung ist die viertelstündliche Messung beim Netzbetreiber; für Mengen, die einer Energiegemeinschaft zugeordnet sind, gilt der Rabatt nicht.</div>
           </div>
         </label>
       </div>

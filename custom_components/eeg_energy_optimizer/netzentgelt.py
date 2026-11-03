@@ -16,8 +16,8 @@ Endkundenpreisen rechnet.
 
 Zwei Verordnungen, ein Leser: Bis 31.12.2026 gilt die SNE-V 2018 (§ 5), ab
 1.1.2027 die Tarifverordnung (SNE-T-V) zur Grundsatzverordnung SNE-G-V, die
-zusätzlich einen Winter-Nieder-Arbeitspreis (WiNAP, Oktober–März 22–4 Uhr)
-kennt. Der Tabellenleser sucht die Spalten nach Namen (AP, SNAP, WiNAP) und
+zusätzlich einen Winter-Nieder-Arbeitspreis (WiNAP, Oktober–März 23–5 Uhr,
+erstmals ab 1.10.2027) kennt. Der Tabellenleser sucht die Spalten nach Namen (AP, SNAP, WiNAP) und
 kommt mit einer Zeile je Bereich ebenso zurecht wie mit den Unterzeilen der
 SNE-V 2018. Die SNE-T-V ist noch nicht kundgemacht (erwartet Dezember 2026);
 ihre RIS-Kennung fehlt deshalb und wird per Titelsuche ermittelt — sobald sie

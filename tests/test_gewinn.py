@@ -659,50 +659,67 @@ def test_snap_gilt_nur_im_sommerhalbjahr():
         assert sched.bezugspreis_zu(inputs, stamp) == pytest.approx(erwartet), monat
 
 
-def test_winap_gilt_im_winter_zwischen_zweiundzwanzig_und_vier():
-    """Zeitraum und Uhrzeit stehen in der SNE-G-V (§ 7 Abs. 4): 1. Oktober
-    bis 31. März, 22:00 bis 04:00 des Folgetags."""
+def test_winap_gilt_im_winter_zwischen_dreiundzwanzig_und_fuenf():
+    """Zeitraum und Uhrzeit stehen in der SNE-G-V (BGBl. II Nr. 299/2026,
+    § 7 Abs. 4): 1. Oktober bis 31. März, 23:00 bis 05:00 des Folgetags.
+    Der Begutachtungsentwurf hatte 22 bis 4 Uhr."""
     inputs = _inputs(consumption_price=0.25, consumption_price_winap=0.23)
-    januar = datetime(2027, 1, 15, tzinfo=timezone.utc)
+    januar = datetime(2028, 1, 15, tzinfo=timezone.utc)
 
     def preis(tag, stunde):
         return sched.bezugspreis_zu(inputs, tag.replace(hour=stunde))
 
-    assert preis(januar, 22) == pytest.approx(0.23)
     assert preis(januar, 23) == pytest.approx(0.23)
     assert preis(januar, 0) == pytest.approx(0.23)
-    assert preis(januar, 3) == pytest.approx(0.23)
-    # 04:00 gehört nicht mehr dazu, 21:00 noch nicht.
-    assert preis(januar, 4) == pytest.approx(0.25)
-    assert preis(januar, 21) == pytest.approx(0.25)
+    assert preis(januar, 4) == pytest.approx(0.23)
+    # 05:00 gehört nicht mehr dazu, 22:00 noch nicht.
+    assert preis(januar, 5) == pytest.approx(0.25)
+    assert preis(januar, 22) == pytest.approx(0.25)
     assert preis(januar, 12) == pytest.approx(0.25)
+
+
+def test_winap_erst_ab_oktober_2027():
+    """§ 32 Abs. 4 SNE-G-V: „erstmals für den Zeitraum beginnend mit
+    1. Oktober 2027". Liefert eine Tabelle vorher schon einen Satz, gilt er
+    im Winter 2026/27 nicht."""
+    inputs = _inputs(consumption_price=0.25, consumption_price_winap=0.23)
+    for stamp, erwartet in (
+        (datetime(2026, 12, 15, 23, tzinfo=timezone.utc), 0.25),
+        (datetime(2027, 1, 15, 23, tzinfo=timezone.utc), 0.25),
+        (datetime(2027, 3, 31, 23, tzinfo=timezone.utc), 0.25),
+        (datetime(2027, 10, 1, 2, tzinfo=timezone.utc), 0.25),  # Nacht vom 30.9.
+        (datetime(2027, 10, 1, 23, tzinfo=timezone.utc), 0.23),  # erste Nacht
+        (datetime(2027, 10, 2, 4, tzinfo=timezone.utc), 0.23),
+    ):
+        assert sched.bezugspreis_zu(inputs, stamp) == pytest.approx(erwartet), stamp
 
 
 def test_winap_gilt_nur_im_winterhalbjahr():
     inputs = _inputs(consumption_price=0.25, consumption_price_winap=0.23)
-    for monat, erwartet in (
-        (9, 0.25), (10, 0.23), (12, 0.23), (1, 0.23), (3, 0.23), (4, 0.25), (7, 0.25)
+    for jahr, monat, erwartet in (
+        (2028, 9, 0.25), (2027, 10, 0.23), (2027, 12, 0.23), (2028, 1, 0.23),
+        (2028, 3, 0.23), (2028, 4, 0.25), (2028, 7, 0.25),
     ):
-        stamp = datetime(2027, monat, 15, 23, tzinfo=timezone.utc)
+        stamp = datetime(jahr, monat, 15, 23, tzinfo=timezone.utc)
         assert sched.bezugspreis_zu(inputs, stamp) == pytest.approx(erwartet), monat
 
 
 def test_winap_am_saisonrand_zaehlt_der_beginn_der_nacht():
-    """„22 Uhr bis 4 Uhr des Folgetags": Die Nacht vom 31.3. auf den 1.4.
-    gehört noch dazu, die Stunden vor 4 Uhr am 1.10. noch nicht."""
+    """„23 Uhr bis 5 Uhr des Folgetags": Die Nacht vom 31.3. auf den 1.4.
+    gehört noch dazu, die Stunden vor 5 Uhr am 1.10. noch nicht."""
     inputs = _inputs(consumption_price=0.25, consumption_price_winap=0.23)
 
     assert sched.bezugspreis_zu(
-        inputs, datetime(2027, 3, 31, 23, tzinfo=timezone.utc)
+        inputs, datetime(2028, 3, 31, 23, tzinfo=timezone.utc)
     ) == pytest.approx(0.23)
     assert sched.bezugspreis_zu(
-        inputs, datetime(2027, 4, 1, 2, tzinfo=timezone.utc)
+        inputs, datetime(2028, 4, 1, 4, tzinfo=timezone.utc)
     ) == pytest.approx(0.23)
     assert sched.bezugspreis_zu(
-        inputs, datetime(2027, 10, 1, 2, tzinfo=timezone.utc)
+        inputs, datetime(2028, 10, 1, 4, tzinfo=timezone.utc)
     ) == pytest.approx(0.25)
     assert sched.bezugspreis_zu(
-        inputs, datetime(2027, 10, 1, 22, tzinfo=timezone.utc)
+        inputs, datetime(2028, 10, 1, 23, tzinfo=timezone.utc)
     ) == pytest.approx(0.23)
 
 
@@ -718,10 +735,10 @@ def test_snap_und_winap_stehen_nebeneinander():
         inputs, datetime(2027, 7, 15, 12, tzinfo=timezone.utc)
     ) == pytest.approx(0.24)
     assert sched.bezugspreis_zu(
-        inputs, datetime(2027, 1, 15, 23, tzinfo=timezone.utc)
+        inputs, datetime(2028, 1, 15, 23, tzinfo=timezone.utc)
     ) == pytest.approx(0.23)
     assert sched.bezugspreis_zu(
-        inputs, datetime(2027, 1, 15, 12, tzinfo=timezone.utc)
+        inputs, datetime(2028, 1, 15, 12, tzinfo=timezone.utc)
     ) == pytest.approx(0.25)
     assert sched.bezugspreis_zu(
         inputs, datetime(2027, 7, 15, 23, tzinfo=timezone.utc)
@@ -732,14 +749,14 @@ def test_winap_allein_ergibt_eine_preisreihe():
     """Auch ohne SNAP muss das LP eine Reihe sehen — sonst plant es nachts
     gegen einen Preis, den es dort nicht gibt."""
     pytest.importorskip("pandas")
-    januar = datetime(2027, 1, 15, tzinfo=timezone.utc)
+    januar = datetime(2028, 1, 15, tzinfo=timezone.utc)
     stamps = [januar.replace(hour=h) for h in (12, 21, 22, 23)]
     inputs = _inputs(
         timestamps=stamps, consumption_kw=[0.5] * 4, production_kw=[0.0] * 4,
         consumption_price=0.25, consumption_price_winap=0.23,
     )
     reihe = sched.HAConfig(inputs).consumption_price(stamps[0])
-    assert [round(float(v), 4) for v in list(reihe)] == [0.25, 0.25, 0.23, 0.23]
+    assert [round(float(v), 4) for v in list(reihe)] == [0.25, 0.25, 0.25, 0.23]
 
 
 def test_snap_allein_ergibt_eine_preisreihe():
@@ -979,6 +996,16 @@ def test_heizstab_plan_aus_discard_gedeckelt():
     assert sched._heizstab_plan_kw(2.0, inputs) == pytest.approx(2.0 * EFF)
     assert sched._heizstab_plan_kw(20.0, inputs) == pytest.approx(6.0)
     assert sched._heizstab_plan_kw(20.0, _inputs()) == 0.0  # kein Heizstab
+
+
+def test_heizstab_plan_lp_null_gilt():
+    """Hat das LP den Heizstab gerechnet, gilt auch seine 0 — die
+    abgeregelte PV fällt dann nicht an den Heizstab (Replay-Korpus, Huawei
+    28.10.2026: 0,76 kW Wärme bei 3,1 kW Entladung am Horizontende)."""
+    inputs = _inputs(heizstab_max_kw=6.0)
+    assert sched._heizstab_plan_kw(2.0, inputs, 0.0) == 0.0
+    assert sched._heizstab_plan_kw(2.0, inputs, 1.0) == pytest.approx(1.0 * EFF)
+    assert sched._heizstab_plan_kw(2.0, inputs, None) == pytest.approx(2.0 * EFF)
 
 
 def test_standardbetrieb_gibt_abgeregeltes_dem_heizstab():

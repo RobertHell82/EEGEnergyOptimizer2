@@ -78,10 +78,10 @@ Zwei Sonderfälle im Feld Netzbereich:
 
 Mit diesem Haken rechnet der Fahrplan in bestimmten Fenstern mit einer günstigeren Netzgebühr:
 
-- **SNAP** (Sommer-Nieder-Arbeitspreis): 1. April bis 30. September, täglich 10 bis 16 Uhr, 20 % günstiger.
-- **WiNAP** (Winter-Nieder-Arbeitspreis): ab 2027, 1. Oktober bis 31. März, 22 bis 4 Uhr.
+- **SNAP** (Sommer-Nieder-Arbeitspreis): 1. April bis 30. September, täglich 10 bis 16 Uhr, 2026 um 20 % günstiger.
+- **WiNAP** (Winter-Nieder-Arbeitspreis): erstmals ab 1. Oktober 2027, dann jeweils 1. Oktober bis 31. März, 23 bis 5 Uhr.
 
-Zeiten und Rabatt sind von der Verordnung fest vorgegeben. Gesenkt wird nur das Netznutzungsentgelt, die anderen Posten bleiben gleich.
+Zeiten sind von der Verordnung fest vorgegeben (Systemnutzungsentgelte-Grundsatzverordnung § 7), die Sätze stehen in der Tarifverordnung deines Netzbereichs. Gesenkt wird nur das Netznutzungsentgelt, die anderen Posten bleiben gleich.
 
 > [!WARNING]
 > **Setze den Haken nur, wenn dein Zähler viertelstündlich misst.** Das ist Voraussetzung für die zeitvariablen Sätze. Für Strom, der einer Energiegemeinschaft zugeordnet ist, gilt der Rabatt nicht.

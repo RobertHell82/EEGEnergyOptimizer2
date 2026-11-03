@@ -27,7 +27,7 @@ import math
 import re
 import time
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any
 
 from . import eeg_price
@@ -148,12 +148,15 @@ CONF_SCHEDULE_CONSUMPTION_PRICE = "schedule_consumption_price"
 # Zeitvariable Netzentgelte: Sommer-Nieder-Arbeitspreis (SNAP) — seit
 # 1.4.2026 ein um 20 % verringertes Netznutzungsentgelt auf der Netzebene 7,
 # 1. April bis 30. September, 10 bis 16 Uhr (SNE-V 2018 idF Novelle 2026,
-# § 2 Abs. 1 Z 9 und § 5 Abs. 1b) — und ab 2027 der Winter-Nieder-Arbeits-
-# preis (WiNAP), 1. Oktober bis 31. März, 22 bis 4 Uhr des Folgetags (SNE-G-V
-# § 7 Abs. 4). Zeiträume, Uhrzeiten und Rabatt stehen in der Verordnung und
-# sind deshalb fest verdrahtet — konfiguriert wird nur, ob der Anschluss die
-# zeitvariablen Sätze bekommt (Voraussetzung: Viertelstundenmessung). Der
-# Schlüssel heißt nach dem ersten Fenster; er schaltet beide.
+# § 2 Abs. 1 Z 9 und § 5 Abs. 1b) — und der Winter-Nieder-Arbeitspreis
+# (WiNAP), 1. Oktober bis 31. März, 23 bis 5 Uhr des Folgetags (SNE-G-V,
+# BGBl. II Nr. 299/2026, § 7 Abs. 4), erstmals ab 1. Oktober 2027 (§ 32
+# Abs. 4). Der Begutachtungsentwurf hatte 22 bis 4 Uhr ab 1.1.2027; die
+# Endfassung hat beides verschoben. Zeiträume und Uhrzeiten stehen in der
+# Verordnung und sind deshalb fest verdrahtet, die Sätze kommen aus der
+# Tarifverordnung (netzentgelt.py) — konfiguriert wird nur, ob der Anschluss
+# die zeitvariablen Sätze bekommt (Voraussetzung: Viertelstundenmessung,
+# § 7 Abs. 5). Der Schlüssel heißt nach dem ersten Fenster; er schaltet beide.
 CONF_SCHEDULE_SNAP_ENABLED = "schedule_snap_enabled"
 SNAP_MONAT_VON = 4       # 1. April
 SNAP_MONAT_BIS = 9       # 30. September (einschließlich)
@@ -161,8 +164,11 @@ SNAP_STUNDE_VON = 10
 SNAP_STUNDE_BIS = 16     # 16:00 gehört nicht mehr dazu
 WINAP_MONAT_VON = 10     # 1. Oktober
 WINAP_MONAT_BIS = 3      # 31. März (einschließlich, über den Jahreswechsel)
-WINAP_STUNDE_VON = 22
-WINAP_STUNDE_BIS = 4     # 04:00 gehört nicht mehr dazu
+WINAP_STUNDE_VON = 23
+WINAP_STUNDE_BIS = 5     # 05:00 gehört nicht mehr dazu
+# Erste WiNAP-Nacht (§ 32 Abs. 4 SNE-G-V). Davor gilt kein WiNAP, auch wenn
+# eine Tabelle schon einen Satz liefert.
+WINAP_AB = date(2027, 10, 1)
 CONF_SCHEDULE_GRID_FEE = "schedule_grid_fee"
 CONF_SCHEDULE_BATTERY_COST = "schedule_battery_cost"
 # Mindest-Ladestand in Prozent, unter den der Fahrplan nicht planen darf.
@@ -538,7 +544,7 @@ class ScheduleInputs:
     netzdienlich_bis_stunde: int | None = None
     netzdienlich_bonus: float = 0.0
     # Bezugspreis im SNAP-Fenster (Sommer, 10–16 Uhr) und im WiNAP-Fenster
-    # (Winter, 22–4 Uhr); None = Fenster gibt es nicht. Abgeleitet aus
+    # (Winter, 23–5 Uhr, ab 1.10.2027); None = Fenster gibt es nicht. Abgeleitet aus
     # Arbeitspreis + verbilligter Netzgebühr; die Fenstergrenzen kommen aus
     # der Verordnung, nicht aus der Konfiguration.
     consumption_price_snap: float | None = None
@@ -1244,6 +1250,33 @@ class HAConfig:
         if ziel <= 0 or len(ueberschuss) == 0:
             return termine
 
+        werte = [float(v) for v in ueberschuss.values]
+        rest, ende_halb = self._abbau_bis_ende(parameters, ueberschuss)
+
+        tage = [stempel.date() for stempel in ueberschuss.index]
+        if pv is None:
+            kandidaten = pv_enden(werte, tage)
+        else:
+            vorher = float(self._inputs.ueberschuss_vor_start_kwh or 0.0)
+            kandidaten = abend_kandidaten(
+                [float(v) for v in pv], werte, tage,
+                {tage[0]: vorher} if vorher > 0 else None, self.time_res / 3600.0,
+            )
+        for i in kandidaten:
+            if ziel - ende_halb > rest[i + 1] + 1e-9:
+                continue  # vom Ziel käme der Plan nicht mehr auf halb
+            termine.append(i)
+        return termine
+
+    def _abbau_bis_ende(self, parameters, ueberschuss) -> tuple[list[float], float]:
+        """(Abbau ab Slot j bis zum Horizontende in kWh, Endstand in kWh).
+
+        Wie viel die Batterie nach einem Slot noch abgeben kann, bevor der
+        Horizont endet, und auf welchen Stand ``opt()`` sie dort festlegt.
+        Eine Forderung über ``Endstand + rest[i + 1]`` am Ende von Slot ``i``
+        lässt das LP ohne Lösung: Es müsste schneller entladen, als die
+        Batterie kann. Gemeinsam für Ladeziel und Netzforderung.
+        """
         p2e = self.time_res / 3600.0
         werte = [float(v) for v in ueberschuss.values]
         verbrauch = [float(v) for v in parameters["consumption"].values]
@@ -1280,22 +1313,7 @@ class HAConfig:
                         float(self.battery_power_limit),
                     ) * p2e,
                 )
-        ende_halb = min(self.battery_capacity / 2.0, stand)
-
-        tage = [stempel.date() for stempel in ueberschuss.index]
-        if pv is None:
-            kandidaten = pv_enden(werte, tage)
-        else:
-            vorher = float(self._inputs.ueberschuss_vor_start_kwh or 0.0)
-            kandidaten = abend_kandidaten(
-                [float(v) for v in pv], werte, tage,
-                {tage[0]: vorher} if vorher > 0 else None, p2e,
-            )
-        for i in kandidaten:
-            if ziel - ende_halb > rest[i + 1] + 1e-9:
-                continue  # vom Ziel käme der Plan nicht mehr auf halb
-            termine.append(i)
-        return termine
+        return rest, min(self.battery_capacity / 2.0, stand)
 
     def netzladen(self, parameters, ueberschuss):
         """Untergrenze von ``dc_p`` je Slot (kW, DC, ≤ 0) — oder None.
@@ -1374,13 +1392,9 @@ class HAConfig:
         fest = self._preis_fest_je_slot(stempel)
         wandlung = self.ac_efficiency ** 2
         aufschlag = float(self.battery_cost or 0.0) + float(self._inputs.netzladen_vorteil or 0.0)
-        netzgrenze = float(self._inputs.netzladen_netzgrenze_kw or 0.0)
-        if netzgrenze > 0:
-            grenzen = [
-                -min(max_kw, max(0.0, netzgrenze - h)) / self.ac_efficiency for h in haus
-            ]
-        else:
-            grenzen = [-max_kw / self.ac_efficiency] * len(haus)
+        grenzen = [
+            -kw / self.ac_efficiency for kw in self._netzladen_erlaubt_kw(max_kw, haus, stempel)
+        ]
 
         untergrenze = [0.0] * len(werte)
         von = 0
@@ -1491,15 +1505,29 @@ class HAConfig:
         """Was aus dem Netz notfalls erreicht werden muss (kWh je Slot) — oder None.
 
         Spitzenreserve (``_reserve_netz_forderung``) und Mindestladung am
-        Abend (``_abend_forderung``), je Slot die höhere.
+        Abend (``_abend_forderung``), je Slot die höhere — gekappt auf das,
+        wovon der Plan bis zum Horizontende noch auf den Endstand kommt
+        (``_abbau_bis_ende``). Ohne die Kappung hatte das LP keine Lösung,
+        sobald das Horizontende kurz hinter der Abendspitze lag: An einem
+        dunklen Tag ist der Endstand das, was die PV allein schafft (oft 0),
+        die Reserve davor aber aus dem Netz gekauft — 2,6 kWh in zwei Slots
+        abzubauen schafft keine 5-kW-Batterie (Replay-Korpus, Huawei und
+        SolaX 01.11.2026). Kein Plan heißt Failsafe; an dunklen Tagen
+        täglich, solange der Horizont dort endet. Das Ladeziel hat dieselbe
+        Prüfung in ``ladeziel_termine``.
         """
         reserve = self._reserve_netz_forderung(ueberschuss)
         abend = self._abend_forderung(parameters, ueberschuss)
         if reserve is None:
-            return abend
-        if abend is None:
-            return reserve
-        return [max(a, b) for a, b in zip(reserve, abend)]
+            forderung = abend
+        elif abend is None:
+            forderung = reserve
+        else:
+            forderung = [max(a, b) for a, b in zip(reserve, abend)]
+        if forderung is None:
+            return None
+        rest, ende = self._abbau_bis_ende(parameters, ueberschuss)
+        return [min(f, ende + rest[k + 1]) if f > 0 else f for k, f in enumerate(forderung)]
 
     def _netz_untergrenze(self, parameters, ueberschuss):
         """Pflichtladung aus dem Netz je Slot (kW, DC, ≤ 0) — oder None.
@@ -1525,13 +1553,10 @@ class HAConfig:
             return None
         import pandas as pd
 
-        from .spitzenreserve import SICHERHEIT_KW
-
         max_kw = max(
             float(self._inputs.spitzenreserve_netz_kw or 0.0),
             float(self._inputs.netzladen_max_kw or 0.0),
         )
-        netzgrenze = float(self._inputs.netzladen_netzgrenze_kw or 0.0)
         p2e = self.time_res / 3600.0
         preise = [float(v) / p2e for v in parameters["consumption_price"].values]
         haus = [float(v) for v in parameters["consumption"].values]
@@ -1540,23 +1565,7 @@ class HAConfig:
         stempel = list(ueberschuss.index)
         n = len(werte)
         fest = self._preis_fest_je_slot(stempel)
-        info = self._inputs.spitzenreserve or {}
-        grenze_je_t = {}
-        for (t, _), g in zip(info.get("kurve") or [], info.get("grenzen") or []):
-            try:
-                grenze_je_t[int(datetime.fromisoformat(t).timestamp())] = float(g)
-            except (TypeError, ValueError):
-                continue
-        standard = float(info.get("grenze_kw") or 0.0)
-        netz = []
-        for k in range(n):
-            erlaubt = max_kw
-            if info:
-                grenze = grenze_je_t.get(int(stempel[k].timestamp()), standard)
-                erlaubt = min(erlaubt, grenze - SICHERHEIT_KW - haus[k])
-            if netzgrenze > 0:
-                erlaubt = min(erlaubt, netzgrenze - haus[k])
-            netz.append(max(0.0, erlaubt))
+        netz = self._netzladen_erlaubt_kw(max_kw, haus, stempel)
 
         kapazitaet = float(self.battery_capacity)
         grenze_leistung = float(self.battery_power_limit)
@@ -1579,12 +1588,21 @@ class HAConfig:
             return -_entladeleistung_fuer_dc(-w, kapazitaet) * p2e
 
         gewaehlt = [False] * n
-        for _ in range(n):
+        # Forderungen, die auch mit jedem freien Slot davor nicht erreichbar
+        # sind. Sie werden übersprungen, nicht die Suche beendet: Bis 2.1.64
+        # stand hier ein ``break``, und ein unerreichbarer früher Termin —
+        # etwa das Ende des Überschusses im zweiten Slot des Plans — nahm
+        # allen späteren die Pflichtladung. Die Mindestladung von morgen
+        # 16:15 fiel weg, der Plan entlud davor auf 49,5 % statt 90 %
+        # (Replay-Korpus, Kostal 28.10.2026). ``opt()`` kappt die
+        # unerreichbare Forderung ohnehin auf das Erreichbare.
+        aufgegeben: set[int] = set()
+        for _ in range(2 * n):
             stand = start
             luecke = None
             for k in range(n):
                 stand = min(kapazitaet, max(0.0, stand + schritt(k, gewaehlt[k])))
-                if stand < forderung[k] - 1e-6:
+                if k not in aufgegeben and stand < forderung[k] - 1e-6:
                     luecke = k
                     break
             if luecke is None:
@@ -1594,7 +1612,8 @@ class HAConfig:
                 if not gewaehlt[j] and fest[j] and netz[j] > 0
             ]
             if not kandidaten:
-                break
+                aufgegeben.add(luecke)
+                continue
             gewaehlt[min(kandidaten, key=lambda j: (preise[j], -j))] = True
         if not any(gewaehlt):
             return None
@@ -1602,6 +1621,41 @@ class HAConfig:
             [-netz[k] / self.ac_efficiency if gewaehlt[k] else 0.0 for k in range(n)],
             index=ueberschuss.index,
         )
+
+    def _netzladen_erlaubt_kw(self, max_kw: float, haus: list[float], stempel) -> list[float]:
+        """Was die Batterie je Slot höchstens aus dem Netz ziehen darf (kW, AC).
+
+        Eine Regel für beide Wege, wirtschaftliches Netzladen und
+        Pflichtladung: höchstens ``max_kw``, und den Zähler (Haus + Ladung)
+        weder über die Netzgrenze des Netzladens noch — mit der Batterie-Stufe
+        der Spitzenkappung — über deren Grenze je Slot minus
+        ``SICHERHEIT_KW``. Dieselbe Kappung macht der Executor bei jeder
+        Netzladung. Bis 2.1.64 kannte nur die Pflichtladung die Grenze der
+        Spitzenkappung; das wirtschaftliche Netzladen plante darüber, der
+        Executor kappte, und die Batterie lud weniger als geplant
+        (Replay-Korpus, Huawei 02.11.2026: 4 kW Bezug bei 3 kW Grenze).
+        """
+        from .spitzenreserve import SICHERHEIT_KW
+
+        netzgrenze = float(self._inputs.netzladen_netzgrenze_kw or 0.0)
+        info = self._inputs.spitzenreserve or {}
+        grenze_je_t = {}
+        for (t, _), g in zip(info.get("kurve") or [], info.get("grenzen") or []):
+            try:
+                grenze_je_t[int(datetime.fromisoformat(t).timestamp())] = float(g)
+            except (TypeError, ValueError):
+                continue
+        standard = float(info.get("grenze_kw") or 0.0)
+        erlaubt_je_slot = []
+        for k, h in enumerate(haus):
+            erlaubt = max_kw
+            if info:
+                grenze = grenze_je_t.get(int(stempel[k].timestamp()), standard)
+                erlaubt = min(erlaubt, grenze - SICHERHEIT_KW - h)
+            if netzgrenze > 0:
+                erlaubt = min(erlaubt, netzgrenze - h)
+            erlaubt_je_slot.append(max(0.0, erlaubt))
+        return erlaubt_je_slot
 
     def _preis_fest_je_slot(self, stempel) -> list[bool]:
         """``consumption_price_fest`` auf die Slots des LP umgelegt."""
@@ -1823,15 +1877,18 @@ def ist_im_snap_fenster(stamp: datetime) -> bool:
 def ist_im_winap_fenster(stamp: datetime) -> bool:
     """Liegt der Zeitpunkt im Winter-Nachtfenster der Verordnung?
 
-    1. Oktober bis 31. März, jeweils 22:00 bis 04:00 des Folgetags. Die
-    Nacht gehört zum Tag, an dem sie beginnt: 31.3. 22:00 bis 1.4. 04:00
-    zählt noch dazu, 1.10. 00:00 bis 04:00 noch nicht.
+    1. Oktober bis 31. März, jeweils 23:00 bis 05:00 des Folgetags, erstmals
+    in der Nacht ab 1.10.2027 (``WINAP_AB``). Die Nacht gehört zum Tag, an
+    dem sie beginnt: 31.3. 23:00 bis 1.4. 05:00 zählt noch dazu, 1.10.
+    00:00 bis 05:00 noch nicht.
     """
     if stamp.hour >= WINAP_STUNDE_VON:
         tag = stamp
     elif stamp.hour < WINAP_STUNDE_BIS:
         tag = stamp - timedelta(days=1)
     else:
+        return False
+    if tag.date() < WINAP_AB:
         return False
     return tag.month >= WINAP_MONAT_VON or tag.month <= WINAP_MONAT_BIS
 
@@ -3907,6 +3964,12 @@ def solve(inputs: ScheduleInputs) -> dict[str, Any]:
     started = time.monotonic()
     table = opt_highs.opt(config, inputs.start)
     duration_ms = int((time.monotonic() - started) * 1000)
+    # Dieselbe Bedingung wie ``heizstab_aktiv`` in opt_highs.py.
+    heizstab_im_lp = (
+        inputs.heizstab_max_kw > 0
+        and inputs.heizstab_waermewert > 0
+        and inputs.heizstab_budget_kwh > 0
+    )
 
     slots: list[dict[str, Any]] = []
     for stamp, row in table.iterrows():
@@ -3930,10 +3993,12 @@ def solve(inputs: ScheduleInputs) -> dict[str, Any]:
         )
         # Geplante Heizstab-Leistung. Mit Wärmewert und Pufferbudget hat
         # das LP sie selbst bestimmt (Spalte ``heater``) — dann gilt dessen
-        # Wert. Ohne beides bleibt es bei der Nachbearbeitung: Was abgeregelt
-        # würde, nimmt der Heizstab bis zu seiner Maximalleistung.
+        # Wert, auch eine 0. Ohne beides bleibt es bei der Nachbearbeitung:
+        # Was abgeregelt würde, nimmt der Heizstab bis zu seiner
+        # Maximalleistung. ``opt_highs`` liefert die Spalte in beiden Fällen
+        # (ohne LP-Heizstab als 0,0), darum die Unterscheidung hier.
         slot["heizstab"] = _heizstab_plan_kw(
-            slot.get("discard"), inputs, row.get("heater")
+            slot.get("discard"), inputs, row.get("heater") if heizstab_im_lp else None
         )
         if inputs.netzladen_max_kw > 0 or inputs.spitzenreserve_netz_kw > 0:
             slot["netzladung"] = netzladung_kw(slot, HAConfig.ac_efficiency)
@@ -4025,7 +4090,13 @@ def _heizstab_plan_kw(
 
     * ``heater_dc_kw`` gesetzt — das Modell hat selbst entschieden, wie viel
       Wärme es sich leisten will (Wärmewert gegen Einspeisung, begrenzt durch
-      das Pufferbudget). Dieser Wert gilt.
+      Pufferbudget und PV-Überschuss). Dieser Wert gilt, **auch eine 0**:
+      Dann hat das LP die Wärme verboten, etwa weil das Haus die PV schon
+      braucht oder das Tagesbudget erschöpft ist. Bis 2.1.64 fiel eine 0 auf
+      die Nachbearbeitung zurück, und der Plan zeigte Wärme aus abgeregelter
+      PV, während die Batterie das Haus versorgte — am Horizontende, wo der
+      Plan die Batterie auf den Endstand leert (Replay-Korpus, Huawei
+      28.10.2026: 0,76 kW Wärme bei 3,1 kW Entladung).
     * sonst — Nachbearbeitung wie bisher: Was abgeregelt würde, nimmt der
       Heizstab bis zu seiner Maximalleistung. Das ist auch der Weg für den
       Referenz-Fahrplan, der ohne LP auskommt.
@@ -4035,9 +4106,10 @@ def _heizstab_plan_kw(
     """
     if inputs.heizstab_max_kw <= 0:
         return 0.0
-    if heater_dc_kw is not None and heater_dc_kw > 0:
+    if heater_dc_kw is not None:
         return round(
-            min(float(heater_dc_kw) * HAConfig.ac_efficiency, inputs.heizstab_max_kw), 4
+            min(max(0.0, float(heater_dc_kw)) * HAConfig.ac_efficiency,
+                inputs.heizstab_max_kw), 4
         )
     if discard_kw is None or discard_kw <= 0:
         return 0.0
