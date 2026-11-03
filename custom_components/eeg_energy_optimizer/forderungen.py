@@ -39,14 +39,6 @@ BATTERIE_WIDERSTAND = 0.04
 # Die Spitzenreserve fordert nur vor einer Viertelstunde, in der die Kurve
 # um mehr als das fällt — kleinere Stufen sind Rundung, kein Bedarf.
 RESERVE_NETZ_BEDARF_MIN_KWH = 0.05
-# Ein Termin der Mindestladung, dessen Slot früher endet, entfällt. Endete
-# der Überschuss im zweiten Slot des Plans, kaufte der Plan sonst sofort mit
-# voller Leistung für einen Termin, der praktisch „jetzt" war (Kostal
-# 28.10.2026: 2 kWh in 30 Minuten). Erreichbar ist so ein Termin ohnehin
-# kaum; die Mindestladung gilt dann ab dem nächsten Tag. Das Ladeziel behält
-# solche Termine — es kauft nie und hält die Batterie kurz vor dem PV-Ende
-# davon ab, noch schnell einzuspeisen. Entscheidung 03.11.2026.
-MINDESTLADUNG_VORLAUF_H = 1.0
 # Die Mindestladung rechnet rückwärts vom Termin mit nur diesem Anteil der
 # erlaubten Netzladeleistung (die PV zählt voll). Mit der vollen Leistung
 # lud der Plan genau in den letzten Viertelstunden vor dem Termin — ohne
@@ -309,9 +301,8 @@ class Forderungen:
         dem Start), die mit dem Sonnenuntergang alle entfallen; auch ein Tag
         ganz ohne PV hat jetzt einen Termin.
 
-        Ohne ``abend_kwh`` keine. Termine, deren Slot weniger als
-        ``MINDESTLADUNG_VORLAUF_H`` ab jetzt endet, entfallen; ein
-        Untergang vor dem Horizontstart oder hinter seinem Ende ebenso.
+        Ohne ``abend_kwh`` keine. Ein Untergang vor dem Horizontstart oder
+        hinter seinem Ende hat keinen Slot und damit keinen Termin.
         """
         if self.v.abend_kwh <= 0 or self.n == 0:
             return []
@@ -331,8 +322,13 @@ class Forderungen:
             u = untergang.timestamp()
             for k, t in enumerate(stempel):
                 if t.timestamp() <= u < t.timestamp() + slot_s:
-                    if (k + 1) * self.akku.p2e >= MINDESTLADUNG_VORLAUF_H - 1e-9:
-                        termine.append(k)
+                    # Auch kurz vor dem Untergang bleibt der Termin. Bis 2.1.66
+                    # entfiel er, wenn sein Slot in weniger als einer Stunde
+                    # endete — und brach damit eine laufende Netzladung ab:
+                    # Traun 03.11.2026, 16:00, Ladestand 30 % statt 60 %.
+                    # Die letzte Stunde vor Sonnenuntergang ist genau die Zeit,
+                    # in der notfalls noch geladen werden muss.
+                    termine.append(k)
                     break
         return sorted(set(termine))
 

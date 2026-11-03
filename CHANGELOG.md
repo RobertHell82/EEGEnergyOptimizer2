@@ -12,6 +12,10 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+### Behoben
+
+- **Mindestladung am Abend: Netzladung brach eine Stunde vor Sonnenuntergang ab.** Seit 2.1.65 entfiel ein Termin, dessen Viertelstunde weniger als eine Stunde in der Zukunft lag. Gedacht war das gegen einen Sofortkauf für einen Termin, der überraschend „jetzt“ ist; mit dem Sonnenuntergang als Termin traf es aber genau die letzte Stunde einer laufenden Netzladung. Traun am 03.11.2026: Freigabe um 16:00 bei 30 % statt der eingestellten 60 %. Der Termin bleibt jetzt bis zum Sonnenuntergang stehen.
+
 ## [2.1.66] - 2026-11-03
 
 ### Geändert

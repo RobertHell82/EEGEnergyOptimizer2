@@ -53,4 +53,3 @@ Ein Beispiel: 10-kWh-Batterie, Mindestladung 60 %, Ladeziel 100 %. Die Sonne geh
 
 Gekauft wird nur bis zur Mindestladung. Was darüber bis zum **Ladeziel** fehlt, kommt weiter nur von der Sonne oder aus Viertelstunden, in denen sich der Zukauf rechnet (Mindestvorteil). Die Grenze am Zähler und die der Spitzenkappung gelten auch hier.
 
-Liegt der Sonnenuntergang weniger als eine Stunde in der Zukunft, entfällt der Termin für heute: In so kurzer Zeit wäre die Mindestladung ohnehin kaum zu schaffen, und der Fahrplan würde nur mit voller Leistung teuer zukaufen. Sie gilt dann wieder ab dem nächsten Tag. Schaltest du die Mindestladung also erst kurz vor Sonnenuntergang ein, wirkt sie erst ab morgen.

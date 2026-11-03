@@ -480,10 +480,7 @@ the event loop is long enough for HA to flag a blocking call.
   gets back there — the same rule for Ladeziel, Mindestladung and reserve
   (`Forderungen._rand`, decision 03.11.2026; until 2.1.64 the Ladeziel
   dropped such a termin, the grid demands capped it). That end condition is
-  why `fullcharge_try` is unusable. A Mindestladung termin whose slot ends
-  less than `MINDESTLADUNG_VORLAUF_H` (1 h) from now is dropped — no
-  instant full-power purchase for a termin that is practically now (Kostal
-  28.10.2026); the Ladeziel keeps such termine. Why it exists: Grünbach,
+  why `fullcharge_try` is unusable. Why it exists: Grünbach,
   04.10.2026 — OeMAG (10.17 ct) rose above the community's day rate, feed-in
   went flat, and the plan only charged what the night needed (73–85 %).
   **Before the target slot** (`HAConfig.ladeziel_termine`) the floor is
@@ -568,8 +565,8 @@ the event loop is long enough for HA to flag a blocking call.
   (dark days: end of generation, plus rules for a tiny surplus and the surplus
   before the horizon start): when the surplus ended at noon the termin passed
   at noon and nothing demanded the evening any more — Traun 03.11.2026 sat at
-  21 % instead of 60 %. A termin whose slot ends less than 1 h from now is
-  dropped (`MINDESTLADUNG_VORLAUF_H`). Before the termin a backward chain demands what is
+  21 % instead of 60 %. Termine are kept until sunset — a 1-h cut-off (2.1.65–2.1.66) aborted
+  a running grid charge at 16:00 (Traun 03.11.2026). Before the termin a backward chain demands what is
   still needed with only `MINDESTLADUNG_LEISTUNG_ANTEIL` (70 %) of the allowed grid charge
   power plus the expected PV (`abend_termin_je_slot` maps chain slots to their termin for the
   reason text) — without it the plan charged in exactly the last quarter-hours (Traun

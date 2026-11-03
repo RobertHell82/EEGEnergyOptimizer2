@@ -64,12 +64,13 @@ def test_auch_ein_tag_ganz_ohne_pv_hat_einen_termin():
     assert len(rechnung.termine_abend) == 2
 
 
-def test_termin_unter_einer_stunde_entfaellt():
-    """Um 16:00 gerechnet endet der Untergangs-Slot in 45 Minuten — kein
-    Sofortkauf mit voller Leistung (Kostal 28.10.2026). Morgen bleibt."""
+def test_termin_kurz_vor_sonnenuntergang_bleibt():
+    """Um 16:00 gerechnet endet der Untergangs-Slot in 45 Minuten. Bis 2.1.66
+    entfiel der Termin dann und brach die laufende Netzladung ab — Traun
+    03.11.2026: Freigabe um 16:00 bei 30 % statt 60 %. Er bleibt jetzt."""
     rechnung = _rechnung(abend_kwh=6.0, start=datetime(2026, 11, 3, 16, 0, tzinfo=WIEN))
-    assert [_uhr(rechnung, i) for i in rechnung.termine_abend] == ["04. 16:30"]
-
+    assert [_uhr(rechnung, i) for i in rechnung.termine_abend] == ["03. 16:30", "04. 16:30"]
+    assert rechnung.pflicht is not None and rechnung.pflicht[0] < 0
 
 def test_ohne_bekannte_untergaenge_rechnet_der_ersatzstandort():
     rechnung = _rechnung(abend_kwh=6.0, untergaenge=None)
