@@ -146,21 +146,14 @@ def test_dunkle_termine_sind_die_des_lp():
 
     inputs = _abend(pv=0.03, abend=50.0)
     config = sched.HAConfig(inputs)
-    gesehen = {}
-    original = config.abend_termine
-
-    def mitschreiben(parameters, ueberschuss, pv):
-        ergebnis = original(parameters, ueberschuss, pv)
-        if "dc_production" in parameters:
-            gesehen["lp"] = [ueberschuss.index[i] for i in ergebnis]
-        return ergebnis
-
-    config.abend_termine = mitschreiben
     table = opt_highs.opt(config, inputs.start)
+    # Die Rechnung, mit der das LP lief, liegt im Cache.
+    lp = config._forderungen_cache[2]
+    gesehen = [lp.lage.stempel[i] for i in lp.termine_abend]
     ueberschuss = table["PV"] - table["consumption"] / config.ac_efficiency
     ausgabe = [table.index[i] for i in config.abend_termine(table, ueberschuss, table["PV"])]
-    assert gesehen["lp"]
-    assert [pd.Timestamp(t) for t in gesehen["lp"]] == [pd.Timestamp(t) for t in ausgabe]
+    assert gesehen
+    assert [pd.Timestamp(t) for t in gesehen] == [pd.Timestamp(t) for t in ausgabe]
 
 
 def test_ganz_ohne_pv_kein_termin():
@@ -190,23 +183,19 @@ def test_erreichbar_deckelt_die_entladung_nicht_wie_opt_highs():
     assert config._erreichbar(parameters, ueberschuss, None) == pytest.approx(erwartet)
 
 
-def test_netz_grenzen_cache_haelt_die_objekte():
+def test_forderungen_cache_haelt_die_objekte():
     """Gleiche Reihen → einmal gerechnet; neue Reihen → neu gerechnet, auch
     wenn ihre ``id()`` zufällig die alte wäre."""
     pd = pytest.importorskip("pandas")
     config = sched.HAConfig(_abend())
-    aufrufe = []
-    config._netzladen_wirtschaftlich = lambda p, u: aufrufe.append(1) or None
-    config._netz_untergrenze = lambda p, u: None
     index = pd.date_range("2026-11-02 18:00", periods=2, freq="15min", tz="Europe/Vienna")
     parameters = pd.DataFrame({"dc_production": [0.0, 0.0]}, index=index)
     ueberschuss = pd.Series([-1.0, -1.0], index=index)
-    config._netz_grenzen(parameters, ueberschuss)
-    config._netz_grenzen(parameters, ueberschuss)
-    assert len(aufrufe) == 1
-    config._netz_grenzen(parameters.copy(), ueberschuss)
-    assert len(aufrufe) == 2
-    assert config._netz_cache[0] is not parameters
+    erste = config._forderungen(parameters, ueberschuss)
+    assert config._forderungen(parameters, ueberschuss) is erste
+    kopie = parameters.copy()
+    assert config._forderungen(kopie, ueberschuss) is not erste
+    assert config._forderungen_cache[0] is kopie
 
 
 
@@ -340,7 +329,9 @@ def test_pflicht_rechnung_deckelt_die_entladung_nicht():
     forderung = [0.0] * n
     forderung[-1] = start + 0.2 * grenze
     assert start + 1.0 * grenze < kapazitaet  # der Test braucht Luft nach oben
-    config._netz_forderung = lambda p, u: forderung
+    # Die Forderung von Hand setzen — die Pflicht-Rechnung liest sie aus der
+    # Rechnung des Laufs (cached_property, also über das Instanz-Dict).
+    config._forderungen(parameters, ueberschuss).__dict__["netz_forderung"] = forderung
     untergrenze = config._netz_untergrenze(parameters, ueberschuss)
     assert untergrenze is not None
     # Nachrechnen wie opt_highs: Laden gedeckelt, Entladung nicht.

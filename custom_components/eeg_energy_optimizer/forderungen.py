@@ -1,0 +1,700 @@
+"""Untergrenzen des Ladestands je Slot — eine Rechnung für alle.
+
+Drei Wünsche verlangen, dass die Batterie zu bestimmten Zeiten mindestens
+einen Stand hat, und kommen über den Ladeziel-Hook in ``opt()``
+(``chamo/README.md`` § 3, § 5):
+
+* **Ladeziel** — am Ende der PV-Zeit, davor rückwärts auf dem vorsichtigen
+  Pfad verteilt. Kauft nie, höchstens über wirtschaftliches Netzladen.
+* **Mindestladung am Abend** — am Ende der PV-Zeit bzw. der Erzeugung.
+  Pflicht, notfalls aus dem Netz.
+* **Spitzenreserve aus dem Netz** — vor jeder Viertelstunde, die zur Spitze
+  beiträgt. Pflicht, notfalls aus dem Netz.
+
+Der Mindest-Ladestand selbst (mit Backup und der Spitzenreserve von jetzt)
+ist keine Forderung hier, er steckt als fehlende Kapazität im Modell
+(``HAConfig.__init__``).
+
+Bis 2.1.64 lag das in elf Methoden von ``HAConfig``, die einander riefen,
+mit drei Erreichbarkeitsrechnungen und zwei Regeln für den Planungsrand.
+Die Fehler, die der Replay-Korpus fand, lagen fast alle in diesen Fugen.
+Hier steht dieselbe Rechnung einmal, ohne pandas und ohne ``hass``:
+``HAConfig`` füllt ``Lage`` aus den gerasterten Parametern von ``opt()``,
+die Plan-Ausgabe liest dasselbe Ergebnis.
+
+Alle Stände in kWh im Modellfenster (über dem Boden, bis zum Deckel) und
+für das ENDE eines Slots, wie ``battery_free[i]`` in ``opt_highs``.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from datetime import datetime
+from functools import cached_property
+
+# Haralds Innenwiderstand je Stufe (``opt_highs``: ``c.battery_resistance``).
+BATTERIE_WIDERSTAND = 0.04
+
+# Ab welcher erwarteten PV-Leistung (kW, DC) ein Slot an einem Tag ohne
+# Überschuss noch als „Erzeugung" zählt — darunter ist es Dämmerung, und
+# deren Prognose sagt nichts über das Ende des Tages.
+PV_ERZEUGUNG_MIN_KW = 0.05
+# Unter so viel Überschuss am ganzen Tag (kWh) gilt ein Tag für die
+# Mindestladung als dunkel. Ein einzelner Slot mit 0,01 kW über der Hauslast
+# zu Mittag ist kein Ende der PV-Zeit, sondern Rauschen in der Prognose —
+# als solches gezählt, sprang der Termin von ~16:30 auf 12:00, sobald die
+# Prognose den Slot einmal knapp über und einmal knapp unter die Hauslast
+# legte, und mit ihm die Pflichtladung um vier Stunden nach vorn. Eine halbe
+# Kilowattstunde lädt keine Batterie nennenswert.
+UEBERSCHUSS_WINZIG_KWH = 0.5
+# Die Spitzenreserve fordert nur vor einer Viertelstunde, in der die Kurve
+# um mehr als das fällt — kleinere Stufen sind Rundung, kein Bedarf.
+RESERVE_NETZ_BEDARF_MIN_KWH = 0.05
+
+
+# ---------------------------------------------------------------------------
+# Batteriephysik (Haralds gestufte Verluste)
+# ---------------------------------------------------------------------------
+
+
+def batterie_verluste_kw(p_kw: float, kapazitaet_kwh: float) -> float:
+    """Innenwiderstandsverluste in kW zu einer Batterieleistung — Haralds Modell.
+
+    ``opt_highs.py`` kann keinen echten Innenwiderstand (quadratisch) linear
+    abbilden und nimmt zwei Stufen: bis 0,1 C ist (Ent-)Laden verlustfrei,
+    zwischen 0,1 C und 0,2 C gehen ``battery_resistance`` (4 %) der Leistung
+    darüber verloren, oberhalb von 0,2 C das Doppelte. „C" ist die Kapazität
+    in kWh als Leistung in kW gelesen. Die Verluste gehen vom DC-Bus ab, die
+    Batterie selbst sieht die volle Leistung — beim Laden kommt also weniger
+    von der PV an, beim Entladen weniger beim Haus. Richtung ist egal.
+    """
+    r = BATTERIE_WIDERSTAND
+    stufe = kapazitaet_kwh / 10.0
+    p = abs(p_kw)
+    hoch1 = min(max(p - stufe, 0.0), stufe)
+    hoch2 = max(p - 2.0 * stufe, 0.0)
+    return r * hoch1 + 2.0 * r * hoch2
+
+
+def ladeleistung_aus_dc(angebot_kw: float, kapazitaet_kwh: float) -> float:
+    """Umkehrung von ``batterie_verluste_kw`` fürs Laden: die Batterieleistung
+    p, für die ``p + Verluste(p)`` genau das DC-Angebot ausschöpft."""
+    r = BATTERIE_WIDERSTAND
+    stufe = kapazitaet_kwh / 10.0
+    if angebot_kw <= stufe:
+        return max(angebot_kw, 0.0)
+    if angebot_kw <= stufe * (2.0 + r):          # bis p = 0,2 C
+        return (angebot_kw + r * stufe) / (1.0 + r)
+    return (angebot_kw + 3.0 * r * stufe) / (1.0 + 2.0 * r)
+
+
+def entladeleistung_fuer_dc(bedarf_kw: float, kapazitaet_kwh: float) -> float:
+    """Umkehrung fürs Entladen: die Batterieleistung p, für die
+    ``p − Verluste(p)`` genau den DC-Bedarf deckt."""
+    r = BATTERIE_WIDERSTAND
+    stufe = kapazitaet_kwh / 10.0
+    if bedarf_kw <= stufe:
+        return max(bedarf_kw, 0.0)
+    if bedarf_kw <= stufe * (2.0 - r):           # bis p = 0,2 C
+        return (bedarf_kw - r * stufe) / (1.0 - r)
+    return (bedarf_kw - 3.0 * r * stufe) / (1.0 - 2.0 * r)
+
+
+# ---------------------------------------------------------------------------
+# Termine
+# ---------------------------------------------------------------------------
+
+
+def pv_enden(werte: list[float], tage: list) -> list[int]:
+    """Je Kalendertag der letzte Slot mit Überschuss — das Ende der PV-Zeit.
+
+    Nur wenn danach am selben Tag noch ein Slot im Horizont liegt (sonst ist
+    es das Ende der Rechnung, nicht der Sonne) und nicht nur eine Wolke
+    dazwischen war. ``werte`` ist der Überschuss je Slot, ``tage`` das Datum.
+    Gemeinsam für Ladeziel und Netzladen.
+    """
+    enden: list[int] = []
+    for i in range(len(werte)):
+        if werte[i] <= 0:
+            continue
+        naechster = i + 1
+        if naechster >= len(werte) or tage[naechster] != tage[i]:
+            continue  # Horizont- oder Tagesende, kein PV-Ende
+        if werte[naechster] > 0:
+            continue  # Überschuss geht weiter
+        if any(werte[k] > 0 for k in range(naechster, len(werte)) if tage[k] == tage[i]):
+            continue  # nur eine Wolke, später am Tag kommt noch Sonne
+        enden.append(i)
+    return enden
+
+
+def pv_erzeugung_enden(
+    pv: list[float],
+    werte: list[float],
+    tage: list,
+    vorher_kwh: dict | None = None,
+    p2e: float = 0.25,
+) -> list[int]:
+    """Termine der Mindestladung an Tagen ohne nennenswerten Überschuss.
+
+    ``pv_enden`` kennt nur Tage, an denen die PV das Haus wenigstens eine
+    Viertelstunde übersteigt. An einem dunklen Novembertag (PV ganztags unter
+    der Hauslast) gibt es keinen solchen Slot, also keinen Termin — und damit
+    keine Mindestladung, genau an dem Tag, für den sie gedacht ist
+    (nachgerechnet: Mindestladung 50 %, PV-Faktor 0,03 → 0 kWh gekauft, der
+    Plan blieb bei 27,6 %).
+
+    Für solche Tage gilt als Termin der letzte Slot mit erwarteter Erzeugung
+    über ``PV_ERZEUGUNG_MIN_KW`` — das Ende der Erzeugung statt des Endes
+    des Überschusses. Wie bei ``pv_enden`` nur, wenn danach am selben Tag noch
+    ein Slot im Horizont liegt. Ein Tag ganz ohne PV (Prognose 0, Schnee auf
+    den Modulen) hat keinen Termin: Ohne Erzeugung gibt es keinen Abend, an
+    dem man ihn festmachen könnte, und ein frei gewählter Zeitpunkt wäre eine
+    Erfindung.
+
+    „Dunkel" heißt: Der Überschuss des GANZEN Kalendertags bleibt unter
+    ``UEBERSCHUSS_WINZIG_KWH``. Gezählt wird, was im Horizont liegt, plus
+    ``vorher_kwh`` (Datum → kWh) für den Teil des Tages vor dem Horizontstart.
+    Ohne diesen Teil bekam ein sonniger Tag, dessen letzter Überschuss-Slot
+    um 15:30 schon vorbei war, einen zweiten Termin am Ende der Erzeugung
+    (~16:30): ein Zwangskauf am Nachmittag für einen Tag, dessen PV-Ende
+    längst war, und eine zweite Prüfung in der Telemetrie.
+
+    Nur für die Mindestladung, nicht fürs Ladeziel: Das Ladeziel lässt sich
+    ohnehin nur aus Überschuss erreichen — an einem Tag ohne ihn gibt es für
+    es nichts zu planen.
+    """
+    summe: dict = dict(vorher_kwh or {})
+    for i, w in enumerate(werte):
+        if w > 0:
+            summe[tage[i]] = summe.get(tage[i], 0.0) + w * p2e
+    letzte: dict = {}
+    for i, p in enumerate(pv):
+        if summe.get(tage[i], 0.0) < UEBERSCHUSS_WINZIG_KWH and p > PV_ERZEUGUNG_MIN_KW:
+            letzte[tage[i]] = i
+    enden: list[int] = []
+    for i in sorted(letzte.values()):
+        naechster = i + 1
+        if naechster >= len(werte) or tage[naechster] != tage[i]:
+            continue  # Horizont- oder Tagesende, kein Ende der Erzeugung
+        enden.append(i)
+    return enden
+
+
+def abend_kandidaten(
+    pv: list[float],
+    werte: list[float],
+    tage: list,
+    vorher_kwh: dict | None = None,
+    p2e: float = 0.25,
+) -> list[int]:
+    """Kandidaten für den Termin der Mindestladung, je Kalendertag höchstens einer.
+
+    Tage mit nennenswertem Überschuss: das Ende der PV-Zeit (``pv_enden``),
+    wie beim Ladeziel. Dunkle Tage (``pv_erzeugung_enden``): das Ende der
+    Erzeugung — auch dann, wenn ein winziger Überschuss-Slot ``pv_enden``
+    einen Mittagstermin gäbe. Der Termin ist dort also max(PV-Ende,
+    Erzeugungsende) — praktisch das Erzeugungsende, denn die Erzeugung endet
+    nur bei einer Hauslast nahe null vor dem Überschuss. Liegt es hinter dem
+    Horizont, fällt der Tag ganz weg, statt auf den Mittag zurückzufallen —
+    wie bei ``pv_enden`` ist das Ende der Rechnung kein Ende des Tages.
+    """
+    erzeugung = {tage[i]: i for i in pv_erzeugung_enden(pv, werte, tage, vorher_kwh, p2e)}
+    summe: dict = dict(vorher_kwh or {})
+    for i, w in enumerate(werte):
+        if w > 0:
+            summe[tage[i]] = summe.get(tage[i], 0.0) + w * p2e
+    termine = dict(erzeugung)
+    for i in pv_enden(werte, tage):
+        tag = tage[i]
+        if summe.get(tag, 0.0) >= UEBERSCHUSS_WINZIG_KWH:
+            termine[tag] = i
+        elif tag in erzeugung:
+            termine[tag] = max(i, erzeugung[tag])
+    return sorted(termine.values())
+
+
+# ---------------------------------------------------------------------------
+# Eingänge und Rechnung
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class Akku:
+    """Die Batterie im Modellfenster, wie ``HAConfig`` sie ``opt()`` gibt."""
+
+    kapazitaet: float          # kWh zwischen Boden und Deckel
+    frei: float                # kWh bis zum Deckel
+    leistung: float            # kW, ``battery_power_limit``
+    ac_limit: float            # kW
+    eta: float                 # ``ac_efficiency``
+    p2e: float                 # h je Slot
+
+    @property
+    def stand(self) -> float:
+        return self.kapazitaet - self.frei
+
+
+@dataclass
+class Vorgaben:
+    """Was eingestellt ist — alle Wünsche, Grenzen und Preise außer der Reihe."""
+
+    ladeziel_kwh: float = 0.0
+    abend_kwh: float = 0.0
+    netzladen_max_kw: float = 0.0
+    netzladen_netzgrenze_kw: float = 0.0
+    netzladen_vorteil: float = 0.0
+    battery_cost: float = 0.0
+    spitzenreserve_netz_kw: float = 0.0
+    # Spitzenreserve: Kurve in % je Viertelstunde (Epoche → %), die Grenze
+    # der Spitzenkappung je Viertelstunde (Epoche → kW) und die Standard-
+    # grenze. ``reserve_aktiv`` heißt: Die Batterie-Stufe läuft, ihre Grenze
+    # gilt für jede Netzladung.
+    reserve_aktiv: bool = False
+    reserve_pct: dict = field(default_factory=dict)
+    kappung_kw: dict = field(default_factory=dict)
+    kappung_standard_kw: float = 0.0
+    sicherheit_kw: float = 0.3
+    # Für die Reserve in kWh im Modellfenster: echte Kapazität, Boden ohne
+    # Reserve und Boden des Modells in Prozent.
+    kapazitaet_echt_kwh: float = 0.0
+    boden_basis_pct: float | None = None
+    boden_pct: float = 0.0
+    ueberschuss_vor_start_kwh: float = 0.0
+
+
+@dataclass
+class Lage:
+    """Die gerasterten Reihen eines ``opt()``-Laufs, je Slot."""
+
+    stempel: list[datetime]
+    ueberschuss: list[float]          # DC: PV − Haus/η
+    pv: list[float]                   # DC-Erzeugung
+    haus: list[float]                 # AC
+    einspeisegrenze: list[float]      # kW
+    preise: list[float] | None = None  # Bezugspreis €/kWh
+    fest: list[bool] | None = None     # Preis veröffentlicht?
+    vorsichtig: list[float] | None = None  # Überschuss auf dem p10-Pfad
+
+
+class Forderungen:
+    """Termine, Forderungen und Netzgrenzen eines Laufs — einmal gerechnet.
+
+    ``ziel`` geht als Mindestinhalt je Slot in den Ladeziel-Hook,
+    ``netzladen`` als Untergrenze von ``dc_p`` in den Netzlade-Hook.
+    """
+
+    def __init__(self, lage: Lage, akku: Akku, vorgaben: Vorgaben) -> None:
+        self.lage = lage
+        self.akku = akku
+        self.v = vorgaben
+        self.n = len(lage.ueberschuss)
+        self.tage = [s.date() for s in lage.stempel]
+
+    # -- Planungsrand ---------------------------------------------------
+
+    @cached_property
+    def abbau_bis_ende(self) -> tuple[list[float], float]:
+        """(Abbau ab Slot j bis zum Horizontende in kWh, Endstand in kWh).
+
+        Wie viel die Batterie nach einem Slot noch abgeben kann, bevor der
+        Horizont endet, und auf welchen Stand ``opt()`` sie dort festlegt.
+        Eine Forderung über ``Endstand + rest[i + 1]`` am Ende von Slot ``i``
+        lässt das LP ohne Lösung: Es müsste schneller entladen, als die
+        Batterie kann.
+        """
+        a = self.akku
+        werte = self.lage.ueberschuss
+        verbrauch = self.lage.haus
+        grenze = self.lage.einspeisegrenze
+        # Was die Batterie je Slot höchstens abgeben kann, ohne zu laden:
+        # in Slots ohne Überschuss den Fehlbetrag des Hauses plus die
+        # erlaubte Einspeisung, beides auf der DC-Seite und gedeckelt durch
+        # die Leistungsgrenze. Slots mit Überschuss zählen nicht — dort
+        # versorgt die PV das Haus.
+        abbau = [
+            0.0 if werte[j] > 0 else min(
+                a.leistung,
+                -werte[j] + max(0.0, min(grenze[j], a.ac_limit - verbrauch[j])) / a.eta,
+            ) * a.p2e
+            for j in range(self.n)
+        ]
+        rest = [0.0] * (self.n + 1)
+        for j in range(self.n - 1, -1, -1):
+            rest[j] = rest[j + 1] + abbau[j]
+        # Der Endstand, wie opt() ihn setzt (chamo/README.md § 4): halb, aber
+        # nie mehr, als die Batterie aus PV allein erreicht.
+        stand = a.stand
+        for w in werte:
+            if w > 0:
+                stand = min(
+                    a.kapazitaet,
+                    stand + min(ladeleistung_aus_dc(w, a.kapazitaet), a.leistung) * a.p2e,
+                )
+        return rest, min(a.kapazitaet / 2.0, stand)
+
+    def termine(self, ziel_kwh: float, mit_erzeugung: bool = False) -> list[int]:
+        """Slots, an denen ein Stand von ``ziel_kwh`` gilt.
+
+        Je Kalendertag das Ende der PV-Zeit (``pv_enden``); mit
+        ``mit_erzeugung`` (Mindestladung) an dunklen Tagen das Ende der
+        Erzeugung (``abend_kandidaten``). Ein Termin, von dem der Plan bis
+        zum Horizontende nicht mehr auf den Endstand käme, bleibt weg.
+        """
+        if ziel_kwh <= 0 or self.n == 0:
+            return []
+        if mit_erzeugung:
+            vorher = float(self.v.ueberschuss_vor_start_kwh or 0.0)
+            kandidaten = abend_kandidaten(
+                self.lage.pv, self.lage.ueberschuss, self.tage,
+                {self.tage[0]: vorher} if vorher > 0 else None, self.akku.p2e,
+            )
+        else:
+            kandidaten = pv_enden(self.lage.ueberschuss, self.tage)
+        rest, ende = self.abbau_bis_ende
+        return [i for i in kandidaten if ziel_kwh - ende <= rest[i + 1] + 1e-9]
+
+    @cached_property
+    def termine_ladeziel(self) -> list[int]:
+        return self.termine(self.v.ladeziel_kwh)
+
+    @cached_property
+    def termine_abend(self) -> list[int]:
+        return self.termine(self.v.abend_kwh, mit_erzeugung=True)
+
+    # -- Erreichbarkeit -------------------------------------------------
+
+    def erreichbar(self, untergrenze: list[float] | None) -> list[float]:
+        """Stand am Ende jedes Slots, wenn jede Gelegenheit zum Laden genutzt wird.
+
+        Wie die Erreichbarkeit in ``opt_highs`` (mit denselben gestuften
+        Verlusten): Überschuss lädt, Defizit entlädt, und wo ``untergrenze``
+        unter null liegt, lädt die Batterie aus PV plus Netz. Ohne
+        ``untergrenze`` also das ohne Zukauf Erreichbare.
+
+        Gedeckelt wird wie dort nur das Laden, nicht die Entladung
+        (``min(step, max_step)`` in ``opt_highs``): Eine hier gedeckelte
+        Entladung hielt den Stand höher als das LP und ließ eine Forderung
+        stehen, die ``opt()`` danach doch kappen musste.
+        """
+        a = self.akku
+        lb = untergrenze if untergrenze is not None else [0.0] * self.n
+        stand = a.stand
+        ergebnis = []
+        for w, p, u in zip(self.lage.ueberschuss, self.lage.pv, lb):
+            if u < 0:
+                schritt = min(ladeleistung_aus_dc(p - u, a.kapazitaet), a.leistung)
+            elif w > 0:
+                schritt = min(ladeleistung_aus_dc(w, a.kapazitaet), a.leistung)
+            else:
+                schritt = -entladeleistung_fuer_dc(-w, a.kapazitaet)
+            stand = min(a.kapazitaet, max(0.0, stand + schritt * a.p2e))
+            ergebnis.append(stand)
+        return ergebnis
+
+    # -- Netzgrenzen ----------------------------------------------------
+
+    def netz_erlaubt_kw(self, max_kw: float) -> list[float]:
+        """Was die Batterie je Slot höchstens aus dem Netz ziehen darf (kW, AC).
+
+        Eine Regel für beide Wege, wirtschaftliches Netzladen und
+        Pflichtladung: höchstens ``max_kw``, und den Zähler (Haus + Ladung)
+        weder über die Netzgrenze des Netzladens noch — mit der Batterie-Stufe
+        der Spitzenkappung — über deren Grenze je Slot minus
+        ``sicherheit_kw``. Dieselbe Kappung macht der Executor bei jeder
+        Netzladung. Bis 2.1.64 kannte nur die Pflichtladung die Grenze der
+        Spitzenkappung; das wirtschaftliche Netzladen plante darüber, der
+        Executor kappte, und die Batterie lud weniger als geplant
+        (Replay-Korpus, Huawei 02.11.2026: 4 kW Bezug bei 3 kW Grenze).
+        """
+        v = self.v
+        erlaubt_je_slot = []
+        for t, h in zip(self.lage.stempel, self.lage.haus):
+            erlaubt = max_kw
+            if v.reserve_aktiv:
+                grenze = v.kappung_kw.get(int(t.timestamp()), v.kappung_standard_kw)
+                erlaubt = min(erlaubt, grenze - v.sicherheit_kw - h)
+            if v.netzladen_netzgrenze_kw > 0:
+                erlaubt = min(erlaubt, v.netzladen_netzgrenze_kw - h)
+            erlaubt_je_slot.append(max(0.0, erlaubt))
+        return erlaubt_je_slot
+
+    def _fest(self) -> list[bool]:
+        return list(self.lage.fest) if self.lage.fest is not None else [True] * self.n
+
+    @cached_property
+    def wirtschaftlich(self) -> list[float] | None:
+        """Untergrenze von ``dc_p`` je Slot (kW, DC, ≤ 0) — oder None.
+
+        Wo die Grenze unter null liegt, darf das LP aus dem Netz laden,
+        höchstens ``netzladen_max_kw`` (AC). None heißt: nirgends — dann ist
+        das Modell Zeile für Zeile das ohne Netzladen.
+
+        Erlaubt ist ein Slot vor dem Ende der PV-Zeit eines Tages (ab dem
+        vorigen PV-Ende), wenn Netzstrom dort billiger ist als der Strom, den
+        die Batterie danach ersetzt: der nach Hauslast gewichtete Bezugspreis
+        der Nacht bis zum nächsten Überschuss. Billiger heißt nach beiden
+        Wandlungen (AC→DC→AC, ``eta``²), Alterung (``battery_cost``) und
+        Mindestvorteil (``netzladen_vorteil``). Ein Slot mit
+        fortgeschriebenem Börsenpreis ist nie erlaubt.
+
+        Der Vergleich gilt je kWh. Ob die Nacht die Energie auch braucht,
+        entscheidet er nicht — das Ladeziel darf diese Slots nutzen und
+        füllt dann bis zum Ziel, auch wenn ein Teil später eingespeist wird.
+        """
+        max_kw = float(self.v.netzladen_max_kw or 0.0)
+        if max_kw <= 0 or self.n == 0 or self.lage.preise is None:
+            return None
+        preise = self.lage.preise
+        haus = self.lage.haus
+        werte = self.lage.ueberschuss
+        fest = self._fest()
+        wandlung = self.akku.eta ** 2
+        aufschlag = float(self.v.battery_cost or 0.0) + float(self.v.netzladen_vorteil or 0.0)
+        grenzen = [-kw / self.akku.eta for kw in self.netz_erlaubt_kw(max_kw)]
+        untergrenze = [0.0] * self.n
+        self.ersetzt_preis: list[float | None] = [None] * self.n
+        von = 0
+        for i in pv_enden(werte, self.tage):
+            k = i + 1
+            gewicht = summe = 0.0
+            while k < self.n and werte[k] <= 0:
+                gewicht += haus[k]
+                summe += haus[k] * preise[k]
+                k += 1
+            if gewicht > 0:
+                ersetzt = summe / gewicht
+                for j in range(von, i + 1):
+                    if fest[j] and preise[j] + aufschlag < ersetzt * wandlung:
+                        untergrenze[j] = grenzen[j]
+                        self.ersetzt_preis[j] = ersetzt
+            von = i + 1
+        if not any(u < 0 for u in untergrenze):
+            return None
+        return untergrenze
+
+    # -- Pflichtforderungen aus dem Netz --------------------------------
+
+    @cached_property
+    def reserve_forderung(self) -> list[float] | None:
+        """Mindestinhalt je Slot aus der Spitzenreserve.
+
+        Nur mit „Reserve notfalls aus dem Netz" (``spitzenreserve_netz_kw``).
+        Die Kurve sagt je Viertelstunde, wie viel Energie ab ihr bis zum
+        nächsten Überschuss über der Grenze liegt. Gefordert wird sie nur am
+        Ende des Slots VOR einer Viertelstunde, die selbst zum Bedarf beiträgt
+        (Kurve fällt dort um mehr als ``RESERVE_NETZ_BEDARF_MIN_KWH``): Bis
+        dahin ist jede Viertelstunde gleich gut zum Nachladen, und die
+        günstigste darf es sein. Eine Forderung schon am Abend für die
+        Wärmepumpe um 07:30 ließe nur das sofortige Laden zu.
+
+        Gezählt im Modellfenster, also über dem Boden des Modells, der die
+        Reserve von jetzt schon enthält, soweit der Ladestand reicht.
+        """
+        v = self.v
+        if float(v.spitzenreserve_netz_kw or 0.0) <= 0:
+            return None
+        if v.boden_basis_pct is None or not v.reserve_pct or self.n == 0:
+            return None
+        kap = float(v.kapazitaet_echt_kwh)
+        stempel = [int(t.timestamp()) for t in self.lage.stempel]
+        schritt_s = int(round(self.akku.p2e * 3600))
+        forderung = [0.0] * self.n
+        for k in range(self.n - 1):
+            # Ohne Kurvenwert (hinter dem Horizont) fällt die Kurve nicht —
+            # ein „danach = 0“ machte aus der Mindestreserve eine Forderung
+            # am letzten Slot (Traun 02.11.2026). Die Kurve reicht einen Slot
+            # weiter als das LP; den Wert dort gibt es also meist noch.
+            jetzt = v.reserve_pct.get(stempel[k + 1])
+            danach = v.reserve_pct.get(
+                stempel[k + 2] if k + 2 < self.n else stempel[-1] + schritt_s
+            )
+            if jetzt is None or danach is None:
+                continue
+            anteil = (jetzt - danach) / 100.0 * kap
+            if anteil <= RESERVE_NETZ_BEDARF_MIN_KWH:
+                continue
+            kwh = kap * (float(v.boden_basis_pct) + jetzt - float(v.boden_pct)) / 100.0
+            forderung[k] = min(self.akku.kapazitaet, max(0.0, kwh))
+        return forderung if any(f > 0 for f in forderung) else None
+
+    @cached_property
+    def abend_forderung(self) -> list[float] | None:
+        """Mindestladung am Abend: ``abend_kwh`` an jedem Termin, sonst 0."""
+        if self.v.abend_kwh <= 0 or not self.termine_abend:
+            return None
+        forderung = [0.0] * self.n
+        for i in self.termine_abend:
+            forderung[i] = self.v.abend_kwh
+        return forderung
+
+    @cached_property
+    def netz_forderung(self) -> list[float] | None:
+        """Was aus dem Netz notfalls erreicht werden muss (kWh je Slot).
+
+        Spitzenreserve und Mindestladung, je Slot die höhere — gekappt auf
+        das, wovon der Plan bis zum Horizontende noch auf den Endstand kommt.
+        Ohne die Kappung hatte das LP keine Lösung, sobald das Horizontende
+        kurz hinter der Abendspitze lag: An einem dunklen Tag ist der
+        Endstand das, was die PV allein schafft (oft 0), die Reserve davor
+        aber aus dem Netz gekauft — 2,6 kWh in zwei Slots abzubauen schafft
+        keine 5-kW-Batterie (Replay-Korpus, Huawei und SolaX 01.11.2026).
+        """
+        reserve = self.reserve_forderung
+        abend = self.abend_forderung
+        if reserve is None:
+            forderung = abend
+        elif abend is None:
+            forderung = reserve
+        else:
+            forderung = [max(a, b) for a, b in zip(reserve, abend)]
+        if forderung is None:
+            return None
+        rest, ende = self.abbau_bis_ende
+        return [min(f, ende + rest[k + 1]) if f > 0 else f for k, f in enumerate(forderung)]
+
+    @cached_property
+    def pflicht(self) -> list[float] | None:
+        """Pflichtladung aus dem Netz je Slot (kW, DC, ≤ 0) — oder None.
+
+        Unabhängig vom Preis, aber so günstig wie möglich: Für die erste
+        Forderung, die der Stand ohne Zukauf nicht erreicht, wird der
+        günstigste noch freie Slot davor gewählt — bei gleichem Preis der
+        späteste —, dann neu gerechnet, bis alles erreicht ist oder kein Slot
+        mehr hilft. Hat die Gemeinschaft Überschuss, ist das der günstigste
+        Slot. Nur gewählte Slots bekommen eine Grenze — so kauft das LP
+        nicht nebenbei auf Vorrat.
+        """
+        forderung = self.netz_forderung
+        if forderung is None or self.lage.preise is None:
+            return None
+        a = self.akku
+        max_kw = max(float(self.v.spitzenreserve_netz_kw or 0.0),
+                     float(self.v.netzladen_max_kw or 0.0))
+        preise = self.lage.preise
+        pv = self.lage.pv
+        werte = self.lage.ueberschuss
+        fest = self._fest()
+        netz = self.netz_erlaubt_kw(max_kw)
+
+        def schritt(k: int, mit_netz: bool) -> float:
+            if mit_netz:
+                return min(
+                    ladeleistung_aus_dc(pv[k] + netz[k] / a.eta, a.kapazitaet), a.leistung
+                ) * a.p2e
+            w = werte[k]
+            if w > 0:
+                return min(ladeleistung_aus_dc(w, a.kapazitaet), a.leistung) * a.p2e
+            # Die Entladung NICHT auf die Batterieleistung deckeln — wie
+            # ``erreichbar`` und ``opt_highs``. Gedeckelt blieb der Stand
+            # hier höher, als er im LP fällt, wenn das Haus mehr braucht, als
+            # die Batterie hergibt: Es wurden zu wenige Pflicht-Slots
+            # gewählt, und ``opt()`` kappte die Forderung danach still.
+            return -entladeleistung_fuer_dc(-w, a.kapazitaet) * a.p2e
+
+        gewaehlt = [False] * self.n
+        # Forderungen, die auch mit jedem freien Slot davor nicht erreichbar
+        # sind, werden übersprungen, nicht die Suche beendet: Bis 2.1.64
+        # stand hier ein ``break``, und ein unerreichbarer früher Termin —
+        # etwa das Ende des Überschusses im zweiten Slot des Plans — nahm
+        # allen späteren die Pflichtladung (Replay-Korpus, Kostal
+        # 28.10.2026). ``opt()`` kappt die unerreichbare Forderung ohnehin.
+        aufgegeben: set[int] = set()
+        for _ in range(2 * self.n):
+            stand = a.stand
+            luecke = None
+            for k in range(self.n):
+                stand = min(a.kapazitaet, max(0.0, stand + schritt(k, gewaehlt[k])))
+                if k not in aufgegeben and stand < forderung[k] - 1e-6:
+                    luecke = k
+                    break
+            if luecke is None:
+                break
+            kandidaten = [
+                j for j in range(luecke + 1) if not gewaehlt[j] and fest[j] and netz[j] > 0
+            ]
+            if not kandidaten:
+                aufgegeben.add(luecke)
+                continue
+            gewaehlt[min(kandidaten, key=lambda j: (preise[j], -j))] = True
+        if not any(gewaehlt):
+            return None
+        return [-netz[k] / a.eta if gewaehlt[k] else 0.0 for k in range(self.n)]
+
+    # -- Ergebnis für die Hooks -----------------------------------------
+
+    @cached_property
+    def netzladen(self) -> list[float] | None:
+        """Untergrenze von ``dc_p`` je Slot: die tiefere aus wirtschaftlich
+        und Pflicht. Ohne beide None."""
+        w, p = self.wirtschaftlich, self.pflicht
+        if p is None:
+            return w
+        if w is None:
+            return p
+        return [min(a, b) for a, b in zip(w, p)]
+
+    @cached_property
+    def ladeziel_kette(self) -> list[float]:
+        """Mindestinhalt je Slot aus dem Ladeziel, rückwärts vom Termin.
+
+        Am Termin steht das Ziel selbst. Davor steht, was die Batterie
+        mindestens halten muss, damit sie das Ziel auch dann noch erreicht,
+        wenn nur der vorsichtige Pfad (``min_production``: p10, sonst 60 %
+        der Erwartung) eintrifft: Überschuss-Slots senken die Forderung um
+        das, was sie im schlechten Fall laden, Defizit-Slots heben sie um
+        das, was das Haus dort aus der Batterie nimmt. Ohne vorsichtigen Pfad
+        gilt der Erwartungswert.
+
+        Warum (Anlage Schweiz, 07.10.2026): Mit dem Ziel nur am Termin
+        rechnete der Plan mit der ERWARTETEN Prognose von 29 kWh, speiste
+        nachts 5,5 kWh und vormittags 2,5 kWh ein und wollte mittags
+        nachladen. Es kamen 21 kWh, abends standen 77 % statt 100.
+        """
+        a = self.akku
+        forderung = [0.0] * self.n
+        if not self.termine_ladeziel:
+            return forderung
+        werte = self.lage.vorsichtig if self.lage.vorsichtig is not None else self.lage.ueberschuss
+        # Dieselben gestuften Verluste wie die Erreichbarkeitsschranke in
+        # opt_highs.py, gedeckelt durch die Batterieleistung.
+        schritt = [
+            (
+                min(ladeleistung_aus_dc(w, a.kapazitaet), a.leistung) if w > 0
+                else -min(entladeleistung_fuer_dc(-w, a.kapazitaet), a.leistung)
+            ) * a.p2e
+            for w in werte
+        ]
+        # Wie bor in opt() gilt jeder Wert für den Stand am ENDE des Slots
+        # (battery_free[i]): Vom Ende von k auf das Ende von k+1 wirkt
+        # der Schritt von k+1.
+        for i in self.termine_ladeziel:
+            bedarf = self.v.ladeziel_kwh
+            forderung[i] = max(forderung[i], bedarf)
+            for k in range(i - 1, -1, -1):
+                bedarf = min(a.kapazitaet, max(0.0, bedarf - schritt[k + 1]))
+                if bedarf <= 0.0:
+                    break
+                forderung[k] = max(forderung[k], bedarf)
+        if self.pflicht is not None:
+            # Die Pflicht-Slots gehören der Pflicht: opt() kappt das Ziel
+            # auf das mit ALLEN freigegebenen Slots Erreichbare, das Ladeziel
+            # selbst darf aber nur, was ohne Zukauf oder mit dem
+            # wirtschaftlichen Netzladen geht. Sonst füllte es über die für
+            # 0,75 kWh Reserve gewählten Slots bis 100 % aus dem Netz
+            # (Traun 02.11.2026).
+            erreichbar = self.erreichbar(self.wirtschaftlich)
+            forderung = [min(f, e) for f, e in zip(forderung, erreichbar)]
+        return forderung
+
+    @cached_property
+    def ziel(self) -> list[float]:
+        """Mindestinhalt je Slot für den Ladeziel-Hook: Ladeziel und
+        Netzforderung, je Slot die höhere."""
+        kette = self.ladeziel_kette
+        netz = self.netz_forderung
+        if netz is None:
+            return kette
+        if not self.termine_ladeziel:
+            return list(netz)
+        return [max(f, r) for f, r in zip(kette, netz)]
