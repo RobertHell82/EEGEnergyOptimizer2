@@ -1123,6 +1123,19 @@ absent for every other source.
   and a fake HA connection whose replies the test releases one by one;
   `tests/test_panel_js.py` runs them under pytest (skipped without Node).
   `EEG_PANEL_DATEI=<path>` runs them against another version of the panel
+- **Replay-Korpus** (`tests/fixtures/replay/`, `tests/test_replay_korpus.py`):
+  anonymised real plans from plan archives, re-solved with today's code —
+  as archived and in variants that switch on features on the real series
+  (`replay_korpus.VARIANTEN`: Netzladen, Mindestladung, Spitzenreserve
+  aus dem Netz, dark day, heater). Checked against invariants
+  (`replay_korpus.verstoesse`), never against exact values: the LP often
+  has several equally good solutions (> 1 kW apart, < 0.5 ct). Add plants
+  with `python scripts/replay_korpus.py aufnehmen <plaene.zip> --kuerzel
+  <treiber>-<x>`; review a fresh archive without committing it with
+  `… pruefen <plaene.zip>`. A new incident → a new rule in `verstoesse`
+  (plus a deliberately broken plan that trips it), not only a single test.
+  `_mit_spitzenreserve` mirrors `_spitzenreserve_fuer_plan` and the block
+  after it in `async_collect_inputs` — change both together
 - `pyproject.toml` configures pytest
 - All UI strings in German (`strings.json`, `translations/de.json`), English fallback (`translations/en.json`)
 - HA imports are guarded with try/except for test environment compatibility (stubs provided)
