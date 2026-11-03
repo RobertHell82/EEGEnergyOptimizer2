@@ -154,8 +154,9 @@ class PlanAction:
     # Prognose-Hauslast des Slots — Rückfall für Guard 2, wenn der
     # Hauslast-Messwert nicht lesbar ist.
     consumption_kw: float | None = None
-    # Klartext für Statussensor und Aktivitätslog, wenn „release" mehr
-    # bedeutet als Normalbetrieb (Beispiel: volle Batterie).
+    # Klartext für Statussensor und Aktivitätslog: bei „release", wenn es
+    # mehr bedeutet als Normalbetrieb (volle Batterie); sonst der Grund des
+    # Slots aus dem Plan (``slot["grund"]``), wo eine Forderung ihn erklärt.
     reason: str | None = None
 
 
@@ -240,6 +241,10 @@ def plan_action(result: dict | None, now: datetime) -> PlanAction | None:
         return None
     slot_t = slot.get("t")
     consumption = slot.get("consumption")
+    # Warum der Plan hier lädt oder Ladung hält (schedule._gruende_eintragen)
+    # — für die Statuskarte (``plan_grund``) und das Aktivitätslog. Eine
+    # Freigabe behält ihren eigenen Grund: aus ihm wird der Statustext.
+    grund = slot.get("grund") or None
 
     try:
         netzladung = float(slot.get("netzladung") or 0.0)
@@ -256,6 +261,7 @@ def plan_action(result: dict | None, now: datetime) -> PlanAction | None:
             target_soc=slot.get("soc"),
             slot_t=slot_t,
             consumption_kw=consumption,
+            reason=grund,
         )
     if battery_p < -_EPS_KW:
         if _laedt_alles(slot, result, grid_p):
@@ -275,7 +281,8 @@ def plan_action(result: dict | None, now: datetime) -> PlanAction | None:
         # Slot plant Laden → Ladelimit auf die Planleistung. Guard 1 hebt es
         # bei stiller Abregelung an.
         return PlanAction(
-            "charge_limit", power_kw=-battery_p, slot_t=slot_t, consumption_kw=consumption
+            "charge_limit", power_kw=-battery_p, slot_t=slot_t, consumption_kw=consumption,
+            reason=grund,
         )
     if battery_p > _EPS_KW and grid_p > _EPS_KW:
         # Slot plant Einspeisung aus der Batterie → erzwungene Entladung.
@@ -285,6 +292,7 @@ def plan_action(result: dict | None, now: datetime) -> PlanAction | None:
             target_soc=slot.get("soc"),
             slot_t=slot_t,
             consumption_kw=consumption,
+            reason=grund,
         )
     if battery_p > _EPS_KW:
         # Entladung nur für den Hausverbrauch — das erledigt der
@@ -323,7 +331,9 @@ def plan_action(result: dict | None, now: datetime) -> PlanAction | None:
     # PV-Überschuss in die Batterie laden, den der Plan einspeisen will
     # (Morgen-Einspeisung entsteht genau hier). Ladelimit 0 blockiert nur das
     # Laden; Entladung für den Hausverbrauch bleibt möglich.
-    return PlanAction("charge_limit", power_kw=0.0, slot_t=slot_t, consumption_kw=consumption)
+    return PlanAction(
+        "charge_limit", power_kw=0.0, slot_t=slot_t, consumption_kw=consumption, reason=grund
+    )
 
 
 class ScheduleExecutor:

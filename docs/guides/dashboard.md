@@ -79,7 +79,9 @@ Das Diagramm zeigt den Fahrplan: PV- und Verbrauchsprognose, geplante Netzleistu
 - **Verlauf**: Messung blass daneben — aus, letzte 12 Stunden oder ab gestern.
 - **Neu rechnen**: rechnet den Plan sofort.
 
-Maus darüber oder Tipp zeigt die Werte der Viertelstunde — geplant und, für die Vergangenheit, gemessen.
+Maus darüber oder Tipp zeigt die Werte der Viertelstunde — geplant und, für die Vergangenheit, gemessen. Lädt der Plan dort aus dem Netz oder hält er Ladung zurück, steht darunter der Grund, zum Beispiel „Netzladung für die Mindestladung (90 % um 16:15); Bezug begrenzt durch die Spitzenkappung (4,0 kW)“ oder „Hält Ladung für das Ladeziel (100 % um 15:00), auch bei schwacher Sonne“. Denselben Grund zeigt die Statuskarte für die laufende Viertelstunde.
+
+Im Ladestand markiert ein blauer Kreis das **Ladeziel** und eine violette Raute die **Mindestladung am Abend**, jeweils am Ende der PV-Zeit auf der Höhe des Werts. Kurz vor dem Ende des Planungszeitraums (48 Stunden) wird ein solches Ziel abgesenkt, weil der Optimierer dort einen festen Endstand verlangt; der Tooltip sagt das dann. Jeder neue Plan rückt diesen Rand weiter nach hinten.
 
 **Zoomen.** Zwei Finger auseinanderziehen zoomt hinein, zusammenschieben heraus. Am PC: Trackpad, Strg + Mausrad oder mit gedrückter linker Maustaste einen Bereich markieren. Gezoomt verschiebt waagrechtes Wischen den Ausschnitt (am PC auch Umschalt + Mausrad). Doppelklick, **Ganzer Plan** oder das Umstellen von Plan oder Verlauf zeigt wieder alles.
 

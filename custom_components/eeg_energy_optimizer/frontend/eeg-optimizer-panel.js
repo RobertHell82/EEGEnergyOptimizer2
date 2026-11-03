@@ -4035,6 +4035,10 @@ class EegOptimizerPanel extends HTMLElement {
              </div>`;
         }
       }
+      if (d.grund) {
+        tt.innerHTML +=
+          `<div style="margin-top:5px;padding-top:4px;border-top:1px solid var(--divider-color);max-width:240px;white-space:normal;font-size:11px">${this._escapeHtml(d.grund)}</div>`;
+      }
       tt.dataset.slot = d.key;
     }
 
@@ -4661,10 +4665,35 @@ class EegOptimizerPanel extends HTMLElement {
         const dt = new Date(tz);
         const hhmm = `${String(dt.getHours()).padStart(2, "0")}:${String(dt.getMinutes()).padStart(2, "0")}`;
         const knapp = Number(termin.geplant_pct) < Number(ladeziel.ziel_pct) - 0.5;
+        // Am Planungsrand (kurz vor dem Ende der 48 Stunden) ist das Ziel
+        // abgesenkt \u2014 dort liegt es nicht an der Sonne.
+        const rand = termin.abgesenkt === "planungsrand";
         socGrid += `<circle cx="${cx.toFixed(1)}" cy="${ys(ladeziel.ziel_pct).toFixed(1)}" r="3.5" fill="none" stroke="#1e88e5" stroke-width="1.2" stroke-opacity="0.8">`
           + `<title>Ladeziel ${fmtDe(ladeziel.ziel_pct, 0)} % um ${hhmm}`
-          + (knapp ? ` \u2014 geplant ${fmtDe(termin.geplant_pct, 0)} %, mehr gibt die Sonne nicht her` : "")
+          + (knapp && rand
+            ? ` \u2014 am Ende des Planungszeitraums auf ${fmtDe(termin.gefordert_pct, 0)} % abgesenkt, jeder neue Plan r\u00fcckt das nach hinten`
+            : knapp ? ` \u2014 geplant ${fmtDe(termin.geplant_pct, 0)} %, mehr gibt die Sonne nicht her` : "")
           + `</title></circle>`;
+      }
+    }
+    // Mindestladung am Abend: eine kleine Raute je Termin auf der H\u00f6he des
+    // Schwellwerts, violett wie die Netzladung, die sie notfalls ausl\u00f6st.
+    const abend = d.netzladen_abend;
+    if (abend && Array.isArray(abend.termine)) {
+      for (const termin of abend.termine) {
+        const tz = Date.parse(termin.t);
+        if (!Number.isFinite(tz)) continue;
+        const cx = x(tz);
+        if (cx < padL || cx > W - padR) continue;
+        const dt = new Date(tz);
+        const hhmm = `${String(dt.getHours()).padStart(2, "0")}:${String(dt.getMinutes()).padStart(2, "0")}`;
+        const cy = ys(abend.ziel_pct);
+        const r = 3.5;
+        const rand = termin.abgesenkt === "planungsrand";
+        socGrid += `<path d="M${cx.toFixed(1)},${(cy - r).toFixed(1)} L${(cx + r).toFixed(1)},${cy.toFixed(1)} L${cx.toFixed(1)},${(cy + r).toFixed(1)} L${(cx - r).toFixed(1)},${cy.toFixed(1)} Z" fill="none" stroke="#6a1b9a" stroke-width="1.2" stroke-opacity="0.8">`
+          + `<title>Mindestladung ${fmtDe(abend.ziel_pct, 0)} % um ${hhmm}`
+          + (rand ? ` \u2014 am Ende des Planungszeitraums auf ${fmtDe(termin.gefordert_pct, 0)} % abgesenkt` : "")
+          + `</title></path>`;
       }
     }
     [0, 50, 100].forEach(pct => {
@@ -4741,6 +4770,8 @@ class EegOptimizerPanel extends HTMLElement {
           : "")
         + (eegHier.length === 0 ? "" : ` data-eegj="${this._escapeHtml(JSON.stringify(eegHier))}"`)
         + (preisSlot == null ? "" : ` data-preis="${fmtDe(preisSlot * 100, 2)}"`)
+        // Warum der Plan hier lädt oder Ladung hält (schedule._gruende_eintragen).
+        + (p && p.grund ? ` data-grund="${this._escapeHtml(p.grund)}"` : "")
         + `/>`;
     }
 

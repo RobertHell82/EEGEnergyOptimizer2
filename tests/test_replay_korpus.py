@@ -100,6 +100,43 @@ def test_regeln(pfad, variante):
     assert rk.verstoesse(inputs, plan) == []
 
 
+# -- Grund je Slot: an echten Fundstellen ----------------------------------
+
+
+def _plan(name: str, variante: str) -> dict:
+    inputs = rk.VARIANTEN[variante](
+        rk.inputs_aus_eintrag(rk.eintrag_laden(rk.KORPUS / f"{name}.json.gz"))
+    )
+    return sched.solve(inputs)
+
+
+def test_grund_nennt_pflicht_und_kappungsgrenze():
+    """Fronius 19 kWh, 02.11. 13:16, Mindestladung 90 %: Der Plan lädt mit dem
+    höchsten Bezug, den die Spitzenkappung (4 kW) zulässt — genau das soll
+    im Grund stehen, nicht von Hand nachgerechnet werden müssen."""
+    plan = _plan("fronius-b_2026-11-02_131628", "mindestladung")
+    grund = plan["slots"][0].get("grund") or ""
+    assert "Netzladung für die Mindestladung (90 % um 16:15)" in grund
+    assert "Spitzenkappung (4,0 kW)" in grund
+
+
+def test_grund_am_planungsrand_nennt_den_abgesenkten_wert():
+    plan = _plan("fronius-a_2026-10-21_155642", "archiv")
+    (rand,) = [t for t in plan["ladeziel"]["termine"] if t.get("abgesenkt")]
+    assert rand["abgesenkt"] == "planungsrand"
+    gruende = [s.get("grund") or "" for s in plan["slots"]]
+    assert any("am Planungsrand auf 63 % abgesenkt" in g for g in gruende)
+
+
+def test_ohne_forderung_kein_grund():
+    """Eine Anlage ohne Ladeziel, Mindestladung und Reserve hat nichts, was
+    einen Slot erklärt — dann bleibt das Feld weg (Archiv bleibt klein)."""
+    eintrag = rk.eintrag_laden(rk.KORPUS / "sigenergy-a_2026-10-29_050721.json.gz")
+    inputs = dataclasses.replace(rk.inputs_aus_eintrag(eintrag), ladeziel_pct=0.0)
+    plan = sched.solve(inputs)
+    assert not any("grund" in s for s in plan["slots"])
+
+
 # -- Die Regeln selbst: schlagen sie an? -----------------------------------
 #
 # Ein Regelwerk, das nie rot wird, sieht genauso aus wie eines, das nichts

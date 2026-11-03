@@ -3481,6 +3481,54 @@ def _abend_termine(
     return {"ziel_pct": ziel_pct, "termine": termine}
 
 
+def _gruende_eintragen(
+    config: "HAConfig", table, slots: list[dict[str, Any]], inputs: ScheduleInputs
+) -> None:
+    """Schreibt je Slot ``grund``, wo eine Forderung erklärt, warum der Plan
+    lädt oder Ladung hält (``Forderungen.gruende``) — sonst kein Feld.
+
+    Dazu die Spitzenreserve von jetzt: Sie ist keine Forderung, sondern hebt
+    den Boden des Modells (fehlende Kapazität). Liegt der Plan auf diesem
+    Boden und der Boden über dem eingestellten Mindest-Ladestand, hält er
+    die Reserve.
+
+    Bis 2.1.64 musste jeder Plan, der lud oder hielt, ohne erkennbaren Anlass
+    von Hand aus Slots, Forderungen und Grenzen nachgerechnet werden. Der
+    Grund steht jetzt im Plan, im Archiv und — über ``PlanAction.reason`` —
+    in der Statuskarte.
+    """
+    if not slots or table is None or len(table) == 0:
+        return
+    try:
+        rechnung = _lp_rechnung(config, table)
+    except Exception:  # noqa: BLE001 — die Begründung ist Anzeige, kein Aktor
+        _LOGGER.debug("Begründung je Slot nicht berechenbar", exc_info=True)
+        return
+    kapazitaet_echt = float(inputs.battery_capacity_kwh) or 1.0
+    boden_kwh = config.deckel_kwh - config.battery_capacity
+
+    def pct(kwh: float) -> float:
+        return 100.0 * (boden_kwh + kwh) / kapazitaet_echt
+
+    inhalt = [config.battery_capacity - float(s.get("battery") or 0.0) for s in slots]
+    netzladung = [netzladung_kw(s, HAConfig.ac_efficiency) for s in slots]
+    gruende = rechnung.gruende(
+        inhalt, netzladung, pct,
+        ladeziel_pct=min(float(inputs.ladeziel_pct or 0.0), float(inputs.max_soc_pct)),
+        abend_pct=min(float(inputs.netzladen_abend_pct or 0.0), float(inputs.max_soc_pct)),
+    )
+    basis = inputs.min_soc_basis_pct
+    reserve_pct = 0.0 if basis is None else float(inputs.min_soc_pct) - float(basis)
+    for slot, grund, stand in zip(slots, gruende, inhalt):
+        if grund is None and reserve_pct >= 0.5 and stand <= 0.05:
+            grund = (
+                f"Hält die Spitzenreserve ({reserve_pct:.0f} % über dem "
+                "Mindest-Ladestand)"
+            )
+        if grund:
+            slot["grund"] = grund
+
+
 def _termin(
     config: "HAConfig", inputs: ScheduleInputs, rechnung: Forderungen,
     slots: list[dict[str, Any]], i: int, ziel_pct: float, gefordert_kwh: float,
@@ -3581,6 +3629,7 @@ def solve(inputs: ScheduleInputs) -> dict[str, Any]:
     # Puffertemperatur je Slot — Nachrechnung aus der geplanten Wärme, das
     # LP bleibt davon unberührt.
     _puffer_temperatur_verlauf(slots, inputs)
+    _gruende_eintragen(config, table, slots, inputs)
 
     result = {
         "slots": slots,

@@ -869,6 +869,23 @@ the event loop is long enough for HA to flag a blocking call.
   the status card. The heater's measured power reaches the status card through
   the Hausverbrauch sensor's attributes, not its own entity: that card must
   show one point in time (see **Status card** below).
+- **The plan says why (`slot["grund"]`, 03.11.2026)**: `schedule._gruende_eintragen`
+  writes a short German reason into every slot that a demand of
+  `forderungen.py` explains — grid charge for a mandatory demand (Mindestladung,
+  Spitzenreserve) or because it is cheap (`ersetzt_preis`), with the binding
+  meter limit (`netz_begrenzung`: Spitzenkappung or Netzgrenze); "Hält
+  Ladung für …" only where the plan sits **on the effective demand** (after
+  `opt()`'s own reachability cap — the plan below the raw demand means the
+  cap bound, not the demand), with the lowered value at the plan edge or
+  "erreichbar sind x %"; and the Spitzenreserve of now (a raised floor, not a
+  demand). No field otherwise — pure price decisions are not explained (that
+  would need the duals). `plan_action` hands it on as `PlanAction.reason` for
+  charge_limit / grid_charge / discharge (a release keeps its own reason, the
+  status text is built from it) → `plan_grund` in the status card and the
+  activity log; the panel shows it in the schedule tooltip (`data-grund`). Plan
+  termine (`ladeziel`, `netzladen_abend`) carry `gefordert_pct` and, when
+  lower than the target, `abgesenkt` = `planungsrand` | `erreichbar`; the SOC
+  chart marks Ladeziel (blue circle) and Mindestladung (purple diamond).
 - **Status card — one point in time**: PV, battery, grid and Hausverbrauch are
   computed together every 30 s; the heater pushes its own value every 10 s.
   Reading the four entities separately put three different timestamps in one

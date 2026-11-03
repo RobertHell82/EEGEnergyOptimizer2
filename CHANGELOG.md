@@ -20,6 +20,11 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 - **Heizstab im Plan nur, wo das Modell ihn einplant.** Hatte das Modell in einem Slot keine Wärme vorgesehen, etwa weil das Haus die PV braucht oder das Tagesbudget aufgebraucht ist, zeigte der Plan trotzdem Wärme aus abgeregelter PV.
 - **WiNAP nach der endgültigen Verordnung.** Der Winter-Nieder-Arbeitspreis gilt laut Systemnutzungsentgelte-Grundsatzverordnung (BGBl. II Nr. 299/2026) von 23 bis 5 Uhr statt 22 bis 4 Uhr wie im Entwurf, und erstmals ab 1. Oktober 2027 (§ 32 Abs. 4). Wirksam war er bisher nicht, weil die Tarifverordnung noch keinen Satz enthält; jetzt greift er auch dann nicht vor Oktober 2027, wenn eine Tabelle früher einen liefert.
 
+### Hinzugefügt
+
+- **Der Fahrplan sagt, warum er lädt oder Ladung hält.** Je Viertelstunde steht der Grund im Plan, im Tooltip des Diagramms und für die laufende Viertelstunde in der Statuskarte, zum Beispiel „Netzladung für die Mindestladung (90 % um 16:15); Bezug begrenzt durch die Spitzenkappung (4,0 kW)“, „Netzladung, weil günstig: 12,1 ct statt 19,4 ct danach“, „Hält Ladung für das Ladeziel (100 % um 15:00), auch bei schwacher Sonne“ oder „Hält die Spitzenreserve“. Reine Preisentscheidungen ohne Ziel (etwa Einspeisen in Bedarfsstunden der Gemeinschaft) erklärt er noch nicht. Das Diagnose-ZIP enthält die Gründe mit.
+- **Mindestladung im Ladestands-Diagramm** als violette Raute, wie das Ladeziel als blauer Kreis. Am Ende des Planungszeitraums abgesenkte Ziele sagt der Tooltip dazu.
+
 ### Geändert
 
 - **Mindestladung am Abend: kein Sofortkauf mehr für einen Termin, der praktisch jetzt ist.** Endet der PV-Überschuss in der nächsten Stunde und liegt der Ladestand unter der Mindestladung, kaufte der Plan bisher sofort mit voller Leistung (3–10 kW), ohne den Wert noch erreichen zu können. Termine weniger als eine Stunde ab jetzt entfallen; die Mindestladung gilt dann ab dem nächsten Tag.

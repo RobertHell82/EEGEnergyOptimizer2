@@ -108,6 +108,19 @@ def test_laden_wird_ladelimit():
     )
 
 
+def test_grund_des_slots_wird_zum_plan_grund():
+    """Der Grund aus dem Plan (``slot["grund"]``) reist mit der Absicht —
+    die Statuskarte zeigt ihn als ``plan_grund``. Eine Freigabe behält ihren
+    eigenen Grund, aus dem der Statustext wird."""
+    grund = "Netzladung für die Mindestladung (90 % um 16:15)"
+    slot = {**_slot(0, battery_p=-2.4, grid_p=1.0), "grund": grund}
+    assert plan_action({"slots": [slot]}, NOW).reason == grund
+    halten = {**_slot(0, battery_p=0.0, grid_p=0.5, soc=60.0), "PV": 2.0, "grund": grund}
+    assert plan_action({"slots": [halten]}, NOW).reason == grund
+    voll = {**_slot(0, battery_p=0.0, soc=100.0), "grund": grund}
+    assert plan_action({"slots": [voll]}, NOW).reason == sx.RELEASE_GRUND_BATTERIE_VOLL
+
+
 def test_alles_laden_gibt_frei():
     """Laden ohne Einspeisung heißt: der ganze Überschuss in die Batterie.
     Ein Ladelimit auf die Planleistung schickte jede Sonne über der Prognose

@@ -28,6 +28,7 @@ für das ENDE eines Slots, wie ``battery_free[i]`` in ``opt_highs``.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from functools import cached_property
@@ -747,3 +748,111 @@ class Forderungen:
         if not self.termine_ladeziel:
             return list(netz)
         return [max(f, r) for f, r in zip(kette, netz)]
+
+    # -- Begründung je Slot ---------------------------------------------
+
+    def gruende(
+        self,
+        inhalt_kwh: list[float],
+        netzladung_kw: list[float],
+        pct: "Callable[[float], float]",
+        ladeziel_pct: float,
+        abend_pct: float,
+    ) -> list[str | None]:
+        """Warum der Plan in einem Slot lädt oder Ladung hält — oder None.
+
+        Nur, wo eine Forderung dieser Rechnung den Slot erklärt:
+
+        * **Netzladung** — für eine Pflichtforderung (Mindestladung,
+          Spitzenreserve) oder, im wirtschaftlichen Netzladen, weil der Strom
+          jetzt billiger ist als der, den die Batterie danach ersetzt; dazu
+          die Grenze, die den Bezug deckelt.
+        * **Hält Ladung** — der geplante Stand am Slot-Ende liegt auf einer
+          Forderung (Ladeziel samt vorsichtiger Rückwärtskette, Mindestladung,
+          Spitzenreserve); am Planungsrand mit dem abgesenkten Wert.
+
+        Reine Preisentscheidungen ohne Forderung (Einspeisen in Bedarfsstunden
+        der Gemeinschaft) erklärt das nicht — dafür bräuchte es die Dualpreise.
+
+        ``inhalt_kwh`` ist der geplante Stand am Ende jedes Slots im
+        Modellfenster, ``pct`` rechnet kWh im Modellfenster in Prozent um.
+        """
+        gruende: list[str | None] = [None] * self.n
+        netz = self.netz_forderung or [0.0] * self.n
+        kette = self.ladeziel_kette
+        pflicht = self.pflicht
+        wirtschaftlich = self.wirtschaftlich
+        ersetzt = getattr(self, "ersetzt_preis", [None] * self.n)
+        max_kw = max(float(self.v.spitzenreserve_netz_kw or 0.0),
+                     float(self.v.netzladen_max_kw or 0.0))
+        begrenzung = self.netz_begrenzung(max_kw) if max_kw > 0 else []
+        # Die Forderung, wie opt() sie wirken lässt (chamo § 2b/§ 5): gekappt
+        # auf das ohne Zukauf Erreichbare, mit Netz-Slots auf das mit ihnen
+        # Erreichbare.
+        wirksam = [min(z, e) for z, e in zip(self.ziel, self.erreichbar(self.netzladen))]
+
+        def uhr(k: int) -> str:
+            return self.lage.stempel[min(k, self.n - 1)].strftime("%H:%M")
+
+        def zahl(x: float, stellen: int = 0) -> str:
+            return f"{x:.{stellen}f}".replace(".", ",")
+
+        def netz_quelle(k: int) -> str | None:
+            """Die nächste Netzforderung ab Slot k, als Satzteil."""
+            for j in range(k, self.n):
+                if netz[j] <= 0:
+                    continue
+                if j in self.termine_abend:
+                    text = f"die Mindestladung ({zahl(abend_pct)} % um {uhr(j)})"
+                    if j in self.am_rand_abgesenkt:
+                        text += f", am Planungsrand auf {zahl(pct(netz[j]))} % abgesenkt"
+                    return text
+                return f"die Spitzenreserve (Spitze um {uhr(j + 1)})"
+            return None
+
+        def ladeziel_quelle(k: int) -> str | None:
+            termin = next((i for i in self.termine_ladeziel if i >= k), None)
+            if termin is None:
+                return None
+            text = f"das Ladeziel ({zahl(ladeziel_pct)} % um {uhr(termin)})"
+            if termin in self.am_rand_abgesenkt:
+                text += f", am Planungsrand auf {zahl(pct(wirksam[termin]))} % abgesenkt"
+            elif pct(wirksam[termin]) < ladeziel_pct - 0.5:
+                text += f", erreichbar sind {zahl(pct(wirksam[termin]))} %"
+            elif k < termin:
+                text += ", auch bei schwacher Sonne"
+            return text
+
+        for k in range(self.n):
+            laden = netzladung_kw[k] if k < len(netzladung_kw) else 0.0
+            if laden >= 0.05:
+                if pflicht is not None and pflicht[k] < 0 and netz_quelle(k):
+                    text = f"Netzladung für {netz_quelle(k)}"
+                elif wirtschaftlich is not None and wirtschaftlich[k] < 0 and ersetzt[k]:
+                    text = (
+                        f"Netzladung, weil günstig: {zahl(100 * self.lage.preise[k], 1)} ct "
+                        f"statt {zahl(100 * ersetzt[k], 1)} ct danach"
+                    )
+                else:
+                    text = None
+                if text and begrenzung:
+                    erlaubt, quelle, wert = begrenzung[k]
+                    if quelle and laden >= erlaubt - 0.1:
+                        art = "die Spitzenkappung" if quelle == "kappung" else "die Netzgrenze"
+                        text += f"; Bezug begrenzt durch {art} ({zahl(wert, 1)} kW)"
+                gruende[k] = text
+                continue
+            # Bindend ist eine Forderung nur, wo der Plan AUF ihr liegt — und
+            # zwar auf der wirksamen: opt() kappt sie noch auf das Erreichbare
+            # (ohne Zukauf, bzw. mit den freigegebenen Netz-Slots). Liegt der
+            # Plan darunter, hat die Kappung gegriffen, nicht die Forderung.
+            forderung = wirksam[k]
+            if forderung <= 0.05 or abs(inhalt_kwh[k] - forderung) > 0.05:
+                continue
+            if netz[k] >= kette[k]:
+                quelle = netz_quelle(k)
+            else:
+                quelle = ladeziel_quelle(k)
+            if quelle:
+                gruende[k] = f"Hält Ladung für {quelle}"
+        return gruende
