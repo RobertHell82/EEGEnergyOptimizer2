@@ -432,11 +432,42 @@ def verstoesse(inputs: sched.ScheduleInputs, plan: dict[str, Any]) -> list[str]:
     for termin in abend.get("termine") or []:
         ziel = float(abend["ziel_pct"])
         if float(termin["geplant_pct"]) < ziel - 1.0:
-            stunden = (datetime.fromisoformat(termin["t"]) - inputs.start).total_seconds() / 3600
             fehlt_kwh = (ziel - float(soc0)) / 100.0 * inputs.battery_capacity_kwh
-            if fehlt_kwh <= inputs.battery_power_limit_kw * max(0.0, stunden - 0.25):
+            if fehlt_kwh <= _ladbar_bis_kwh(inputs, slots, termin["t"]):
                 fehler.append(
                     f"{termin['t']}: Mindestladung {ziel} % verfehlt "
                     f"(geplant {termin['geplant_pct']} %)"
                 )
     return fehler
+
+
+def _ladbar_bis_kwh(inputs: sched.ScheduleInputs, slots: list[dict], bis: str) -> float:
+    """Obergrenze dessen, was die Batterie bis zum Ende von Slot ``bis`` laden kann.
+
+    Je Slot PV plus erlaubter Netzbezug neben dem Haus, gedeckelt durch die
+    Batterieleistung — ohne Verluste und ohne Entladung, also großzügig. Der
+    Netzbezug ist durch die Netzgrenze des Netzladens und die Grenze der
+    Spitzenkappung (minus Sicherheit) begrenzt: An einer Anlage mit 4 kW
+    Grenze kommt eine 6-kW-Batterie in vier Stunden nicht von 19 auf 90 %
+    (Fronius 02.11.2026), und das ist kein Fehler des Plans.
+    """
+    from custom_components.eeg_energy_optimizer.spitzenreserve import SICHERHEIT_KW
+
+    reserve = inputs.spitzenreserve or {}
+    grenzen = {t: g for (t, _), g in zip(reserve.get("kurve") or [], reserve.get("grenzen") or [])}
+    standard = float(reserve.get("grenze_kw") or 0.0)
+    p2e = inputs.time_res_s / 3600.0
+    summe = 0.0
+    for slot in slots:
+        netz = float("inf")
+        if inputs.netzladen_netzgrenze_kw > 0:
+            netz = inputs.netzladen_netzgrenze_kw
+        if reserve:
+            netz = min(netz, grenzen.get(slot["t"], standard) - SICHERHEIT_KW)
+        haus = float(slot.get("consumption") or 0.0)
+        pv = float(slot.get("PV") or 0.0)
+        laden = min(inputs.battery_power_limit_kw, pv + max(0.0, netz - haus))
+        summe += max(0.0, laden) * p2e
+        if slot["t"] == bis:
+            break
+    return summe
