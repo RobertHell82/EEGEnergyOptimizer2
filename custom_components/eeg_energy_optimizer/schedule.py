@@ -3451,9 +3451,10 @@ def _ladeziel_termine(
     if config.ladeziel_kwh <= 0 or table is None or len(table) == 0:
         return None
     ziel_pct = round(min(float(inputs.ladeziel_pct), float(inputs.max_soc_pct)), 1)
+    rechnung = _lp_rechnung(config, table)
     termine = [
-        {"t": slots[i]["t"], "geplant_pct": slots[i]["soc"]}
-        for i in _lp_rechnung(config, table).termine_ladeziel
+        _termin(config, inputs, rechnung, slots, i, ziel_pct, rechnung.ladeziel_kette[i])
+        for i in rechnung.termine_ladeziel
         if i < len(slots)
     ]
     return {"ziel_pct": ziel_pct, "termine": termine}
@@ -3470,12 +3471,37 @@ def _abend_termine(
     if config.abend_kwh <= 0 or table is None or len(table) == 0:
         return None
     ziel_pct = round(min(float(inputs.netzladen_abend_pct), float(inputs.max_soc_pct)), 1)
+    rechnung = _lp_rechnung(config, table)
+    netz = rechnung.netz_forderung or [0.0] * len(slots)
     termine = [
-        {"t": slots[i]["t"], "geplant_pct": slots[i]["soc"]}
-        for i in _lp_rechnung(config, table).termine_abend
+        _termin(config, inputs, rechnung, slots, i, ziel_pct, min(config.abend_kwh, netz[i]))
+        for i in rechnung.termine_abend
         if i < len(slots)
     ]
     return {"ziel_pct": ziel_pct, "termine": termine}
+
+
+def _termin(
+    config: "HAConfig", inputs: ScheduleInputs, rechnung: Forderungen,
+    slots: list[dict[str, Any]], i: int, ziel_pct: float, gefordert_kwh: float,
+) -> dict[str, Any]:
+    """Ein Termin für die Plan-Ausgabe: was gilt, was gefordert ist, was geplant.
+
+    ``gefordert_pct`` ist der Stand, den das LP dort tatsächlich halten
+    musste — unter ``ziel_pct``, wenn die Forderung abgesenkt wurde:
+    ``abgesenkt = "planungsrand"`` (kurz vor dem Ende der 48 Stunden kommt der
+    Plan von dort nicht mehr auf den festen Endstand, ``Forderungen._rand``)
+    oder ``"erreichbar"`` (das Ladeziel kauft nie über die Pflicht-Slots).
+    """
+    kapazitaet = float(inputs.battery_capacity_kwh) or 1.0
+    boden_kwh = config.deckel_kwh - config.battery_capacity
+    gefordert_pct = round(100.0 * (boden_kwh + gefordert_kwh) / kapazitaet, 1)
+    termin = {"t": slots[i]["t"], "geplant_pct": slots[i]["soc"], "gefordert_pct": gefordert_pct}
+    if gefordert_pct < ziel_pct - 0.5:
+        termin["abgesenkt"] = (
+            "planungsrand" if i in rechnung.am_rand_abgesenkt else "erreichbar"
+        )
+    return termin
 
 
 def netzladung_kw(slot: dict, ac_efficiency: float) -> float:

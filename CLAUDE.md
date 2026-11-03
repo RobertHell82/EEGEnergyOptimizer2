@@ -476,8 +476,14 @@ the event loop is long enough for HA to flag a blocking call.
   guarantees (never a purchase, never infeasible); a cloudy day turns 100 %
   into whatever the PV manages. A target from which the plan could not get
   back to Harald's fixed end state (half full at the horizon end, via house
-  load plus allowed export in non-surplus slots) is dropped — that end
-  condition is why `fullcharge_try` is unusable. Why it exists: Grünbach,
+  load plus allowed export in non-surplus slots) is **lowered** to what still
+  gets back there — the same rule for Ladeziel, Mindestladung and reserve
+  (`Forderungen._rand`, decision 03.11.2026; until 2.1.64 the Ladeziel
+  dropped such a termin, the grid demands capped it). That end condition is
+  why `fullcharge_try` is unusable. A Mindestladung termin whose slot ends
+  less than `MINDESTLADUNG_VORLAUF_H` (1 h) from now is dropped — no
+  instant full-power purchase for a termin that is practically now (Kostal
+  28.10.2026); the Ladeziel keeps such termine. Why it exists: Grünbach,
   04.10.2026 — OeMAG (10.17 ct) rose above the community's day rate, feed-in
   went flat, and the plan only charged what the night needed (73–85 %).
   **Before the target slot** (`HAConfig.ladeziel_termine`) the floor is

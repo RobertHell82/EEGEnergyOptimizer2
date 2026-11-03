@@ -430,7 +430,9 @@ def verstoesse(inputs: sched.ScheduleInputs, plan: dict[str, Any]) -> list[str]:
     # selbst bei voller Leistung nicht.
     abend = plan.get("netzladen_abend") or {}
     for termin in abend.get("termine") or []:
-        ziel = float(abend["ziel_pct"])
+        # Am Planungsrand gilt der abgesenkte Wert (``gefordert_pct``): Der
+        # feste Endstand von opt() lässt dort nicht mehr zu.
+        ziel = min(float(abend["ziel_pct"]), float(termin.get("gefordert_pct", 100.0)))
         if float(termin["geplant_pct"]) < ziel - 1.0:
             fehlt_kwh = (ziel - float(soc0)) / 100.0 * inputs.battery_capacity_kwh
             if fehlt_kwh <= _ladbar_bis_kwh(inputs, slots, termin["t"]):

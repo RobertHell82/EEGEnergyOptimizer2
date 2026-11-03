@@ -22,6 +22,9 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 
 ### Geändert
 
+- **Mindestladung am Abend: kein Sofortkauf mehr für einen Termin, der praktisch jetzt ist.** Endet der PV-Überschuss in der nächsten Stunde und liegt der Ladestand unter der Mindestladung, kaufte der Plan bisher sofort mit voller Leistung (3–10 kW), ohne den Wert noch erreichen zu können. Termine weniger als eine Stunde ab jetzt entfallen; die Mindestladung gilt dann ab dem nächsten Tag.
+- **Am Ende des Planungszeitraums gilt für Ladeziel, Mindestladung und Spitzenreserve dieselbe Regel.** Passt ein Termin kurz vor dem Ende von 48 Stunden nicht mehr zum festen Endstand des Optimierers, wird er abgesenkt statt gestrichen. Für den letzten Plan-Tag zeigt der Plan damit auch beim Ladeziel einen (niedrigeren) Termin.
+- **Interner Umbau**: Ladeziel, Mindestladung, Spitzenreserve aus dem Netz und die Netzlade-Grenzen rechnet jetzt ein Modul an einer Stelle, statt elf Methoden, die einander aufriefen. Über alle Pläne des Replay-Korpus verhaltensgleich geprüft, bevor die beiden Änderungen oben dazukamen.
 - **Replay-Korpus**: 58 echte Fahrpläne von fünf Anlagen (Fronius, Huawei, Kostal, SolaX, Sigenergy) werden bei jedem Testlauf mit dem aktuellen Code nachgerechnet und gegen feste Regeln geprüft. Die vier Fehler oben hat er gefunden.
 
 ## [2.1.64] - 2026-11-02

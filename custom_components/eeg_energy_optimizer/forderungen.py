@@ -50,6 +50,14 @@ UEBERSCHUSS_WINZIG_KWH = 0.5
 # Die Spitzenreserve fordert nur vor einer Viertelstunde, in der die Kurve
 # um mehr als das fällt — kleinere Stufen sind Rundung, kein Bedarf.
 RESERVE_NETZ_BEDARF_MIN_KWH = 0.05
+# Ein Termin der Mindestladung, dessen Slot früher endet, entfällt. Endete
+# der Überschuss im zweiten Slot des Plans, kaufte der Plan sonst sofort mit
+# voller Leistung für einen Termin, der praktisch „jetzt" war (Kostal
+# 28.10.2026: 2 kWh in 30 Minuten). Erreichbar ist so ein Termin ohnehin
+# kaum; die Mindestladung gilt dann ab dem nächsten Tag. Das Ladeziel behält
+# solche Termine — es kauft nie und hält die Batterie kurz vor dem PV-Ende
+# davon ab, noch schnell einzuspeisen. Entscheidung 03.11.2026.
+MINDESTLADUNG_VORLAUF_H = 1.0
 
 
 # ---------------------------------------------------------------------------
@@ -338,21 +346,51 @@ class Forderungen:
 
         Je Kalendertag das Ende der PV-Zeit (``pv_enden``); mit
         ``mit_erzeugung`` (Mindestladung) an dunklen Tagen das Ende der
-        Erzeugung (``abend_kandidaten``). Ein Termin, von dem der Plan bis
-        zum Horizontende nicht mehr auf den Endstand käme, bleibt weg.
+        Erzeugung (``abend_kandidaten``), und ohne Termine, deren Slot vor
+        ``MINDESTLADUNG_VORLAUF_H`` endet.
+
+        Ein Termin am Planungsrand, von dem der Plan nicht mehr auf den
+        Endstand käme, bleibt stehen — seine Forderung kappt ``_rand`` wie
+        jede andere. Bis 2.1.64 strich das Ladeziel so einen Termin, die
+        Netzforderung kappte ihn; eine Regel statt zwei (Entscheidung
+        03.11.2026).
         """
         if ziel_kwh <= 0 or self.n == 0:
             return []
-        if mit_erzeugung:
-            vorher = float(self.v.ueberschuss_vor_start_kwh or 0.0)
-            kandidaten = abend_kandidaten(
-                self.lage.pv, self.lage.ueberschuss, self.tage,
-                {self.tage[0]: vorher} if vorher > 0 else None, self.akku.p2e,
-            )
-        else:
-            kandidaten = pv_enden(self.lage.ueberschuss, self.tage)
+        if not mit_erzeugung:
+            return pv_enden(self.lage.ueberschuss, self.tage)
+        vorher = float(self.v.ueberschuss_vor_start_kwh or 0.0)
+        kandidaten = abend_kandidaten(
+            self.lage.pv, self.lage.ueberschuss, self.tage,
+            {self.tage[0]: vorher} if vorher > 0 else None, self.akku.p2e,
+        )
+        return [i for i in kandidaten if (i + 1) * self.akku.p2e >= MINDESTLADUNG_VORLAUF_H - 1e-9]
+
+    def _rand(self, forderung: list[float]) -> list[float]:
+        """Jede Forderung gekappt auf das, wovon der Plan bis zum Horizontende
+        noch auf den Endstand kommt (``abbau_bis_ende``).
+
+        Der Endstand ist ein Kunstgriff von ``opt()`` (halb voll, an dunklen
+        Tagen weniger), keine echte Anforderung. Eine Forderung kurz davor,
+        die die Batterie bis dahin nicht wieder abbauen kann, ließe das LP
+        ohne Lösung (Replay-Korpus, Huawei und SolaX 01.11.2026: kein Plan,
+        Failsafe). Gekappt statt gestrichen: So viel, wie zusammenpasst,
+        gilt weiter; jeder Planlauf rückt den Rand ohnehin nach hinten.
+        """
         rest, ende = self.abbau_bis_ende
-        return [i for i in kandidaten if ziel_kwh - ende <= rest[i + 1] + 1e-9]
+        ergebnis = []
+        for k, f in enumerate(forderung):
+            grenze = ende + rest[k + 1]
+            if f > grenze + 1e-9:
+                self.am_rand_abgesenkt.add(k)
+                f = grenze
+            ergebnis.append(f)
+        return ergebnis
+
+    @cached_property
+    def am_rand_abgesenkt(self) -> set[int]:
+        """Slots, deren Forderung ``_rand`` abgesenkt hat — für Anzeige und Grund."""
+        return set()
 
     @cached_property
     def termine_ladeziel(self) -> list[int]:
@@ -407,17 +445,29 @@ class Forderungen:
         Executor kappte, und die Batterie lud weniger als geplant
         (Replay-Korpus, Huawei 02.11.2026: 4 kW Bezug bei 3 kW Grenze).
         """
+        return [kw for kw, _, _ in self.netz_begrenzung(max_kw)]
+
+    def netz_begrenzung(self, max_kw: float) -> list[tuple[float, str | None, float]]:
+        """Je Slot (erlaubte Netzladung kW, bindende Grenze, deren Wert in kW).
+
+        Die Grenze ist ``"kappung"`` (Spitzenkappung), ``"netzgrenze"``
+        (Netzgrenze des Netzladens) oder None (nur die Ladeleistung) — für
+        die Begründung im Plan.
+        """
         v = self.v
-        erlaubt_je_slot = []
+        ergebnis = []
         for t, h in zip(self.lage.stempel, self.lage.haus):
-            erlaubt = max_kw
+            erlaubt, quelle, wert = max_kw, None, max_kw
             if v.reserve_aktiv:
                 grenze = v.kappung_kw.get(int(t.timestamp()), v.kappung_standard_kw)
-                erlaubt = min(erlaubt, grenze - v.sicherheit_kw - h)
-            if v.netzladen_netzgrenze_kw > 0:
-                erlaubt = min(erlaubt, v.netzladen_netzgrenze_kw - h)
-            erlaubt_je_slot.append(max(0.0, erlaubt))
-        return erlaubt_je_slot
+                if grenze - v.sicherheit_kw - h < erlaubt:
+                    erlaubt, quelle, wert = grenze - v.sicherheit_kw - h, "kappung", grenze
+            if v.netzladen_netzgrenze_kw > 0 and v.netzladen_netzgrenze_kw - h < erlaubt:
+                erlaubt, quelle, wert = (
+                    v.netzladen_netzgrenze_kw - h, "netzgrenze", v.netzladen_netzgrenze_kw
+                )
+            ergebnis.append((max(0.0, erlaubt), quelle, wert))
+        return ergebnis
 
     def _fest(self) -> list[bool]:
         return list(self.lage.fest) if self.lage.fest is not None else [True] * self.n
@@ -550,8 +600,7 @@ class Forderungen:
             forderung = [max(a, b) for a, b in zip(reserve, abend)]
         if forderung is None:
             return None
-        rest, ende = self.abbau_bis_ende
-        return [min(f, ende + rest[k + 1]) if f > 0 else f for k, f in enumerate(forderung)]
+        return self._rand(forderung)
 
     @cached_property
     def pflicht(self) -> list[float] | None:
@@ -685,7 +734,7 @@ class Forderungen:
             # (Traun 02.11.2026).
             erreichbar = self.erreichbar(self.wirtschaftlich)
             forderung = [min(f, e) for f, e in zip(forderung, erreichbar)]
-        return forderung
+        return self._rand(forderung)
 
     @cached_property
     def ziel(self) -> list[float]:

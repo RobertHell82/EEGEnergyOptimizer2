@@ -54,3 +54,5 @@ Bei jeder Neuberechnung prüft der Fahrplan, ob die erwartete PV die Batterie bi
 Ein Beispiel: 10-kWh-Batterie, Mindestladung 60 %, Ladeziel 100 %. Die PV-Zeit endet laut Prognose um 15:30, bis dahin bringt die Sonne die Batterie nur auf 45 %. Es fehlen 15 %, also 1,5 kWh. Die kauft der Fahrplan in den günstigsten Viertelstunden vor 15:30, etwa zu Mittag, wenn die Gemeinschaft Überschuss hat. Die restlichen 40 % bis zum Ladeziel kauft er nur, wenn sich das rechnet.
 
 Gekauft wird nur bis zur Mindestladung. Was darüber bis zum **Ladeziel** fehlt, kommt weiter nur von der Sonne oder aus Viertelstunden, in denen sich der Zukauf rechnet (Mindestvorteil). Die Grenze am Zähler und die der Spitzenkappung gelten auch hier.
+
+Liegt das Ende der PV-Zeit weniger als eine Stunde in der Zukunft, entfällt der Termin für heute: In so kurzer Zeit wäre die Mindestladung ohnehin kaum zu schaffen, und der Fahrplan würde nur mit voller Leistung teuer zukaufen. Sie gilt dann wieder ab dem nächsten Tag. Schaltest du die Mindestladung also am Nachmittag ein, wirkt sie erst ab morgen.

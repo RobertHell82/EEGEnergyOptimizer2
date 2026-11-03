@@ -213,11 +213,22 @@ def test_kein_ziel_wenn_der_horizont_mittags_endet():
 def test_kein_ziel_das_die_endbedingung_unloesbar_macht():
     """opt() legt den Speicher am Horizontende auf halb fest. Ohne Einspeisung
     und mit kleiner Hauslast kommt ein voller Speicher in ein paar Stunden
-    nicht mehr auf halb — dann bleibt das Ziel weg, statt das LP zu kippen."""
+    nicht mehr auf halb — dann wird das Ziel so weit abgesenkt, wie der Plan
+    von dort noch auf den Endstand kommt, statt das LP zu kippen.
+
+    Bis 2.1.64 entfiel der Termin hier ganz; seit 03.11.2026 gilt für
+    Ladeziel, Mindestladung und Reserve dieselbe Regel: absenken."""
     stempel, ueberschuss = _tag("2026-10-05 06:00", 14, 9, 17)   # bis 20:00
     config = sched.HAConfig(_inputs_gruenbach(ladeziel_pct=100.0))
-    ziel = config.ladeziel(_parameter(stempel, verbrauch=0.3, grenze=0.0), ueberschuss)
-    assert float(ziel.sum()) == 0.0
+    parameter = _parameter(stempel, verbrauch=0.3, grenze=0.0)
+    ziel = config.ladeziel(parameter, ueberschuss)
+    rest, ende = config._abbau_bis_ende(parameter, ueberschuss)
+    (termin,) = config.ladeziel_termine(parameter, ueberschuss)
+    # Der Termin bleibt, aber unter dem vollen Ziel …
+    assert 0.0 < float(ziel.iloc[termin]) < config.ladeziel_kwh
+    # … und nirgends über dem, wovon der Plan noch auf den Endstand kommt.
+    for k, f in enumerate(ziel.values):
+        assert float(f) <= ende + rest[k + 1] + 1e-9
 
 
 def test_eine_wolke_ist_kein_ende_der_pv_zeit():
