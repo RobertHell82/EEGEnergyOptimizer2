@@ -12,6 +12,8 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+## [2.1.66] - 2026-11-03
+
 ### Geändert
 
 - **Mindestladung am Abend lädt mit Puffer.** Der Fahrplan rechnete mit der vollen Netzladeleistung und lud genau in den letzten Viertelstunden vor dem Sonnenuntergang (Traun 03.11.2026: 6 kWh fehlten, geplant 14:45–16:30, keine Viertelstunde Luft). Braucht das Haus dann mehr, bleibt unter der Netzgrenze weniger für die Batterie. Jetzt rechnet er mit 70 % der erlaubten Netzladeleistung und beginnt bei großem Fehlbetrag und wenig PV entsprechend früher.
