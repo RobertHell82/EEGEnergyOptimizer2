@@ -8502,7 +8502,7 @@ class EegOptimizerPanel extends HTMLElement {
         <label>Mindestladung am Abend (%)</label>
         <input type="number" data-field="${prefix}schedule_netzladen_abend_pct"
                value="${abendPct}" min="0" max="100" step="5" placeholder="aus">
-        <div class="help-text">So voll soll die Batterie am Ende der PV-Zeit auf jeden Fall sein. Schafft die Sonne das laut Prognose nicht, lädt der Fahrplan den Rest aus dem Netz — unabhängig vom Preis, aber in den günstigsten Viertelstunden davor, also bevorzugt, wenn die Gemeinschaft Strom übrig hat. Gekauft wird nur bis zu diesem Wert; was darüber bis zum Ladeziel fehlt, bleibt der Sonne und dem Mindestvorteil oben überlassen. Leer heißt aus.</div>
+        <div class="help-text">So voll soll die Batterie bei Sonnenuntergang auf jeden Fall sein, jeden Tag. Schafft die Sonne das laut Prognose nicht, lädt der Fahrplan den Rest aus dem Netz — unabhängig vom Preis, aber in den günstigsten Viertelstunden davor, also bevorzugt, wenn die Gemeinschaft Strom übrig hat. Gekauft wird nur bis zu diesem Wert; was darüber bis zum Ladeziel fehlt, bleibt der Sonne und dem Mindestvorteil oben überlassen. Leer heißt aus.</div>
       </div>`,
     }) + sperre;
   }

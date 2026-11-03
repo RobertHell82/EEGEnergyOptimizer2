@@ -104,21 +104,9 @@ def test_auch_ohne_ladeziel():
 
 
 # ---------------------------------------------------------------------------
-# Dunkle Tage: PV ganztags unter der Hauslast — kein Überschuss-Slot, also
-# kein Ende der PV-Zeit im Sinne von ``pv_enden``. Die Mindestladung steht
-# dann am Ende der Erzeugung (``pv_erzeugung_enden``).
+# Dunkle Tage: PV ganztags unter der Hauslast. Die Mindestladung steht wie
+# an jedem Tag beim Sonnenuntergang (``Forderungen.termine_abend``).
 # ---------------------------------------------------------------------------
-
-
-def test_pv_erzeugung_enden_nur_an_tagen_ohne_ueberschuss():
-    tage = ["a"] * 6 + ["b"] * 6 + ["c"] * 3
-    pv = [0, 0.2, 0.3, 0.1, 0.02, 0] + [0, 3.5, 4.6, 0.1, 0, 0] + [0, 0.2, 0.3]
-    werte = [-1, -0.5, -0.4, -0.6, -1, -1] + [-1, 3.0, 4.0, -0.5, -1, -1] + [-1, -0.5, -0.4]
-    # Tag a: letzte Erzeugung über 0,05 kW bei Index 3 (0,02 ist Dämmerung).
-    # Tag b hat Überschuss — das ist Sache von pv_enden. Tag c endet mit dem
-    # Horizont, mitten in der Erzeugung: kein Termin.
-    assert sched.pv_erzeugung_enden(pv, werte, tage) == [3]
-    assert sched.pv_erzeugung_enden([0.0] * 6, [-1.0] * 6, ["a"] * 6) == []
 
 
 def test_dunkler_tag_bekommt_die_mindestladung():
@@ -156,14 +144,6 @@ def test_dunkle_termine_sind_die_des_lp():
     assert [pd.Timestamp(t) for t in gesehen] == [pd.Timestamp(t) for t in ausgabe]
 
 
-def test_ganz_ohne_pv_kein_termin():
-    """Prognose 0 den ganzen Tag: Es gibt kein Ende der Erzeugung, an dem die
-    Mindestladung stehen könnte — kein Termin, kein Kauf (bewusst)."""
-    plan = sched.solve(_abend(pv=0.0, abend=50.0))
-    assert plan["netzladen_abend"]["termine"] == []
-    assert _netzladung_kwh(plan) == 0.0
-
-
 def test_erreichbar_deckelt_die_entladung_nicht_wie_opt_highs():
     """``opt_highs`` deckelt in seiner Erreichbarkeit nur das Laden
     (``min(step, max_step)``). ``_erreichbar`` tat beides — der Stand blieb
@@ -198,108 +178,10 @@ def test_forderungen_cache_haelt_die_objekte():
     assert config._forderungen_cache[0] is kopie
 
 
-
 # ---------------------------------------------------------------------------
 # Review Runde 2: Überschuss vor dem Horizontstart, winziger Überschuss,
 # Entladung in der Pflicht-Rechnung.
 # ---------------------------------------------------------------------------
-
-
-def test_sonniger_tag_ab_1530_bekommt_keinen_zweiten_termin():
-    """Horizont ab 15:30, der Überschuss des Tages ist schon vorbei: Ohne den
-    Teil vor dem Start sah der Tag dunkel aus und bekam einen Termin am Ende
-    der Erzeugung (~16:30) — ein Zwangskauf am Nachmittag."""
-    # 15:30 … 17:30, PV fällt unter die Hauslast, kein Überschuss mehr.
-    tage = ["a"] * 9
-    pv = [0.5, 0.4, 0.3, 0.2, 0.1, 0.04, 0, 0, 0]
-    werte = [p - 0.5 / 0.95 for p in pv]
-    assert sched.abend_kandidaten(pv, werte, tage) == [4]  # ohne Wissen: dunkel
-    assert sched.abend_kandidaten(pv, werte, tage, {"a": 12.0}) == []
-    assert sched.pv_erzeugung_enden(pv, werte, tage, {"a": 12.0}) == []
-
-
-def test_haconfig_nutzt_den_ueberschuss_vor_dem_start():
-    """``ueberschuss_vor_start_kwh`` gilt für den Tag des Horizontstarts
-    (Horizont ab 15:30, der Überschuss war am Vormittag): Ohne ihn sieht der
-    Tag dunkel aus und bekommt einen Termin am Ende der Erzeugung, mit ihm
-    keinen."""
-    pd = pytest.importorskip("pandas")
-    index = pd.date_range("2026-11-02 15:30", periods=40, freq="15min", tz="Europe/Vienna")
-    pv = [max(0.0, 0.5 - 0.1 * i) for i in range(6)] + [0.0] * 34
-    parameters = pd.DataFrame(
-        {"consumption": [0.5] * 40, "feedin_limit": [10.0] * 40}, index=index
-    )
-    ueberschuss = pd.Series([p - 0.5 / 0.95 for p in pv], index=index)
-    pv_reihe = pd.Series(pv, index=index)
-    ohne = sched.HAConfig(_abend(abend=50.0))
-    mit = sched.HAConfig(dataclasses.replace(_abend(abend=50.0), ueberschuss_vor_start_kwh=8.0))
-    assert ohne.abend_termine(parameters, ueberschuss, pv_reihe) == [4]
-    assert mit.abend_termine(parameters, ueberschuss, pv_reihe) == []
-
-
-def test_winziger_ueberschuss_zieht_den_termin_nicht_auf_mittag():
-    """Ein Slot mit 0,01 kW über der Hauslast zu Mittag: Die Mindestladung
-    bleibt am Ende der Erzeugung; ``pv_enden`` (und damit das Ladeziel) sieht
-    weiter den Mittag."""
-    tage = ["a"] * 10
-    pv = [0.1, 0.3, 0.54, 0.4, 0.3, 0.2, 0.1, 0.02, 0, 0]
-    werte = [p - 0.5 / 0.95 for p in pv]
-    assert werte[2] > 0 and sum(w for w in werte if w > 0) * 0.25 < 0.5
-    assert sched.pv_enden(werte, tage) == [2]
-    assert sched.abend_kandidaten(pv, werte, tage) == [6]
-    # Nennenswerter Überschuss: wieder das Ende des Überschusses.
-    viel = [w + (3.0 if i == 2 else 0.0) for i, w in enumerate(werte)]
-    assert sched.abend_kandidaten(pv, viel, tage) == [2]
-
-
-def test_winziger_ueberschuss_bei_offenem_horizont_kein_mittagstermin():
-    """Endet der Horizont mitten in der Erzeugung, fällt der Tag weg — statt
-    auf den winzigen Mittagsslot zurückzufallen."""
-    tage = ["a"] * 6
-    pv = [0.1, 0.3, 0.54, 0.4, 0.3, 0.2]
-    werte = [p - 0.5 / 0.95 for p in pv]
-    assert sched.abend_kandidaten(pv, werte, tage) == []
-
-
-def test_ueberschuss_vor_start_aus_der_prognose():
-    from datetime import timedelta, timezone
-
-    tz = timezone(timedelta(hours=1))
-
-    class Profil:
-        hourly_avg = {"x": 1}
-
-        def hourly_for(self, stamp):
-            return 500.0
-
-    start = datetime(2026, 11, 2, 15, 30, tzinfo=tz)
-    mittag = datetime(2026, 11, 2, 12, 0, tzinfo=tz)
-    detailed = {
-        mittag: (2.5, 2.0),
-        mittag + timedelta(minutes=30): (0.0, 0.0),
-    }
-    kwh = sched._ueberschuss_vor_start_prognose(Profil(), start, detailed, None)
-    # 12:00–12:30 = zwei Viertelstunden zu (2,5 − 0,5/0,95) kW.
-    assert kwh == pytest.approx(2 * 0.25 * (2.5 - 0.5 / 0.95))
-    assert sched._ueberschuss_vor_start_prognose(Profil(), start, None, None) == 0.0
-    um_mitternacht = start.replace(hour=0, minute=0)
-    assert sched._ueberschuss_vor_start_prognose(Profil(), um_mitternacht, detailed, None) == 0.0
-
-
-def test_ueberschuss_gemessen_summiert_und_beginnt_um_mitternacht():
-    from datetime import timedelta, timezone
-
-    tz = timezone(timedelta(hours=1))
-    data = {}
-    t0 = datetime(2026, 11, 2, 12, 0, tzinfo=tz)
-    assert sched._ueberschuss_gemessen(data, t0, 3.0, 0.95) == 0.0
-    kwh = sched._ueberschuss_gemessen(data, t0 + timedelta(minutes=1), 3.0, 0.95)
-    assert kwh == pytest.approx(2.0 / 60)
-    # Eine lange Pause zählt höchstens fünf Minuten.
-    kwh = sched._ueberschuss_gemessen(data, t0 + timedelta(hours=1), 3.0, 0.95)
-    assert kwh == pytest.approx(2.0 / 60 + 2.0 * 5 / 60)
-    # Nächster Tag: von vorn.
-    assert sched._ueberschuss_gemessen(data, t0 + timedelta(days=1), 3.0, 0.95) == 0.0
 
 
 def test_pflicht_rechnung_deckelt_die_entladung_nicht():

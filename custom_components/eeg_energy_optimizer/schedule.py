@@ -55,16 +55,12 @@ from .const import (
 )
 from .forderungen import (  # noqa: F401 — hier mit-exportiert (Tests, Altnamen)
     BATTERIE_WIDERSTAND,
-    PV_ERZEUGUNG_MIN_KW,
     RESERVE_NETZ_BEDARF_MIN_KWH,
-    UEBERSCHUSS_WINZIG_KWH,
     Akku,
     Forderungen,
     Lage,
     Vorgaben,
-    abend_kandidaten,
     pv_enden,
-    pv_erzeugung_enden,
 )
 from .forderungen import batterie_verluste_kw as _batterie_verluste_kw
 from .forderungen import entladeleistung_fuer_dc as _entladeleistung_fuer_dc
@@ -578,13 +574,11 @@ class ScheduleInputs:
     netzladen_vorteil: float = DEFAULT_NETZLADEN_VORTEIL
     # Mindestladung am Abend in Prozent (0 = aus), nur mit Netzladen.
     netzladen_abend_pct: float = 0.0
-    # PV-Überschuss des laufenden Kalendertags VOR ``start`` (kWh, DC wie
-    # ``dc_production − consumption/η``): der größere Wert aus Prognose der
-    # schon vergangenen Viertelstunden und gemessenem Überschuss seit
-    # Mitternacht. Die Zeitachse beginnt bei ``start`` — ohne diesen Wert
-    # hielte ``pv_erzeugung_enden`` einen sonnigen Tag, dessen Überschuss um
-    # 15:30 schon vorbei ist, für einen dunklen.
-    ueberschuss_vor_start_kwh: float = 0.0
+    # Sonnenuntergänge (ISO, mit Zone) für die Tage des Horizonts — die
+    # Termine der Mindestladung am Abend (``Forderungen.termine_abend``).
+    # Aus HA (``sun``), Rückfall NOAA am Standort. None = keine bekannt,
+    # dann rechnet ``Forderungen`` sie am Ersatzstandort.
+    sonnenuntergaenge: list[str] | None = None
     # Spitzenreserve notfalls aus dem Netz (kW, AC, = Batterieleistung);
     # 0 = aus. Grenze am Zähler ist die der Spitzenkappung, je Slot in
     # ``spitzenreserve["grenzen"]``.
@@ -1098,7 +1092,9 @@ class HAConfig:
             kapazitaet_echt_kwh=float(i.battery_capacity_kwh),
             boden_basis_pct=i.min_soc_basis_pct,
             boden_pct=float(i.min_soc_pct),
-            ueberschuss_vor_start_kwh=float(i.ueberschuss_vor_start_kwh or 0.0),
+            sonnenuntergaenge=[
+                datetime.fromisoformat(t) for t in (i.sonnenuntergaenge or [])
+            ] or None,
         )
 
     @staticmethod
@@ -1168,25 +1164,14 @@ class HAConfig:
     def _abbau_bis_ende(self, parameters, ueberschuss) -> tuple[list[float], float]:
         return self._forderungen(parameters, ueberschuss).abbau_bis_ende
 
-    def ladeziel_termine(
-        self, parameters, ueberschuss, ziel_kwh: float | None = None, pv=None
-    ) -> list[int]:
-        """Slots, an denen das Ladeziel gilt — mit ``ziel_kwh`` und ``pv``
-        die der Mindestladung (``Forderungen.termine``)."""
-        ziel = self.ladeziel_kwh if ziel_kwh is None else float(ziel_kwh)
-        return self._forderungen(parameters, ueberschuss, pv).termine(
-            ziel, mit_erzeugung=pv is not None
-        )
+    def ladeziel_termine(self, parameters, ueberschuss) -> list[int]:
+        """Slots, an denen das Ladeziel gilt (Ende der PV-Zeit)."""
+        return self._forderungen(parameters, ueberschuss).termine_ladeziel
 
-    def abend_termine(self, parameters, ueberschuss, pv) -> list[int]:
-        """Termine der Mindestladung — dieselben für LP und Plan-Ausgabe.
-
-        ``pv`` ist die erwartete Erzeugung je Slot: im LP
-        ``dc_production``, in der Ergebnistabelle die Spalte ``PV``.
-        """
-        if self.abend_kwh <= 0 or len(ueberschuss) == 0:
-            return []
-        return self.ladeziel_termine(parameters, ueberschuss, self.abend_kwh, pv=pv)
+    def abend_termine(self, parameters, ueberschuss, pv=None) -> list[int]:
+        """Termine der Mindestladung (Sonnenuntergang) — dieselben für LP
+        und Plan-Ausgabe."""
+        return self._forderungen(parameters, ueberschuss, pv).termine_abend
 
     def _netzladen_erlaubt_kw(self, max_kw: float, haus: list[float], stempel) -> list[float]:
         rechnung = Forderungen(
@@ -2128,65 +2113,42 @@ def _messmittel(
     return sum(w for _, w in puffer) / len(puffer)
 
 
-def _ueberschuss_vor_start_prognose(
-    coordinator: Any,
-    start: datetime,
-    detailed: dict[datetime, tuple[float, float]] | None,
-    wh_hours: dict[str, float] | None,
-) -> float:
-    """Prognostizierter PV-Überschuss des Tages von Mitternacht bis ``start`` (kWh).
+def _sonnenuntergaenge(hass: Any, start: datetime, horizon_h: float) -> list[str]:
+    """Sonnenuntergang je Kalendertag von ``start`` bis zum Horizontende.
 
-    Dieselbe Rechnung wie das LP (``dc_production − consumption/η``), nur
-    über die Viertelstunden, die die Zeitachse nicht mehr enthält. Solcast
-    und die eigene Prognose liefern den ganzen Tag, ``wh_hours`` ebenso; was
-    fehlt, zählt als 0 — dann bleibt es beim gemessenen Wert.
+    Aus Home Assistant (``get_astral_event_date``, dieselbe Rechnung wie
+    ``sun.sun``) — sonst NOAA am Standort der Installation
+    (``forderungen.sonnenuntergang``, ±2 min). Ein Tag, für den keins von
+    beiden geht (Polarnacht), fehlt.
     """
-    mitternacht = start.replace(hour=0, minute=0, second=0, microsecond=0)
-    schritte = int((start.timestamp() - mitternacht.timestamp()) // 900)
-    if schritte <= 0 or not (detailed or wh_hours):
-        return 0.0
-    stamps = [
-        datetime.fromtimestamp(mitternacht.timestamp() + k * 900, tz=start.tzinfo)
-        for k in range(schritte)
-    ]
+    from .forderungen import sonnenuntergang
+
+    zone = start.tzinfo
     try:
-        haus = _consumption_from_profile(coordinator, stamps)
-        if haus is None:
-            return 0.0
-        if detailed:
-            pv, _ = _production_from_detailed(detailed, stamps)
-        else:
-            pv = _production_from_wh(wh_hours, stamps)
-    except Exception:  # noqa: BLE001 — nur eine Hilfsgröße für die Termine
-        return 0.0
-    eta = HAConfig.ac_efficiency
-    return sum(max(0.0, p - h / eta) for p, h in zip(pv, haus)) * 0.25
-
-
-def _ueberschuss_gemessen(
-    data: dict, now: datetime, pv_kw: float | None, haus_kw: float | None
-) -> float:
-    """Gemessener PV-Überschuss seit Mitternacht (kWh), je Planlauf aufsummiert.
-
-    Liegt in ``hass.data`` wie das Messmittel, überlebt also keinen Neustart —
-    dafür gibt es die Prognose der vergangenen Viertelstunden. Ein Lauf zählt
-    höchstens fünf Minuten: Nach einer Pause wäre der Überschuss von jetzt
-    eine Erfindung für die Zeit dazwischen.
-    """
-    merker = data.setdefault("ueberschuss_heute", {})
-    tag = now.date()
-    if merker.get("tag") != tag:
-        merker.clear()
-        merker.update(tag=tag, kwh=0.0, zuletzt=None)
-    zuletzt = merker.get("zuletzt")
-    merker["zuletzt"] = now
-    if pv_kw is None or haus_kw is None or zuletzt is None:
-        return float(merker["kwh"])
-    dauer_h = min(max(0.0, (now - zuletzt).total_seconds()), 300.0) / 3600.0
-    merker["kwh"] = float(merker["kwh"]) + max(
-        0.0, pv_kw - haus_kw / HAConfig.ac_efficiency
-    ) * dauer_h
-    return float(merker["kwh"])
+        breite = float(hass.config.latitude)
+        laenge = float(hass.config.longitude)
+    except (AttributeError, TypeError, ValueError):
+        breite = laenge = None
+    try:
+        from homeassistant.helpers.sun import get_astral_event_date
+    except ImportError:  # Testumgebung ohne HA
+        get_astral_event_date = None
+    ergebnis: list[str] = []
+    tag = start.date()
+    ende = (start + timedelta(hours=horizon_h)).date()
+    while tag <= ende:
+        zeit = None
+        if get_astral_event_date is not None:
+            try:
+                zeit = get_astral_event_date(hass, "sunset", tag)
+            except Exception:  # noqa: BLE001 — dann NOAA
+                zeit = None
+        if not isinstance(zeit, datetime) and breite is not None:
+            zeit = sonnenuntergang(tag, breite, laenge, zone)
+        if isinstance(zeit, datetime):
+            ergebnis.append(zeit.astimezone(zone).isoformat())
+        tag += timedelta(days=1)
+    return ergebnis
 
 
 def _grid_timestamps(
@@ -2858,16 +2820,6 @@ async def async_collect_inputs(
     if house_load_now is not None:
         consumption[0] = round(house_load_now, 4)
 
-    # Überschuss des Tages vor dem Horizontstart — für die Termine der
-    # Mindestladung (``pv_erzeugung_enden``): Prognose der vergangenen
-    # Viertelstunden, gemessen seit Mitternacht, der größere Wert.
-    ueberschuss_vorher = max(
-        _ueberschuss_vor_start_prognose(
-            coordinator, start, detailed if wh_hours is None else None, wh_hours
-        ),
-        _ueberschuss_gemessen(data, now, pv_now, house_load_now),
-    )
-
     # Batterie: kombinierter Zustand bei Master/Slave, sonst die Sensoren.
     # ``has_combined_battery_state`` ist eine PROPERTY (inverter/base.py) —
     # das getattr liefert also bereits den Wahrheitswert. Bis 1.5.50 stand
@@ -3240,7 +3192,7 @@ async def async_collect_inputs(
         consumption_kw=consumption,
         production_kw=production,
         min_production_kw=min_production,
-        ueberschuss_vor_start_kwh=round(ueberschuss_vorher, 3),
+        sonnenuntergaenge=_sonnenuntergaenge(hass, start, horizon),
         worst_case_factor=DEFAULT_WORST_CASE_FACTOR,
         battery_free_kwh=round(battery_free, 3),
         battery_capacity_kwh=float(capacity),

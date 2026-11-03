@@ -553,33 +553,23 @@ the event loop is long enough for HA to flag a blocking call.
   surplus known → no EEG purchase).
   Both need a grid area (`bezugsreihe_netzladen` returns nothing without
   `Netzgebuehr`). **Mindestladung am Abend** (`schedule_netzladen_abend_pct`,
-  0/empty = off, only with the switch; decision 02.11.2026): at each PV end
-  (`ladeziel_termine` with `abend_kwh`) the battery must hold the threshold,
-  **independent of price** — `_abend_forderung` joins the reserve's demand in
-  `_netz_forderung`, `_netz_untergrenze` picks the cheapest slots before it
-  on the **expected** PV (re-planned every minute), so a community surplus
-  slot wins. Only up to the threshold: the Ladeziel above it stays with PV and
-  the economic bound (`HAConfig._erreichbar`, which like `opt_highs` caps
-  only charging, never discharging — `_netz_untergrenze` neither, since
-  2.1.64: a capped discharge chose too few mandatory slots and `opt()` cut
-  the demand silently). **Dark days** (the day's whole surplus below
-  `UEBERSCHUSS_WINZIG_KWH` = 0.5 kWh): the termin is the last slot of the day with
-  expected PV > 0.05 kW (`pv_erzeugung_enden`, `PV_ERZEUGUNG_MIN_KW`), if
-  another slot of that day follows in the horizon, with the same end-state
-  check as `ladeziel_termine`; a day with no PV at all has no termin (by
-  decision — there is no evening to anchor it to). A tiny surplus (one
-  0.01-kW slot at noon) does not pull the termin to noon: `abend_kandidaten`
-  takes max(PV end, end of generation) for such a day, and drops the day if
-  the generation end lies beyond the horizon. "The day's surplus" includes
-  the part **before the horizon start** (`ScheduleInputs.ueberschuss_vor_start_kwh`:
-  the larger of the forecast for today's past quarter-hours and the measured
-  surplus since midnight, `_ueberschuss_gemessen` in `hass.data`) — without
-  it a sunny day planned from 15:30 looked dark and got a second termin at
-  ~16:30, a forced purchase in the afternoon. Only for the
-  Mindestladung (`HAConfig.abend_termine`, shared by LP and plan output
-  `_abend_termine`), never for the Ladeziel. Before this (2.1.64) a dark
-  November day bought nothing and the plan stayed at 27.6 % with a 50 %
-  threshold. The plan carries
+  0/empty = off, only with the switch; decisions 02.11. and 03.11.2026): at
+  **sunset** of every day in the horizon (`Forderungen.termine_abend`: the
+  slot that contains the sunset, demanded for its end; sunsets from HA's
+  `get_astral_event_date` in `schedule._sonnenuntergaenge`, NOAA fallback
+  `forderungen.sonnenuntergang`, Linz as stand-in location for old archives
+  and tests) the battery must hold the threshold, **independent of price** —
+  `abend_forderung` joins the reserve's demand in `netz_forderung`, `pflicht`
+  picks the cheapest slots before it on the **expected** PV (re-planned every
+  minute), so a community surplus slot wins. Only up to the threshold: the
+  Ladeziel above it stays with PV and the economic bound (`erreichbar`, which
+  like `opt_highs` caps only charging, never discharging). Every day has a
+  termin, also one without any PV. Until 03.11.2026 the termin was the PV end
+  (dark days: end of generation, plus rules for a tiny surplus and the surplus
+  before the horizon start): when the surplus ended at noon the termin passed
+  at noon and nothing demanded the evening any more — Traun 03.11.2026 sat at
+  21 % instead of 60 %. A termin whose slot ends less than 1 h from now is
+  dropped (`MINDESTLADUNG_VORLAUF_H`). The plan carries
   `netzladen_abend` (`ziel_pct`, `termine` with planned SOC) like `ladeziel`;
   a missed evening is reported as telemetry `abendladung`. Tests:
   `tests/test_netzladen_abend.py`. The series replaces scalar and window prices in

@@ -6,7 +6,7 @@ einen Stand hat, und kommen über den Ladeziel-Hook in ``opt()``
 
 * **Ladeziel** — am Ende der PV-Zeit, davor rückwärts auf dem vorsichtigen
   Pfad verteilt. Kauft nie, höchstens über wirtschaftliches Netzladen.
-* **Mindestladung am Abend** — am Ende der PV-Zeit bzw. der Erzeugung.
+* **Mindestladung am Abend** — beim Sonnenuntergang jedes Tages.
   Pflicht, notfalls aus dem Netz.
 * **Spitzenreserve aus dem Netz** — vor jeder Viertelstunde, die zur Spitze
   beiträgt. Pflicht, notfalls aus dem Netz.
@@ -36,18 +36,6 @@ from functools import cached_property
 # Haralds Innenwiderstand je Stufe (``opt_highs``: ``c.battery_resistance``).
 BATTERIE_WIDERSTAND = 0.04
 
-# Ab welcher erwarteten PV-Leistung (kW, DC) ein Slot an einem Tag ohne
-# Überschuss noch als „Erzeugung" zählt — darunter ist es Dämmerung, und
-# deren Prognose sagt nichts über das Ende des Tages.
-PV_ERZEUGUNG_MIN_KW = 0.05
-# Unter so viel Überschuss am ganzen Tag (kWh) gilt ein Tag für die
-# Mindestladung als dunkel. Ein einzelner Slot mit 0,01 kW über der Hauslast
-# zu Mittag ist kein Ende der PV-Zeit, sondern Rauschen in der Prognose —
-# als solches gezählt, sprang der Termin von ~16:30 auf 12:00, sobald die
-# Prognose den Slot einmal knapp über und einmal knapp unter die Hauslast
-# legte, und mit ihm die Pflichtladung um vier Stunden nach vorn. Eine halbe
-# Kilowattstunde lädt keine Batterie nennenswert.
-UEBERSCHUSS_WINZIG_KWH = 0.5
 # Die Spitzenreserve fordert nur vor einer Viertelstunde, in der die Kurve
 # um mehr als das fällt — kleinere Stufen sind Rundung, kein Bedarf.
 RESERVE_NETZ_BEDARF_MIN_KWH = 0.05
@@ -59,6 +47,12 @@ RESERVE_NETZ_BEDARF_MIN_KWH = 0.05
 # solche Termine — es kauft nie und hält die Batterie kurz vor dem PV-Ende
 # davon ab, noch schnell einzuspeisen. Entscheidung 03.11.2026.
 MINDESTLADUNG_VORLAUF_H = 1.0
+# Ersatzstandort für den Sonnenuntergang, wenn keiner bekannt ist (alte
+# Archive, Tests): Linz. Innerhalb Österreichs liegt der Untergang damit
+# höchstens etwa 20 Minuten daneben — für den Termin einer Viertelstunde
+# reicht das, für eine echte Anlage kommt er aus Home Assistant.
+ERSATZ_BREITE = 48.3
+ERSATZ_LAENGE = 14.3
 
 
 # ---------------------------------------------------------------------------
@@ -137,90 +131,28 @@ def pv_enden(werte: list[float], tage: list) -> list[int]:
     return enden
 
 
-def pv_erzeugung_enden(
-    pv: list[float],
-    werte: list[float],
-    tage: list,
-    vorher_kwh: dict | None = None,
-    p2e: float = 0.25,
-) -> list[int]:
-    """Termine der Mindestladung an Tagen ohne nennenswerten Überschuss.
+def sonnenuntergang(tag, breite: float, laenge: float, zone) -> datetime | None:
+    """Sonnenuntergang an ``tag`` (Ortszeit ``zone``) — NOAA, Höhe −0,833°.
 
-    ``pv_enden`` kennt nur Tage, an denen die PV das Haus wenigstens eine
-    Viertelstunde übersteigt. An einem dunklen Novembertag (PV ganztags unter
-    der Hauslast) gibt es keinen solchen Slot, also keinen Termin — und damit
-    keine Mindestladung, genau an dem Tag, für den sie gedacht ist
-    (nachgerechnet: Mindestladung 50 %, PV-Faktor 0,03 → 0 kWh gekauft, der
-    Plan blieb bei 27,6 %).
-
-    Für solche Tage gilt als Termin der letzte Slot mit erwarteter Erzeugung
-    über ``PV_ERZEUGUNG_MIN_KW`` — das Ende der Erzeugung statt des Endes
-    des Überschusses. Wie bei ``pv_enden`` nur, wenn danach am selben Tag noch
-    ein Slot im Horizont liegt. Ein Tag ganz ohne PV (Prognose 0, Schnee auf
-    den Modulen) hat keinen Termin: Ohne Erzeugung gibt es keinen Abend, an
-    dem man ihn festmachen könnte, und ein frei gewählter Zeitpunkt wäre eine
-    Erfindung.
-
-    „Dunkel" heißt: Der Überschuss des GANZEN Kalendertags bleibt unter
-    ``UEBERSCHUSS_WINZIG_KWH``. Gezählt wird, was im Horizont liegt, plus
-    ``vorher_kwh`` (Datum → kWh) für den Teil des Tages vor dem Horizontstart.
-    Ohne diesen Teil bekam ein sonniger Tag, dessen letzter Überschuss-Slot
-    um 15:30 schon vorbei war, einen zweiten Termin am Ende der Erzeugung
-    (~16:30): ein Zwangskauf am Nachmittag für einen Tag, dessen PV-Ende
-    längst war, und eine zweite Prüfung in der Telemetrie.
-
-    Nur für die Mindestladung, nicht fürs Ladeziel: Das Ladeziel lässt sich
-    ohnehin nur aus Überschuss erreichen — an einem Tag ohne ihn gibt es für
-    es nichts zu planen.
+    Rückfall, wenn Home Assistant keinen liefert; auf etwa zwei Minuten
+    genau (Traun 03.11.2026: 16:43 statt 16:41). Mit ``sonnenstand`` aus der
+    PV-Kalibrierung, halbiert zwischen Mittag und 23 Uhr. None, wenn die
+    Sonne an dem Tag nicht untergeht.
     """
-    summe: dict = dict(vorher_kwh or {})
-    for i, w in enumerate(werte):
-        if w > 0:
-            summe[tage[i]] = summe.get(tage[i], 0.0) + w * p2e
-    letzte: dict = {}
-    for i, p in enumerate(pv):
-        if summe.get(tage[i], 0.0) < UEBERSCHUSS_WINZIG_KWH and p > PV_ERZEUGUNG_MIN_KW:
-            letzte[tage[i]] = i
-    enden: list[int] = []
-    for i in sorted(letzte.values()):
-        naechster = i + 1
-        if naechster >= len(werte) or tage[naechster] != tage[i]:
-            continue  # Horizont- oder Tagesende, kein Ende der Erzeugung
-        enden.append(i)
-    return enden
+    from .pvprognose.kalibrierung import sonnenstand
 
-
-def abend_kandidaten(
-    pv: list[float],
-    werte: list[float],
-    tage: list,
-    vorher_kwh: dict | None = None,
-    p2e: float = 0.25,
-) -> list[int]:
-    """Kandidaten für den Termin der Mindestladung, je Kalendertag höchstens einer.
-
-    Tage mit nennenswertem Überschuss: das Ende der PV-Zeit (``pv_enden``),
-    wie beim Ladeziel. Dunkle Tage (``pv_erzeugung_enden``): das Ende der
-    Erzeugung — auch dann, wenn ein winziger Überschuss-Slot ``pv_enden``
-    einen Mittagstermin gäbe. Der Termin ist dort also max(PV-Ende,
-    Erzeugungsende) — praktisch das Erzeugungsende, denn die Erzeugung endet
-    nur bei einer Hauslast nahe null vor dem Überschuss. Liegt es hinter dem
-    Horizont, fällt der Tag ganz weg, statt auf den Mittag zurückzufallen —
-    wie bei ``pv_enden`` ist das Ende der Rechnung kein Ende des Tages.
-    """
-    erzeugung = {tage[i]: i for i in pv_erzeugung_enden(pv, werte, tage, vorher_kwh, p2e)}
-    summe: dict = dict(vorher_kwh or {})
-    for i, w in enumerate(werte):
-        if w > 0:
-            summe[tage[i]] = summe.get(tage[i], 0.0) + w * p2e
-    termine = dict(erzeugung)
-    for i in pv_enden(werte, tage):
-        tag = tage[i]
-        if summe.get(tag, 0.0) >= UEBERSCHUSS_WINZIG_KWH:
-            termine[tag] = i
-        elif tag in erzeugung:
-            termine[tag] = max(i, erzeugung[tag])
-    return sorted(termine.values())
+    unten = -0.833
+    von = datetime(tag.year, tag.month, tag.day, 12, 0, tzinfo=zone)
+    bis = datetime(tag.year, tag.month, tag.day, 23, 0, tzinfo=zone)
+    if sonnenstand(von, breite, laenge)[1] <= unten or sonnenstand(bis, breite, laenge)[1] > unten:
+        return None
+    for _ in range(30):
+        mitte = von + (bis - von) / 2
+        if sonnenstand(mitte, breite, laenge)[1] > unten:
+            von = mitte
+        else:
+            bis = mitte
+    return von.replace(microsecond=0)
 
 
 # ---------------------------------------------------------------------------
@@ -269,7 +201,8 @@ class Vorgaben:
     kapazitaet_echt_kwh: float = 0.0
     boden_basis_pct: float | None = None
     boden_pct: float = 0.0
-    ueberschuss_vor_start_kwh: float = 0.0
+    # Termine der Mindestladung; None = am Ersatzstandort rechnen.
+    sonnenuntergaenge: list[datetime] | None = None
 
 
 @dataclass
@@ -342,30 +275,58 @@ class Forderungen:
                 )
         return rest, min(a.kapazitaet / 2.0, stand)
 
-    def termine(self, ziel_kwh: float, mit_erzeugung: bool = False) -> list[int]:
-        """Slots, an denen ein Stand von ``ziel_kwh`` gilt.
-
-        Je Kalendertag das Ende der PV-Zeit (``pv_enden``); mit
-        ``mit_erzeugung`` (Mindestladung) an dunklen Tagen das Ende der
-        Erzeugung (``abend_kandidaten``), und ohne Termine, deren Slot vor
-        ``MINDESTLADUNG_VORLAUF_H`` endet.
+    @cached_property
+    def termine_ladeziel(self) -> list[int]:
+        """Je Kalendertag das Ende der PV-Zeit (``pv_enden``) — nur mit Ladeziel.
 
         Ein Termin am Planungsrand, von dem der Plan nicht mehr auf den
-        Endstand käme, bleibt stehen — seine Forderung kappt ``_rand`` wie
-        jede andere. Bis 2.1.64 strich das Ladeziel so einen Termin, die
-        Netzforderung kappte ihn; eine Regel statt zwei (Entscheidung
-        03.11.2026).
+        Endstand käme, bleibt stehen — seine Forderung senkt ``_rand`` wie
+        jede andere (Entscheidung 03.11.2026; bis 2.1.64 wurde er gestrichen).
         """
-        if ziel_kwh <= 0 or self.n == 0:
+        if self.v.ladeziel_kwh <= 0 or self.n == 0:
             return []
-        if not mit_erzeugung:
-            return pv_enden(self.lage.ueberschuss, self.tage)
-        vorher = float(self.v.ueberschuss_vor_start_kwh or 0.0)
-        kandidaten = abend_kandidaten(
-            self.lage.pv, self.lage.ueberschuss, self.tage,
-            {self.tage[0]: vorher} if vorher > 0 else None, self.akku.p2e,
-        )
-        return [i for i in kandidaten if (i + 1) * self.akku.p2e >= MINDESTLADUNG_VORLAUF_H - 1e-9]
+        return pv_enden(self.lage.ueberschuss, self.tage)
+
+    @cached_property
+    def termine_abend(self) -> list[int]:
+        """Je Kalendertag der Slot, in dem die Sonne untergeht — der Termin
+        der Mindestladung am Abend, gefordert für sein Ende.
+
+        „Abend = Sonnenuntergang" (Entscheidung 03.11.2026). Bis dahin war der
+        Termin das Ende der PV-Zeit (letzter Überschuss-Slot), an dunklen
+        Tagen das Ende der Erzeugung. Endete der Überschuss schon zu Mittag,
+        lag der Termin dort, war um 13:15 vorbei, und für den Abend forderte
+        nichts mehr — Traun 03.11.2026 stand bei 21 % statt 60 %. Dazu kamen
+        drei Sonderregeln (dunkler Tag, winziger Überschuss, Überschuss vor
+        dem Start), die mit dem Sonnenuntergang alle entfallen; auch ein Tag
+        ganz ohne PV hat jetzt einen Termin.
+
+        Ohne ``abend_kwh`` keine. Termine, deren Slot weniger als
+        ``MINDESTLADUNG_VORLAUF_H`` ab jetzt endet, entfallen; ein
+        Untergang vor dem Horizontstart oder hinter seinem Ende ebenso.
+        """
+        if self.v.abend_kwh <= 0 or self.n == 0:
+            return []
+        stempel = self.lage.stempel
+        untergaenge = self.v.sonnenuntergaenge
+        if untergaenge is None:
+            zone = stempel[0].tzinfo
+            tage = sorted(set(self.tage))
+            untergaenge = [
+                u for u in (
+                    sonnenuntergang(t, ERSATZ_BREITE, ERSATZ_LAENGE, zone) for t in tage
+                ) if u is not None
+            ]
+        slot_s = self.akku.p2e * 3600.0
+        termine: list[int] = []
+        for untergang in untergaenge:
+            u = untergang.timestamp()
+            for k, t in enumerate(stempel):
+                if t.timestamp() <= u < t.timestamp() + slot_s:
+                    if (k + 1) * self.akku.p2e >= MINDESTLADUNG_VORLAUF_H - 1e-9:
+                        termine.append(k)
+                    break
+        return sorted(set(termine))
 
     def _rand(self, forderung: list[float]) -> list[float]:
         """Jede Forderung gekappt auf das, wovon der Plan bis zum Horizontende
@@ -392,14 +353,6 @@ class Forderungen:
     def am_rand_abgesenkt(self) -> set[int]:
         """Slots, deren Forderung ``_rand`` abgesenkt hat — für Anzeige und Grund."""
         return set()
-
-    @cached_property
-    def termine_ladeziel(self) -> list[int]:
-        return self.termine(self.v.ladeziel_kwh)
-
-    @cached_property
-    def termine_abend(self) -> list[int]:
-        return self.termine(self.v.abend_kwh, mit_erzeugung=True)
 
     # -- Erreichbarkeit -------------------------------------------------
 

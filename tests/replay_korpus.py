@@ -299,7 +299,6 @@ def _dunkel(inputs: sched.ScheduleInputs) -> sched.ScheduleInputs:
                 None if inputs.min_production_kw is None
                 else [v * faktor for v in inputs.min_production_kw]
             ),
-            ueberschuss_vor_start_kwh=0.0,
         ),
         netzladen_abend_pct=50.0,
     )

@@ -22,7 +22,7 @@ Spot- und Gemeinschaftsbezug brauchen einen **Netzbereich** (Karte **Bezug**), s
 |---|---|
 | **Höchster Netzbezug beim Laden aus dem Netz (kW)** | Gilt am Zähler, Haus und Batterie zusammen. Plan und Steuerung rechnen mit Hausverbrauch und PV (die Steuerung alle 30 s mit den Messwerten) und lassen die Batterie nur so schnell laden, dass der Bezug darunter bleibt. Das Haus wird nie begrenzt. Leer = keine Grenze, die Batterie lädt mit ihrer vollen Leistung. Ist die **Spitzenkappung** mit Batterie an, bleibt jede Netzladung ohnehin 0,3 kW unter deren Grenzwert |
 | **Mindestvorteil (ct/kWh)** | Um so viel muss der Netzstrom billiger sein als die Nacht. Vorgabe 2 ct |
-| **Mindestladung am Abend (%)** | So voll soll die Batterie am Ende der PV-Zeit auf jeden Fall sein, unabhängig vom Preis (siehe unten). Leer = aus |
+| **Mindestladung am Abend (%)** | So voll soll die Batterie bei Sonnenuntergang auf jeden Fall sein, unabhängig vom Preis (siehe unten). Leer = aus |
 
 Während der Netzladung lädt der Wechselrichter mit der geplanten Leistung bis zum geplanten Ladestand, der Statussensor zeigt „Netzladung x kW bis y %“, im Diagramm ist sie violett gestrichelt. Der Heizstab bleibt dabei aus.
 
@@ -45,14 +45,12 @@ Mit **Bezug aus der Gemeinschaft** lädt der Fahrplan genau in den Viertelstunde
 
 ## Mindestladung am Abend
 
-Das Ladeziel kauft nur zu, wenn sich das rechnet. Willst du am Abend auf jeden Fall einen bestimmten Ladestand haben, etwa für die Nacht oder als Reserve, trag ihn bei **Mindestladung am Abend** ein. Der Termin ist derselbe wie beim Ladeziel: das Ende der PV-Zeit, also der letzte Moment des Tages, an dem die Sonne mehr liefert, als das Haus braucht.
-
-An einem dunklen Tag liefert die Sonne nie mehr, als das Haus braucht — dann gibt es kein Ende der PV-Zeit. Für die Mindestladung gilt an so einem Tag das Ende der Erzeugung: die letzte Viertelstunde, in der die Anlage laut Prognose noch nennenswert Strom macht (mehr als 50 W). Gerade an diesen Tagen wird also aus dem Netz nachgeladen. Sagt die Prognose für einen Tag gar keine Erzeugung voraus, etwa bei Schnee auf den Modulen, gibt es keinen Termin und keine Mindestladung. Das Ladeziel bleibt davon unberührt: An einem Tag ohne Sonnenüberschuss hat es nichts zu planen.
+Das Ladeziel kauft nur zu, wenn sich das rechnet. Willst du am Abend auf jeden Fall einen bestimmten Ladestand haben, etwa für die Nacht oder als Reserve, trag ihn bei **Mindestladung am Abend** ein. Der Termin ist der **Sonnenuntergang**, jeden Tag, egal wie viel die Sonne an dem Tag liefert, auch an einem trüben Tag oder bei Schnee auf den Modulen. Die Uhrzeit kommt aus Home Assistant (dieselbe wie bei `sun.sun`).
 
 Bei jeder Neuberechnung prüft der Fahrplan, ob die erwartete PV die Batterie bis dahin auf diesen Wert bringt. Fehlt etwas, lädt er den Rest aus dem Netz, egal was der Strom kostet, aber in den günstigsten Viertelstunden vor dem Termin. Mit Bezug aus der Gemeinschaft sind das die Viertelstunden, in denen die Gemeinschaft Strom übrig hat; gibt es an dem Tag keine, nimmt er die günstigste andere. Wird es trüber als vorhergesagt, kauft der nächste Lauf entsprechend mehr.
 
-Ein Beispiel: 10-kWh-Batterie, Mindestladung 60 %, Ladeziel 100 %. Die PV-Zeit endet laut Prognose um 15:30, bis dahin bringt die Sonne die Batterie nur auf 45 %. Es fehlen 15 %, also 1,5 kWh. Die kauft der Fahrplan in den günstigsten Viertelstunden vor 15:30, etwa zu Mittag, wenn die Gemeinschaft Überschuss hat. Die restlichen 40 % bis zum Ladeziel kauft er nur, wenn sich das rechnet.
+Ein Beispiel: 10-kWh-Batterie, Mindestladung 60 %, Ladeziel 100 %. Die Sonne geht um 16:40 unter, bis dahin bringt sie die Batterie nur auf 45 %. Es fehlen 15 %, also 1,5 kWh. Die kauft der Fahrplan in den günstigsten Viertelstunden vor 16:40, etwa zu Mittag, wenn die Gemeinschaft Überschuss hat. Die restlichen 40 % bis zum Ladeziel kauft er nur, wenn sich das rechnet.
 
 Gekauft wird nur bis zur Mindestladung. Was darüber bis zum **Ladeziel** fehlt, kommt weiter nur von der Sonne oder aus Viertelstunden, in denen sich der Zukauf rechnet (Mindestvorteil). Die Grenze am Zähler und die der Spitzenkappung gelten auch hier.
 
-Liegt das Ende der PV-Zeit weniger als eine Stunde in der Zukunft, entfällt der Termin für heute: In so kurzer Zeit wäre die Mindestladung ohnehin kaum zu schaffen, und der Fahrplan würde nur mit voller Leistung teuer zukaufen. Sie gilt dann wieder ab dem nächsten Tag. Schaltest du die Mindestladung also am Nachmittag ein, wirkt sie erst ab morgen.
+Liegt der Sonnenuntergang weniger als eine Stunde in der Zukunft, entfällt der Termin für heute: In so kurzer Zeit wäre die Mindestladung ohnehin kaum zu schaffen, und der Fahrplan würde nur mit voller Leistung teuer zukaufen. Sie gilt dann wieder ab dem nächsten Tag. Schaltest du die Mindestladung also erst kurz vor Sonnenuntergang ein, wirkt sie erst ab morgen.

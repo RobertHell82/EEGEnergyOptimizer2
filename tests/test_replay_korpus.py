@@ -111,12 +111,13 @@ def _plan(name: str, variante: str) -> dict:
 
 
 def test_grund_nennt_pflicht_und_kappungsgrenze():
-    """Fronius 19 kWh, 02.11. 13:16, Mindestladung 90 %: Der Plan lädt mit dem
+    """Fronius 19 kWh, 02.11. 13:16, Mindestladung 90 % bei Sonnenuntergang: Der Plan lädt mit dem
     höchsten Bezug, den die Spitzenkappung (4 kW) zulässt — genau das soll
     im Grund stehen, nicht von Hand nachgerechnet werden müssen."""
     plan = _plan("fronius-b_2026-11-02_131628", "mindestladung")
     grund = plan["slots"][0].get("grund") or ""
-    assert "Netzladung für die Mindestladung (90 % um 16:15)" in grund
+    # Termin ist der Slot des Sonnenuntergangs (Ersatzstandort Linz: 16:43).
+    assert "Netzladung für die Mindestladung (90 % um 16:30)" in grund
     assert "Spitzenkappung (4,0 kW)" in grund
 
 
