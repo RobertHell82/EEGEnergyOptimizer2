@@ -12,8 +12,11 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+## [2.1.65] - 2026-11-03
+
 ### Behoben
 
+- **Wallbox Ambibox: Ladestand 0 % und „Zustand 524288“.** Die Ambibox liefert ihre 32-Bit-Werte mit dem niedrigen Wort zuerst, gelesen wurde mit dem hohen zuerst. Damit stand jede Ganzzahl um 16 Bit verschoben (Sitzungszustand 524288 statt 8 = „Gestoppt“, höchste Ladeleistung 668 467 kW statt 10,2 kW), und jeder Gleitkommawert, also Ladestand, Kapazität und Batteriegesundheit, kam als winzige Zahl an, also 0. Gelesen und geschrieben wird jetzt in der Reihenfolge des Geräts. Der Schreibweg des Handtests hatte denselben Fehler: 3 kW wären als rund 196 MW angekommen; der Test lief nur deshalb nicht los, weil auch der Steuermodus verdreht gelesen wurde und das Auto als nicht steuerbar galt.
 - **Kein Fahrplan an dunklen Tagen mit „Reserve notfalls aus dem Netz“.** Endete der Planungszeitraum kurz nach der Abendspitze des nächsten Tages, verlangte die Spitzenreserve davor noch Energie, die die Batterie bis zum Ende des Zeitraums nicht mehr abbauen konnte. Der Optimierer fand dann keine Lösung, und nach 15 Minuten gab der Failsafe den Wechselrichter frei — an solchen Tagen jeden Abend für eine Weile. Die Forderung wird jetzt auf das begrenzt, wovon der Plan noch auf seinen Endstand kommt, wie es das Ladeziel schon tat.
 - **Mindestladung am Abend für den nächsten Tag.** Lag der erste Termin so früh, dass er nicht mehr erreichbar war (etwa wenn der PV-Überschuss gerade endete), bekam auch jeder spätere Termin keine Pflichtladung mehr; der Plan entlud dann vor dem Termin, statt auf die Mindestladung zu laden. Jetzt wird nur der unerreichbare Termin übersprungen.
 - **Netzladung unter der Grenze der Spitzenkappung auch im Plan.** Der Executor begrenzte jede Netzladung auf die Grenze der Spitzenkappung, der Plan aber nur die Pflichtladung, nicht das Laden zu günstigen Preisen. Die Batterie lud dann weniger als geplant. Beide rechnen jetzt mit derselben Grenze.
