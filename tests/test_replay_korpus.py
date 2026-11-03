@@ -19,6 +19,7 @@ einem halben Cent Unterschied.
 from __future__ import annotations
 
 import dataclasses
+import os
 
 import pytest
 
@@ -28,25 +29,71 @@ from . import replay_korpus as rk
 
 DATEIEN = rk.korpus_dateien()
 
+# Pläne, an denen ein Fehler auftrat — sie laufen immer in allen Varianten.
+# Gegen den Stand vor dem jeweiligen Fix wird jeder davon rot.
+FUNDSTELLEN = {
+    "fronius-a_2026-10-25_025848",  # Zeitumstellung im Loader
+    "fronius-b_2026-11-02_131628",  # Mindestladung, Kappungsgrenze bindet
+    "fronius-b_2026-11-03_101549",
+    "huawei-a_2026-10-28_170232",   # Heizstab aus abgeregelter PV
+    "huawei-a_2026-11-01_194432",   # infeasible am Horizontende
+    "huawei-a_2026-11-02_010841",   # Netzladen über der Kappungsgrenze
+    "huawei-a_2026-11-02_155259",   # Mindestladung, reale Einstellung
+    "kostal-a_2026-10-27_160353",   # Mindestladung, break
+    "kostal-a_2026-10-28_111355",
+    "kostal-a_2026-11-01_130901",
+    "kostal-a_2026-11-02_160008",
+    "solax-a_2026-11-01_155757",
+    "solax-a_2026-11-01_190457",    # infeasible am Horizontende
+}
+
+
+def _name(pfad) -> str:
+    return pfad.name.removesuffix(".json.gz")
+
+
+def _mit_varianten() -> list:
+    """Jeder dritte Plan je Anlage plus alle Fundstellen — oder alle, mit
+    ``EEG_KORPUS_VOLL=1``. Die Fehler fanden bisher die Fundstellen und die
+    Varianten, nicht die schiere Menge; alle Pläne in allen Varianten
+    kosteten über vier Minuten."""
+    if os.environ.get("EEG_KORPUS_VOLL"):
+        return DATEIEN
+    je_anlage: dict[str, int] = {}
+    auswahl = []
+    for pfad in DATEIEN:
+        anlage = _name(pfad).split("_")[0]
+        nummer = je_anlage[anlage] = je_anlage.get(anlage, -1) + 1
+        if nummer % 3 == 0 or _name(pfad) in FUNDSTELLEN:
+            auswahl.append(pfad)
+    return auswahl
+
 
 def test_korpus_ist_da():
     assert len(DATEIEN) >= 10
 
 
-@pytest.mark.parametrize("pfad", DATEIEN, ids=lambda p: p.name.removesuffix(".json.gz"))
-def test_loader_trifft_die_eingaenge(pfad):
-    """PV, Verbrauch und Zeitachse kommen exakt so zurück, wie das LP sie sah —
-    sonst prüften alle Regeln unten einen anderen Plan als den archivierten."""
+def test_fundstellen_sind_im_korpus():
+    assert FUNDSTELLEN <= {_name(p) for p in DATEIEN}
+
+
+@pytest.mark.parametrize("pfad", DATEIEN, ids=_name)
+def test_wie_archiviert(pfad):
+    """Jeder Plan wie archiviert: Erst muss der Loader die Eingänge exakt
+    treffen — PV, Verbrauch, Preis, Zahl der Slots —, sonst prüften die
+    Regeln einen anderen Plan als den archivierten. Dann die Regeln."""
     eintrag = rk.eintrag_laden(pfad)
-    plan = sched.solve(rk.inputs_aus_eintrag(eintrag))
+    inputs = rk.inputs_aus_eintrag(eintrag)
+    plan = sched.solve(inputs)
     alt = eintrag["plan"]["slots"]
     assert len(plan["slots"]) == len(alt)
     for spalte in ("PV", "consumption", "feedin_price"):
         assert rk.abweichung(alt, plan["slots"], spalte) < 1e-3, spalte
+    assert rk.verstoesse(inputs, plan) == []
 
 
-@pytest.mark.parametrize("variante", list(rk.VARIANTEN))
-@pytest.mark.parametrize("pfad", DATEIEN, ids=lambda p: p.name.removesuffix(".json.gz"))
+@pytest.mark.parametrize("variante", [v for v in rk.VARIANTEN if v != "archiv"])
+@pytest.mark.parametrize("pfad", _mit_varianten(), ids=_name)
 def test_regeln(pfad, variante):
     inputs = rk.VARIANTEN[variante](rk.inputs_aus_eintrag(rk.eintrag_laden(pfad)))
     plan = sched.solve(inputs)

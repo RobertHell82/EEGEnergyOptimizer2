@@ -1133,7 +1133,11 @@ absent for every other source.
   with `python scripts/replay_korpus.py aufnehmen <plaene.zip> --kuerzel
   <treiber>-<x>`; review a fresh archive without committing it with
   `… pruefen <plaene.zip>`. A new incident → a new rule in `verstoesse`
-  (plus a deliberately broken plan that trips it), not only a single test.
+  (plus a deliberately broken plan that trips it), not only a single test,
+  and the plan that showed it into `FUNDSTELLEN` in the test (add it with
+  `aufnehmen --eintraege`). Every plan runs as archived; the variants run on
+  every third plan per plant plus all `FUNDSTELLEN` (`EEG_KORPUS_VOLL=1`
+  runs all of them, ~4 instead of ~2 minutes).
   `_mit_spitzenreserve` mirrors `_spitzenreserve_fuer_plan` and the block
   after it in `async_collect_inputs` — change both together
 - `pyproject.toml` configures pytest
