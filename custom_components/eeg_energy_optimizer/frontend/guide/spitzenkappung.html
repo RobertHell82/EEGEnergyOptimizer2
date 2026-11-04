@@ -57,11 +57,12 @@
 <p>Ohne diese Option holt die Batterie ihre Reserve nur aus der Sonne. Nach einem trüben Tag kann sie dann leer in eine Nacht mit Spitze gehen. Mit <strong>Reserve notfalls aus dem Netz nachladen</strong> lädt der Fahrplan nach, was zur Reserve fehlt, und zwar unabhängig vom Preis.</p>
 <ul>
 <li><strong>Wann:</strong> vor der ersten Viertelstunde, in der laut Statistik eine Spitze kommt, etwa vor der Wärmepumpe am Morgen. Bis dahin ist jede Viertelstunde gleich gut, und der Plan nimmt die <strong>günstigste</strong>. Ist im Tab <strong>Tarife</strong> ein Bezug aus der Gemeinschaft eingerichtet, sind das die Viertelstunden, in denen die Gemeinschaft Strom übrig hat. Sonst gilt der Bezugstarif aus der Karte <strong>Bezug</strong>, etwa ein günstigeres Netzentgelt-Fenster oder bei Spot-Bezug die billigste Stunde. Das Netzladen selbst (Tab <strong>Netzladen</strong>) muss dafür nicht an sein.</li>
+<li><strong>Mindestreserve:</strong> Liegt die Batterie unter der <strong>Mindestreserve</strong>, lädt der Fahrplan sie spätestens bis zum nächsten Sonnenuntergang wieder auf, auch wenn die Statistik keine Spitze erwartet. Ohne diese Regel kam eine leere Batterie im Winter nie wieder in die Reserve, weil die Sonne nicht mehr als den Hausverbrauch bringt.</li>
 <li><strong>Wie viel:</strong> nur, was zur Reserve fehlt und die Sonne bis dahin nicht bringt.</li>
 <li><strong>Nie über der Grenze:</strong> Haus und Ladung zusammen bleiben 0,3 kW unter dem Grenzwert. Sonst schüfe das Nachladen genau die Spitze, gegen die es vorsorgt.</li>
 </ul>
 <p>Ein Beispiel: Grenzwert 5 kW, die Statistik verlangt für die Nacht 20 % Reserve, nach einem trüben Tag hat die Batterie abends nur 12 %. Um 6:00 läuft gewöhnlich die Wärmepumpe an. Der Fahrplan lädt die fehlenden 8 % in den günstigsten Viertelstunden zwischen jetzt und 6:00 nach, bei 0,8 kW Hausverbrauch mit höchstens 3,9 kW. Mehr als die Reserve kauft er dabei nicht.</p>
-<p>Das ist etwas anderes als die <strong>Mindestladung am Abend</strong> im Tab <strong>Netzladen</strong>: Die gilt am Ende der PV-Zeit und ist ein fester Ladestand, den du einträgst. Die Reserve rechnet die Integration selbst aus, und nachgeladen wird vor der nächsten Spitze.</p>
+<p>Das ist etwas anderes als die <strong>Mindestladung am Abend</strong> im Tab <strong>Netzladen</strong>: Die gilt beim Sonnenuntergang und ist ein fester Ladestand, den du einträgst. Die Reserve rechnet die Integration selbst aus, und nachgeladen wird vor der nächsten Spitze.</p>
 <p>Die Option braucht einen Wechselrichter, der beides kann: die Entladung begrenzen und aus dem Netz laden. Das können alle, außer SolaX Gen6 (lädt nicht aus dem Netz) und Victron ohne aktuelle Integration (begrenzt die Entladung nicht). Geprüft ist das Laden aus dem Netz bisher nur bei Huawei. Sie kostet die Lade- und Entladeverluste und Strom, der auch gekauft ist, wenn die Spitze ausbleibt. Die Reserve deckt die Nacht mit dem höchsten Bedarf der letzten Wochen ab, nicht eine durchschnittliche.</p>
 <h4>Verbraucher abschalten</h4>
 <p><strong>Wann schaltet die Integration ab?</strong></p>
@@ -114,7 +115,7 @@
 </tr>
 <tr>
 <td><strong>Reserve notfalls aus dem Netz nachladen</strong></td>
-<td>Beta, nicht mit SolaX Gen6. Lädt die fehlende Reserve vor der nächsten erwarteten Spitze aus dem Netz nach, in den günstigsten Viertelstunden. Vorgabe aus</td>
+<td>Beta, nicht mit SolaX Gen6. Lädt die fehlende Reserve vor der nächsten erwarteten Spitze aus dem Netz nach, die Mindestreserve spätestens bis zum Sonnenuntergang, jeweils in den günstigsten Viertelstunden. Vorgabe aus</td>
 </tr>
 <tr>
 <td><strong>Verbraucher</strong></td>

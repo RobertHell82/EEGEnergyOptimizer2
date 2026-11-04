@@ -67,12 +67,13 @@ Auch der Fahrplan rechnet die Reserve mit ein:
 Ohne diese Option holt die Batterie ihre Reserve nur aus der Sonne. Nach einem trüben Tag kann sie dann leer in eine Nacht mit Spitze gehen. Mit **Reserve notfalls aus dem Netz nachladen** lädt der Fahrplan nach, was zur Reserve fehlt, und zwar unabhängig vom Preis.
 
 - **Wann:** vor der ersten Viertelstunde, in der laut Statistik eine Spitze kommt, etwa vor der Wärmepumpe am Morgen. Bis dahin ist jede Viertelstunde gleich gut, und der Plan nimmt die **günstigste**. Ist im Tab **Tarife** ein Bezug aus der Gemeinschaft eingerichtet, sind das die Viertelstunden, in denen die Gemeinschaft Strom übrig hat. Sonst gilt der Bezugstarif aus der Karte **Bezug**, etwa ein günstigeres Netzentgelt-Fenster oder bei Spot-Bezug die billigste Stunde. Das Netzladen selbst (Tab **Netzladen**) muss dafür nicht an sein.
+- **Mindestreserve:** Liegt die Batterie unter der **Mindestreserve**, lädt der Fahrplan sie spätestens bis zum nächsten Sonnenuntergang wieder auf, auch wenn die Statistik keine Spitze erwartet. Ohne diese Regel kam eine leere Batterie im Winter nie wieder in die Reserve, weil die Sonne nicht mehr als den Hausverbrauch bringt.
 - **Wie viel:** nur, was zur Reserve fehlt und die Sonne bis dahin nicht bringt.
 - **Nie über der Grenze:** Haus und Ladung zusammen bleiben 0,3 kW unter dem Grenzwert. Sonst schüfe das Nachladen genau die Spitze, gegen die es vorsorgt.
 
 Ein Beispiel: Grenzwert 5 kW, die Statistik verlangt für die Nacht 20 % Reserve, nach einem trüben Tag hat die Batterie abends nur 12 %. Um 6:00 läuft gewöhnlich die Wärmepumpe an. Der Fahrplan lädt die fehlenden 8 % in den günstigsten Viertelstunden zwischen jetzt und 6:00 nach, bei 0,8 kW Hausverbrauch mit höchstens 3,9 kW. Mehr als die Reserve kauft er dabei nicht.
 
-Das ist etwas anderes als die **Mindestladung am Abend** im Tab **Netzladen**: Die gilt am Ende der PV-Zeit und ist ein fester Ladestand, den du einträgst. Die Reserve rechnet die Integration selbst aus, und nachgeladen wird vor der nächsten Spitze.
+Das ist etwas anderes als die **Mindestladung am Abend** im Tab **Netzladen**: Die gilt beim Sonnenuntergang und ist ein fester Ladestand, den du einträgst. Die Reserve rechnet die Integration selbst aus, und nachgeladen wird vor der nächsten Spitze.
 
 Die Option braucht einen Wechselrichter, der beides kann: die Entladung begrenzen und aus dem Netz laden. Das können alle, außer SolaX Gen6 (lädt nicht aus dem Netz) und Victron ohne aktuelle Integration (begrenzt die Entladung nicht). Geprüft ist das Laden aus dem Netz bisher nur bei Huawei. Sie kostet die Lade- und Entladeverluste und Strom, der auch gekauft ist, wenn die Spitze ausbleibt. Die Reserve deckt die Nacht mit dem höchsten Bedarf der letzten Wochen ab, nicht eine durchschnittliche.
 
@@ -115,7 +116,7 @@ Die Spitzenkappung findest du in den **Einstellungen** im Tab **Spitzenkappung**
 | **Grenzwert (kW)** | 2 bis 20 kW, Vorgabe 5. Darunter wird nichts gekappt |
 | **Mindestreserve (%)** | So viel hält die Batterie immer für Spitzen zurück, auch wenn die Statistik weniger verlangt. Vorgabe 0 |
 | **Maximalreserve (%)** | Mehr hält die Batterie nie zurück. Vorgabe 30. Ein leeres Feld heißt ebenfalls 30, 0 schaltet die Reserve ab |
-| **Reserve notfalls aus dem Netz nachladen** | Beta, nicht mit SolaX Gen6. Lädt die fehlende Reserve vor der nächsten erwarteten Spitze aus dem Netz nach, in den günstigsten Viertelstunden. Vorgabe aus |
+| **Reserve notfalls aus dem Netz nachladen** | Beta, nicht mit SolaX Gen6. Lädt die fehlende Reserve vor der nächsten erwarteten Spitze aus dem Netz nach, die Mindestreserve spätestens bis zum Sonnenuntergang, jeweils in den günstigsten Viertelstunden. Vorgabe aus |
 | **Verbraucher** | Bis zu zehn, in der Reihenfolge, in der abgeschaltet wird. Je Verbraucher brauchst du einen **Leistungssensor** (W oder kW) und einen **Schalter** (`switch.` oder `input_boolean.`). Optional trägst du die **Nennleistung** in kW ein |
 
 Ohne Batterie-Stufe (andere Wechselrichter) brauchst du mindestens einen Verbraucher. Sonst täte die Funktion nichts.

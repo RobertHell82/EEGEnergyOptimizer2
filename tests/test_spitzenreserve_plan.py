@@ -390,7 +390,12 @@ async def test_mindestreserve_fordert_am_horizontende_nichts():
     der Kurve. Vorher galt dort „danach = 0“, die Mindestreserve wurde zur
     Forderung am letzten Slot, und weil sie ohne Zukauf nicht erreichbar war,
     gab das die billigsten Slots frei — das Ladeziel füllte dann bis 100 %
-    aus dem Netz (Traun 02.11.2026, 5,8 kWh zu 17,6 ct ohne jeden Vorteil)."""
+    aus dem Netz (Traun 02.11.2026, 5,8 kWh zu 17,6 ct ohne jeden Vorteil).
+
+    Seit 2.1.68 fordert die Mindestreserve am ersten Sonnenuntergang — sonst
+    kam eine leere Batterie im Winter nie wieder in die Reserve (Werenka
+    29.10.–04.11.2026). Am Horizontende bleibt es bei nichts, und gekauft
+    wird nur, was zur Reserve fehlt."""
     config = {**CONFIG_NETZ, "spitzenkappung_reserve_min_pct": 5}
     inputs, _ = await _sammeln(
         _hass(config, _netz_inverter(), _verlauf(0.3), soc="12")
@@ -404,4 +409,14 @@ async def test_mindestreserve_fordert_am_horizontende_nichts():
     # einschließlich Horizontende reicht — wie in Traun (192 gegen 193).
     stempel = pd.DatetimeIndex([datetime.fromisoformat(t) for t, _ in kurve[:-1]])
     ueberschuss = pd.Series([0.0] * len(stempel), index=stempel)
-    assert sched.HAConfig(inputs)._reserve_netz_forderung(ueberschuss) is None
+    forderung = sched.HAConfig(inputs)._reserve_netz_forderung(ueberschuss)
+    assert forderung is not None
+    gefordert = [k for k, f in enumerate(forderung) if f > 0]
+    assert len(gefordert) == 1, "nur der erste Sonnenuntergang"
+    assert gefordert[0] < len(forderung) - 4, "nicht am Horizontende"
+    # Boden 10 % + 5 % Reserve, der Ladestand 12 % hält davon 2 % — es fehlen
+    # 3 % von 10 kWh.
+    assert forderung[gefordert[0]] == pytest.approx(0.3, abs=0.01)
+    result = sched.solve(inputs)
+    gekauft = sum(s.get("netzladung", 0.0) for s in result["slots"]) * 0.25
+    assert gekauft <= 0.3 / 0.9 + 0.1, gekauft

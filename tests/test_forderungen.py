@@ -7,6 +7,8 @@ Sonnenuntergang, Termine bleiben bis zum Sonnenuntergang, am Planungsrand wird
 jede Forderung abgesenkt statt gestrichen.
 """
 
+import pytest
+
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -145,3 +147,46 @@ def test_begrenzung_bis_nennt_die_spitzenkappung():
     assert b["durch"] == "kappung" and b["grenze_kw"] == 5.0
     assert b["slots"] == b["von"] == termin + 1
     assert b["moeglich_kwh"] == round(0.2 * 0.25 * (termin + 1), 2)
+
+
+def _mit_flacher_reserve(rechnung, boden_basis=11.0, boden=11.0, reserve=10.0):
+    """Spitzenkappung mit „Reserve notfalls aus dem Netz“ und nur der
+    Mindestreserve: die Kurve ist überall gleich, sie fällt nirgends."""
+    schritt = timedelta(minutes=15)
+    stempel = rechnung.lage.stempel + [rechnung.lage.stempel[-1] + schritt]
+    v = rechnung.v
+    v.spitzenreserve_netz_kw = 5.0
+    v.reserve_aktiv = True
+    v.reserve_pct = {int(t.timestamp()): reserve for t in stempel}
+    v.kappung_standard_kw = 6.0
+    v.kapazitaet_echt_kwh = 13.5
+    v.boden_basis_pct = boden_basis
+    v.boden_pct = boden
+    return rechnung
+
+
+def test_mindestreserve_wird_aus_dem_netz_nachgeladen():
+    """Werenka 29.10.–04.11.2026: Mindestreserve 10 % mit „notfalls aus dem
+    Netz“, Ladestand sechs Tage bei 9–13 %, keine Netzladung — eine flache
+    Kurve forderte nie etwas. Jetzt gilt sie zum nächsten Sonnenuntergang."""
+    rechnung = _mit_flacher_reserve(_rechnung(stand=0.0))
+    termin = rechnung.untergaenge[0]
+    assert _uhr(rechnung, termin) == "03. 16:30"
+    forderung = rechnung.netz_forderung
+    assert forderung[termin] == pytest.approx(1.35)
+    assert not any(forderung[:termin]), "bis dahin ist jeder Slot gleich gut"
+    assert rechnung.pflicht is not None
+    assert any(p < 0 for p in rechnung.pflicht[: termin + 1])
+    assert termin in rechnung.mindestreserve_slots
+
+
+def test_gehaltene_mindestreserve_fordert_nichts():
+    """Hält der Boden die Reserve schon, ist nichts nachzuladen."""
+    rechnung = _mit_flacher_reserve(_rechnung(stand=5.0), boden=21.0)
+    assert rechnung.reserve_forderung is None
+
+
+def test_mindestreserve_ohne_netz_schalter_fordert_nichts():
+    rechnung = _mit_flacher_reserve(_rechnung(stand=0.0))
+    rechnung.v.spitzenreserve_netz_kw = 0.0
+    assert rechnung.reserve_forderung is None

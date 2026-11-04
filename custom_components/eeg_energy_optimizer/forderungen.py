@@ -304,7 +304,15 @@ class Forderungen:
         Ohne ``abend_kwh`` keine. Ein Untergang vor dem Horizontstart oder
         hinter seinem Ende hat keinen Slot und damit keinen Termin.
         """
-        if self.v.abend_kwh <= 0 or self.n == 0:
+        if self.v.abend_kwh <= 0:
+            return []
+        return self.untergaenge
+
+    @cached_property
+    def untergaenge(self) -> list[int]:
+        """Je Kalendertag der Slot, in dem die Sonne untergeht — Termin der
+        Mindestladung und der Mindestreserve aus dem Netz."""
+        if self.n == 0:
             return []
         stempel = self.lage.stempel
         untergaenge = self.v.sonnenuntergaenge
@@ -553,7 +561,28 @@ class Forderungen:
                 continue
             kwh = kap * (float(v.boden_basis_pct) + jetzt - float(v.boden_pct)) / 100.0
             forderung[k] = min(self.akku.kapazitaet, max(0.0, kwh))
+        # Die Mindestreserve: Eine flache Kurve fällt nirgends, also forderte
+        # sie nie etwas. Wer leer war, kam nur über die PV wieder in die
+        # Reserve — im Winter nie. Werenka, 29.10.–04.11.2026: Mindestreserve
+        # 10 % mit „notfalls aus dem Netz", Ladestand sechs Tage bei 9–13 %,
+        # keine einzige Netzladung, Spitzen 9–12 kW bei 6 kW Grenze. Jetzt
+        # wird ihr Stand spätestens zum nächsten Sonnenuntergang gefordert,
+        # bis dahin im günstigsten Slot.
+        werte = [v.reserve_pct.get(t) for t in stempel]
+        werte = [w for w in werte if w is not None]
+        termin = self.untergaenge[0] if self.untergaenge else None
+        if werte and termin is not None:
+            kwh = kap * (float(v.boden_basis_pct) + min(werte) - float(v.boden_pct)) / 100.0
+            kwh = min(self.akku.kapazitaet, max(0.0, kwh))
+            if kwh > forderung[termin]:
+                forderung[termin] = kwh
+                self.mindestreserve_slots.add(termin)
         return forderung if any(f > 0 for f in forderung) else None
+
+    @cached_property
+    def mindestreserve_slots(self) -> set[int]:
+        """Slots, deren Reserve-Forderung die Mindestreserve ist — für den Grund."""
+        return set()
 
     @cached_property
     def abend_forderung(self) -> list[float] | None:
@@ -828,6 +857,8 @@ class Forderungen:
                     if termin in self.am_rand_abgesenkt:
                         text += f", am Planungsrand auf {zahl(pct(netz[termin]))} % abgesenkt"
                     return text
+                if j in self.mindestreserve_slots:
+                    return f"die Mindestreserve der Spitzenkappung (bis {uhr(j)})"
                 return f"die Spitzenreserve (Spitze um {uhr(j + 1)})"
             return None
 
