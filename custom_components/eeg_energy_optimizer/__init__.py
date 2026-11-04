@@ -711,17 +711,23 @@ def _check_abendladung_health(schedule_state, mode, config, soc, merker, jetzt, 
         elif jetzt >= ende:
             ziel = float(merker.get("ziel_pct") or 0.0)
             if soc is not None and float(soc) < ziel - ABENDLADUNG_TOLERANZ_PCT:
+                kontext = {
+                    "ziel_pct": ziel,
+                    "soc": round(float(soc), 1),
+                    "geplant_pct": merker.get("geplant_pct"),
+                    "termin": termin,
+                    "inverter_type": config.get(CONF_INVERTER_TYPE),
+                }
+                # Deckelte eine Grenze am Zähler die Netzladung (Spitzenkappung,
+                # Netzgrenze), ist das verfehlte Ziel eine Einstellungsfrage,
+                # kein Versagen der Steuerung.
+                if merker.get("begrenzung"):
+                    kontext["begrenzung"] = merker["begrenzung"]
                 emit(
                     category="abendladung",
                     severity="warning",
                     message_hash="verfehlt",
-                    context={
-                        "ziel_pct": ziel,
-                        "soc": round(float(soc), 1),
-                        "geplant_pct": merker.get("geplant_pct"),
-                        "termin": termin,
-                        "inverter_type": config.get(CONF_INVERTER_TYPE),
-                    },
+                    context=kontext,
                 )
             _abend_merker_leeren(merker)
             # Höchstens eine Prüfung je Tag (Datum des Termins, Ortszeit).
@@ -754,7 +760,8 @@ def _check_abendladung_health(schedule_state, mode, config, soc, merker, jetzt, 
             # der heutige stehen, bis er vorbei ist.
             break
         merker.update(
-            t=eintrag["t"], geplant_pct=eintrag.get("geplant_pct"), ziel_pct=abend.get("ziel_pct")
+            t=eintrag["t"], geplant_pct=eintrag.get("geplant_pct"), ziel_pct=abend.get("ziel_pct"),
+            begrenzung=eintrag.get("begrenzung"),
         )
         break
     else:

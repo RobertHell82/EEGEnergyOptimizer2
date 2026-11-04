@@ -3,7 +3,7 @@
 Die Rechnung selbst prüfen die Fahrplan-Tests (test_ladeziel,
 test_netzladen_abend, test_spitzenreserve_plan) und der Replay-Korpus über
 ``HAConfig``. Hier stehen die Regeln vom 03.11.2026: Mindestladung am
-Sonnenuntergang, Termine unter einer Stunde entfallen, am Planungsrand wird
+Sonnenuntergang, Termine bleiben bis zum Sonnenuntergang, am Planungsrand wird
 jede Forderung abgesenkt statt gestrichen.
 """
 
@@ -130,3 +130,18 @@ def test_mindestladung_laedt_mit_puffer_frueher(monkeypatch):
     assert 0.0 < rechnung.netz_forderung[termin - 4] < rechnung.netz_forderung[termin]
     # Der Grund nennt auch vor dem Termin die Mindestladung, nicht die Reserve.
     assert rechnung.abend_termin_je_slot[termin - 4] == termin
+
+
+def test_begrenzung_bis_nennt_die_spitzenkappung():
+    """Wolfsteiner 03.11.2026: Haus 4,5 kW, Spitzenkappung 5 kW — bis zum
+    Termin konnten je Viertelstunde nur 0,2 kW aus dem Netz in die Batterie."""
+    rechnung = _rechnung(abend_kwh=6.0)
+    assert rechnung.begrenzung_bis(rechnung.termine_abend[0]) is None
+    rechnung.lage.haus[:] = [4.5] * len(rechnung.lage.haus)
+    rechnung.v.reserve_aktiv = True
+    rechnung.v.kappung_standard_kw = 5.0
+    termin = rechnung.termine_abend[0]
+    b = rechnung.begrenzung_bis(termin)
+    assert b["durch"] == "kappung" and b["grenze_kw"] == 5.0
+    assert b["slots"] == b["von"] == termin + 1
+    assert b["moeglich_kwh"] == round(0.2 * 0.25 * (termin + 1), 2)

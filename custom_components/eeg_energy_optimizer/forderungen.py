@@ -427,6 +427,35 @@ class Forderungen:
             ergebnis.append((max(0.0, erlaubt), quelle, wert))
         return ergebnis
 
+    def begrenzung_bis(self, termin: int) -> dict | None:
+        """Was die Netzladung von jetzt bis zum Ende von Slot ``termin``
+        deckelt — für die Telemetrie einer verfehlten Mindestladung.
+
+        None, wenn keine Grenze am Zähler greift (nur die Ladeleistung).
+        Sonst ``durch`` (``"kappung"`` / ``"netzgrenze"``, die öfter bindende),
+        deren Wert, in wie vielen der Slots sie band, und ``moeglich_kwh``:
+        was bis zum Termin höchstens aus dem Netz in die Batterie konnte, mit
+        der Hausprognose. Wolfsteiner 03.11.2026: Haus 4,5 kW Dauerlast neben
+        einer Spitzenkappung von 5 kW — die Mindestladung 50 % war nicht zu
+        laden, die Meldung sah aus wie ein Versagen der Steuerung.
+        """
+        max_kw = max(float(self.v.spitzenreserve_netz_kw or 0.0),
+                     float(self.v.netzladen_max_kw or 0.0))
+        if max_kw <= 0:
+            return None
+        teil = self.netz_begrenzung(max_kw)[: termin + 1]
+        gebunden = [(q, w) for _, q, w in teil if q is not None]
+        if not gebunden:
+            return None
+        durch = max(("kappung", "netzgrenze"), key=lambda q: sum(g == q for g, _ in gebunden))
+        return {
+            "durch": durch,
+            "grenze_kw": round(next(w for q, w in gebunden if q == durch), 2),
+            "slots": len(gebunden),
+            "von": len(teil),
+            "moeglich_kwh": round(sum(kw for kw, _, _ in teil) * self.akku.p2e, 2),
+        }
+
     def _fest(self) -> list[bool]:
         return list(self.lage.fest) if self.lage.fest is not None else [True] * self.n
 

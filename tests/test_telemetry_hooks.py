@@ -1080,6 +1080,24 @@ def test_abendladung_verfehlt_wird_einmal_gemeldet():
     assert len(calls) == 1
 
 
+def test_abendladung_nennt_die_grenze_am_zaehler():
+    """Wolfsteiner 03.11.2026: Haus 4,5 kW neben einer Spitzenkappung von
+    5 kW — die Meldung sagt, dass die Grenze die Netzladung deckelte."""
+    from custom_components.eeg_energy_optimizer import _check_abendladung_health
+
+    calls, emit = _sammler()
+    merker = {}
+    plan = _abend_plan()
+    begrenzung = {"durch": "kappung", "grenze_kw": 5.0, "slots": 12, "von": 12,
+                  "moeglich_kwh": 0.6}
+    plan["netzladen_abend"]["termine"][0]["begrenzung"] = begrenzung
+    _check_abendladung_health(plan, MODE_EIN, {}, 7.0, merker,
+                              datetime(2026, 11, 2, 13, 0, tzinfo=ABEND_TZ), emit)
+    _check_abendladung_health(plan, MODE_EIN, {}, 7.0, merker,
+                              datetime(2026, 11, 2, 14, 16, tzinfo=ABEND_TZ), emit)
+    assert calls[0]["context"]["begrenzung"] == begrenzung
+
+
 def test_abendladung_knapp_darunter_oder_modus_aus_meldet_nichts():
     from custom_components.eeg_energy_optimizer import _check_abendladung_health
 

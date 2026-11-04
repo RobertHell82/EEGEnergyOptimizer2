@@ -3492,6 +3492,8 @@ def _termin(
     ``abgesenkt = "planungsrand"`` (kurz vor dem Ende der 48 Stunden kommt der
     Plan von dort nicht mehr auf den festen Endstand, ``Forderungen._rand``)
     oder ``"erreichbar"`` (das Ladeziel kauft nie über die Pflicht-Slots).
+    ``begrenzung`` (``Forderungen.begrenzung_bis``) sagt, ob eine Grenze am
+    Zähler die Netzladung bis dahin deckelte — die Telemetrie gibt es mit.
     """
     kapazitaet = float(inputs.battery_capacity_kwh) or 1.0
     boden_kwh = config.deckel_kwh - config.battery_capacity
@@ -3501,6 +3503,9 @@ def _termin(
         termin["abgesenkt"] = (
             "planungsrand" if i in rechnung.am_rand_abgesenkt else "erreichbar"
         )
+    begrenzung = rechnung.begrenzung_bis(i)
+    if begrenzung:
+        termin["begrenzung"] = begrenzung
     return termin
 
 
