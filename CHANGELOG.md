@@ -12,6 +12,12 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+## [2.1.68] - 2026-11-04
+
+### Behoben
+
+- **Spitzenkappung: Eine leere Batterie kam im Winter nie wieder in die Mindestreserve.** Mit „Reserve notfalls aus dem Netz nachladen“ lud der Fahrplan nur vor einer Viertelstunde nach, in der die Statistik eine Spitze erwartet. Die Mindestreserve gilt aber immer, ihre Kurve fällt nirgends, und so forderte sie nie etwas. War die Batterie einmal leer, kam sie nur über die Sonne zurück in die Reserve, und die bringt im November nicht mehr, als das Haus braucht. Eine Anlage mit 23,5 kWh, 10 % Mindestreserve und 6 kW Grenze stand sechs Tage lang bei 9–13 %, ohne eine einzige Netzladung, während das Haus täglich Spitzen von 9 bis 12 kW zog. Jetzt lädt der Fahrplan eine unterschrittene Mindestreserve spätestens bis zum nächsten Sonnenuntergang wieder auf, in der günstigsten Viertelstunde davor, und nennt im Fahrplan den Grund.
+
 ## [2.1.67] - 2026-11-04
 
 ### Behoben
