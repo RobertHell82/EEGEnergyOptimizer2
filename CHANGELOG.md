@@ -12,6 +12,16 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+## [2.1.69] - 2026-11-04
+
+### Hinzugefügt
+
+- **Messkorrektur der PV-Prognose.** Bei Hochnebel rechnen die Wettermodelle zu hell: Sie sehen die Wolkendecke, nehmen darunter aber weit mehr Licht an, als im November durchkommt. In Traun lag die eigene Prognose am 3.11. bei 13,0 kWh, gemessen wurden 1,8; in Grünbach kam am 4.11. den ganzen Tag nur gut ein Drittel der Prognose. Der Fahrplan verließ sich auf diese Sonne, auch bei der Mindestladung am Abend. Jetzt vergleicht er laufend die gemessene PV-Leistung der letzten Stunde mit der Prognose und rechnet die nächsten drei Stunden mit diesem Verhältnis, gleich nach jetzt voll, danach abnehmend. Morgens, abends und während einer Abregelung korrigiert er nicht nach unten. Das gilt für jede Prognosequelle; der Faktor steht bei der Quelle im Fahrplan, etwa „Messkorrektur ×0,37“.
+
+### Behoben
+
+- **Prognosevergleich las die Solcast-Prognose einer anderen Anlage.** Steuert die eigene Berechnung, waren die Solcast-Felder leer, weil der Wechsel dorthin sie geleert hatte, und der Vergleich suchte sich die Solcast-Daten selbst. Spiegelt die Home-Assistant-Instanz Sensoren einer zweiten Anlage, wie es in Grünbach mit Traun der Fall ist, erwischte er deren Reihe; auch der von Solcast geliehene p10 kam von dort. Gelesen werden jetzt nur noch die eingetragenen Prognose-Sensoren. Leere Felder füllt das Update einmal aus der Solcast-Integration, auch bei englischen Sensornamen. Der Wechsel auf die eigene Berechnung leert die Sensoren nicht mehr, und bei eingeschaltetem Vergleich lassen sie sich unter **Solcast-Sensoren für den Vergleich** einsehen und ändern. Steuert Solcast, ist „PV-Prognose heute“ jetzt immer sichtbar: Dieser Sensor trägt die Halbstunden des laufenden Tages.
+
 ## [2.1.68] - 2026-11-04
 
 ### Behoben
