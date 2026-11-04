@@ -1672,6 +1672,34 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         new_data.pop("heizstab_alt_temp_c", None)
         hass.config_entries.async_update_entry(entry, data=new_data, version=29)
 
+    if entry.version < 30:
+        # v30 — Solcast-Halbstunden kommen seit 2.1.69 nur noch aus den
+        # eingetragenen Prognose-Sensoren (``schedule._solcast_entity_ids``).
+        # Leere Felder werden einmal aus der Solcast-Integration gefüllt:
+        # „Prognose heute" und Tag 3–7 erkannte das Panel nur bei deutschen
+        # Namen, und der Wechsel auf die eigene Berechnung leerte alle — für
+        # den Prognosevergleich und den geliehenen p10 stand dann nichts mehr
+        # da. Nur bei Solcast oder eigener Berechnung (bei Forecast.Solar
+        # stehen dort dessen Sensoren), nur Plattform ``solcast_solar``.
+        new_data = {**entry.data}
+        quelle = new_data.get(CONF_FORECAST_SOURCE)
+        if quelle in ("solcast_solar", "eigen"):
+            try:
+                from homeassistant.helpers import entity_registry as er
+
+                from .schedule import solcast_sensoren_aus_registry
+
+                gefunden = solcast_sensoren_aus_registry(
+                    list(er.async_get(hass).entities.values())
+                )
+            except Exception:  # noqa: BLE001 — die Migration darf nie scheitern
+                _LOGGER.debug("Solcast-Sensoren nicht aus der Registry lesbar", exc_info=True)
+                gefunden = {}
+            for schluessel, entity_id in gefunden.items():
+                if not str(new_data.get(schluessel) or "").strip():
+                    new_data[schluessel] = entity_id
+        hass.config_entries.async_update_entry(entry, data=new_data, version=30)
+
     return True
 
 

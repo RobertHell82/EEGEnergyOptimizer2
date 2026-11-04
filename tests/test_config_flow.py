@@ -88,13 +88,13 @@ class TestConfigFlowMetadata:
     def test_version_in_sync_with_migration(self):
         """VERSION must match the highest migration target in __init__.py.
 
-        Latest migration: v29 (Altschluessel heizstab_alt_temp_c entfernt).
+        Latest migration: v30 (leere Solcast-Sensorfelder aus der Registry).
         """
-        assert EegEnergyOptimizerConfigFlow.VERSION == 29
+        assert EegEnergyOptimizerConfigFlow.VERSION == 30
 
-    def test_config_flow_version_is_29(self):
-        """Smoke: VERSION wurde von 28 auf 29 angehoben."""
-        assert EegEnergyOptimizerConfigFlow.VERSION == 29
+    def test_config_flow_version_is_30(self):
+        """Smoke: VERSION wurde von 29 auf 30 angehoben."""
+        assert EegEnergyOptimizerConfigFlow.VERSION == 30
 
 
 class TestStepUser:

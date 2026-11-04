@@ -143,6 +143,8 @@ BASE_CONFIG = {
     "battery_capacity_kwh": 12.5,
     "discharge_power_kw": 5.0,
     "forecast_source": "solcast_solar",
+    # Gelesen wird nur, was eingetragen ist (seit 2.1.69).
+    "forecast_today_entity": "sensor.solcast_pv_forecast_prognose_heute",
 }
 
 
@@ -827,7 +829,7 @@ def test_solcast_detailed_wird_eingelesen():
         _solcast_state(NOW, SOLCAST_TAG),
     ]
 
-    detailed = sched._solcast_detailed(hass)
+    detailed = sched._solcast_detailed(hass, BASE_CONFIG)
 
     assert len(detailed) == len(SOLCAST_TAG)
     sechs_uhr = NOW.replace(hour=6, minute=0, second=0, microsecond=0)
@@ -839,7 +841,7 @@ def test_worst_case_kommt_aus_p10_nicht_aus_faktor():
     hass.states.async_all.return_value = [_solcast_state(NOW, SOLCAST_TAG)]
     stamps = sched._grid_timestamps(NOW, hours=2)
 
-    erwartung, p10 = sched._production_from_detailed(sched._solcast_detailed(hass), stamps)
+    erwartung, p10 = sched._production_from_detailed(sched._solcast_detailed(hass, BASE_CONFIG), stamps)
 
     assert len(erwartung) == len(p10) == len(stamps)
     # p10 liegt überall unter dem Erwartungswert, wo überhaupt Leistung anliegt
@@ -856,21 +858,26 @@ def test_worst_case_kommt_aus_p10_nicht_aus_faktor():
 SOLCAST_FREMD = [(uhr, est / 2, p10 / 2) for uhr, est, p10 in SOLCAST_TAG]
 
 
-def _registry_stub(monkeypatch, zuordnung: dict[str, str]):
+def _registry_stub(monkeypatch, zuordnung: dict[str, str], plattform: dict | None = None):
     """Minimale entity_registry-Attrappe: entity_id → config_entry_id.
 
     Über ``monkeypatch`` gesetzt, damit der Stub am Testende verschwindet —
     andere Testdateien (Sigenergy, Huawei) patchen dieselben Modulnamen.
+    ``plattform`` setzt die Plattform je Entity (sonst ``solcast_solar``).
     """
     import sys
     import types
 
     eintraege = {
-        eid: types.SimpleNamespace(entity_id=eid, config_entry_id=entry)
+        eid: types.SimpleNamespace(
+            entity_id=eid, config_entry_id=entry,
+            platform=(plattform or {}).get(eid, "solcast_solar"),
+        )
         for eid, entry in zuordnung.items()
     }
     registry = MagicMock()
     registry.async_get = lambda eid: eintraege.get(eid)
+    registry.entities = eintraege
 
     modul = types.ModuleType("homeassistant.helpers.entity_registry")
     modul.async_get = lambda hass: registry
@@ -917,18 +924,31 @@ def test_zweite_solcast_integration_wird_nicht_mitgelesen(monkeypatch):
     assert detailed[sechs_uhr] == (0.48, 0.21), "Werte der eigenen Anlage"
 
 
-def test_ohne_zuordnung_bleibt_die_attributsuche():
-    """Ist die Registry nicht lesbar, wird weiter über das Attribut gesucht.
+def test_gespiegelte_solcast_sensoren_zaehlen_nicht():
+    """Grünbach, seit 13.10.2026: Die eigene Berechnung steuert, daneben
+    spiegelt ``remote_homeassistant`` die Solcast-Sensoren aus Traun. Gelesen
+    wurde die Traun-Reihe. Jetzt zählen nur die eingetragenen Sensoren."""
+    hass = MagicMock()
+    hass.states.async_all.return_value = [
+        _solcast_state(NOW, SOLCAST_TAG),
+        _solcast_state(NOW, SOLCAST_FREMD, "sensor.traun_solcast_pv_forecast_prognose_heute"),
+    ]
 
-    Der Fahrplan soll nicht ausfallen, nur weil die Zuordnung fehlt — die
-    Prognose ist dann bestenfalls unscharf, aber vorhanden.
-    """
+    detailed = sched._solcast_detailed(
+        hass, {"forecast_today_entity": "sensor.solcast_pv_forecast_prognose_heute"}
+    )
+
+    sechs_uhr = NOW.replace(hour=6, minute=0, second=0, microsecond=0)
+    assert detailed[sechs_uhr] == (0.48, 0.21), "Werte der eigenen Anlage"
+
+
+def test_ohne_eingetragene_sensoren_keine_halbstunden():
+    """Keine Suche über das Attribut mehr: Was nicht eingetragen ist, wird
+    nicht gelesen."""
     hass = MagicMock()
     hass.states.async_all.return_value = [_solcast_state(NOW, SOLCAST_TAG)]
 
-    detailed = sched._solcast_detailed(hass, {})
-
-    assert len(detailed) == len(SOLCAST_TAG)
+    assert sched._solcast_detailed(hass, {}) == {}
 
 
 def test_p10_wird_nach_unten_auf_den_worst_case_faktor_begrenzt():

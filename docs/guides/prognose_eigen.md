@@ -51,6 +51,8 @@ Sie lernt immer, wenn die eigene Berechnung steuert. Ihren Stand siehst du in de
 
 Schnee auf den Modulen und ein Ost-West-Dach an einem einzigen MPP-Tracker kann auch die Kalibrierung nicht abbilden.
 
+**Hochnebel** rechnen die Wettermodelle zu hell: Sie sehen die Wolkendecke, nehmen darunter aber deutlich mehr Licht an, als im November tatsächlich durchkommt. An solchen Tagen lag die Prognose um das Zwei- bis Fünffache zu hoch. Dagegen hilft die **Messkorrektur**: Liegt die gemessene PV-Leistung über die letzte Stunde deutlich neben der Prognose, rechnet der Fahrplan die nächsten drei Stunden mit diesem Verhältnis, gleich nach jetzt voll, danach abnehmend. Morgens, abends und während einer Abregelung korrigiert sie nicht nach unten. Sie gilt für jede Prognosequelle, und der Fahrplan zeigt den Faktor bei der Quelle an, etwa „Messkorrektur ×0,37“.
+
 Solcast hat zusätzlich Satellitendaten für die nächsten Stunden und ist bei wechselnder Bewölkung dort im Vorteil. Für den Fahrplan zählt aber vor allem, wie viel heute noch und morgen kommt — da sind beide gleichauf.
 
 ## Prognosevergleich: beide Quellen nebeneinander
@@ -58,7 +60,7 @@ Solcast hat zusätzlich Satellitendaten für die nächsten Stunden und ist bei w
 Ob die eigene Berechnung bei dir so gut ist wie Solcast, zeigt der Schalter **Prognosevergleich** — im Assistenten beim Schritt „PV-Prognose“ und unter **Einstellungen → Prognose**:
 
 - Steuert **Solcast** (oder Forecast.Solar), läuft die eigene Berechnung mit — trag dafür in derselben Karte deine Flächen ein.
-- Steuert die **eigene Berechnung**, läuft Solcast bzw. Forecast.Solar mit; die Integration muss installiert sein.
+- Steuert die **eigene Berechnung**, läuft Solcast bzw. Forecast.Solar mit; die Integration muss installiert sein. Gelesen werden nur die Solcast-Sensoren, die unter **Solcast-Sensoren für den Vergleich** eingetragen sind, vor allem **PV-Prognose heute**. Sensoren, die eine andere Home-Assistant-Instanz spiegelt, zählen so nie.
 
 Jeden Morgen ab 5 Uhr werden beide Prognosen für den Tag festgehalten, über den Tag kommt die gemessene PV-Leistung dazu. Die Karte **Prognosevergleich** zeigt für einen wählbaren Tag drei Linien — Fremdprognose, eigene Berechnung, Messung — und darunter die letzten Tage: Tagessumme je Quelle, Abweichung, wer näher lag. Aufgehoben wird gut ein Jahr (die Kalibrierung lernt daraus); Abweichung, Fehler und p10 rechnen über die letzten 30 Tage. Steuert die eigene Berechnung, wird auch ohne Schalter aufgezeichnet.
 

@@ -408,7 +408,11 @@ async def test_p10_wird_von_solcast_geliehen():
         (f"{(start + timedelta(minutes=30 * k)).hour:02d}:{(start + timedelta(minutes=30 * k)).minute:02d}", 4.0, 2.0)
         for k in range(2)
     ]
-    hass, now = _fahrplan_hass({"pv_prognose_vergleich": True}, halb, [_solcast_state(start, solcast_werte)])
+    hass, now = _fahrplan_hass(
+        {"pv_prognose_vergleich": True,
+         "forecast_today_entity": "sensor.solcast_pv_forecast_prognose_heute"},
+        halb, [_solcast_state(start, solcast_werte)],
+    )
     with patch.object(sched, "_now_local", return_value=now):
         inputs, problem = await sched.async_collect_inputs(hass, "entry1")
     assert problem is None

@@ -76,6 +76,7 @@ from .netzentgelt import (  # noqa: F401 — Schlüssel hier mit-exportiert
     netzgebuehr_fuer,
 )
 from .power_readings import (
+    compute_grid_export_kw,
     compute_house_load_kw,
     compute_pv_now_kw,
     resolve_battery_capacity_kwh,
@@ -2113,6 +2114,39 @@ def _messmittel(
     return sum(w for _, w in puffer) / len(puffer)
 
 
+def _messkorrektur_anwenden(
+    hass: Any, config: dict, data: dict, now: datetime, stamps: list[datetime],
+    production: list[float], min_production: list[float] | None, quelle: str,
+    pv_now: float | None, prognose_jetzt: float | None, soc: float | None,
+    ac_limit: float, export_grenze: float | None,
+) -> tuple[list[float], list[float] | None, str]:
+    """Probe ablegen, Faktor bilden, Erzeugung (und p10-Pfad) skalieren.
+
+    Gilt für jede Quelle: Auch Solcast holt nur wenige Male am Tag. Die
+    Quelle bekommt den Faktor in ihren Text, damit Panel und Archiv zeigen,
+    womit gerechnet wurde.
+    """
+    from . import messkorrektur
+    from .pvprognose.kalibrierung import _abgeregelt
+
+    export = compute_grid_export_kw(hass, config)
+    abgeregelt = pv_now is not None and prognose_jetzt is not None and _abgeregelt(
+        pv_now, prognose_jetzt, export, soc, export_grenze, ac_limit,
+    )
+    puffer = data.setdefault("messkorrektur", [])
+    messkorrektur.probe_ablegen(puffer, now, pv_now, prognose_jetzt, abgeregelt)
+    wert = messkorrektur.faktor(puffer, now)
+    if wert is None or abs(wert - 1.0) < 0.05:
+        return production, min_production, quelle
+    production = messkorrektur.anwenden(production, stamps, now, wert, ac_limit)
+    if min_production is not None:
+        min_production = messkorrektur.anwenden(min_production, stamps, now, wert, ac_limit)
+        min_production = [min(p, e) for p, e in zip(min_production, production)]
+    zahl = f"{wert:.2f}".replace(".", ",")
+    quelle = f"{quelle}; Messkorrektur ×{zahl}"
+    return production, min_production, quelle
+
+
 def _sonnenuntergaenge(hass: Any, start: datetime, horizon_h: float) -> list[str]:
     """Sonnenuntergang je Kalendertag von ``start`` bis zum Horizontende.
 
@@ -2213,44 +2247,66 @@ def _consumption_from_profile(coordinator: Any, stamps: list[datetime]) -> list[
     return values
 
 
+# Die Prognose-Sensoren in der Konfiguration — die einzigen, deren
+# ``detailedForecast`` gelesen wird.
+PROGNOSE_SENSOR_SCHLUESSEL = (
+    CONF_FORECAST_REMAINING_ENTITY,
+    CONF_FORECAST_TOMORROW_ENTITY,
+    "forecast_today_entity",
+    "forecast_day3_entity",
+    "forecast_day4_entity",
+    "forecast_day5_entity",
+    "forecast_day6_entity",
+    "forecast_day7_entity",
+)
+
+# unique_id der Solcast-Integration je Schlüssel — sprachunabhängig, anders
+# als die Entity-Namen (``prognose_heute`` gegen ``forecast_today``).
+SOLCAST_UNIQUE_IDS = {
+    CONF_FORECAST_REMAINING_ENTITY: "get_remaining_today",
+    CONF_FORECAST_TOMORROW_ENTITY: "total_kwh_forecast_tomorrow",
+    "forecast_today_entity": "total_kwh_forecast_today",
+    **{f"forecast_day{n}_entity": f"total_kwh_forecast_d{n}" for n in range(3, 8)},
+}
+
+
 def _solcast_entity_ids(
     hass: HomeAssistant, config: dict[str, Any]
-) -> set[str] | None:
-    """Die Prognose-Entities DIESER Anlage — None heißt „nicht zuzuordnen".
+) -> set[str]:
+    """Die in der Konfiguration eingetragenen Prognose-Sensoren.
 
-    Anker sind die im Assistenten gewählten Prognose-Sensoren: Sie stehen in
-    der Konfiguration, es muss also kein Entity-Name erraten werden. Über die
-    Entity-Registry führt der Sensor zu seinem Config-Entry und damit zu allen
-    Tagessensoren derselben Solcast-Installation.
-
-    Nötig, sobald mehr als eine Solcast-Integration in der Instanz läuft
-    (zweite Anlage, zweites Konto): Deren Tagessensoren tragen dasselbe
-    Zeitraster, und ohne Zuordnung gewinnt schlicht der zuletzt gelesene —
-    der Fahrplan führe dann die fremde Anlage.
+    Nur die — keine Zuordnung über die Registry, keine Suche über das
+    Attribut. Grünbach spiegelt per ``remote_homeassistant`` die
+    Solcast-Sensoren aus Traun; mit Leerfeldern (die eigene Berechnung
+    steuert) suchte der Code über das Attribut, und seit 13.10.2026 lief im
+    Prognosevergleich die Traun-Reihe, auch der geliehene p10. Davor (13.09.)
+    fuhr der Fahrplan auf derselben Instanz eine zweite Solcast-Integration.
+    Leere Felder füllt einmal die Migration auf v30
+    (``solcast_sensoren_aus_registry``).
     """
-    try:
-        from homeassistant.helpers import entity_registry as er
+    return {
+        str(config.get(k) or "").strip()
+        for k in PROGNOSE_SENSOR_SCHLUESSEL
+        if str(config.get(k) or "").strip()
+    }
 
-        registry = er.async_get(hass)
-    except Exception:  # noqa: BLE001 — ohne Registry bleibt die Attributsuche
-        return None
-    for key in (CONF_FORECAST_TOMORROW_ENTITY, CONF_FORECAST_REMAINING_ENTITY):
-        entity_id = str(config.get(key) or "").strip()
-        if not entity_id:
-            continue
-        try:
-            eintrag = registry.async_get(entity_id)
-            if eintrag is None or not eintrag.config_entry_id:
-                continue
-            geschwister = er.async_entries_for_config_entry(
-                registry, eintrag.config_entry_id
-            )
-        except Exception:  # noqa: BLE001
-            continue
-        ids = {e.entity_id for e in geschwister}
-        if ids:
-            return ids
-    return None
+
+def solcast_sensoren_aus_registry(eintraege) -> dict[str, str]:
+    """Schlüssel → entity_id der Solcast-Sensoren, aus Registry-Einträgen.
+
+    Nur Plattform ``solcast_solar`` (gespiegelte Sensoren zählen nie) und nur,
+    wenn es genau eine Solcast-Integration gibt — bei zweien wäre es geraten.
+    Für die Migration auf v30; zur Laufzeit gilt allein die Konfiguration.
+    """
+    solcast = [e for e in eintraege if getattr(e, "platform", None) == "solcast_solar"]
+    if len({getattr(e, "config_entry_id", None) for e in solcast}) != 1:
+        return {}
+    nach_uid = {getattr(e, "unique_id", None): e.entity_id for e in solcast}
+    return {
+        schluessel: nach_uid[uid]
+        for schluessel, uid in SOLCAST_UNIQUE_IDS.items()
+        if uid in nach_uid
+    }
 
 
 def _solcast_detailed(
@@ -2263,14 +2319,14 @@ def _solcast_detailed(
     pv_estimate90}`` — Leistung in kW. Über sieben Tagessensoren ergibt das
     eine Woche Vorausschau samt Worst-Case-Pfad.
 
-    Gelesen werden nur die Sensoren der eigenen Solcast-Installation
-    (``_solcast_entity_ids``). Lässt sie sich nicht bestimmen, bleibt die
-    Suche über das Attribut — sie kommt ohne Entity-Namen aus, die ja
-    lokalisiert sind (``prognose_heute`` gegen ``forecast_today``). Fallen
-    dabei zwei Quellen auf denselben Zeitpunkt, steht das als Warnung im
-    Protokoll: Dann ist die Reihe nicht mehr eindeutig.
+    Gelesen werden nur die in der Konfiguration eingetragenen Sensoren
+    (``_solcast_entity_ids``); ohne Eintrag gibt es keine Halbstunden. Fallen
+    zwei eingetragene Sensoren auf denselben Zeitpunkt, steht das als
+    Warnung im Protokoll: Dann ist die Reihe nicht mehr eindeutig.
     """
     erlaubt = _solcast_entity_ids(hass, config or {})
+    if not erlaubt:
+        return {}
     werte: dict[datetime, tuple[float, float]] = {}
     herkunft: dict[datetime, str] = {}
     fremde: set[str] = set()
@@ -2278,7 +2334,7 @@ def _solcast_detailed(
         detailed = state.attributes.get("detailedForecast")
         if not isinstance(detailed, list):
             continue
-        if erlaubt is not None and state.entity_id not in erlaubt:
+        if state.entity_id not in erlaubt:
             continue
         for eintrag in detailed:
             if not isinstance(eintrag, dict):
@@ -2798,6 +2854,9 @@ async def async_collect_inputs(
     # Stützpunkt übernimmt: Verbrauch hoch, Erzeugung runter. Vorgabe 0,
     # dann passiert hier nichts (siehe CONF_SCHEDULE_SICHERHEITSPUFFER_PCT).
     puffer_pct = _sicherheitspuffer_pct(config)
+    # Die Prognose für jetzt, vor Puffer und Messung — Vergleichswert der
+    # Messkorrektur (messkorrektur.py).
+    prognose_jetzt = production[0] if production else None
     consumption, production, min_production = _puffer_anwenden(
         puffer_pct, consumption, production, min_production
     )
@@ -2879,6 +2938,18 @@ async def async_collect_inputs(
         )
     else:
         feedin_limit = max(0.5, ac_limit - 0.5)
+
+    # Messkorrektur: Liegt die Messung der letzten Stunde deutlich neben der
+    # Prognose (Hochnebel, den die Modelle zu hell rechnen), wird die
+    # Prognose der nächsten Stunden damit skaliert, abklingend. Vor allem,
+    # was die Erzeugung danach liest (Spitzenreserve, Bezugsreihe, LP).
+    production, min_production, quelle = _messkorrektur_anwenden(
+        hass, config, data, now, stamps, production, min_production, quelle,
+        pv_now, prognose_jetzt, soc, ac_limit,
+        feedin_limit if config.get(
+            CONF_GRID_EXPORT_LIMIT_ENABLED, DEFAULT_GRID_EXPORT_LIMIT_ENABLED
+        ) else None,
+    )
 
     # Notstrom-Untergrenze: unsere konfigurierte Reserve gegen den Ladestand,
     # den der Wechselrichter hardwareseitig zurückhält (Backup-Power) — der

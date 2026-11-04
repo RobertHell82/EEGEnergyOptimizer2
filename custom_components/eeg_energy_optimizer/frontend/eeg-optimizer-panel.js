@@ -2335,6 +2335,7 @@ class EegOptimizerPanel extends HTMLElement {
               this._settingsData.pv_verluste_pct = 14;
             }
             this._ensurePvPrognoseStatus();
+            if (this._settingsData.forecast_source === "eigen") this._solcastErkennen(this._settingsData, true);
           }
           this._render();
         }
@@ -2354,6 +2355,7 @@ class EegOptimizerPanel extends HTMLElement {
             const w = this._wizardData;
             if (!Array.isArray(w.pv_flaechen) || w.pv_flaechen.length === 0) w.pv_flaechen = [this._neueFlaeche(w)];
             if (w.pv_verluste_pct == null || w.pv_verluste_pct === "") w.pv_verluste_pct = 14;
+            if (w.forecast_source === "eigen") this._solcastErkennen(w, true);
           }
           this._saveWizardProgress();
           this._render();
@@ -6606,14 +6608,13 @@ class EegOptimizerPanel extends HTMLElement {
   _applyForecastDefaults(source, d = this._wizardData) {
     // Zielobjekt: der Assistent oder die Einstellungen (Quellenwechsel).
     if (source === "eigen") {
-      // Eigene Berechnung: keine fremden Sensoren. Eine erste Fläche wird
-      // vorbelegt, damit die Tabelle nicht leer startet — mit der PV-Spitze,
-      // wenn sie schon bekannt ist (Wiederholung der Einrichtung).
-      for (const k of [
-        "forecast_remaining_entity", "forecast_tomorrow_entity", "forecast_today_entity",
-        "forecast_day3_entity", "forecast_day4_entity", "forecast_day5_entity",
-        "forecast_day6_entity", "forecast_day7_entity",
-      ]) d[k] = "";
+      // Eigene Berechnung: Die Solcast-Sensoren bleiben stehen — der
+      // Prognosevergleich und der geliehene p10 lesen genau sie, und seit
+      // 2.1.69 nur noch die eingetragenen. Bis dahin leerte der Wechsel alle
+      // (Grünbach, Traun). Leere Felder füllt die Erkennung, soweit es die
+      // Sensoren gibt. Eine erste Fläche wird vorbelegt, damit die Tabelle
+      // nicht leer startet — mit der PV-Spitze, wenn sie schon bekannt ist.
+      this._solcastErkennen(d, true);
       if (!Array.isArray(d.pv_flaechen) || d.pv_flaechen.length === 0) {
         d.pv_flaechen = [this._neueFlaeche(d)];
       }
@@ -6623,25 +6624,7 @@ class EegOptimizerPanel extends HTMLElement {
       return;
     }
     if (source === "solcast_solar") {
-      // Auto-detect which Solcast naming convention exists
-      const states = this._hass?.states || {};
-      const pick = (candidates) => candidates.find(id => states[id]) || candidates[0];
-      d.forecast_remaining_entity =
-        pick(SOLCAST_DEFAULTS_CANDIDATES.forecast_remaining_entity);
-      d.forecast_tomorrow_entity =
-        pick(SOLCAST_DEFAULTS_CANDIDATES.forecast_tomorrow_entity);
-      // Auto-detect additional Solcast sensors (today + day 3-7)
-      const prefix = d.forecast_tomorrow_entity.replace(/morgen$/, "");
-      // Handle old "fuer_" prefix — tag sensors don't have "fuer_"
-      const tagPrefix = prefix.endsWith("fuer_") && !states[prefix + "tag_3"]
-        ? prefix.replace(/fuer_$/, "") : prefix;
-      const tryFind = (id) => states[id] ? id : "";
-      d.forecast_today_entity = tryFind(tagPrefix + "heute");
-      d.forecast_day3_entity = tryFind(tagPrefix + "tag_3");
-      d.forecast_day4_entity = tryFind(tagPrefix + "tag_4");
-      d.forecast_day5_entity = tryFind(tagPrefix + "tag_5");
-      d.forecast_day6_entity = tryFind(tagPrefix + "tag_6");
-      d.forecast_day7_entity = tryFind(tagPrefix + "tag_7");
+      this._solcastErkennen(d, false);
     } else {
       d.forecast_remaining_entity =
         FORECAST_SOLAR_DEFAULTS.forecast_remaining_entity;
@@ -6654,6 +6637,33 @@ class EegOptimizerPanel extends HTMLElement {
       d.forecast_day6_entity = "";
       d.forecast_day7_entity = "";
     }
+  }
+
+  _solcastErkennen(d, nurLeere) {
+    // Solcast-Sensoren über die deutschen Standardnamen erkennen. Gespiegelte
+    // Sensoren einer anderen Instanz (Plattform remote_homeassistant) zählen
+    // nie — hass.entities kennt die Plattform. nurLeere: nur leere Felder
+    // füllen und nur mit Sensoren, die es gibt. Englische Namen füllt die
+    // Migration auf v30 über die unique_id.
+    const states = this._hass?.states || {};
+    const plattform = (id) => this._hass?.entities?.[id]?.platform;
+    const echt = (id) => !!states[id] && (plattform(id) === undefined || plattform(id) === "solcast_solar");
+    const setze = (k, id) => {
+      if (nurLeere && (String(d[k] || "").trim() || !id)) return;
+      d[k] = id;
+    };
+    const pick = (candidates) => candidates.find(echt) || (nurLeere ? "" : candidates[0]);
+    setze("forecast_remaining_entity", pick(SOLCAST_DEFAULTS_CANDIDATES.forecast_remaining_entity));
+    setze("forecast_tomorrow_entity", pick(SOLCAST_DEFAULTS_CANDIDATES.forecast_tomorrow_entity));
+    // Heute und Tag 3–7 über das Präfix des Morgen-Sensors
+    const morgen = d.forecast_tomorrow_entity || SOLCAST_DEFAULTS_CANDIDATES.forecast_tomorrow_entity[0];
+    const prefix = morgen.replace(/morgen$/, "");
+    // Handle old "fuer_" prefix — tag sensors don't have "fuer_"
+    const tagPrefix = prefix.endsWith("fuer_") && !states[prefix + "tag_3"]
+      ? prefix.replace(/fuer_$/, "") : prefix;
+    const tryFind = (id) => echt(id) ? id : "";
+    setze("forecast_today_entity", tryFind(tagPrefix + "heute"));
+    for (const n of [3, 4, 5, 6, 7]) setze(`forecast_day${n}_entity`, tryFind(tagPrefix + `tag_${n}`));
   }
 
   /* ── Hass / panel setters ─────────────────────── */
@@ -9481,10 +9491,29 @@ class EegOptimizerPanel extends HTMLElement {
       return this._escapeHtml(this._hass?.states?.[id]?.attributes?.friendly_name || id);
     };
     const zusatz = d.forecast_source === "solcast_solar" && d.expert_mode;
+    // Eigene Berechnung mit Vergleich: Gelesen wird nur, was hier steht.
+    const vergleich = d.forecast_source === "eigen" && d.pv_prognose_vergleich;
+    const heuteFeld = this._entityPickerHtml("settings_forecast_today_entity", d.forecast_today_entity, "PV-Prognose heute (gesamt)", "Gesamte PV-Produktion für heute in kWh, z.B. sensor.solcast_pv_forecast_prognose_heute. Trägt die Halbstunden von heute.", "sensor");
+    const offenV = this._prognoseSensorenOffen;
 
     // Die Felder bleiben zugeklappt im DOM (display:none): das Speichern
     // liest alle data-field-Eingaben nach, auch die nicht sichtbaren.
-    const sensoren = fremd ? `
+    const sensoren = vergleich ? `
+      <div style="margin-top:12px;border-top:1px solid var(--divider-color,#e0e0e0);padding-top:8px">
+        <div data-action="toggle-prognose-sensoren" style="display:flex;justify-content:space-between;align-items:center;cursor:pointer;user-select:none;gap:8px">
+          <div style="min-width:0">
+            <div style="font-weight:500">Solcast-Sensoren für den Vergleich</div>
+            ${offenV ? "" : `<div class="help-text" style="margin:2px 0 0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Heute: ${kurz(d.forecast_today_entity)} · Morgen: ${kurz(d.forecast_tomorrow_entity)}</div>`}
+          </div>
+          <ha-icon icon="mdi:chevron-${offenV ? "up" : "down"}" style="--mdc-icon-size:22px;color:var(--secondary-text-color);flex:none"></ha-icon>
+        </div>
+        <div style="${offenV ? "" : "display:none;"}margin-top:12px">
+          <div class="help-text" style="margin-bottom:12px">Gelesen werden nur diese Sensoren. Leer lassen, wenn mit Forecast.Solar verglichen werden soll.</div>
+          ${heuteFeld}
+          ${this._entityPickerHtml("settings_forecast_tomorrow_entity", d.forecast_tomorrow_entity, "PV-Prognose morgen", "Prognostizierte PV-Produktion für morgen in kWh.", "sensor")}
+          ${this._entityPickerHtml("settings_forecast_remaining_entity", d.forecast_remaining_entity, "PV-Prognose verbleibend heute", "Verbleibende PV-Produktion für heute in kWh.", "sensor")}
+        </div>
+      </div>` : fremd ? `
       <div style="margin-top:12px;border-top:1px solid var(--divider-color,#e0e0e0);padding-top:8px">
         <div data-action="toggle-prognose-sensoren" style="display:flex;justify-content:space-between;align-items:center;cursor:pointer;user-select:none;gap:8px">
           <div style="min-width:0">
@@ -9496,10 +9525,10 @@ class EegOptimizerPanel extends HTMLElement {
         <div style="${offen ? "" : "display:none;"}margin-top:12px">
           ${this._entityPickerHtml("settings_forecast_remaining_entity", d.forecast_remaining_entity, "Sensor PV-Prognose verbleibend heute *", "Verbleibende PV-Produktion für heute in kWh.", "sensor")}
           ${this._entityPickerHtml("settings_forecast_tomorrow_entity", d.forecast_tomorrow_entity, "Sensor PV-Prognose morgen *", "Prognostizierte PV-Produktion für morgen in kWh.", "sensor")}
+          ${d.forecast_source === "solcast_solar" ? heuteFeld : ""}
           ${zusatz ? `
             <div style="margin:16px 0 8px;font-weight:500">Weitere Prognose-Sensoren (optional)</div>
             <div class="help-text" style="margin-bottom:12px">Werden beim Quellenwechsel automatisch erkannt. Nur ändern, wenn die Erkennung nicht passt.</div>
-            ${this._entityPickerHtml("settings_forecast_today_entity", d.forecast_today_entity, "PV-Prognose heute (gesamt)", "Gesamte PV-Produktion für heute in kWh, z.B. sensor.solcast_pv_forecast_prognose_heute.", "sensor")}
             ${[3, 4, 5, 6, 7].map(n => this._entityPickerHtml(`settings_forecast_day${n}_entity`, d[`forecast_day${n}_entity`], `PV-Prognose Tag ${n}`, `z.B. sensor.solcast_pv_forecast_prognose_tag_${n}`, "sensor")).join("")}
           ` : ""}
         </div>
