@@ -12,9 +12,15 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+## [2.1.67] - 2026-11-04
+
 ### Behoben
 
 - **Mindestladung am Abend: Netzladung brach eine Stunde vor Sonnenuntergang ab.** Seit 2.1.65 entfiel ein Termin, dessen Viertelstunde weniger als eine Stunde in der Zukunft lag. Gedacht war das gegen einen Sofortkauf für einen Termin, der überraschend „jetzt“ ist; mit dem Sonnenuntergang als Termin traf es aber genau die letzte Stunde einer laufenden Netzladung. Traun am 03.11.2026: Freigabe um 16:00 bei 30 % statt der eingestellten 60 %. Der Termin bleibt jetzt bis zum Sonnenuntergang stehen.
+
+### Geändert
+
+- **Telemetrie: Eine verfehlte Mindestladung sagt, ob eine Grenze am Zähler sie verhindert hat.** Deckelte die Spitzenkappung oder die Netzgrenze des Netzladens die Netzladung bis zum Sonnenuntergang, nennt die Meldung jetzt die Grenze und wie viel bis dahin überhaupt aus dem Netz in die Batterie gepasst hätte. Anlass war eine Anlage mit rund 4,5 kW Dauerlast im Haus und einer Spitzenkappung von 5 kW: Für die Mindestladung von 50 % blieben 0,2 kW, der Abend endete bei 7 %. Das sah aus wie ein Versagen der Steuerung, war aber ein Widerspruch zweier Einstellungen, bei dem die Spitzenkappung gewollt Vorrang hat.
 
 ## [2.1.66] - 2026-11-03
 
