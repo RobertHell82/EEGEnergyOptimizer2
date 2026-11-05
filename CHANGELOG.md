@@ -12,6 +12,12 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+## [2.1.76-beta.1] - 2026-11-05
+
+### Hinzugefügt
+
+- **Wallbox Ambibox (Beta): Rohregister zur Fehlersuche.** Der Sensor *Auto Status* trägt ein Attribut `rohregister`: jeder Wert des letzten Lesevorgangs mit seiner Modbus-Adresse, dreifach gedeutet (u32, i32, f32), dazu die zurückgelesenen Holding-Register. Anlass ist Ansfelden: Beim Laden mit 5 kW und beim Rückspeisen mit 4,5 kW zeigte *Auto Ladeleistung* 0 kW und der Batteriezustand blieb auf „Ruhezustand“; damit sieht auch die Prüfung auf Gegenrichtung nichts. Das Rückwärtslesen zeigt, ob die Box unseren Sollwert behält oder ein zweiter Regler ihn überschreibt. Das Attribut landet nicht in der Datenbank.
+
 ## [2.1.75] - 2026-11-05
 
 ### Geändert
