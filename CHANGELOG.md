@@ -12,6 +12,12 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+## [2.1.76-beta.3] - 2026-11-05
+
+### Geändert
+
+- **Wallbox Ambibox (Beta): Sollwert wieder nachschreiben, jetzt alle 10 s.** Der Versuch aus beta.2 ist beantwortet: Ein einmal geschriebener Wert startet keine Sitzung, nach rund 60 s meldet die Box „Fehler“ — das ist ihr Watchdog. Mit 30 s Takt setzte das Auto beim Rückspeisen jede Minute 10–15 s aus; der engere Takt zeigt, ob das am Takt lag.
+
 ## [2.1.76-beta.2] - 2026-11-05
 
 ### Behoben
