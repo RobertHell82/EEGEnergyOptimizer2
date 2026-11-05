@@ -62,6 +62,41 @@ keinen Ziel-Ladestand kennt (alle außer Huawei), beobachtet der Treiber den
 Ladestand selbst und gibt am Ziel frei. Was je Gerät offen ist, steht in den
 Abschnitten unten.
 
+## Am Gerät geprüft (Diagnose der Ansteuerung)
+
+Was die **Diagnose der Ansteuerung** (Einstellungen → System, seit 2.1.70)
+an echten Anlagen gemessen hat: Jeder Befehl wird geschrieben,
+zurückgelesen und auf seine Wirkung an Batterie- und Netzleistung geprüft.
+Manches lässt sich nur zu bestimmten Zeiten prüfen. Das Ladelimit braucht
+eine Batterie, die gerade aus PV lädt. Der Entladedeckel und die Netzladung
+brauchen einen Abend, an dem das Haus mehr braucht, als die PV liefert.
+
+✓ = wirkt am Gerät · ◐ = angenommen und zurückgelesen, Wirkung noch nicht
+prüfbar · ✗ = Problem gefunden · – = noch nicht geprüft
+
+| Wechselrichter | Ladelimit | Zwangsentladung | Freigabe | Entladedeckel | Netzladung |
+|---|---|---|---|---|---|
+| **Fronius Gen24** | ✓ | ✓ | ✓ | ◐ | ◐ |
+| **Huawei SUN2000** | ◐ ¹ | ✓ | ✓ | ◐ | – ² |
+| **Kostal Plenticore** | – | – | – | – | – |
+| **Sigenergy SigenStor** | ✓ | ✓ ³ | ✓ | ◐ | ◐ |
+| **SMA Smart Energy** | – | – | – | – | – |
+| **SolaX Gen4** | ✓ | ✓ | ✓ | ◐ ⁴ | ◐ |
+| **Victron ESS** | – | – | – | – | – |
+
+Stand 05.11.2026, je eine Anlage, alle Läufe mittags mit PV-Überschuss.
+
+1. Batterie war voll. 0 kW und 1 kW wurden geschrieben und korrekt
+   zurückgelesen, die Wirkung ist noch offen.
+2. In der Diagnose übersprungen (Batterie voll). Im Betrieb ist das
+   Netzladen am Gerät geprüft (Oktober 2026).
+3. Die Batterie liefert exakt die befohlene Leistung. Der damalige Modus
+   „Command Discharging (ESS First)“ regelte dabei aber die ganze PV ab
+   (17,9 → 0 kW). Seit 2.1.72 entlädt der Treiber mit „PV First“; dass die
+   PV damit weiterläuft, ist noch zu bestätigen.
+4. Die Stellwerte zeigen den Entladestrom nicht. Belegen kann den Deckel
+   nur die gemessene Wirkung, nicht das Zurücklesen.
+
 ## Was je Wechselrichter noch zu klären ist
 
 Alphabetisch. Die Einrichtung selbst beschreibt jeweils der verlinkte Guide.
