@@ -90,10 +90,10 @@ Stand 05.11.2026, je eine Anlage, alle Läufe mittags mit PV-Überschuss.
    zurückgelesen, die Wirkung ist noch offen.
 2. In der Diagnose übersprungen (Batterie voll). Im Betrieb ist das
    Netzladen am Gerät geprüft (Oktober 2026).
-3. Die Batterie liefert exakt die befohlene Leistung. Der damalige Modus
-   „Command Discharging (ESS First)“ regelte dabei aber die ganze PV ab
-   (17,9 → 0 kW). Seit 2.1.72 entlädt der Treiber mit „PV First“; dass die
-   PV damit weiterläuft, ist noch zu bestätigen.
+3. Der frühere Modus „Command Discharging (ESS First)“ regelte die ganze
+   PV ab (17,9 → 0 kW). Seit 2.1.72 entlädt der Treiber mit „PV First“, am
+   Gerät bestätigt: Die Batterie gibt 1,00 kW ab, die PV läuft mit 12,4 kW
+   weiter, die Einspeisung steigt von 3,7 auf 13,0 kW.
 4. Die Stellwerte zeigen den Entladestrom nicht. Belegen kann den Deckel
    nur die gemessene Wirkung, nicht das Zurücklesen.
 
