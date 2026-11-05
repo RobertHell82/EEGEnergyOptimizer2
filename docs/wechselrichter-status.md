@@ -77,22 +77,19 @@ prüfbar · ✗ = Problem gefunden · – = noch nicht geprüft
 | Wechselrichter | Ladelimit | Zwangsentladung | Freigabe | Entladedeckel | Netzladung |
 |---|---|---|---|---|---|
 | **Fronius Gen24** | ✓ | ✓ | ✓ | ◐ | ◐ |
-| **Huawei SUN2000** | ◐ ¹ | ✓ | ✓ | ◐ | – ² |
-| **Kostal Plenticore** | ✓ | ✓ | ◐ | ◐ | ◐ |
+| **Huawei SUN2000** | ✓ | ✓ | ✓ | ◐ | ◐ ¹ |
+| **Kostal Plenticore** | ✓ | ✓ | ✓ | ◐ | ◐ |
 | **Sigenergy SigenStor** | ✓ | ✓ | ✓ | ◐ | ◐ |
 | **SMA Smart Energy** | – | – | – | – | – |
-| **SolaX Gen4** | ✓ | ✓ | ✓ | ◐ ³ | ◐ |
-| **Victron ESS** | ✗ ⁴ | ✓ | ✓ | ◐ | ◐ |
+| **SolaX Gen4** | ✓ | ✓ | ✓ | ◐ ² | ◐ |
+| **Victron ESS** | ✗ ³ | ✓ | ✓ | ◐ | ◐ |
 
 Stand 05.11.2026, je eine Anlage, alle Läufe mittags mit PV-Überschuss.
 
-1. Batterie war voll. 0 kW und 1 kW wurden geschrieben und korrekt
-   zurückgelesen, die Wirkung ist noch offen.
-2. In der Diagnose übersprungen (Batterie voll). Im Betrieb ist das
-   Netzladen am Gerät geprüft (Oktober 2026).
-3. Die Stellwerte zeigen den Entladestrom nicht. Belegen kann den Deckel
+1. Im Betrieb ist das Netzladen am Gerät geprüft (Oktober 2026).
+2. Die Stellwerte zeigen den Entladestrom nicht. Belegen kann den Deckel
    nur die gemessene Wirkung, nicht das Zurücklesen.
-4. Der DVCC-Ladestrom stand auf 0 A (korrekt zurückgelesen), die Batterie
+3. Der DVCC-Ladestrom stand auf 0 A (korrekt zurückgelesen), die Batterie
    lud aber weiter. Der Test lief komplett in einem aktiven
    BatteryLife-Ladeplan des GX-Geräts, der vermutlich das Limit übersteuert.
    Mit abgeschaltetem Ladeplan noch zu wiederholen.
