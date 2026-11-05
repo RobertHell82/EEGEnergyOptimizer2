@@ -77,27 +77,29 @@ Wirkung aber noch nicht in jedem Schritt zu sehen · ✗ = Problem gefunden ·
 
 | Wechselrichter | Ladelimit | Zwangsentladung | Freigabe | Entladedeckel | Netzladung |
 |---|---|---|---|---|---|
-| **Fronius Gen24** | ✓ | ✓ | ✓ | ◐ ³ | ✓ |
-| **Huawei SUN2000** | ◐ ¹ | ✓ | ✓ | ◐ ² | ✓ |
-| **Kostal Plenticore** | ✓ | ✓ | ✓ | ◐ ³ | ✓ |
-| **Sigenergy SigenStor** | ✓ | ✓ | ✓ | ◐ | ◐ |
-| **SMA Smart Energy** | ◐ ⁴ | ✓ | ✓ | ◐ | – |
+| **Fronius Gen24** | ✓ | ✓ | ✓ | ◐ ² | ✓ |
+| **Huawei SUN2000** | ◐ ¹ | ✓ | ✓ | ✓ | ✓ |
+| **Kostal Plenticore** | ✓ | ✓ | ✓ | ◐ ² | ✓ |
+| **Sigenergy SigenStor** | ✓ | ✓ | ✓ | ◐ ² | ✓ |
+| **SMA Smart Energy** | ◐ ³ | ✓ | ✓ | ◐ ² | ✓ |
 | **SolaX Gen4** | ✓ | ✓ | ✓ | ✓ | ✓ |
-| **Victron ESS** | ✗ ⁵ | ✓ | ✓ | ◐ ² | ✓ |
+| **Victron ESS** | ✗ ⁴ | ✓ | ✓ | ◐ ⁵ | ✓ |
 
 Stand 05.11.2026, je eine Anlage, Läufe mittags und abends. Ladelimit heißt
 0 kW und 1 kW, Entladedeckel heißt halten, 0,5 kW und aufheben.
 
 1. 0 kW wirkt, 1 kW noch nicht zu sehen.
-2. Halten und 0,5 kW wirken, das Aufheben war noch nicht zu sehen.
-3. Halten wirkt, 0,5 kW und das Aufheben noch nicht zu sehen (zu wenig
-   Hausverbrauch).
-4. Batterie war voll. Den Wert des Ladelimits liest der SMA-Treiber nicht
-   vom Gerät zurück, belegen kann es nur die gemessene Wirkung.
-5. Der DVCC-Ladestrom stand auf 0 A (korrekt zurückgelesen), die Batterie
+2. Halten wirkt. 0,5 kW und das Aufheben waren noch nicht zu sehen, dafür
+   muss die Batterie deutlich über 0,5 kW ins Haus liefern (Hausverbrauch
+   über 1 kW).
+3. Noch kein Lauf mit PV-Überschuss. Den Wert des Ladelimits liest der
+   SMA-Treiber nicht vom Gerät zurück, belegen kann es nur die gemessene
+   Wirkung.
+4. Der DVCC-Ladestrom stand auf 0 A (korrekt zurückgelesen), die Batterie
    lud aber weiter. Der Test lief komplett in einem aktiven
    BatteryLife-Ladeplan des GX-Geräts, der vermutlich das Limit übersteuert.
    Mit abgeschaltetem Ladeplan noch zu wiederholen.
+5. Halten und 0,5 kW wirken, das Aufheben war noch nicht zu sehen.
 
 ## Was je Wechselrichter noch zu klären ist
 
