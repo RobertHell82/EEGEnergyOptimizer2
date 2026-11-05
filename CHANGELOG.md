@@ -12,6 +12,12 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+## [2.1.73] - 2026-11-05
+
+### Behoben
+
+- **Diagnose: Ein Ladelimit ohne Überschuss galt als Fehler.** Beim ersten Lauf an einem Kostal stieg während des 1-kW-Limits der Hausverbrauch auf 3,5 kW, für die Batterie blieben aus der PV nur 0,3 kW übrig, und die nahm sie auch, ins Netz ging nichts. Das Limit hat also gar nicht begrenzt, die Diagnose verlangte trotzdem 0,7 bis 1,25 kW und meldete einen Fehler. Lädt die Batterie weniger als das Limit und geht dabei nichts ins Netz, ist die Messung jetzt nicht bewertbar statt falsch. Beim Entladedeckel gilt dasselbe spiegelbildlich, wenn nichts aus dem Netz bezogen wird.
+
 ## [2.1.72] - 2026-11-05
 
 ### Geändert
