@@ -80,11 +80,11 @@ prüfbar · ✗ = Problem gefunden · – = noch nicht geprüft
 | **Huawei SUN2000** | ✓ | ✓ | ✓ | ◐ | ◐ ¹ |
 | **Kostal Plenticore** | ✓ | ✓ | ✓ | ◐ | ◐ |
 | **Sigenergy SigenStor** | ✓ | ✓ | ✓ | ◐ | ◐ |
-| **SMA Smart Energy** | – | – | – | – | – |
+| **SMA Smart Energy** | ◐ ⁴ | ✓ | ✓ | ◐ | – |
 | **SolaX Gen4** | ✓ | ✓ | ✓ | ◐ ² | ◐ |
 | **Victron ESS** | ✗ ³ | ✓ | ✓ | ◐ | ◐ |
 
-Stand 05.11.2026, je eine Anlage, alle Läufe mittags mit PV-Überschuss.
+Stand 05.11.2026, je eine Anlage, Läufe mittags und am Nachmittag.
 
 1. Im Betrieb ist das Netzladen am Gerät geprüft (Oktober 2026).
 2. Die Stellwerte zeigen den Entladestrom nicht. Belegen kann den Deckel
@@ -93,6 +93,8 @@ Stand 05.11.2026, je eine Anlage, alle Läufe mittags mit PV-Überschuss.
    lud aber weiter. Der Test lief komplett in einem aktiven
    BatteryLife-Ladeplan des GX-Geräts, der vermutlich das Limit übersteuert.
    Mit abgeschaltetem Ladeplan noch zu wiederholen.
+4. Batterie war voll. Den Wert des Ladelimits liest der SMA-Treiber nicht
+   vom Gerät zurück, belegen kann es nur die gemessene Wirkung.
 
 ## Was je Wechselrichter noch zu klären ist
 
