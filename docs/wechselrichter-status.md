@@ -82,7 +82,7 @@ prüfbar · ✗ = Problem gefunden · – = noch nicht geprüft
 | **Sigenergy SigenStor** | ✓ | ✓ ³ | ✓ | ◐ | ◐ |
 | **SMA Smart Energy** | – | – | – | – | – |
 | **SolaX Gen4** | ✓ | ✓ | ✓ | ◐ ⁴ | ◐ |
-| **Victron ESS** | – | – | – | – | – |
+| **Victron ESS** | ✗ ⁵ | ✓ | ✓ | ◐ | ◐ |
 
 Stand 05.11.2026, je eine Anlage, alle Läufe mittags mit PV-Überschuss.
 
@@ -96,6 +96,12 @@ Stand 05.11.2026, je eine Anlage, alle Läufe mittags mit PV-Überschuss.
    weiter, die Einspeisung steigt von 3,7 auf 13,0 kW.
 4. Die Stellwerte zeigen den Entladestrom nicht. Belegen kann den Deckel
    nur die gemessene Wirkung, nicht das Zurücklesen.
+5. Der DVCC-Ladestrom stand auf 0 A (korrekt zurückgelesen), die Batterie
+   lud aber weiter. Der Test lief komplett in einem aktiven
+   BatteryLife-Ladeplan des GX-Geräts, der vermutlich das Limit übersteuert.
+   Mit abgeschaltetem Ladeplan noch zu wiederholen. Der Entladedeckel
+   („Max. Wechselrichterleistung“) wurde geschrieben und sauber auf −1
+   zurückgestellt.
 
 ## Was je Wechselrichter noch zu klären ist
 
