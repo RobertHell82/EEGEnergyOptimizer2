@@ -12,6 +12,13 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+## [2.1.75] - 2026-11-05
+
+### Geändert
+
+- **Wallbox Ambibox (Beta): Entladetest auch für Autos ohne ISO 15118-20.** Der Handtest gab das Rückspeisen bisher nur frei, wenn das Fahrzeug über ISO 15118-20 lädt. In Ansfelden steckte ein Skoda Enyaq von 2021, der zurückspeisen kann, aber über ISO 15118-2 mit VWs eigener Erweiterung VAS — 15118-20 gab es damals noch nicht. Das Auto meldete der Box 10 kW Entladeleistung, der Knopf blieb trotzdem gesperrt. Jetzt genügt ISO 15118-20, ISO 15118-2 VAS oder eine vom Fahrzeug gemeldete Entladeleistung; DIN 70121 bleibt gesperrt. Die Anleitung nennt den Schalter „VW VAS“ in der Ambibox-Oberfläche.
+- **Am selben Abend am Gerät geprüft:** Laden mit vorgegebener Leistung wirkt (5 kW bestellt, +5,0 kW im Hausverbrauch), Start aus „Gestoppt“ und Stopp ebenso; das Vorzeichen „negativ = laden“ stimmt, positiv brachte die Box in den Fehlerzustand. Die ersten Versuche luden fix mit 3 kW, weil ein zweites Energiemanagement (Solar Manager) die Box parallel steuerte — die Ambibox verträgt nur einen Regler.
+
 ## [2.1.74] - 2026-11-05
 
 ### Behoben
