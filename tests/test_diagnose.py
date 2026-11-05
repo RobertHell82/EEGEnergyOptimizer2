@@ -252,6 +252,7 @@ class FakeInverter:
         self.ladelimit_nur_null = False      # Wert ≠ 0 wird ignoriert, 0 bleibt
         self.deckel_nur_null = False         # Deckel ≠ 0 und Aufheben ignoriert
         self.entladung_nur_ladestopp = False # Zwangsmodus sperrt nur das Laden
+        self.entladung_regelt_pv_ab = False  # Sigenergy „ESS First": PV auf 0
         self.ruecklesen_verzoegert = 0       # so viele Lesungen noch der alte Wert
         self.ladelimit_vom_geraet_gelesen = True
         self.batterie_gesperrt = False
@@ -369,8 +370,11 @@ class Anlage:
         if self.messen_wirft:
             raise RuntimeError("Sensor kaputt")
         b = self.batterie()
-        neu = {"soc": self.soc, "pv": self.pv, "batt": b,
-               "netz": self.pv - self.haus - b, "haus": self.haus}
+        pv = self.pv
+        if self.inv.modus == "entladung" and self.inv.entladung_regelt_pv_ab:
+            pv, b = 0.0, -self.inv.entladung
+        neu = {"soc": self.soc, "pv": pv, "batt": b,
+               "netz": pv - self.haus - b, "haus": self.haus}
         if self.verzoegerung_proben:
             inv = self.inv
             zustand = (inv.modus, inv.ladelimit, inv.deckel, inv.entladung, inv.netzladung)
@@ -593,7 +597,9 @@ class TestKaputteTreiber:
         s = _schritte(p, "entladung")[0]
         assert s["befehl_ok"] is True
         assert s["wirkung"] == d.NICHT_ERFUELLT
-        assert "keine Wirkung" in s["text"]
+        # Der Text sagt, was stattdessen gemessen wurde.
+        assert "nicht die erwartete Wirkung" in s["text"]
+        assert "Batterie -2.00 kW" in s["text"]
         befunde = d.befunde(p)
         assert {"bereich": "entladung", "art": "wirkungslos"}.items() <= befunde[0].items()
         assert befunde[0]["batt_median"] is not None
@@ -1186,3 +1192,47 @@ class TestVerzoegerteWirkung:
         texte = " ".join(x["text"] for x in _schritte(p, "ladelimit"))
         assert "voll" in texte
         assert "-0.00" not in str(p)
+
+
+class TestPvEinbruch:
+    """Sigenergy, 05.11.2026: Zwangsentladung 1 kW — Batterie exakt 1 kW,
+    PV von 17,9 auf 0 kW, Einspeisung von 4,2 auf 0,45 kW."""
+
+    def test_rein(self):
+        proben = [{"pv": 17.9}, {"pv": 11.6}, {"pv": 0.0}, {"pv": 0.0}, {"pv": 0.0}]
+        assert d.pv_einbruch(17.93, proben) == (17.93, 0.0)
+        # Wolke: auf 60 % — kein Einbruch.
+        assert d.pv_einbruch(10.0, [{"pv": 6.0}] * 3) is None
+        # Ohne nennenswerte PV vorher nichts zu sagen.
+        assert d.pv_einbruch(0.5, [{"pv": 0.0}] * 3) is None
+        assert d.pv_einbruch(None, [{"pv": 0.0}] * 3) is None
+
+    @pytest.mark.asyncio
+    async def test_wie_sigenergy(self):
+        """Tagsüber nicht sauber prüfbar → teilweise, kein Fehler, keine Meldung."""
+        diag, inv, anlage, *_ = _aufbau(pv=18.0, haus=0.3, soc=83)
+        inv.entladung_regelt_pv_ab = True
+        anlage.verzoegerung_proben = 1
+        p = await _laufen(diag)
+        s = _schritte(p, "entladung")[0]
+        assert s["ergebnis"] == d.TEILWEISE
+        assert s["pv_eingebrochen"] == {"vorher_kw": 18.0, "nachher_kw": 0.0}
+        assert "entlädt 1.00 kW" in s["text"]
+        assert "regelt dabei die PV ab (18.00 → 0.00 kW)" in s["text"]
+        assert "nachts wiederholen" in s["text"]
+        assert p["bereiche"]["entladung"]["ergebnis"] == d.TEILWEISE
+        assert not [b for b in d.befunde(p) if b["bereich"] == "entladung"]
+        # Die Freigabe danach ist nicht prüfbar, nicht geschenkt.
+        f = [x for x in _schritte(p, "freigabe") if "Zwangsentladung" in x["titel"]][0]
+        assert f["wirkung"] == d.NICHT_PRUEFBAR
+
+    @pytest.mark.asyncio
+    async def test_nachts_bestanden_bleibt_nach_tagestest(self):
+        diag, inv, anlage, *_ = _aufbau(pv=0.0, haus=0.5, soc=83)
+        inv.entladung_regelt_pv_ab = True     # nachts ohne Bedeutung
+        p = await _laufen(diag)
+        assert _bereich(p, "entladung") == d.OK
+        anlage.pv = 18.0
+        await _laufen(diag)
+        assert diag._bereiche["entladung"]["ergebnis"] == d.OK
+        assert diag._bereiche["entladung"]["zuletzt_teilweise"]

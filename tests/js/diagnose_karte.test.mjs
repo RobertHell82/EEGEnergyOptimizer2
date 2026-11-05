@@ -105,7 +105,8 @@ test("während des Laufs: aktueller Schritt, Messwerte, Abbrechen, kein Start", 
   assert.match(html, /class="diag-kreisel"/);
   // Ein Satz statt des Schrittnamens, der Schrittname steht in den Details.
   assert.match(html, /Laden wird gesperrt/);
-  assert.match(html, /Alle Schritte \(2\)/);
+  assert.match(html, /Details \(2 Schritte\)/);
+  assert.match(html, /<details class="diag-details">/);
   assert.match(html, /Ladelimit 0 kW/);
   // Ladestand als Batterie, Leistungen als Kacheln mit Richtung.
   assert.match(html, /diag-akku-fuellung" style="height:54.4%/);
@@ -324,4 +325,21 @@ test("schmal: Liste statt Tabelle", () => {
   const html = p._diagnoseKarte();
   assert.doesNotMatch(html, /<table/);
   assert.match(html, /diagnose-bereiche/);
+});
+
+test("Details bleiben über das Neuzeichnen offen", () => {
+  const p = neuesPanel();
+  p._hass = hassMit({});
+  p._diagnose = status({
+    laeuft: true,
+    schritt: { bereich: "ladelimit", titel: "Ladelimit 0 kW (Laden sperren)" },
+    probe: {},
+    lauf: { schritte: [{ bereich: "vorpruefung", titel: "Wechselrichter erreichbar", ergebnis: "ok" }] },
+  });
+  assert.equal(p._diagnoseDetailsOffen, false);
+  assert.match(p._diagnoseKarte(), /<details class="diag-details">/);
+  assert.match(p._diagnoseKarte(), /<summary data-action="diagnose-details">/);
+  p._diagnoseDetailsOffen = true;   // so setzt es der Klick auf die Zusammenfassung
+  assert.match(p._diagnoseKarte(), /<details class="diag-details" open>/);
+  assert.match(p._diagnoseKarte(), /<details class="diag-details" open>/);   // nächstes Neuzeichnen
 });

@@ -265,6 +265,27 @@ def median(werte: list[float]) -> float | None:
     return (reihe[mitte - 1] + reihe[mitte]) / 2
 
 
+def pv_einbruch(basis_pv: float | None, proben: list[dict]) -> tuple[float, float] | None:
+    """Fiel die PV während eines Zwangsmodus fast auf null? ``(vorher, nachher)``.
+
+    Sigenergy, 05.11.2026: „Command Discharging (ESS First)" mit 1 kW — die
+    Batterie lieferte exakt 1 kW, die PV fiel von 17,9 auf 0 kW, die
+    Einspeisung sank. Das Gerät regelt in diesem Modus die PV ab. Gewertet
+    werden die letzten ``FOLGE_OK`` Proben gegen den Ausgangswert; eine
+    Wolke drückt die PV selten binnen zwei Minuten unter 30 %, ein
+    abregelnder Modus auf null.
+    """
+    if basis_pv is None or basis_pv < 1.0:
+        return None
+    pv = [x.get("pv") for x in proben if isinstance(x, dict) and x.get("pv") is not None]
+    if len(pv) < FOLGE_OK:
+        return None
+    nachher = median(pv[-FOLGE_OK:])
+    if nachher is None or nachher > max(0.3, basis_pv * 0.3):
+        return None
+    return round(basis_pv, 2), round(nachher, 2)
+
+
 def _kw_text(kw: float) -> str:
     """kW für Texte: zwei Stellen, nie „-0.00"."""
     wert = round(float(kw), 2)
@@ -1034,6 +1055,35 @@ class AnsteuerungsDiagnose:
             "Diagnose: %s — %s (%s)", schritt["titel"], ergebnis, schritt["text"]
         )
 
+    def _pv_einbruch_pruefen(self, schritt: dict) -> None:
+        """Nach einem Zwangsmodus: Hat das Gerät dabei die PV abgeregelt?
+
+        Dann lässt sich der Befehl bei Sonne nicht sauber prüfen: Die
+        Einspeisung steigt nicht, weil die PV fehlt, obwohl die Batterie
+        liefert. Kein Fehler — zwangsentladen wird nachts, und dort gibt es
+        nichts abzuregeln —, sondern „teilweise" mit dem Hinweis, nachts zu
+        wiederholen. Ein „teilweise" überschreibt kein früheres „ok".
+        Sigenergy „ESS First", 05.11.2026: Batterie exakt 1 kW, PV 17,9 → 0.
+        """
+        einbruch = pv_einbruch((schritt.get("basis") or {}).get("pv"), schritt.get("proben") or [])
+        if einbruch is None:
+            return
+        vorher, nachher = einbruch
+        schritt["pv_eingebrochen"] = {"vorher_kw": vorher, "nachher_kw": nachher}
+        schritt["wirkung"] = NICHT_PRUEFBAR
+        proben = schritt.get("proben") or []
+        batt = median([x.get("batt") for x in proben[-FOLGE_OK:] if x.get("batt") is not None])
+        batt_text = (
+            f"die Batterie {'entlädt' if batt < 0 else 'lädt'} {_kw_text(abs(batt))} kW, "
+            if batt is not None else ""
+        )
+        schritt["voraussetzung"] = "der Wechselrichter regelt in diesem Modus die PV ab"
+        schritt["text"] = (
+            f"Befehl angenommen, {batt_text}aber das Gerät regelt dabei die PV ab "
+            f"({_kw_text(vorher)} → {_kw_text(nachher)} kW) — bei Sonne nicht sauber "
+            "prüfbar, nachts wiederholen"
+        )
+
     @staticmethod
     def _standardtext(schritt: dict) -> str:
         if schritt["befehl_ok"] is False:
@@ -1046,6 +1096,17 @@ class AnsteuerungsDiagnose:
             )
         wirkung = schritt.get("wirkung")
         if wirkung == NICHT_ERFUELLT:
+            # Was stattdessen gemessen wurde — „keine Wirkung" allein sagt
+            # nicht, ob nichts geschah oder das Falsche.
+            proben = [x for x in schritt.get("proben") or [] if isinstance(x, dict)][-FOLGE_OK:]
+            batt = median([x.get("batt") for x in proben if x.get("batt") is not None])
+            netz = median([x.get("netz") for x in proben if x.get("netz") is not None])
+            if batt is not None and netz is not None:
+                return (
+                    "Befehl angenommen, aber nicht die erwartete Wirkung — gemessen: "
+                    f"Batterie {_kw_text(batt)} kW, Netz {_kw_text(netz)} kW"
+                    f"{' (erwartet: ' + schritt['erwartung'] + ')' if schritt.get('erwartung') else ''}"
+                )
             return "Befehl angenommen, aber keine Wirkung gemessen"
         if wirkung == UNEINDEUTIG:
             return "Messung uneindeutig — bitte wiederholen"
@@ -1541,6 +1602,7 @@ class AnsteuerungsDiagnose:
             lambda: inverter.async_set_discharge(kw, ziel), power_kw=kw, target_soc=ziel,
         ):
             await self._beobachten(s, pruef, stopp=_stopp)
+            self._pv_einbruch_pruefen(s)
         self._schritt_ende(s)
         # Freigabe immer, auch nach einem abgelehnten Befehl — der kann halb
         # angekommen sein. Prüfbar ist sie nur, wenn die Entladung wirkte:
@@ -1706,6 +1768,7 @@ class AnsteuerungsDiagnose:
         ):
             if pruefbar:
                 await self._beobachten(s, pruef_laden_mindestens(kw), stopp=_stopp)
+                self._pv_einbruch_pruefen(s)
             else:
                 s["voraussetzung"] = (
                     f"die Batterie lädt schon ≈{ladung_vorher:.2f} kW aus PV — "

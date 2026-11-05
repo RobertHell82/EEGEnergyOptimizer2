@@ -29,6 +29,7 @@ from custom_components.eeg_energy_optimizer.inverter.base import InverterBase
 from custom_components.eeg_energy_optimizer.inverter.sigenergy import (
     MODE_COMMAND_CHARGING_PV_FIRST,
     MODE_COMMAND_DISCHARGING_ESS_FIRST,
+    MODE_COMMAND_DISCHARGING_PV_FIRST,
     MODE_SELF_CONSUMPTION,
     SIGEN_DOMAIN,
     SIGEN_ENTITY_DEFAULTS,
@@ -958,3 +959,44 @@ class TestReviewRunde2:
         assert _calls(mock_hass) == []
         assert inv._befehl is None
         assert inv._ziel_erreicht_pct == 80.0
+
+
+class TestEntlademodusPvFirst:
+    """Diagnose 05.11.2026: „ESS First" regelte die PV von 17,9 auf 0 kW ab.
+
+    Bietet die Auswahl „PV First" an, entlädt der Treiber damit; sonst
+    bleibt es beim Modus, den jede Integrationsversion kennt.
+    """
+
+    @staticmethod
+    def _inv(mock_hass, optionen):
+        zustand = {SWITCH: "on", MODE: MODE_SELF_CONSUMPTION, CHARGE_LIMIT: "0", DISCHARGE_LIMIT: "21.6", **NENN}
+        attribute = {**NENN_ATTR}
+        if optionen is not None:
+            attribute[MODE] = {"options": optionen}
+        mock_hass.states.get.side_effect = _states(zustand, attribute)
+        mock_hass.states.async_all.return_value = []
+        return SigenergyInverter(mock_hass, {}), zustand
+
+    async def test_pv_first_wenn_angeboten(self, mock_hass):
+        inv, zustand = self._inv(mock_hass, [
+            "PCS Remote Control", "Standby", "Maximum Self Consumption",
+            "Command Charging (Grid First)", "Command Charging (PV First)",
+            "Command Discharging (PV First)", "Command Discharging (ESS First)", "V2G", "Unknown",
+        ])
+        mock_hass.services.async_call = _wechselnd(zustand)
+        assert await inv.async_set_discharge(3.0, 30.0) is True
+        assert zustand[MODE] == MODE_COMMAND_DISCHARGING_PV_FIRST
+        assert inv._befehl == "entladung"
+
+    async def test_ess_first_ohne_option(self, mock_hass):
+        inv, zustand = self._inv(mock_hass, ["Maximum Self Consumption", "Command Discharging (ESS First)"])
+        mock_hass.services.async_call = _wechselnd(zustand)
+        assert await inv.async_set_discharge(3.0, 30.0) is True
+        assert zustand[MODE] == MODE_COMMAND_DISCHARGING_ESS_FIRST
+
+    async def test_ess_first_ohne_attribut(self, mock_hass):
+        inv, zustand = self._inv(mock_hass, None)
+        mock_hass.services.async_call = _wechselnd(zustand)
+        assert await inv.async_set_discharge(3.0, 30.0) is True
+        assert zustand[MODE] == MODE_COMMAND_DISCHARGING_ESS_FIRST

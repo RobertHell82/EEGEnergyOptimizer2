@@ -17,8 +17,9 @@ Fahrplan-Executors werden so abgebildet:
   Ladelimit X kW  → Ladelimit = X im Modus „Maximum Self Consumption",
                     Entladelimit auf Nennleistung
                     (siehe „Warum kein Command Charging" unten)
-  Entladung X kW  → Modus „Command Discharging (ESS First)", Entladelimit = X,
-                    Ladelimit auf Nennleistung
+  Entladung X kW  → Modus „Command Discharging (PV First)", Entladelimit = X,
+                    Ladelimit auf Nennleistung (ohne diese Option am Gerät:
+                    „ESS First", siehe „Warum PV First" unten)
   Freigabe        → Modus „Maximum Self Consumption", beide Limits auf
                     Nennleistung, danach Remote EMS AUS — das Gerät läuft
                     wieder in seinem eigenen EMS-Arbeitsmodus.
@@ -99,10 +100,20 @@ auszuschalten — die Limits wirken global weiter —, sondern zusätzlich
 Nennleistung zu stellen. Läuft die Integration wieder, erledigt das ihre
 nächste Freigabe von selbst.
 
+**Warum PV First.** „Command Discharging (ESS First)" mit 1 kW Entladelimit
+regelte an einer Anlage die ganze PV ab (Diagnose 05.11.2026, 13:41): Die
+Batterie lieferte exakt 1,00 kW, die PV fiel von 17,9 auf 0 kW, die
+Einspeisung sank von 4,2 auf 0,45 kW — das Gerät gibt in diesem Modus nur
+die Batterieleistung aus. Jede Zwangsentladung bei Sonne hätte die PV
+weggeworfen. „PV First" lässt laut Spezifikation zuerst die PV liefern und
+die Batterie bis zum Entladelimit dazulegen. Am Gerät noch zu bestätigen —
+die Diagnose prüft genau das (``diagnose.pv_einbruch``). Bietet die
+Auswahl die Option nicht an (ältere Integration), bleibt es bei ESS First.
+
 **Am Gerät zu verifizieren (Feldtest):**
 
-- Liefert „Command Discharging (ESS First)" ins Netz oder deckt es nur die
-  Hauslast?
+- Liefert „Command Discharging (PV First)" PV plus Batterie ins Netz, wie
+  die Spezifikation es beschreibt? (ESS First: nein, siehe oben.)
 - Stoppt der Entlade-Cut-Off (Register 40048, ``ESS Discharge Cut-Off State
   of Charge``) eine befohlene Entladung wie der Entladeboden bei SolaX? Der
   Treiber liest ihn als Untergrenze für den Fahrplan, schreibt ihn aber nicht.
@@ -143,6 +154,7 @@ SIGEN_DOMAIN = "sigen"
 # Options-Strings der Modus-Auswahl, wörtlich aus select.py der Integration.
 MODE_SELF_CONSUMPTION = "Maximum Self Consumption"
 MODE_COMMAND_CHARGING_PV_FIRST = "Command Charging (PV First)"
+MODE_COMMAND_DISCHARGING_PV_FIRST = "Command Discharging (PV First)"
 MODE_COMMAND_DISCHARGING_ESS_FIRST = "Command Discharging (ESS First)"
 
 # Wie lange nach dem Einschalten des Remote EMS auf die Modus-Auswahl
@@ -576,6 +588,21 @@ class SigenergyInverter(InverterBase):
         self.last_write_error = grund
         return True
 
+    def _entlademodus(self) -> str:
+        """„PV First", wenn die Auswahl ihn anbietet, sonst „ESS First".
+
+        ESS First regelt die PV ab (siehe „Warum PV First" im Modulkopf).
+        Die Optionen stehen im Attribut ``options`` der Auswahl; fehlt es
+        (Entität noch nicht geladen), wird nicht geraten: ESS First ist der
+        Modus, den es in jeder Version gibt.
+        """
+        entity = self._resolve_entity("remote_ems_mode")
+        state = self._hass.states.get(entity) if entity else None
+        optionen = (getattr(state, "attributes", None) or {}).get("options") if state else None
+        if isinstance(optionen, (list, tuple)) and MODE_COMMAND_DISCHARGING_PV_FIRST in optionen:
+            return MODE_COMMAND_DISCHARGING_PV_FIRST
+        return MODE_COMMAND_DISCHARGING_ESS_FIRST
+
     def _modus_ist(self) -> str | None:
         return self._state_str(self._resolve_entity("remote_ems_mode"))
 
@@ -955,7 +982,7 @@ class SigenergyInverter(InverterBase):
                 await self._ensure_remote_ems()
                 await self._set_number("ess_max_discharging_limit", max(0.0, abs(float(power_kw))))
                 self._entladedeckel_kw = None
-                hinweis = await self._modus_wechseln(MODE_COMMAND_DISCHARGING_ESS_FIRST)
+                hinweis = await self._modus_wechseln(self._entlademodus())
             except _ModusNichtAngekommen as exc:
                 await self._zurueckrollen(exc)
                 return self._fehler(str(exc))

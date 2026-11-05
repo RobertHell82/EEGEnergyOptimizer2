@@ -879,6 +879,9 @@ class EegOptimizerPanel extends HTMLElement {
     this._diagnoseBusy = false;
     this._diagnoseTimer = null;
     this._diagnoseDialog = null;
+    // Aufgeklappte Schrittliste der laufenden Diagnose — bleibt über das
+    // Neuzeichnen alle 2 s offen.
+    this._diagnoseDetailsOffen = false;
     this._peakshareData = null;
     this._peakshareDataLoaded = false;
 
@@ -1334,6 +1337,15 @@ class EegOptimizerPanel extends HTMLElement {
       }
       if (action === "forget-telemetry") {
         this._handleTelemetryForget();
+        return;
+      }
+      if (action === "diagnose-details") {
+        // Die Karte wird während der Diagnose alle 2 s neu gezeichnet — ein
+        // natives <details> klappte dabei jedes Mal wieder zu. Der Zustand
+        // liegt deshalb hier, und das native Umschalten wird unterdrückt.
+        e.preventDefault();
+        this._diagnoseDetailsOffen = !this._diagnoseDetailsOffen;
+        this._render();
         return;
       }
       if (action) {
@@ -2520,7 +2532,7 @@ class EegOptimizerPanel extends HTMLElement {
           ${titel}
           <div class="diag-kopf">
             <span class="diag-kreisel" style="${this._diagnosePhase(900)}"></span>
-            <div style="flex:1;min-width:0">
+            <div class="diag-kopf-text">
               <div style="font-weight:600;font-size:15px">Diagnose läuft</div>
               <div class="help-text" style="margin:0">Die Optimierung ist so lange aus${dauer ? ` · ${dauer}` : ""}</div>
             </div>
@@ -2538,8 +2550,8 @@ class EegOptimizerPanel extends HTMLElement {
             ${imSchritt != null ? `<div class="diag-zeit" title="Beobachtung, höchstens 2 Minuten"><div style="width:${Math.min(100, imSchritt / 120 * 100).toFixed(0)}%"></div></div>` : ""}
           </div>
           ${this._diagnoseLiveWerte(p)}
-          <details class="diag-details">
-            <summary>Alle Schritte (${schritte.length})</summary>
+          <details class="diag-details"${this._diagnoseDetailsOffen ? " open" : ""}>
+            <summary data-action="diagnose-details">Details (${schritte.length} Schritte)</summary>
             <ol>${liste}</ol>
           </details>
         </div>`;
@@ -2596,10 +2608,10 @@ class EegOptimizerPanel extends HTMLElement {
 
     const knoepfe = `
       <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:14px">
-        ${admin ? `<button class="btn-primary" data-action="diagnose-start-frage" ${this._diagnoseBusy ? "disabled" : ""}>
-          <ha-icon icon="mdi:play" style="--mdc-icon-size:18px;vertical-align:-4px"></ha-icon> Diagnose starten</button>` : ""}
-        ${l ? `<button class="btn-secondary" data-action="diagnose-download">
-          <ha-icon icon="mdi:download" style="--mdc-icon-size:18px;vertical-align:-4px"></ha-icon> Protokoll herunterladen</button>` : ""}
+        ${admin ? `<button class="btn-primary diag-knopf" data-action="diagnose-start-frage" ${this._diagnoseBusy ? "disabled" : ""}>
+          <ha-icon icon="mdi:play" style="--mdc-icon-size:18px"></ha-icon>Diagnose starten</button>` : ""}
+        ${l ? `<button class="btn-secondary diag-knopf" data-action="diagnose-download">
+          <ha-icon icon="mdi:download" style="--mdc-icon-size:18px"></ha-icon>Protokoll herunterladen</button>` : ""}
       </div>
       ${!admin ? `<div class="help-text" style="margin-top:6px">Starten kann nur ein Administrator.</div>` : ""}`;
 
@@ -13745,6 +13757,11 @@ class EegOptimizerPanel extends HTMLElement {
         .card h3 { color: var(--success-color, #43a047); }
         /* Diagnose der Ansteuerung (Einstellungen → System) */
         .diag-kopf { display: flex; align-items: center; gap: 12px; margin: 4px 0 14px; }
+        .diag-kopf-text { flex: 1; min-width: 0; }
+        /* Symbol und Text im Knopf mittig auf einer Linie — vertical-align
+           lag in HA (ha-icon ist ein Block mit eigener Höhe) zu tief. */
+        .diag-knopf { display: inline-flex; align-items: center; gap: 6px; }
+        .diag-knopf ha-icon { display: flex; }
         .diag-kreisel {
           width: 28px; height: 28px; border-radius: 50%; flex: none;
           border: 3px solid var(--divider-color, #e0e0e0);
@@ -13833,6 +13850,22 @@ class EegOptimizerPanel extends HTMLElement {
         .diag-offen strong { color: var(--primary-text-color); }
         @media (prefers-reduced-motion: reduce) {
           .diag-kreisel, .diag-ring { animation-duration: 3s; }
+        }
+        /* Sehr schmal (iPhone SE, 320 px): kleinere Punkte, und nur der
+           laufende Schritt trägt seinen Namen — sechs Namen passen dort
+           nicht nebeneinander, gekürzt („Entla…") hilft keinem. */
+        @media (max-width: 420px) {
+          .diag-kopf { flex-wrap: wrap; }
+          .diag-kopf-text { flex: 1 0 150px; }
+          .diag-punkt { width: 30px; height: 30px; }
+          .diag-punkt ha-icon { --mdc-icon-size: 15px !important; }
+          .diag-leiste-linie { top: 13px; }
+          .diag-stufe-name { display: none; }
+          .diag-stufe.aktiv .diag-stufe-name { display: block; overflow: visible; }
+          .diag-live { gap: 10px; }
+          .diag-akku-koerper { width: 48px; }
+          .diag-wert { padding: 6px 8px; }
+          .diag-wert-zahl { font-size: 16px; }
         }
         .energy-flow-svg { width: 100%; height: auto; max-height: 420px; display: block; }
         .energy-flow-svg.narrow { max-height: 460px; margin: 0 auto; }

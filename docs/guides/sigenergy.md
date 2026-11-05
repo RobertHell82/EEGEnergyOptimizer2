@@ -110,7 +110,7 @@ Während der Optimizer steuert, ist der Schalter „Remote EMS" **an**. Gibt er 
 | Fahrplan will | Am Gerät |
 |---|---|
 | **Laden begrenzen** (auch 0 kW = Laden sperren) | Remote EMS an, Modus bleibt „Maximum Self Consumption“ — das Ladelimit wird gesetzt, das Entladelimit steht auf der Nennleistung |
-| **Entladen ins Netz** | Remote EMS an → „Command Discharging (ESS First)" mit Entladelimit, das Ladelimit steht auf der Nennleistung |
+| **Entladen ins Netz** | Remote EMS an → „Command Discharging (PV First)" mit Entladelimit, das Ladelimit steht auf der Nennleistung. Bietet die Integration diesen Modus nicht an, „Command Discharging (ESS First)" — der regelt die PV während der Entladung ab |
 | **Freigabe** (Normalbetrieb) | „Maximum Self Consumption" → beide Limits auf die Nennleistung → Remote EMS **aus** |
 | **Batterie hält die Spitzenreserve** (Beta) | Remote EMS an, „Maximum Self Consumption“, das Entladelimit wird gedeckelt („halten“ = 0,01 kW) |
 | **Aus dem Netz laden** (Beta) | Remote EMS an → „Command Charging (PV First)“ mit dem Ladelimit als Leistung; am Ziel-Ladestand gibt der Optimizer frei |
