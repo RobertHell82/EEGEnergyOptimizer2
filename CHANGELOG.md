@@ -12,6 +12,16 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+## [2.1.76-beta.2] - 2026-11-05
+
+### Behoben
+
+- **Wallbox Ambibox (Beta): Ladeleistung und Richtung stimmen.** Bisher hing die Richtung am *Battery State*, und den meldet nicht jedes Auto: Ein Skoda Enyaq stand durchgehend auf 0, also zeigte die Integration 0 kW, auch beim Laden mit 5 kW. Meldet das Fahrzeug keinen Batteriezustand, kommt die Richtung jetzt aus dem Vorzeichen von *Power AC* (positiv = Rückspeisen, gemessen +4970 W; ab 0,3 kW, darunter liegt der Eigenbedarf der Box). Der Status heißt beim Rückspeisen „Entlädt“ statt „Lädt“, und die Prüfung auf Gegenrichtung sieht endlich etwas.
+
+### Geändert
+
+- **Handtest schreibt den Sollwert nur noch einmal (Versuch).** Mit Nachschreiben alle 30 s setzte das Auto beim Rückspeisen jede Minute 10–15 s aus, Power AC fiel von 4970 auf −170 W. Der Versuch zeigt, ob die Pausen verschwinden und ob die Box einen Watchdog hat. Das Zeitlimit stoppt weiter aktiv.
+
 ## [2.1.76-beta.1] - 2026-11-05
 
 ### Hinzugefügt
