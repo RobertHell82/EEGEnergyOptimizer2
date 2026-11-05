@@ -12,6 +12,13 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+## [2.1.74] - 2026-11-05
+
+### Behoben
+
+- **Diagnose: „Bestanden“ nur noch, wenn jeder Schritt wirkte.** Bisher machte ein bestandener Schritt einen nicht prüfbaren daneben wett: Beim Entladedeckel stand „bestanden“, obwohl nur das Halten zu sehen war, nicht die 0,5 kW und nicht das Aufheben. Jetzt heißt ein solcher Bereich „teilweise“.
+- **Diagnose: keine falschen Fehler mehr, wenn der Hausverbrauch springt.** An einem Huawei stieg während der Zwangsentladung der Hausverbrauch auf 4,4 kW. Die Batterie lieferte die befohlenen 1,9 kW, die Einspeisung konnte aber nicht steigen, und die Diagnose meldete einen Fehler. Bleibt die Batterie bei hohem Hausverbrauch genau beim Sollwert, gilt die Entladung jetzt als wirksam, denn im Automatikbetrieb hätte sie das ganze Haus gedeckt. Ebenso ist das Aufheben eines Entladedeckels nicht bewertbar, solange nichts aus dem Netz bezogen wird: An einem Huawei und einer Victron deckte die Batterie danach einfach den ganzen, kleinen Hausverbrauch.
+
 ## [2.1.73] - 2026-11-05
 
 ### Behoben
