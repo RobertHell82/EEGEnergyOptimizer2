@@ -118,8 +118,8 @@ class TestBereichErgebnis:
     def test_uebersprungen_verdeckt_nichts(self):
         assert d.bereich_ergebnis([d.UEBERSPRUNGEN, d.OK]) == d.OK
 
-    def test_teilweise_neben_ok_ist_ok(self):
-        assert d.bereich_ergebnis([d.OK, d.TEILWEISE]) == d.OK
+    def test_teilweise_neben_ok_bleibt_teilweise(self):
+        assert d.bereich_ergebnis([d.OK, d.TEILWEISE]) == d.TEILWEISE
         assert d.bereich_ergebnis([d.TEILWEISE, d.TEILWEISE]) == d.TEILWEISE
         assert d.bereich_ergebnis([d.OK, d.TEILWEISE, d.UNKLAR]) == d.UNKLAR
 
@@ -484,7 +484,7 @@ class TestMittag:
         assert _bereich(p, "vorpruefung") == d.OK
         assert _bereich(p, "ladelimit") == d.OK
         assert _bereich(p, "entladung") == d.OK
-        assert _bereich(p, "freigabe") == d.OK
+        assert _bereich(p, "freigabe") == d.TEILWEISE
         # Keine Entladung im Automatikbetrieb → Deckel nicht prüfbar.
         assert _bereich(p, "deckel") == d.TEILWEISE
         # Die Batterie lädt schon aus PV → Netzladung nicht unterscheidbar.
@@ -556,7 +556,7 @@ class TestAbend:
         assert _bereich(p, "entladung") == d.OK
         assert _bereich(p, "deckel") == d.OK
         assert _bereich(p, "netzladung") == d.OK
-        assert _bereich(p, "freigabe") == d.OK
+        assert _bereich(p, "freigabe") == d.TEILWEISE
         texte = [s["voraussetzung"] for s in _schritte(p, "ladelimit") if s["voraussetzung"]]
         assert any("PV-Überschuss" in t for t in texte)
 
@@ -969,7 +969,7 @@ class TestReviewBefunde:
         titel = {x["titel"]: x for x in _schritte(p, "deckel")}
         assert titel["Entladedeckel 0 kW (halten)"]["ergebnis"] == d.OK
         assert titel["Entladedeckel aufheben"]["wirkung"] == d.NICHT_PRUEFBAR
-        assert _bereich(p, "deckel") == d.OK
+        assert _bereich(p, "deckel") == d.TEILWEISE
 
     @pytest.mark.asyncio
     async def test_mittags_nur_ladestopp_ist_keine_entladung(self):
@@ -1060,7 +1060,7 @@ class TestReviewBefunde:
         p = await _laufen(diag)
         # Ladelimit-Freigabe nicht prüfbar (keine Ladung), Entladung wirkungslos
         # → deren Freigabe nicht prüfbar; Netzladung wirkt → ihre Freigabe ok.
-        assert _bereich(p, "freigabe") == d.OK
+        assert _bereich(p, "freigabe") == d.TEILWEISE
         diag2, inv2, *_ = _aufbau(pv=0.0, haus=2.0, soc=60, netzladung=False)
         inv2.entladung_wirkungslos = True
         p2 = await _laufen(diag2)
@@ -1250,3 +1250,23 @@ class TestPvEinbruch:
         await _laufen(diag)
         assert diag._bereiche["entladung"]["ergebnis"] == d.OK
         assert diag._bereiche["entladung"]["zuletzt_teilweise"]
+
+
+class TestHausverbrauchSpringt:
+    """Traun, Huawei, 05.11.2026 abends: zwei falsche „Fehler“."""
+
+    def test_entladung_haus_ueber_sollwert(self):
+        p = d.pruef_einspeisung_steigt(0.0, 1.0, 0.5, sollwert_batterie_kw=1.94)
+        # Haus 4,4 kW, Batterie liefert 1,87 kW, Bezug 2,54 kW → wirkt.
+        assert p({"pv": 0.0, "batt": -1.874, "netz": -2.536, "haus": 4.41}) is True
+        # Automatik: Batterie deckt das ganze Haus → kein Zwangsbefehl.
+        assert p({"pv": 0.0, "batt": -4.4, "netz": 0.0, "haus": 4.4}) is False
+        # Netz-Sollwert-Treiber: diese Ausnahme gibt es nicht.
+        q = d.pruef_einspeisung_steigt(0.0, 1.0, 0.5)
+        assert q({"pv": 0.0, "batt": -1.874, "netz": -2.536, "haus": 4.41}) is False
+
+    def test_deckel_aufheben_ohne_bezug(self):
+        p = d.pruef_entladen_ueber(0.75, 4.6)
+        assert p({"batt": -0.45, "netz": 0.003}) is None
+        assert p({"batt": -0.45, "netz": -2.0}) is False
+        assert p({"batt": -4.0, "netz": 0.0}) is True

@@ -227,18 +227,17 @@ def schritt_ergebnis(
 def bereich_ergebnis(ergebnisse: list[str]) -> str:
     """Der schlimmste Schritt zählt; nur übersprungene → übersprungen.
 
-    Ausnahme: „teilweise" neben einem „ok" desselben Bereichs ist ok — der
-    Schreibweg ist dann einmal nachweislich wirksam gewesen (Ladelimit 0
-    wirkte, das 1-kW-Limit war mangels Ladeleistung nur nicht zu sehen).
-    Fehler und Unklares bleiben vorne.
+    Ein Bereich ist nur „ok", wenn jeder seiner Schritte wirkte. Bis 2.1.74
+    machte ein „ok" ein „teilweise" daneben wett — beim Kostal-Deckel stand
+    dann „bestanden", obwohl nur das Halten zu sehen war, nicht 0,5 kW und
+    nicht das Aufheben (Robert, 05.11.2026: „warum ist alles abgehakt, wenn
+    was nicht zu sehen war").
     """
     if not ergebnisse:
         return UEBERSPRUNGEN
     if all(e == UEBERSPRUNGEN for e in ergebnisse):
         return UEBERSPRUNGEN
     relevant = [e for e in ergebnisse if e != UEBERSPRUNGEN]
-    if OK in relevant:
-        relevant = [e for e in relevant if e != TEILWEISE]
     return max(relevant, key=lambda e: _SCHWERE.get(e, 0))
 
 
@@ -378,7 +377,15 @@ def pruef_entladen_ueber(grenze_kw: float, soll_kw: float) -> Callable[[dict], b
         entladung = _entladung(p)
         if entladung is None:
             return None
-        return entladung > grenze_kw + FREI_KW and wirkung_erfuellt(soll_kw, entladung)
+        if entladung > grenze_kw + FREI_KW and wirkung_erfuellt(soll_kw, entladung):
+            return True
+        # Ohne Netzbezug deckt die Batterie schon alles, was das Haus braucht
+        # — mehr als der alte Deckel ist dann nicht abzurufen (Traun,
+        # 05.11.2026: nach dem Aufheben Haus 0,45 kW, Batterie 0,45 kW).
+        netz = p.get("netz")
+        if netz is None or netz > -FREI_KW:
+            return None
+        return False
     return _p
 
 
@@ -411,7 +418,8 @@ def pruef_einspeisen_mindestens(soll_kw: float) -> Callable[[dict], bool | None]
 
 
 def pruef_einspeisung_steigt(
-    basis_netz: float, soll_kw: float, entladung_min_kw: float = 0.0
+    basis_netz: float, soll_kw: float, entladung_min_kw: float = 0.0,
+    sollwert_batterie_kw: float | None = None,
 ) -> Callable[[dict], bool | None]:
     """Zwangsentladung: Die Einspeisung steigt um ``soll_kw`` gegenüber vorher,
     UND die Batterie entlädt mindestens ``entladung_min_kw``.
@@ -431,7 +439,20 @@ def pruef_einspeisung_steigt(
             return None
         if entladung_min_kw > 0 and -batt < entladung_min_kw:
             return False
-        return wirkung_erfuellt(soll_kw, netz - basis_netz)
+        if wirkung_erfuellt(soll_kw, netz - basis_netz):
+            return True
+        # Braucht das Haus inzwischen mehr als der Sollwert, kann die
+        # Einspeisung nicht steigen. Dann zeigt sich der Befehl daran, dass
+        # die Batterie genau beim Sollwert stehen bleibt — die Automatik gäbe
+        # alles fürs Haus her (Traun, 05.11.2026: Haus 4,4 kW, befohlen
+        # 1,94 kW, geliefert 1,87 kW).
+        if sollwert_batterie_kw is not None:
+            haus = p.get("haus")
+            pv = p.get("pv") or 0.0
+            if haus is not None and haus - pv > sollwert_batterie_kw + FREI_KW:
+                toleranz = max(GUARD_WIRKUNG_MIN_LUECKE_KW, sollwert_batterie_kw * 0.15)
+                return abs(-batt - sollwert_batterie_kw) <= toleranz
+        return False
     return _p
 
 
@@ -1601,7 +1622,10 @@ class AnsteuerungsDiagnose:
             return
         ziel = round(max(min_soc, soc - SOC_SCHRITT_PCT))
         entladung_min = entladung * GUARD_WIRKUNG_MIN_ANTEIL
-        pruef = pruef_einspeisung_steigt(basis_netz, zuwachs, entladung_min)
+        pruef = pruef_einspeisung_steigt(
+            basis_netz, zuwachs, entladung_min,
+            sollwert_batterie_kw=None if netz_sollwert else kw,
+        )
         s["erwartung"] = (
             f"Einspeisung steigt um ≥ {zuwachs * GUARD_WIRKUNG_MIN_ANTEIL:.2f} kW "
             f"(vorher {basis_netz:+.2f} kW am Netz), Batterie entlädt ≥ {entladung_min:.2f} kW"
