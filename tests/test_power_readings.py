@@ -902,3 +902,75 @@ def test_backfill_faktor_vergleicht_die_ha_einheit_exakt():
     assert backfill_faktor_kw("Watt", None) == 0.001
     assert backfill_faktor_kw("kw", None) == 1.0
     assert backfill_faktor_kw("mw", None) == 1000.0  # kein HA-Schlüssel: Megawatt-Alias
+
+
+# ---------------------------------------------------------------------------
+# compute_auto_kw / Hauslast ohne Auto (Ambibox)
+# ---------------------------------------------------------------------------
+
+from custom_components.eeg_energy_optimizer.const import (  # noqa: E402
+    CONF_WALLBOX_TYPE,
+    WALLBOX_TYPE_AMBIBOX,
+)
+from custom_components.eeg_energy_optimizer.power_readings import (  # noqa: E402
+    compute_auto_kw,
+)
+
+
+def _hass_mit_auto(states: dict, richtung: str, leistung_kw, verfuegbar=True):
+    hass = _make_hass(states)
+    controller = _MM()
+    controller.verfuegbar = verfuegbar
+    controller.zustand.richtung = richtung
+    controller.zustand.leistung_kw = leistung_kw
+    hass.data = {DOMAIN: {"entry1": {"ambibox": controller}}}
+    return hass
+
+
+class TestAutoInDerHauslast:
+    """Ansfelden, 05.11.2026: Sigenergy regelt das Netz auf 0, das Auto an
+    der Ambibox lädt oder speist zurück."""
+
+    def _cfg(self, **extra):
+        base = {
+            CONF_INVERTER_TYPE: "fronius_gen24",
+            CONF_PV_POWER_SENSOR: "sensor.pv",
+            CONF_BATTERY_POWER_SENSOR: "sensor.bat",
+            CONF_GRID_POWER_SENSOR: "sensor.grid",
+            CONF_WALLBOX_TYPE: WALLBOX_TYPE_AMBIBOX,
+        }
+        base.update(extra)
+        return base
+
+    def test_laden_ist_kein_hausverbrauch(self):
+        """Batterie entlädt 3,7 kW, das Auto zieht 2,97 → Haus 0,73."""
+        hass = _hass_mit_auto({
+            "sensor.pv": _make_state("0.0", "kW"),
+            "sensor.bat": _make_state("-3.7", "kW"),
+            "sensor.grid": _make_state("0.0", "kW"),
+        }, "laden", 2.97)
+        assert compute_auto_kw(hass, self._cfg()) == pytest.approx(2.97)
+        assert compute_house_load_kw(hass, self._cfg()) == pytest.approx(0.73)
+
+    def test_rueckspeisen_ist_keine_negative_last(self):
+        """Das Auto speist 4,9 kW, die Hausbatterie lädt 4,2 → Haus 0,7
+        (bisher: auf 0 geklemmt)."""
+        hass = _hass_mit_auto({
+            "sensor.pv": _make_state("0.0", "kW"),
+            "sensor.bat": _make_state("4.2", "kW"),
+            "sensor.grid": _make_state("0.0", "kW"),
+        }, "entladen", 4.9)
+        assert compute_auto_kw(hass, self._cfg()) == pytest.approx(-4.9)
+        assert compute_house_load_kw(hass, self._cfg()) == pytest.approx(0.7)
+
+    def test_ohne_wallbox_null(self):
+        hass = _hass_mit_auto({}, "laden", 3.0)
+        assert compute_auto_kw(hass, self._cfg(**{CONF_WALLBOX_TYPE: ""})) == 0.0
+
+    def test_ohne_energiefluss_null(self):
+        hass = _hass_mit_auto({}, "aus", 0.17)
+        assert compute_auto_kw(hass, self._cfg()) == 0.0
+
+    def test_ohne_verbindung_null(self):
+        hass = _hass_mit_auto({}, "laden", 3.0, verfuegbar=False)
+        assert compute_auto_kw(hass, self._cfg()) == 0.0

@@ -161,7 +161,7 @@ schedule_executor.py: ScheduleExecutor (execution, 30 s)
 | 2–8 | Tagesverbrauchsprognose heute..Tag 6 | fast | Daily consumption forecasts (7 sensors) |
 | 9 | PV-Prognose heute | fast | Remaining PV today from forecast provider. With the own forecast it also carries `tage_kwh` (7 daily sums), `heute_gesamt_kwh`, `quelle`, `geholt`, `alter_minuten`, `fehler` — the panel's week chart reads them there, since there are no foreign day sensors |
 | 10 | PV-Prognose morgen | fast | PV forecast tomorrow |
-| 11 | Hausverbrauch | fast | Calculated: PV - Battery - Grid (kW, MEASUREMENT) |
+| 11 | Hausverbrauch | fast | Calculated: PV − Battery − Grid − heater − car (Ambibox, charge +, feed-back −) (kW, MEASUREMENT) |
 | 12 | PV-Leistung | fast | Current PV production (kW, MEASUREMENT) |
 | 13 | Netzleistung | fast | Current grid power — positive = export (Einspeisung), negative = import (kW, MEASUREMENT) |
 | 14 | Batterieleistung | fast | Current battery power — positive = charge, negative = discharge (kW, MEASUREMENT) |
@@ -199,6 +199,10 @@ Sollwert / Energie heute), and with a configured wallbox the four
 *Auto*-sensors (Status / Ladestand / Ladeleistung / Energie Ladesitzung).
 Both push from their controller's read cycle. With a heater, `Hausverbrauch`
 is net of it — it is a steered sink, not load the profile should learn.
+The same holds for the car at the Ambibox (`power_readings.compute_auto_kw`,
+signed from *Power AC*): charging is no house load, feeding back no
+negative load; the backfill adds the *Auto Ladeleistung* statistic to the
+heater series.
 
 `Fahrplan-Status` keeps the unique_id of the former `Entscheidung` sensor so
 the entity and its history survive — but its attributes changed completely

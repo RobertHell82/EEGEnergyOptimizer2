@@ -78,6 +78,7 @@ from .const import (
 )
 from .heizstab.controller import create_heizstab, heizstab_enabled
 from .ambibox import create_ambibox
+from .ambibox.controller import ambibox_enabled
 from .inverter import create_inverter
 from .schedule_executor import ScheduleExecutor
 from .telemetry import TelemetryReporter
@@ -912,6 +913,16 @@ async def async_backfill_hausverbrauch_stats(
                 "sensor", DOMAIN, f"{DOMAIN}_{entry_id}_heizstab_leistung"
             ) or ""
 
+        # Auto an der Ambibox: ebenfalls unser eigener Sensor (kW, Laden
+        # positiv, Rückspeisen negativ). Zählt wie der Heizstab nicht zum Haus.
+        auto_id = ""
+        if entry_id and ambibox_enabled(config):
+            from homeassistant.helpers import entity_registry as er
+
+            auto_id = er.async_get(hass).async_get_entity_id(
+                "sensor", DOMAIN, f"{DOMAIN}_{entry_id}_auto_ladeleistung"
+            ) or ""
+
         # Der Heizstab-Sensor ist unser eigener und immer kW — er hat beim
         # ersten Start weder Zustand noch Statistik, das darf nicht abbrechen.
         faktor_ids = {pv_id, *battery_source_ids, *grid_source_ids}
@@ -954,6 +965,8 @@ async def async_backfill_hausverbrauch_stats(
         sensor_ids = set(faktor_ids)
         if heiz_id:
             sensor_ids.add(heiz_id)
+        if auto_id:
+            sensor_ids.add(auto_id)
 
         result = await recorder_instance.async_add_executor_job(
             statistics_during_period,
@@ -971,6 +984,7 @@ async def async_backfill_hausverbrauch_stats(
         pv_entries = result.get(pv_id, [])
         pv2_entries = result.get(pv2_id, []) if pv2_id else []
         heiz_entries = result.get(heiz_id, []) if heiz_id else []
+        auto_entries = result.get(auto_id, []) if auto_id else []
 
         # Formelstand je Entry: nach einem Wechsel einmal alles neu schreiben,
         # sonst nur Lücken füllen (Begründung in backfill_stunden).
@@ -1076,6 +1090,9 @@ async def async_backfill_hausverbrauch_stats(
             heiz_by_ts = _apply_factor(
                 _history_to_hourly_means(history.get(heiz_id, [])), heiz_factor
             ) if heiz_id else {}
+            auto_by_ts = _history_to_hourly_means(
+                history.get(auto_id, [])
+            ) if auto_id else {}
 
             if has_battery_pair:
                 pos_h = _apply_factor(
@@ -1136,6 +1153,7 @@ async def async_backfill_hausverbrauch_stats(
             pv_by_ts = _index_by_start(pv_entries, pv_factor)
             pv2_by_ts = _index_by_start(pv2_entries, pv2_factor) if pv2_entries else {}
             heiz_by_ts = _index_by_start(heiz_entries, heiz_factor) if heiz_entries else {}
+            auto_by_ts = _index_by_start(auto_entries) if auto_entries else {}
 
             if has_battery_pair:
                 battery_by_ts = _combine_pair_signed(
@@ -1178,6 +1196,11 @@ async def async_backfill_hausverbrauch_stats(
 
         # battery_by_ts / grid_by_ts are already in canonical signed kW
         # (positive = charging / positive = export). No further sign flip.
+        # Heizstab und Auto stehen beide außerhalb des Hauses — eine Reihe.
+        if auto_by_ts:
+            heiz_by_ts = dict(heiz_by_ts)
+            for ts, kw in auto_by_ts.items():
+                heiz_by_ts[ts] = heiz_by_ts.get(ts, 0.0) + kw
         stunden, skipped = backfill_stunden(
             pv_by_ts, pv2_by_ts, battery_by_ts, grid_by_ts, heiz_by_ts,
             vorhanden=vorhanden,

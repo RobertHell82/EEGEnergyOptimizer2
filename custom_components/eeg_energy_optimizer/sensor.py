@@ -633,10 +633,14 @@ class HausverbrauchSensor(SensorEntity):
         # grid positive = export, negative = import
         # All values normalized to kW by _read_power_kw
         from .heizstab.controller import heizstab_enabled
-        from .power_readings import compute_heizstab_kw
+        from .ambibox.controller import ambibox_enabled
+        from .power_readings import compute_auto_kw, compute_heizstab_kw
 
         heizstab_power = compute_heizstab_kw(self.hass, self._config)
-        roh = pv_power - battery_power - grid_power - heizstab_power
+        # Auto (Ambibox): Laden ist kein Hausverbrauch, Rückspeisen keine
+        # negative Last — compute_house_load_kw rechnet genauso.
+        auto_power = compute_auto_kw(self.hass, self._config)
+        roh = pv_power - battery_power - grid_power - heizstab_power - auto_power
         hausverbrauch = max(roh, 0.0)
         self._attr_native_value = round(hausverbrauch, 3)
         # Diese vier Werte sind EIN Messzeitpunkt — sie werden hier in einem
@@ -654,6 +658,8 @@ class HausverbrauchSensor(SensorEntity):
             # Auch die 0 gehört hierher: Ohne sie kann das Panel „Heizstab
             # aus" nicht von „kein Heizstab konfiguriert" unterscheiden.
             attrs["heizstab_leistung_kw"] = round(heizstab_power, 3)
+        if ambibox_enabled(self._config):
+            attrs["auto_leistung_kw"] = round(auto_power, 3)
         if roh < -0.05:
             # Die Bilanz geht nicht auf. Das passiert, wenn die Quellsensoren
             # aus verschiedenen Sekunden stammen (Fronius pollt alle 10 s,

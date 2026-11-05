@@ -38,6 +38,7 @@ from .const import (
     INVERTER_SIGN_CONVENTIONS,
     INVERTER_TYPE_HUAWEI,
 )
+from .ambibox.controller import ambibox_enabled, ambibox_host
 from .heizstab.controller import heizstab_host
 
 
@@ -242,7 +243,9 @@ def backfill_stunden(
     schon (EMMA-Vorzeichen, Heizstab) rechnete der Backfill anders als der
     Sensor, und beide Male machte das Überschreiben aus richtigen Daten
     falsche. Fehlt eine Heizstab-Stunde, zählt sie als 0: vor der Einrichtung
-    gab es keinen.
+    gab es keinen. ``heizstab_by_ts`` trägt auch das Auto (Ambibox, Laden
+    positiv, Rückspeisen negativ) — beides sind Senken bzw. Quellen außerhalb
+    des Hauses, der Aufrufer summiert sie.
     """
     stunden: list[tuple[float, float, float, float]] = []
     zu_hoch = 0
@@ -519,10 +522,56 @@ def compute_heizstab_kw(hass: Any, config: dict) -> float:
         return 0.0
 
 
+def compute_auto_kw(hass: Any, config: dict) -> float:
+    """Leistung am Auto in kW — positiv beim Laden, negativ beim Rückspeisen.
+
+    Gegenstück zu ``compute_heizstab_kw`` für die Ambibox: Das Auto ist kein
+    Hausverbrauch. Ein ladendes Auto ist eine Senke wie der Heizstab, ein
+    rückspeisendes eine Quelle, die PV − Batterie − Netz sonst als negativen
+    Verbrauch zeigt (Ansfelden, 05.11.2026: 4,9 kW Rückspeisung → Hausverbrauch
+    auf 0 geklemmt, „Bilanz unvollständig“). Quelle ist der Controller in
+    ``hass.data`` (alle 15 s gelesen). Ohne Wallbox, ohne Verbindung oder
+    ohne Energiefluss 0 — dann bleibt die Formel die alte.
+    """
+    if not ambibox_enabled(config):
+        return 0.0
+    try:
+        eintraege = [
+            data for data in (hass.data.get(DOMAIN) or {}).values()
+            if isinstance(data, dict)
+        ]
+        eigener = next((d for d in eintraege if d.get("config") is config), None)
+        if eigener is None:
+            host = ambibox_host(config)
+            eigener = next(
+                (
+                    d for d in eintraege
+                    if d.get("ambibox") is not None
+                    and ambibox_host(d.get("config") or {}) == host
+                ),
+                None,
+            )
+        controller = None if eigener is None else eigener.get("ambibox")
+        if controller is None or not controller.verfuegbar:
+            return 0.0
+        z = controller.zustand
+        kw = float(z.leistung_kw) if z.leistung_kw else 0.0
+        if not math.isfinite(kw):
+            return 0.0
+        if z.richtung == "laden":
+            return kw
+        if z.richtung == "entladen":
+            return -kw
+        return 0.0
+    except (AttributeError, TypeError, ValueError):
+        return 0.0
+
+
 def compute_house_load_kw(hass: Any, config: dict) -> float | None:
     """Live-Hauslast in kW — identisch zu sensor.HausverbrauchSensor.
 
-    Formel: Hausverbrauch = PV − Batterie − Netz − Heizstab, Vorzeichen über
+    Formel: Hausverbrauch = PV − Batterie − Netz − Heizstab − Auto (Auto
+    positiv beim Laden, negativ beim Rückspeisen), Vorzeichen über
     ``resolve_sign`` normalisiert (Batterie positiv = laden, Netz positiv =
     Einspeisung), Ergebnis auf ≥ 0 begrenzt. Der Heizstab wird abgezogen,
     weil er kein Hausverbrauch ist, sondern eine gesteuerte Senke: bliebe er
@@ -577,4 +626,5 @@ def compute_house_load_kw(hass: Any, config: dict) -> float | None:
     heizstab = compute_heizstab_kw(hass, config)
     if heizstab:
         haus -= heizstab
+    haus -= compute_auto_kw(hass, config)
     return max(haus, 0.0)
