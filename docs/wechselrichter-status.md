@@ -83,7 +83,7 @@ Wirkung aber noch nicht in jedem Schritt zu sehen · ✗ = Problem gefunden ·
 | **Sigenergy SigenStor** | ✓ | ✓ | ✓ | ◐ | ◐ |
 | **SMA Smart Energy** | ◐ ⁴ | ✓ | ✓ | ◐ | – |
 | **SolaX Gen4** | ✓ | ✓ | ✓ | ✓ | ✓ |
-| **Victron ESS** | ✗ ⁵ | ✓ | ✓ | ◐ | ◐ |
+| **Victron ESS** | ✗ ⁵ | ✓ | ✓ | ◐ ² | ✓ |
 
 Stand 05.11.2026, je eine Anlage, Läufe mittags und abends. Ladelimit heißt
 0 kW und 1 kW, Entladedeckel heißt halten, 0,5 kW und aufheben.
