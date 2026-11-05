@@ -93,21 +93,75 @@ test("während des Laufs: aktueller Schritt, Messwerte, Abbrechen, kein Start", 
   p._hass = hassMit({});
   p._diagnose = status({
     laeuft: true,
-    schritt: { titel: "Ladelimit 0 kW (Laden sperren)", erwartung: "Batterie lädt ≤ 0.25 kW" },
+    schritt: { bereich: "ladelimit", titel: "Ladelimit 0 kW (Laden sperren)", erwartung: "Batterie lädt ≤ 0.25 kW" },
     probe: { soc: 54.4, pv: 5.12, batt: 0.05, netz: 4.0, haus: 1.07 },
     lauf: { schritte: [
-      { titel: "Wechselrichter erreichbar", ergebnis: "ok", text: "Treiber meldet verfügbar" },
-      { titel: "Ladelimit 0 kW (Laden sperren)", ergebnis: null },
+      { bereich: "vorpruefung", titel: "Wechselrichter erreichbar", ergebnis: "ok", text: "Treiber meldet verfügbar" },
+      { bereich: "ladelimit", titel: "Ladelimit 0 kW (Laden sperren)", ergebnis: null },
     ] },
   });
   const html = p._diagnoseKarte();
   assert.match(html, /Diagnose läuft/);
+  assert.match(html, /class="diag-kreisel"/);
+  // Ein Satz statt des Schrittnamens, der Schrittname steht in den Details.
+  assert.match(html, /Laden wird gesperrt/);
+  assert.match(html, /Alle Schritte \(2\)/);
   assert.match(html, /Ladelimit 0 kW/);
-  assert.match(html, /Ladestand <strong>54 %/);
-  assert.match(html, /5,12 kW/);
+  // Ladestand als Batterie, Leistungen als Kacheln mit Richtung.
+  assert.match(html, /diag-akku-fuellung" style="height:54.4%/);
+  assert.match(html, />54<small>%/);
+  assert.match(html, /5,1<small> kW/);
+  assert.match(html, /speist ein/);
   assert.match(html, /data-action="diagnose-stop"/);
-  assert.match(html, /läuft<\/span>/);
   assert.doesNotMatch(html, /diagnose-start-frage/);
+});
+
+test("Schrittleiste: Vorprüfung fertig, Laden dreht sich, der Rest wartet", () => {
+  const p = neuesPanel();
+  p._hass = hassMit({});
+  p._diagnose = status({
+    laeuft: true,
+    schritt: { bereich: "ladelimit", titel: "Ladelimit 1.0 kW", start: 40 },
+    probe: { soc: 15, batt: -0.8, netz: -1.2, pv: 0, haus: 2, t: 70, ok: false },
+    lauf: { schritte: [
+      { bereich: "vorpruefung", titel: "Wechselrichter erreichbar", ergebnis: "ok" },
+      { bereich: "freigabe", titel: "Ausgangslage: Automatik herstellen", ergebnis: "ok", neutral: true },
+      { bereich: "ladelimit", titel: "Ladelimit 0 kW (Laden sperren)", ergebnis: "teilweise" },
+      { bereich: "ladelimit", titel: "Ladelimit 1.0 kW", ergebnis: null },
+    ] },
+  });
+  const html = p._diagnoseKarte();
+  const stufen = html.split(/class="diag-stufe(?= aktiv"|")/).slice(1);
+  assert.equal(stufen.length, 6);
+  assert.match(stufen[0], /mdi:check/);            // Vorprüfung bestanden
+  assert.match(stufen[1], /^ aktiv/);              // Laden läuft
+  assert.match(stufen[1], /diag-ring/);
+  assert.doesNotMatch(stufen[2], /diag-ring|mdi:check/);
+  assert.match(html, /auf 1 kW begrenzt/);
+  assert.match(html, /wartet auf Wirkung/);
+  assert.match(html, /class="diag-zeit"/);         // 30 s von 120 s
+  assert.match(html, /width:25%/);
+  // Niedriger Ladestand: rote Füllung; Batterie entlädt, Netz bezieht.
+  assert.match(html, /error-color/);
+  assert.match(html, /entlädt/);
+  assert.match(html, /bezieht/);
+});
+
+test("Ruhezustand: sechs Kacheln, offen nur was nicht bestanden ist, Ergebnisbanner", () => {
+  const p = neuesPanel();
+  p._hass = hassMit({});
+  const s = status({ letztes: { gestartet: "2026-11-05T14:20:00+01:00", ergebnis: "teilweise",
+                                modus_vorher: "Aus" } });
+  s.bereiche.ladelimit = { titel: "Ladelimit", ergebnis: "ok", text: "wirksam", zeit: "2026-11-05T14:22:00+01:00" };
+  s.bereiche.deckel = { titel: "Entladedeckel", ergebnis: "teilweise", text: "abends wiederholen" };
+  s.bereiche.netzladung = { titel: "Netzladung", ergebnis: "uebersprungen", text: "Treiber kann nicht", ohne_faehigkeit: true };
+  p._diagnose = s;
+  const html = p._diagnoseKarte();
+  assert.equal((html.match(/class="diag-kachel"/g) || []).length, 6);
+  assert.match(html, /Bestanden, aber nicht alles prüfbar/);
+  assert.match(html, /<strong>Entladedeckel:<\/strong> abends wiederholen/);
+  assert.doesNotMatch(html, /wirksam<\/li>/);
+  assert.doesNotMatch(html, /Treiber kann nicht<\/li>/);
 });
 
 test("nicht gesteuerter Treiber: Erklärung statt Tabelle", () => {

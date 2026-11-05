@@ -165,15 +165,20 @@ def _jetzt() -> datetime:
 def urteil(werte: list[bool | None]) -> str:
     """Wirkung aus einer Reihe von Probenurteilen (None = nicht bewertbar).
 
-    Die letzten vier bewertbaren Proben entscheiden: alle erfüllt → erfüllt.
-    Nie erfüllt → nicht erfüllt. Dazwischen (kippt hin und her, oder erst
-    erfüllt, dann nicht mehr) → unklar: dann hat vermutlich die Hauslast
-    gesprungen, und ein falsches „Fehler" wäre schlimmer als „wiederholen".
+    Die letzten ``FOLGE_OK`` bewertbaren Proben entscheiden: alle erfüllt →
+    erfüllt — dieselbe Zahl, bei der ``frueh_fertig`` die Beobachtung
+    beendet. Bis 2.1.70 verlangte das Urteil vier, die Beobachtung endete
+    nach drei: Jeder Befehl, der nicht sofort wirkte, war „unklar"
+    (Traun 05.11.2026, Huawei: Wirkung nach 35 s, drei erfüllte Proben,
+    davor eine ohne). Nie erfüllt → nicht erfüllt. Dazwischen (kippt hin und
+    her, oder erst erfüllt, dann nicht mehr) → unklar: dann hat vermutlich
+    die Hauslast gesprungen, und ein falsches „Fehler" wäre schlimmer als
+    „wiederholen".
     """
     bewertbar = [w for w in werte if w is not None]
     if not bewertbar:
         return NICHT_PRUEFBAR
-    if all(bewertbar[-4:]):
+    if all(bewertbar[-FOLGE_OK:]):
         return ERFUELLT
     if not any(bewertbar):
         return NICHT_ERFUELLT
@@ -258,6 +263,12 @@ def median(werte: list[float]) -> float | None:
     if len(reihe) % 2:
         return reihe[mitte]
     return (reihe[mitte - 1] + reihe[mitte]) / 2
+
+
+def _kw_text(kw: float) -> str:
+    """kW für Texte: zwei Stellen, nie „-0.00"."""
+    wert = round(float(kw), 2)
+    return f"{0.0 if wert == 0 else wert:.2f}"
 
 
 def basis_aus_proben(proben: list[dict]) -> dict[str, float | None]:
@@ -1122,8 +1133,17 @@ class AnsteuerungsDiagnose:
             return
         # Nach der Freigabe sollte das Ladelimit wieder am Maximum stehen —
         # roh ins Protokoll, bewertet wird es nicht (das Maximum kennt nicht
-        # jeder Treiber).
-        s["ruecklesen_wert"] = _r(await self._lies_ladelimit())
+        # jeder Treiber). Gewartet wird wie beim Rücklesen: Die Entität des
+        # Huawei meldete den zurückgesetzten Wert erst Sekunden später
+        # (Traun 05.11.2026: direkt danach 1 kW, zwei Minuten später 5 kW).
+        maximum = self._sicher(inverter.get_charge_limit_max_kw)
+        wert = await self._lies_ladelimit()
+        if isinstance(maximum, (int, float)) and maximum > 0:
+            ende = self._uhr() + RUECKLESEN_WARTEN_S
+            while ruecklesen_bewerten(float(maximum), wert) == "abweichung" and self._uhr() < ende:
+                await self._warten(2.5)
+                wert = await self._lies_ladelimit()
+        s["ruecklesen_wert"] = _r(wert)
         if pruefbar is None and getattr(inverter, "batterie_gesperrt", False) is True:
             # Kostal: Die Batterie steht bis zum Watchdog-Rückfall — „keine
             # Zwangsentladung mehr" wäre geschenkt.
@@ -1319,11 +1339,20 @@ class AnsteuerungsDiagnose:
         basis = await self._ruhe()
         ladung = basis.get("batt") or 0.0
         soc = basis.get("soc")
-        pruefbar = ladung >= LADEN_MIN_KW and (soc is None or soc < self._max_soc() - 1)
-        grund = None if pruefbar else (
-            f"die Batterie lädt gerade nicht (≈{ladung:.2f} kW) — "
-            "zur Mittagszeit mit PV-Überschuss wiederholen"
-        )
+        voll = soc is not None and soc >= self._max_soc() - 1
+        pruefbar = ladung >= LADEN_MIN_KW and not voll
+        if pruefbar:
+            grund = None
+        elif voll:
+            grund = (
+                f"die Batterie ist voll ({soc:.0f} %) und lädt nicht — "
+                "bei niedrigerem Ladestand mit PV-Überschuss wiederholen"
+            )
+        else:
+            grund = (
+                f"die Batterie lädt gerade nicht (≈{_kw_text(ladung)} kW) — "
+                "mit PV-Überschuss wiederholen"
+            )
 
         # Ladelimit 0
         s = self._schritt_neu("ladelimit", "Ladelimit 0 kW (Laden sperren)", basis=basis)
@@ -1537,11 +1566,21 @@ class AnsteuerungsDiagnose:
         entladung = max(-(basis.get("batt") or 0.0), 0.0)
         soc = basis.get("soc")
         min_soc = self._min_soc()
-        pruefbar = entladung >= ENTLADEN_MIN_KW and (soc is None or soc > min_soc + 2)
-        grund = None if pruefbar else (
-            f"die Batterie entlädt gerade nicht (≈{entladung:.2f} kW) — "
-            "abends, wenn das Haus mehr braucht als PV liefert, wiederholen"
-        )
+        leer = soc is not None and soc <= min_soc + 2
+        pruefbar = entladung >= ENTLADEN_MIN_KW and not leer
+        if pruefbar:
+            grund = None
+        elif leer:
+            grund = (
+                f"die Batterie steht am Mindest-Ladestand ({soc:.0f} %) — "
+                "bei vollerer Batterie wiederholen"
+            )
+        else:
+            grund = (
+                f"die Batterie entlädt gerade nicht (≈{_kw_text(entladung)} kW), "
+                "die PV deckt das Haus — abends wiederholen, wenn das Haus mehr "
+                "braucht als die PV liefert"
+            )
         pruefbar_t = False
         try:
             # Deckel 0 = halten
@@ -1750,7 +1789,7 @@ class AnsteuerungsDiagnose:
                 ergebnis = bereich_ergebnis([s.get("ergebnis") or ABGEBROCHEN for s in zaehlen])
             schritte = zaehlen
             schlimmster = next(
-                (s for s in schritte if (s.get("ergebnis") or ABGEBROCHEN) == ergebnis),
+                (s for s in reversed(schritte) if (s.get("ergebnis") or ABGEBROCHEN) == ergebnis),
                 schritte[-1],
             )
             bereiche[bereich] = {

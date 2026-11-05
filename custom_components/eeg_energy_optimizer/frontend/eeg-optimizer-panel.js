@@ -2322,7 +2322,7 @@ class EegOptimizerPanel extends HTMLElement {
     });
   }
 
-  _diagnoseErgebnisChip(ergebnis) {
+  _diagnoseErgebnisChip(ergebnis, { ohneIcon = false } = {}) {
     const ART = {
       ok: ["mdi:check-circle", "var(--success-color,#43a047)", "bestanden"],
       teilweise: ["mdi:circle-half-full", "var(--warning-color,#ff9800)", "teilweise"],
@@ -2333,7 +2333,7 @@ class EegOptimizerPanel extends HTMLElement {
     };
     const [icon, farbe, text] = ART[ergebnis] || ["mdi:circle-outline", "var(--secondary-text-color)", "noch nie geprüft"];
     return `<span style="display:inline-flex;align-items:center;gap:4px;color:${farbe};white-space:nowrap">`
-      + `<ha-icon icon="${icon}" style="--mdc-icon-size:16px"></ha-icon>${text}</span>`;
+      + `${ohneIcon ? "" : `<ha-icon icon="${icon}" style="--mdc-icon-size:16px"></ha-icon>`}${text}</span>`;
   }
 
   _diagnoseZeit(iso) {
@@ -2342,6 +2342,97 @@ class EegOptimizerPanel extends HTMLElement {
     if (isNaN(t)) return "";
     const pad = (n) => String(n).padStart(2, "0");
     return `${pad(t.getDate())}.${pad(t.getMonth() + 1)}. ${pad(t.getHours())}:${pad(t.getMinutes())}`;
+  }
+
+  // Kurze Namen und Symbole der sechs Bereiche — für Kacheln und Schrittleiste.
+  static get DIAG_BEREICHE() {
+    return {
+      vorpruefung: { kurz: "Start", icon: "mdi:clipboard-check-outline" },
+      ladelimit: { kurz: "Laden", icon: "mdi:battery-lock" },
+      entladung: { kurz: "Entladen", icon: "mdi:transmission-tower-export" },
+      freigabe: { kurz: "Freigabe", icon: "mdi:autorenew" },
+      deckel: { kurz: "Deckel", icon: "mdi:battery-arrow-down-outline" },
+      netzladung: { kurz: "Netz", icon: "mdi:transmission-tower-import" },
+    };
+  }
+
+  // Ergebnis eines Bereichs während des Laufs, aus seinen Schritten: der
+  // schlimmste zählt, neutrale Schritte (Ausgangslage, Abschluss) nicht —
+  // dieselbe Regel wie im Backend, nur ohne die Feinheiten.
+  _diagnoseBereichLive(schritte) {
+    const RANG = { fehler: 5, unklar: 4, abgebrochen: 3, teilweise: 2, ok: 1, uebersprungen: 0 };
+    const zaehlen = schritte.filter((s) => s.ergebnis && !(s.neutral && (s.ergebnis === "ok" || s.ergebnis === "teilweise")));
+    if (!zaehlen.length) return schritte.some((s) => s.ergebnis) ? "ok" : null;
+    if (zaehlen.some((s) => s.ergebnis === "ok") && !zaehlen.some((s) => RANG[s.ergebnis] > 2)) return "ok";
+    return zaehlen.reduce((a, s) => (RANG[s.ergebnis] > RANG[a] ? s.ergebnis : a), "uebersprungen");
+  }
+
+  // Ein Satz, was gerade passiert — statt der technischen Schrittnamen.
+  _diagnoseJetztText(sch) {
+    if (!sch || sch.ergebnis) {
+      return ["Die Anlage beruhigt sich", "Der Ausgangszustand wird gemessen, bevor der nächste Befehl kommt."];
+    }
+    const t = sch.titel || "";
+    if (t.startsWith("Warten auf den Watchdog")) return ["Wartet auf den Wechselrichter", "Er hält die Batterie nach dem letzten Befehl noch fest — das kann ein paar Minuten dauern."];
+    switch (sch.bereich) {
+      case "vorpruefung": return ["Verbindung wird geprüft", "Ist der Wechselrichter erreichbar, sind die Messwerte lesbar?"];
+      case "ladelimit": return t.includes(" 0 kW")
+        ? ["Laden wird gesperrt", "Die Batterie sollte aufhören zu laden."]
+        : ["Laden wird auf 1 kW begrenzt", "Die Batterie sollte mit etwa 1 kW laden."];
+      case "entladung": return ["Batterie speist ins Netz", "Die Einspeisung sollte um etwa 1 kW steigen."];
+      case "freigabe": return t.startsWith("Abschluss")
+        ? ["Alles wird freigegeben", "Der Wechselrichter geht zurück in seinen Automatikbetrieb."]
+        : ["Freigabe", "Der Wechselrichter sollte in seinen Automatikbetrieb zurückkehren."];
+      case "deckel":
+        if (t.includes("aufheben")) return ["Deckel wird aufgehoben", "Die Batterie sollte wieder mehr hergeben."];
+        if (t.includes(" 0 kW")) return ["Batterie wird angehalten", "Sie sollte nichts mehr hergeben, das Haus bezieht aus dem Netz."];
+        return ["Entladung wird gedeckelt", "Die Batterie sollte höchstens etwa 0,5 kW hergeben."];
+      case "netzladung": return ["Batterie lädt aus dem Netz", "Sie sollte mit etwa 1 kW laden, auch ohne Sonne."];
+      default: return [t, ""];
+    }
+  }
+
+  // Animationen laufen nach jedem Neuzeichnen von vorn los (das Panel
+  // schreibt innerHTML neu, alle 2 s). Eine negative Verzögerung nach der
+  // Uhrzeit hält den Kreisel in Phase, statt dass er springt.
+  _diagnosePhase(periodeMs) {
+    return `animation-delay:-${(Date.now() % periodeMs) / 1000}s`;
+  }
+
+  _diagnoseLiveWerte(p) {
+    const zahl = (v) => (v == null ? "–" : Math.abs(Number(v)).toLocaleString("de-AT", { minimumFractionDigits: 1, maximumFractionDigits: 1 }));
+    const soc = p.soc == null ? null : Math.max(0, Math.min(100, Number(p.soc)));
+    const socFarbe = soc == null ? "var(--disabled-text-color,#9e9e9e)"
+      : soc < 20 ? "var(--error-color,#db4437)" : soc < 50 ? "var(--warning-color,#ff9800)" : "var(--success-color,#43a047)";
+    const ruhe = 0.05;
+    const batt = p.batt == null ? null : Number(p.batt);
+    const netz = p.netz == null ? null : Number(p.netz);
+    const battText = batt == null ? "–" : batt > ruhe ? "lädt" : batt < -ruhe ? "entlädt" : "ruht";
+    const battIcon = batt == null ? "mdi:battery" : batt > ruhe ? "mdi:arrow-up-bold" : batt < -ruhe ? "mdi:arrow-down-bold" : "mdi:pause";
+    const netzText = netz == null ? "–" : netz > ruhe ? "speist ein" : netz < -ruhe ? "bezieht" : "ausgeglichen";
+    const netzIcon = netz == null ? "mdi:transmission-tower" : netz > ruhe ? "mdi:arrow-right-bold" : netz < -ruhe ? "mdi:arrow-left-bold" : "mdi:minus";
+    const kachel = (icon, farbe, wert, text, richtungIcon) => `
+      <div class="diag-wert">
+        <ha-icon icon="${icon}" style="--mdc-icon-size:20px;color:${farbe}"></ha-icon>
+        <div class="diag-wert-zahl">${wert}<small> kW</small></div>
+        <div class="diag-wert-text">${richtungIcon ? `<ha-icon icon="${richtungIcon}" style="--mdc-icon-size:13px"></ha-icon>` : ""}${text}</div>
+      </div>`;
+    return `
+      <div class="diag-live">
+        <div class="diag-akku" title="Ladestand">
+          <div class="diag-akku-kopf"></div>
+          <div class="diag-akku-koerper">
+            <div class="diag-akku-fuellung" style="height:${soc ?? 0}%;background:${socFarbe}"></div>
+            <div class="diag-akku-zahl">${soc == null ? "–" : Math.round(soc) + "<small>%</small>"}</div>
+          </div>
+        </div>
+        <div class="diag-werte">
+          ${kachel("mdi:solar-power-variant", "#f9a825", zahl(p.pv), "PV", null)}
+          ${kachel("mdi:home-battery", socFarbe, zahl(batt), battText, battIcon)}
+          ${kachel("mdi:transmission-tower", "var(--primary-color,#03a9f4)", zahl(netz), netzText, netzIcon)}
+          ${kachel("mdi:home-outline", "var(--secondary-text-color)", zahl(p.haus), "Haus", null)}
+        </div>
+      </div>`;
   }
 
   _diagnoseKarte() {
@@ -2357,83 +2448,168 @@ class EegOptimizerPanel extends HTMLElement {
         <div class="help-text">${g.fehler ? `Nicht abrufbar: ${esc(g.fehler)}` : "Dieser Wechselrichter wird nicht gesteuert — es gibt keine Schreibbefehle zu prüfen."}</div></div>`;
     }
     const admin = this._hass?.user?.is_admin !== false;
-    const fmt = (v, d = 2) => (v == null ? "–" : Number(v).toLocaleString("de-AT", { minimumFractionDigits: d, maximumFractionDigits: d }));
+    const META = this.constructor.DIAG_BEREICHE;
+    const reihe = g.reihenfolge || Object.keys(g.bereiche || {});
+    const FARBE = {
+      ok: "var(--success-color,#43a047)", teilweise: "var(--warning-color,#ff9800)",
+      unklar: "var(--warning-color,#ff9800)", fehler: "var(--error-color,#db4437)",
+    };
+    const ICON = {
+      ok: "mdi:check", teilweise: "mdi:circle-half-full", unklar: "mdi:help",
+      fehler: "mdi:close", uebersprungen: "mdi:minus", abgebrochen: "mdi:stop",
+    };
 
-    // Liste statt Tabelle: Auf 360 px blieb neben Titel und Ergebnis für den
-    // Text keine Spalte übrig. Titel und Ergebnis in einer Zeile, Zeit und
-    // Text darunter über die volle Breite.
-    const zeilen = (g.reihenfolge || Object.keys(g.bereiche || {})).map((b) => {
-      const e = g.bereiche?.[b] || {};
-      const zeit = e.zeit ? this._diagnoseZeit(e.zeit) : "";
-      const unter = `${zeit ? `${zeit} · ` : ""}${esc(e.text || "")}`;
-      return `<div style="padding:6px 0;border-top:1px solid var(--divider-color)">
-        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
-          <span style="font-weight:500">${esc(e.titel || b)}</span>
-          ${this._diagnoseErgebnisChip(e.ergebnis)}
-        </div>
-        ${unter ? `<div style="color:var(--secondary-text-color);font-size:12px;margin-top:2px">${unter}</div>` : ""}
-      </div>`;
-    }).join("");
-
-    let laufBlock = "";
+    // ── Während des Laufs ──────────────────────────────────────────
     if (g.laeuft) {
-      const p = g.probe || {};
+      const schritte = g.lauf?.schritte || [];
       const sch = g.schritt;
-      const schritte = (g.lauf?.schritte || []).map((s) => `
-        <li style="display:flex;gap:8px;align-items:baseline;padding:2px 0">
-          ${s.ergebnis ? this._diagnoseErgebnisChip(s.ergebnis)
-            : `<span style="color:var(--primary-color);white-space:nowrap"><ha-icon icon="mdi:progress-clock" style="--mdc-icon-size:16px"></ha-icon> läuft</span>`}
-          <span>${esc(s.titel)}${s.text ? ` <small style="color:var(--secondary-text-color)">— ${esc(s.text)}</small>` : ""}</span>
-        </li>`).join("");
-      laufBlock = `
-        <div style="margin-top:12px;padding:12px;border-radius:8px;background:var(--secondary-background-color,rgba(127,127,127,.08))">
-          <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
-            <strong>Diagnose läuft — die Optimierung ist so lange aus</strong>
+      const aktiv = sch && !sch.ergebnis ? sch.bereich : null;
+      // Der Bereich, in dem der Lauf gerade steht: der des letzten Schritts.
+      const zuletzt = schritte.length ? schritte[schritte.length - 1].bereich : reihe[0];
+      const posZuletzt = reihe.indexOf(zuletzt);
+      const leiste = reihe.map((b, i) => {
+        const meta = META[b] || { kurz: b, icon: "mdi:circle-outline" };
+        const eigene = schritte.filter((s) => s.bereich === b);
+        const ergebnis = this._diagnoseBereichLive(eigene);
+        // Die Freigabe läuft zwischen den anderen Bereichen mit — fertig ist
+        // sie erst am Ende; ein Bereich vor dem aktuellen ist abgeschlossen.
+        const fertig = b !== "freigabe" && i < posZuletzt && eigene.length > 0;
+        const laeuftHier = aktiv === b || (!aktiv && b === zuletzt && b !== "freigabe");
+        const farbe = fertig || (b === "freigabe" && ergebnis) ? (FARBE[ergebnis] || "var(--secondary-text-color)") : null;
+        let punkt;
+        if (laeuftHier) {
+          punkt = `<div class="diag-punkt diag-punkt-aktiv"><span class="diag-ring" style="${this._diagnosePhase(1000)}"></span>
+            <ha-icon icon="${meta.icon}" style="--mdc-icon-size:18px"></ha-icon></div>`;
+        } else if (farbe && b === "freigabe") {
+          // Die Freigabe läuft zwischen den Bereichen mit und ist erst am
+          // Ende fertig: bisheriges Ergebnis nur als Rand, nicht als Haken.
+          punkt = `<div class="diag-punkt" style="border-color:${farbe};color:${farbe}">
+            <ha-icon icon="${meta.icon}" style="--mdc-icon-size:18px"></ha-icon></div>`;
+        } else if (farbe && fertig) {
+          punkt = `<div class="diag-punkt" style="background:${farbe};border-color:${farbe};color:#fff">
+            <ha-icon icon="${ICON[ergebnis] || meta.icon}" style="--mdc-icon-size:18px"></ha-icon></div>`;
+        } else {
+          punkt = `<div class="diag-punkt"><ha-icon icon="${meta.icon}" style="--mdc-icon-size:18px"></ha-icon></div>`;
+        }
+        return `<div class="diag-stufe${laeuftHier ? " aktiv" : ""}">${punkt}<div class="diag-stufe-name">${esc(meta.kurz)}</div></div>`;
+      }).join("");
+      const anteil = Math.max(0.04, Math.min(1, (Math.max(posZuletzt, 0) + 0.5) / reihe.length));
+
+      const [jetzt, erklaerung] = this._diagnoseJetztText(sch);
+      const p = g.probe || {};
+      // Beobachtungszeit des laufenden Schritts (höchstens 120 s).
+      const imSchritt = sch && !sch.ergebnis && p.t != null && sch.start != null ? Math.max(0, p.t - sch.start) : null;
+      const startMs = g.lauf?.gestartet ? Date.parse(g.lauf.gestartet) : NaN;
+      const dauer = isNaN(startMs) ? "" : (() => {
+        const s = Math.max(0, Math.round((Date.now() - startMs) / 1000));
+        return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+      })();
+      const wirkung = p.ok === true
+        ? `<span class="diag-status ok"><ha-icon icon="mdi:check-circle" style="--mdc-icon-size:15px"></ha-icon>wirkt wie erwartet</span>`
+        : p.ok === false && imSchritt != null
+          ? `<span class="diag-status warten"><ha-icon icon="mdi:timer-sand" style="--mdc-icon-size:15px"></ha-icon>wartet auf Wirkung</span>`
+          : "";
+
+      const liste = schritte.map((s) => `
+        <li>${s.ergebnis ? this._diagnoseErgebnisChip(s.ergebnis)
+          : `<span style="color:var(--primary-color);white-space:nowrap"><ha-icon icon="mdi:progress-clock" style="--mdc-icon-size:16px"></ha-icon> läuft</span>`}
+          <span>${esc(s.titel)}${s.text ? ` <small style="color:var(--secondary-text-color)">— ${esc(s.text)}</small>` : ""}</span></li>`).join("");
+
+      return `
+        <div class="card diag-karte" style="margin-bottom:16px">
+          ${titel}
+          <div class="diag-kopf">
+            <span class="diag-kreisel" style="${this._diagnosePhase(900)}"></span>
+            <div style="flex:1;min-width:0">
+              <div style="font-weight:600;font-size:15px">Diagnose läuft</div>
+              <div class="help-text" style="margin:0">Die Optimierung ist so lange aus${dauer ? ` · ${dauer}` : ""}</div>
+            </div>
             <button class="btn-secondary" data-action="diagnose-stop">Abbrechen</button>
           </div>
-          ${sch ? `<div style="margin-top:8px;font-size:13px">Jetzt: <strong>${esc(sch.titel)}</strong>${sch.erwartung ? ` — erwartet: ${esc(sch.erwartung)}` : ""}</div>` : ""}
-          <div style="display:flex;gap:14px;flex-wrap:wrap;margin-top:8px;font-size:13px;font-variant-numeric:tabular-nums">
-            <span>Ladestand <strong>${p.soc == null ? "–" : Math.round(p.soc) + " %"}</strong></span>
-            <span>PV <strong>${fmt(p.pv)} kW</strong></span>
-            <span>Batterie <strong>${fmt(p.batt)} kW</strong></span>
-            <span>Netz <strong>${fmt(p.netz)} kW</strong></span>
-            <span>Haus <strong>${fmt(p.haus)} kW</strong></span>
+          <div class="diag-leiste-wrap">
+            <div class="diag-leiste-linie"><div style="width:${(anteil * 100).toFixed(0)}%"></div></div>
+            <div class="diag-leiste">${leiste}</div>
           </div>
-          <div class="help-text" style="margin-top:4px">Batterie + = laden, Netz + = Einspeisung.</div>
-          <ol style="list-style:none;margin:10px 0 0;padding:0;font-size:13px">${schritte}</ol>
+          <div class="diag-jetzt">
+            <div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap">
+              <strong style="font-size:15px">${esc(jetzt)}</strong>${wirkung}
+            </div>
+            ${erklaerung ? `<div class="help-text" style="margin:2px 0 0">${esc(erklaerung)}</div>` : ""}
+            ${imSchritt != null ? `<div class="diag-zeit" title="Beobachtung, höchstens 2 Minuten"><div style="width:${Math.min(100, imSchritt / 120 * 100).toFixed(0)}%"></div></div>` : ""}
+          </div>
+          ${this._diagnoseLiveWerte(p)}
+          <details class="diag-details">
+            <summary>Alle Schritte (${schritte.length})</summary>
+            <ol>${liste}</ol>
+          </details>
         </div>`;
     }
 
-    let letzterBlock = "";
+    // ── Ruhezustand: sechs Kacheln, darunter nur, was offen ist ─────
+    const kacheln = reihe.map((b) => {
+      const e = g.bereiche?.[b] || {};
+      const meta = META[b] || { kurz: e.titel || b, icon: "mdi:circle-outline" };
+      const farbe = FARBE[e.ergebnis] || "var(--disabled-text-color,#9e9e9e)";
+      const voll = e.ergebnis === "ok" || e.ergebnis === "fehler";
+      return `
+        <div class="diag-kachel" title="${esc(e.text || "")}">
+          <div class="diag-kachel-icon" style="color:${voll ? "#fff" : farbe};background:${voll ? farbe : "transparent"};border-color:${farbe}">
+            <ha-icon icon="${e.ergebnis ? (ICON[e.ergebnis] || meta.icon) : meta.icon}" style="--mdc-icon-size:20px"></ha-icon>
+          </div>
+          <div class="diag-kachel-name">${esc(e.titel || meta.kurz)}</div>
+          <div class="diag-kachel-status">${this._diagnoseErgebnisChip(e.ergebnis, { ohneIcon: true })}</div>
+          ${e.zeit ? `<div class="diag-kachel-zeit">${this._diagnoseZeit(e.zeit)}</div>` : ""}
+        </div>`;
+    }).join("");
+    const offen = reihe
+      .map((b) => [b, g.bereiche?.[b] || {}])
+      .filter(([, e]) => e.ergebnis && e.ergebnis !== "ok" && e.text && !e.ohne_faehigkeit)
+      .map(([b, e]) => `<li><strong>${esc(e.titel || META[b]?.kurz || b)}:</strong> ${esc(e.text)}</li>`).join("");
+
+    let banner = "";
     const l = g.letztes;
-    if (l && !g.laeuft) {
+    if (l) {
+      const BANNER = {
+        ok: ["mdi:check-decagram", FARBE.ok, "Alles bestanden"],
+        teilweise: ["mdi:progress-check", FARBE.teilweise, "Bestanden, aber nicht alles prüfbar"],
+        unklar: ["mdi:help-circle", FARBE.unklar, "Uneindeutig — bitte wiederholen"],
+        fehler: ["mdi:alert-circle", FARBE.fehler, "Fehler gefunden — Protokoll bitte schicken"],
+        abgebrochen: ["mdi:stop-circle-outline", "var(--secondary-text-color)", "Abgebrochen"],
+        uebersprungen: ["mdi:minus-circle-outline", "var(--secondary-text-color)", "Nichts prüfbar"],
+      };
+      const [icon, farbe, satz] = BANNER[l.ergebnis] || BANNER.abgebrochen;
       const modus = l.modus_vorher === "Ein"
         ? (l.modus_wiederhergestellt
           ? "Die Optimierung ist wieder eingeschaltet."
           : "<strong>Die Optimierung ist aus</strong> — bitte im Dashboard wieder einschalten, wenn alles passt.")
         : "";
-      letzterBlock = `
-        <div style="margin-top:12px;font-size:13px;line-height:1.5">
-          Letzter Lauf: ${this._diagnoseZeit(l.gestartet)} · ${this._diagnoseErgebnisChip(l.ergebnis)}
-          ${l.abbruch_grund ? `<div style="color:var(--secondary-text-color)">Grund: ${esc(l.abbruch_grund)}</div>` : ""}
-          ${modus ? `<div>${modus}</div>` : ""}
+      banner = `
+        <div class="diag-banner" style="border-color:${farbe}">
+          <ha-icon icon="${icon}" style="--mdc-icon-size:28px;color:${farbe};flex:none"></ha-icon>
+          <div style="min-width:0">
+            <div style="font-weight:600">${satz}</div>
+            <div class="help-text" style="margin:0">Letzter Lauf ${this._diagnoseZeit(l.gestartet)}${l.abbruch_grund ? ` · Grund: ${esc(l.abbruch_grund)}` : ""}</div>
+            ${modus ? `<div style="font-size:13px;margin-top:2px">${modus}</div>` : ""}
+          </div>
         </div>`;
     }
 
     const knoepfe = `
-      <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:12px">
-        ${!g.laeuft && admin ? `<button class="btn-primary" data-action="diagnose-start-frage" ${this._diagnoseBusy ? "disabled" : ""}>Diagnose starten</button>` : ""}
-        ${l && !g.laeuft ? `<button class="btn-secondary" data-action="diagnose-download">Protokoll herunterladen</button>` : ""}
+      <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:14px">
+        ${admin ? `<button class="btn-primary" data-action="diagnose-start-frage" ${this._diagnoseBusy ? "disabled" : ""}>
+          <ha-icon icon="mdi:play" style="--mdc-icon-size:18px;vertical-align:-4px"></ha-icon> Diagnose starten</button>` : ""}
+        ${l ? `<button class="btn-secondary" data-action="diagnose-download">
+          <ha-icon icon="mdi:download" style="--mdc-icon-size:18px;vertical-align:-4px"></ha-icon> Protokoll herunterladen</button>` : ""}
       </div>
       ${!admin ? `<div class="help-text" style="margin-top:6px">Starten kann nur ein Administrator.</div>` : ""}`;
 
     return `
-      <div class="card" style="margin-bottom:16px">
+      <div class="card diag-karte" style="margin-bottom:16px">
         ${titel}
-        <div class="help-text" style="margin-bottom:10px">Schickt der Reihe nach jeden Steuerbefehl an den Wechselrichter — Ladelimit, Zwangsentladung, Freigabe, Entladedeckel, Netzladung — und misst, ob er ankommt und wirkt. Dauert etwa 5 bis 15 Minuten. Was sich prüfen lässt, hängt von der Tageszeit ab: Das Ladelimit braucht PV-Überschuss, der Entladedeckel ein Haus, das mehr braucht, als die PV liefert. Ein Bereich, der jetzt nicht prüfbar ist, behält sein letztes Ergebnis.</div>
-        <div class="diagnose-bereiche" style="font-size:13px">${zeilen}</div>
-        ${laufBlock}
-        ${letzterBlock}
+        <div class="help-text" style="margin-bottom:12px">Schickt jeden Steuerbefehl einmal an den Wechselrichter und misst, ob er wirkt. Dauert 5 bis 15 Minuten, die Optimierung ist so lange aus. Was zur Tageszeit nicht prüfbar ist, behält sein letztes Ergebnis — ein Lauf mittags und einer abends prüfen alles.</div>
+        ${banner}
+        <div class="diagnose-bereiche diag-kacheln">${kacheln}</div>
+        ${offen ? `<ul class="diag-offen">${offen}</ul>` : ""}
         ${knoepfe}
         <div class="help-text" style="margin-top:8px">Das Protokoll enthält Befehle, Antworten und Messreihen — schick es bei Problemen mit. Mit eingeschalteter Datenübermittlung geht es automatisch mit.</div>
       </div>`;
@@ -13567,6 +13743,97 @@ class EegOptimizerPanel extends HTMLElement {
         /* Auch die Kartentitel des Dashboards im EEG-Grün (Nutzerwunsch
            27.08.) — Ausnahmen setzen ihre Farbe inline und bleiben. */
         .card h3 { color: var(--success-color, #43a047); }
+        /* Diagnose der Ansteuerung (Einstellungen → System) */
+        .diag-kopf { display: flex; align-items: center; gap: 12px; margin: 4px 0 14px; }
+        .diag-kreisel {
+          width: 28px; height: 28px; border-radius: 50%; flex: none;
+          border: 3px solid var(--divider-color, #e0e0e0);
+          border-top-color: var(--success-color, #43a047);
+          border-right-color: var(--success-color, #43a047);
+          animation: spin 0.9s linear infinite;
+        }
+        .diag-leiste-wrap { position: relative; margin: 0 0 14px; }
+        .diag-leiste-linie {
+          position: absolute; left: 8%; right: 8%; top: 17px; height: 4px; border-radius: 2px;
+          background: var(--divider-color, #e0e0e0); overflow: hidden;
+        }
+        .diag-leiste-linie > div { height: 100%; background: var(--success-color, #43a047); border-radius: 2px; }
+        .diag-leiste { position: relative; display: grid; grid-template-columns: repeat(6, 1fr); gap: 2px; }
+        .diag-stufe { display: flex; flex-direction: column; align-items: center; gap: 4px; min-width: 0; }
+        .diag-punkt {
+          position: relative; width: 38px; height: 38px; border-radius: 50%;
+          display: flex; align-items: center; justify-content: center;
+          background: var(--card-background-color, #fff); color: var(--secondary-text-color);
+          border: 2px solid var(--divider-color, #e0e0e0);
+        }
+        .diag-punkt-aktiv { color: var(--success-color, #43a047); border-color: transparent; }
+        .diag-ring {
+          position: absolute; inset: -3px; border-radius: 50%;
+          border: 3px solid rgba(67, 160, 71, 0.18);
+          border-top-color: var(--success-color, #43a047);
+          animation: spin 1s linear infinite;
+        }
+        .diag-stufe-name { font-size: 11px; color: var(--secondary-text-color); text-align: center;
+          overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+        .diag-stufe.aktiv .diag-stufe-name { color: var(--primary-text-color); font-weight: 600; }
+        .diag-jetzt {
+          padding: 12px 14px; border-radius: 10px; margin-bottom: 12px;
+          background: var(--secondary-background-color, rgba(127, 127, 127, 0.08));
+        }
+        .diag-zeit { height: 4px; border-radius: 2px; margin-top: 10px; overflow: hidden;
+          background: var(--divider-color, #e0e0e0); }
+        .diag-zeit > div { height: 100%; background: var(--primary-color, #03a9f4); }
+        .diag-status { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; white-space: nowrap; }
+        .diag-status.ok { color: var(--success-color, #43a047); }
+        .diag-status.warten { color: var(--secondary-text-color); }
+        .diag-live { display: flex; gap: 14px; align-items: stretch; }
+        .diag-akku { display: flex; flex-direction: column; align-items: center; flex: none; }
+        .diag-akku-kopf { width: 18px; height: 6px; border-radius: 3px 3px 0 0;
+          background: var(--divider-color, #bdbdbd); }
+        .diag-akku-koerper {
+          position: relative; width: 58px; flex: 1; min-height: 104px; border-radius: 9px;
+          border: 3px solid var(--divider-color, #bdbdbd); overflow: hidden;
+          background: var(--card-background-color, #fff);
+        }
+        .diag-akku-fuellung { position: absolute; left: 0; right: 0; bottom: 0; opacity: 0.85; }
+        .diag-akku-zahl {
+          position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+          font-size: 17px; font-weight: 700; color: var(--primary-text-color);
+          text-shadow: 0 0 4px var(--card-background-color, #fff);
+        }
+        .diag-akku-zahl small, .diag-wert-zahl small { font-size: 11px; font-weight: 500; }
+        .diag-werte { flex: 1; display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; min-width: 0; }
+        .diag-wert {
+          padding: 8px 10px; border-radius: 10px; border: 1px solid var(--divider-color, #e0e0e0);
+          display: flex; flex-direction: column; gap: 1px; min-width: 0;
+        }
+        .diag-wert-zahl { font-size: 18px; font-weight: 700; font-variant-numeric: tabular-nums; }
+        .diag-wert-text { display: inline-flex; align-items: center; gap: 2px; font-size: 12px;
+          color: var(--secondary-text-color); white-space: nowrap; }
+        .diag-details { margin-top: 12px; font-size: 13px; }
+        .diag-details summary { cursor: pointer; color: var(--secondary-text-color); }
+        .diag-details ol { list-style: none; margin: 8px 0 0; padding: 0; }
+        .diag-details li { display: flex; gap: 8px; align-items: baseline; padding: 2px 0; }
+        .diag-kacheln { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+        @media (max-width: 480px) { .diag-kacheln { grid-template-columns: repeat(2, 1fr); } }
+        .diag-kachel {
+          display: flex; flex-direction: column; align-items: center; text-align: center; gap: 3px;
+          padding: 12px 6px 10px; border-radius: 12px; border: 1px solid var(--divider-color, #e0e0e0);
+          min-width: 0;
+        }
+        .diag-kachel-icon { width: 40px; height: 40px; border-radius: 50%; border: 2px solid;
+          display: flex; align-items: center; justify-content: center; margin-bottom: 2px; }
+        .diag-kachel-name { font-weight: 600; font-size: 13px; }
+        .diag-kachel-status { font-size: 12px; }
+        .diag-kachel-zeit { font-size: 11px; color: var(--secondary-text-color); }
+        .diag-banner { display: flex; gap: 12px; align-items: center; padding: 10px 12px; margin-bottom: 12px;
+          border-radius: 10px; border-left: 4px solid; background: var(--secondary-background-color, rgba(127,127,127,0.06)); }
+        .diag-offen { margin: 12px 0 0; padding-left: 18px; font-size: 13px; line-height: 1.5;
+          color: var(--secondary-text-color); }
+        .diag-offen strong { color: var(--primary-text-color); }
+        @media (prefers-reduced-motion: reduce) {
+          .diag-kreisel, .diag-ring { animation-duration: 3s; }
+        }
         .energy-flow-svg { width: 100%; height: auto; max-height: 420px; display: block; }
         .energy-flow-svg.narrow { max-height: 460px; margin: 0 auto; }
         .energy-flow-svg .flow-line { stroke-linecap: round; }

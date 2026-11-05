@@ -27,8 +27,24 @@ class TestUrteil:
         assert d.urteil([None, None]) == d.NICHT_PRUEFBAR
         assert d.urteil([]) == d.NICHT_PRUEFBAR
 
-    def test_letzte_vier_erfuellt(self):
+    def test_letzte_drei_erfuellt(self):
         assert d.urteil([False, False, True, True, True, True]) == d.ERFUELLT
+
+    def test_wie_traun_wirkung_nach_35_s(self):
+        """Huawei, Traun 05.11.2026: sieben Proben ohne, dann drei mit Wirkung.
+
+        Die Beobachtung endete nach drei erfüllten Proben, das Urteil wollte
+        bis 2.1.70 vier — „unklar" für eine Entladung, die genau 1 kW lieferte.
+        """
+        werte = [False] * 7 + [True] * 3
+        assert d.frueh_fertig(werte, 45.0)
+        assert d.urteil(werte) == d.ERFUELLT
+
+    def test_frueh_fertig_heisst_immer_erfuellt(self):
+        for vorne in range(0, 8):
+            werte = [False] * vorne + [True] * d.FOLGE_OK
+            if d.frueh_fertig(werte, 60.0):
+                assert d.urteil(werte) == d.ERFUELLT, vorne
 
     def test_nie_erfuellt(self):
         assert d.urteil([False, None, False]) == d.NICHT_ERFUELLT
@@ -320,6 +336,12 @@ class Anlage:
     def __init__(self, inv, *, pv, haus, soc):
         self.inv, self.pv, self.haus, self.soc = inv, pv, haus, soc
         self.messen_wirft = False
+        # Verzögerung wie am Gerät: Nach einer Änderung am Treiber liefern
+        # so viele Proben noch die alten Werte (Huawei: Sensoren alle 30 s).
+        self.verzoegerung_proben = 0
+        self._zustand = None
+        self._alt = None
+        self._rest = 0
 
     def batterie(self):
         inv = self.inv
@@ -334,6 +356,8 @@ class Anlage:
             return inv.netzladung
         ueberschuss = self.pv - self.haus
         if ueberschuss >= 0:
+            if getattr(self, "batterie_voll", False):
+                return 0.0
             grenze = 5.0 if inv.ladelimit is None else inv.ladelimit
             return min(ueberschuss, grenze)
         bedarf = -ueberschuss
@@ -345,8 +369,19 @@ class Anlage:
         if self.messen_wirft:
             raise RuntimeError("Sensor kaputt")
         b = self.batterie()
-        return {"soc": self.soc, "pv": self.pv, "batt": b,
-                "netz": self.pv - self.haus - b, "haus": self.haus}
+        neu = {"soc": self.soc, "pv": self.pv, "batt": b,
+               "netz": self.pv - self.haus - b, "haus": self.haus}
+        if self.verzoegerung_proben:
+            inv = self.inv
+            zustand = (inv.modus, inv.ladelimit, inv.deckel, inv.entladung, inv.netzladung)
+            if self._zustand is not None and zustand != self._zustand:
+                self._rest = self.verzoegerung_proben
+            self._zustand = zustand
+            if self._rest > 0 and self._alt is not None:
+                self._rest -= 1
+                return dict(self._alt)
+            self._alt = neu
+        return neu
 
 
 class FakeSelect:
@@ -519,7 +554,7 @@ class TestAbend:
         assert _bereich(p, "netzladung") == d.OK
         assert _bereich(p, "freigabe") == d.OK
         texte = [s["voraussetzung"] for s in _schritte(p, "ladelimit") if s["voraussetzung"]]
-        assert any("Mittagszeit" in t for t in texte)
+        assert any("PV-Überschuss" in t for t in texte)
 
     @pytest.mark.asyncio
     async def test_teilweise_ueberschreibt_kein_ok(self):
@@ -1118,3 +1153,36 @@ class TestNeuePruefungen:
         p = d.pruef_einspeisung_steigt(0.0, 5.0, 0.5)
         assert not p({"netz": 4.0, "batt": 0.0})   # nur Ladestopp
         assert p({"netz": 5.0, "batt": -1.0})
+
+
+class TestVerzoegerteWirkung:
+    """Am Gerät kommt die Wirkung erst nach Sekunden im Messwert an.
+
+    Die Simulation reagierte bis zum ersten echten Protokoll (Traun,
+    05.11.2026) sofort — darum fiel der Widerspruch zwischen Beobachtungsende
+    und Urteil in keinem Test auf.
+    """
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("pv,haus,soc", [(5.0, 1.0, 50), (0.0, 2.0, 60)])
+    async def test_alles_wirkt_nach_30_s(self, pv, haus, soc):
+        diag, inv, anlage, *_ = _aufbau(pv=pv, haus=haus, soc=soc)
+        anlage.verzoegerung_proben = 6
+        p = await _laufen(diag)
+        for s in p["schritte"]:
+            assert s["ergebnis"] != d.UNKLAR, s["titel"]
+            assert s["ergebnis"] != d.FEHLER, s["titel"]
+        assert _bereich(p, "entladung") == d.OK
+
+    @pytest.mark.asyncio
+    async def test_wie_traun_volle_batterie_mittags(self):
+        """Traun: 100 %, 3,4 kW Einspeisung. Entladung prüfbar, Laden nicht."""
+        diag, inv, anlage, *_ = _aufbau(pv=3.75, haus=0.35, soc=100)
+        anlage.verzoegerung_proben = 6
+        anlage.batterie_voll = True   # lädt nicht, alles geht ins Netz
+        p = await _laufen(diag)
+        s = _schritte(p, "entladung")[0]
+        assert s["ergebnis"] == d.OK, s["text"]
+        texte = " ".join(x["text"] for x in _schritte(p, "ladelimit"))
+        assert "voll" in texte
+        assert "-0.00" not in str(p)
