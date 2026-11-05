@@ -12,6 +12,18 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+## [2.1.76] - 2026-11-05
+
+### Behoben
+
+- **Hausverbrauch zählt das Auto an der Ambibox nicht mehr mit.** Bisher rechnete die Integration PV − Batterie − Netz − Heizstab, das ladende Auto landete also im Hausverbrauch und im Verbrauchsprofil, und ein zurückspeisendes Auto drückte die Rechnung ins Negative: In Ansfelden speiste ein Skoda Enyaq 4,9 kW zurück, die Hausbatterie lud damit, und der Hausverbrauch stand auf 0 mit „Bilanz unvollständig“. Jetzt wird die Leistung am Auto abgezogen, Laden positiv, Rückspeisen negativ — im Sensor, in der Live-Hauslast für Fahrplan und Executor und im Backfill der Stundenwerte. Das Attribut `auto_leistung_kw` am Hausverbrauch zeigt sie.
+- **Wallbox Ambibox: Ladeleistung und Richtung stimmen** (aus den Betas 2.1.76-beta.1 bis 3). Meldet das Auto keinen Batteriezustand, kommt die Richtung aus dem Vorzeichen von *Power AC* (gemessen: Laden −2965 W, Rückspeisen +4970 W, Leerlauf −170 W). Beim Rückspeisen heißt der Status „Entlädt“, und die Prüfung auf Gegenrichtung greift.
+
+### Geändert
+
+- **Wallbox Ambibox: Der Handtest schreibt den Sollwert alle 10 s nach statt alle 30 s.** Ohne Nachschreiben startet die Box keine Sitzung und meldet nach rund 60 s „Fehler“; mit 30 s setzte das Auto beim Rückspeisen jede Minute 10–15 s aus, mit 10 s lieferte es fünf Minuten lang konstant 4,97 kW.
+- **Wallbox Ambibox: Rohregister zur Fehlersuche** am Sensor *Auto Status* (Attribut `rohregister`, nicht aufgezeichnet).
+
 ## [2.1.76-beta.3] - 2026-11-05
 
 ### Geändert
