@@ -77,7 +77,7 @@ Wirkung aber noch nicht in jedem Schritt zu sehen · ✗ = Problem gefunden ·
 
 | Wechselrichter | Ladelimit | Zwangsentladung | Freigabe | Entladedeckel | Netzladung |
 |---|---|---|---|---|---|
-| **Fronius Gen24** | ✓ | ✓ | ✓ | ◐ | ◐ |
+| **Fronius Gen24** | ✓ | ✓ | ✓ | ◐ ³ | ✓ |
 | **Huawei SUN2000** | ◐ ¹ | ✓ | ✓ | ◐ ² | ✓ |
 | **Kostal Plenticore** | ✓ | ✓ | ✓ | ◐ ³ | ✓ |
 | **Sigenergy SigenStor** | ✓ | ✓ | ✓ | ◐ | ◐ |
