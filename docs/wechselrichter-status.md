@@ -71,28 +71,33 @@ Manches lässt sich nur zu bestimmten Zeiten prüfen. Das Ladelimit braucht
 eine Batterie, die gerade aus PV lädt. Der Entladedeckel und die Netzladung
 brauchen einen Abend, an dem das Haus mehr braucht, als die PV liefert.
 
-✓ = wirkt am Gerät · ◐ = angenommen und zurückgelesen, Wirkung noch nicht
-prüfbar · ✗ = Problem gefunden · – = noch nicht geprüft
+✓ = jeder Schritt wirkt am Gerät · ◐ = angenommen und zurückgelesen, die
+Wirkung aber noch nicht in jedem Schritt zu sehen · ✗ = Problem gefunden ·
+– = noch nicht geprüft
 
 | Wechselrichter | Ladelimit | Zwangsentladung | Freigabe | Entladedeckel | Netzladung |
 |---|---|---|---|---|---|
 | **Fronius Gen24** | ✓ | ✓ | ✓ | ◐ | ◐ |
-| **Huawei SUN2000** | ✓ | ✓ | ✓ | ◐ | ◐ ¹ |
-| **Kostal Plenticore** | ✓ | ✓ | ✓ | ✓ | ✓ |
+| **Huawei SUN2000** | ◐ ¹ | ✓ | ✓ | ◐ ² | ✓ |
+| **Kostal Plenticore** | ✓ | ✓ | ✓ | ◐ ³ | ✓ |
 | **Sigenergy SigenStor** | ✓ | ✓ | ✓ | ◐ | ◐ |
-| **SMA Smart Energy** | ◐ ³ | ✓ | ✓ | ◐ | – |
+| **SMA Smart Energy** | ◐ ⁴ | ✓ | ✓ | ◐ | – |
 | **SolaX Gen4** | ✓ | ✓ | ✓ | ✓ | ✓ |
-| **Victron ESS** | ✗ ² | ✓ | ✓ | ◐ | ◐ |
+| **Victron ESS** | ✗ ⁵ | ✓ | ✓ | ◐ | ◐ |
 
-Stand 05.11.2026, je eine Anlage, Läufe mittags und abends.
+Stand 05.11.2026, je eine Anlage, Läufe mittags und abends. Ladelimit heißt
+0 kW und 1 kW, Entladedeckel heißt halten, 0,5 kW und aufheben.
 
-1. Im Betrieb ist das Netzladen am Gerät geprüft (Oktober 2026).
-2. Der DVCC-Ladestrom stand auf 0 A (korrekt zurückgelesen), die Batterie
+1. 0 kW wirkt, 1 kW noch nicht zu sehen.
+2. Halten und 0,5 kW wirken, das Aufheben war noch nicht zu sehen.
+3. Halten wirkt, 0,5 kW und das Aufheben noch nicht zu sehen (zu wenig
+   Hausverbrauch).
+4. Batterie war voll. Den Wert des Ladelimits liest der SMA-Treiber nicht
+   vom Gerät zurück, belegen kann es nur die gemessene Wirkung.
+5. Der DVCC-Ladestrom stand auf 0 A (korrekt zurückgelesen), die Batterie
    lud aber weiter. Der Test lief komplett in einem aktiven
    BatteryLife-Ladeplan des GX-Geräts, der vermutlich das Limit übersteuert.
    Mit abgeschaltetem Ladeplan noch zu wiederholen.
-3. Batterie war voll. Den Wert des Ladelimits liest der SMA-Treiber nicht
-   vom Gerät zurück, belegen kann es nur die gemessene Wirkung.
 
 ## Was je Wechselrichter noch zu klären ist
 
