@@ -78,7 +78,7 @@ prüfbar · ✗ = Problem gefunden · – = noch nicht geprüft
 |---|---|---|---|---|---|
 | **Fronius Gen24** | ✓ | ✓ | ✓ | ◐ | ◐ |
 | **Huawei SUN2000** | ✓ | ✓ | ✓ | ◐ | ◐ ¹ |
-| **Kostal Plenticore** | ✓ | ✓ | ✓ | ◐ | ◐ |
+| **Kostal Plenticore** | ✓ | ✓ | ✓ | ✓ | ✓ |
 | **Sigenergy SigenStor** | ✓ | ✓ | ✓ | ◐ | ◐ |
 | **SMA Smart Energy** | ◐ ³ | ✓ | ✓ | ◐ | – |
 | **SolaX Gen4** | ✓ | ✓ | ✓ | ✓ | ✓ |
