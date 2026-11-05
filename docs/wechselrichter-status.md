@@ -78,11 +78,11 @@ prüfbar · ✗ = Problem gefunden · – = noch nicht geprüft
 |---|---|---|---|---|---|
 | **Fronius Gen24** | ✓ | ✓ | ✓ | ◐ | ◐ |
 | **Huawei SUN2000** | ◐ ¹ | ✓ | ✓ | ◐ | – ² |
-| **Kostal Plenticore** | – | – | – | – | – |
-| **Sigenergy SigenStor** | ✓ | ✓ ³ | ✓ | ◐ | ◐ |
+| **Kostal Plenticore** | ✓ | ✓ | ◐ | ◐ | ◐ |
+| **Sigenergy SigenStor** | ✓ | ✓ | ✓ | ◐ | ◐ |
 | **SMA Smart Energy** | – | – | – | – | – |
-| **SolaX Gen4** | ✓ | ✓ | ✓ | ◐ ⁴ | ◐ |
-| **Victron ESS** | ✗ ⁵ | ✓ | ✓ | ◐ | ◐ |
+| **SolaX Gen4** | ✓ | ✓ | ✓ | ◐ ³ | ◐ |
+| **Victron ESS** | ✗ ⁴ | ✓ | ✓ | ◐ | ◐ |
 
 Stand 05.11.2026, je eine Anlage, alle Läufe mittags mit PV-Überschuss.
 
@@ -90,18 +90,12 @@ Stand 05.11.2026, je eine Anlage, alle Läufe mittags mit PV-Überschuss.
    zurückgelesen, die Wirkung ist noch offen.
 2. In der Diagnose übersprungen (Batterie voll). Im Betrieb ist das
    Netzladen am Gerät geprüft (Oktober 2026).
-3. Der frühere Modus „Command Discharging (ESS First)“ regelte die ganze
-   PV ab (17,9 → 0 kW). Seit 2.1.72 entlädt der Treiber mit „PV First“, am
-   Gerät bestätigt: Die Batterie gibt 1,00 kW ab, die PV läuft mit 12,4 kW
-   weiter, die Einspeisung steigt von 3,7 auf 13,0 kW.
-4. Die Stellwerte zeigen den Entladestrom nicht. Belegen kann den Deckel
+3. Die Stellwerte zeigen den Entladestrom nicht. Belegen kann den Deckel
    nur die gemessene Wirkung, nicht das Zurücklesen.
-5. Der DVCC-Ladestrom stand auf 0 A (korrekt zurückgelesen), die Batterie
+4. Der DVCC-Ladestrom stand auf 0 A (korrekt zurückgelesen), die Batterie
    lud aber weiter. Der Test lief komplett in einem aktiven
    BatteryLife-Ladeplan des GX-Geräts, der vermutlich das Limit übersteuert.
-   Mit abgeschaltetem Ladeplan noch zu wiederholen. Der Entladedeckel
-   („Max. Wechselrichterleistung“) wurde geschrieben und sauber auf −1
-   zurückgestellt.
+   Mit abgeschaltetem Ladeplan noch zu wiederholen.
 
 ## Was je Wechselrichter noch zu klären ist
 
