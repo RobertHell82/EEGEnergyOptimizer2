@@ -12,6 +12,17 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+## [2.1.72] - 2026-11-05
+
+### Geändert
+
+- **Sigenergy entlädt mit „Command Discharging (PV First)“.** Die Diagnose zeigte an einer Anlage, dass der bisherige Modus „ESS First“ die ganze PV abregelt: Die Batterie lieferte die befohlenen 1,00 kW, die PV fiel dabei von 17,9 auf 0 kW, die Einspeisung von 4,2 auf 0,45 kW. Nachts spielt das keine Rolle, an einem Sommerabend, an dem um 19:30 noch 1 kW aus der PV kommt und der Fahrplan schon entlädt, ginge dieses Kilowatt verloren. „PV First“ lässt laut Spezifikation zuerst die PV liefern und die Batterie dazulegen; am Gerät ist das noch zu bestätigen. Bietet die Integration den Modus nicht an, bleibt es bei „ESS First“.
+- **Diagnose: Regelt ein Gerät während eines Zwangsmodus die PV ab, heißt das „teilweise“, nicht „Fehler“.** Die Batterie liefert ja, nur steigt die Einspeisung nicht. Der Hinweis sagt, was passiert ist, und empfiehlt, nachts zu wiederholen; ein früheres „bestanden“ bleibt stehen. Jede andere Fehlwirkung nennt jetzt die gemessenen Werte statt nur „keine Wirkung gemessen“.
+
+### Behoben
+
+- **Diagnose-Ansicht:** Die aufgeklappten Details der laufenden Diagnose klappten alle zwei Sekunden wieder zu, sie bleiben jetzt offen. Die Symbole in den Knöpfen sitzen mittig, und auf sehr schmalen Handys (320 px) zeigt die Schrittleiste nur den Namen des laufenden Schritts, die Kopfzeile bricht sauber um.
+
 ## [2.1.71] - 2026-11-05
 
 ### Behoben
