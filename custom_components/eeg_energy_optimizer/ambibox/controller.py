@@ -275,6 +275,10 @@ class AmbiboxController:
         self._zustand = AutoZustand()
         self._listener: list[Callable[[], None]] = []
         self._gelesen = False
+        # Rohregister des letzten Lesevorgangs (Beta-Diagnose, siehe
+        # ``rohregister``).
+        self._roh_eingang: list[int] | None = None
+        self._roh_holding: list[int] | None = None
         # Manueller Test: Richtung ("laden"/"entladen"), Sollwert in kW und
         # der Zeitpunkt, zu dem von selbst gestoppt wird.
         self._manuell_richtung: str | None = None
@@ -337,6 +341,9 @@ class AmbiboxController:
                 self._melden()
             return
         self._zustand = self._deuten(regs)
+        self._roh_eingang = regs
+        lesen_holding = getattr(self._treiber, "async_read_holding", None)
+        self._roh_holding = await lesen_holding() if lesen_holding else None
         self._gelesen = True
         self._melden()
 
@@ -630,6 +637,37 @@ class AmbiboxController:
                 _LOGGER.debug("Ambibox: Fehler beim Schließen der Verbindung", exc_info=True)
 
     # -- Zustand für Panel und Sensoren -----------------------------------
+
+    def rohregister(self) -> dict[str, Any] | None:
+        """Beta-Diagnose: jeder 32-Bit-Wert des letzten Lesevorgangs.
+
+        Je Adresse (Basis + Offset) dreimal gedeutet — u32, i32, f32 —, weil
+        offen ist, welche Deutung stimmt: In Ansfelden (05.11.2026) stand
+        *Power AC* beim Laden mit 5 kW auf 0, der Batteriezustand auf
+        Ruhezustand. Nullwerte bleiben weg, damit das Attribut kurz bleibt.
+        """
+        if self._roh_eingang is None:
+            return None
+
+        def tabelle(regs: list[int] | None, basis: int) -> dict[str, list] | None:
+            if regs is None:
+                return None
+            werte: dict[str, list] = {}
+            for offset in range(0, len(regs) - 1, 2):
+                if not (regs[offset] or regs[offset + 1]):
+                    continue
+                f32 = mb.read_f32(regs, offset)
+                werte[str(basis + offset)] = [
+                    mb.read_u32(regs, offset),
+                    mb.read_i32(regs, offset),
+                    None if f32 is None else float(f"{f32:.6g}"),
+                ]
+            return werte
+
+        return {
+            "eingang": tabelle(self._roh_eingang, mb.input_base(self.connector)),
+            "holding": tabelle(self._roh_holding, mb.holding_base(self.connector)),
+        }
 
     def status(self) -> dict[str, Any]:
         """Vollständiger Zustand als einfaches dict (Panel, WebSocket)."""

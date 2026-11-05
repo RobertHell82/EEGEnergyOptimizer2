@@ -95,6 +95,8 @@ OFF_TARGET_POWER = 0   # int32  W — Vorzeichenkonvention ungeprüft
 OFF_WAKE_UP = 2        # uint32, nur Wert 1
 OFF_SET_SLEEP = 4      # uint32, nur Wert 1
 OFF_STOP_CHARGE = 6    # uint32, nur Wert 1
+# Die vier Holding-Werte oben, für das Zurücklesen in der Diagnose.
+HOLDING_LENGTH = 8
 
 
 def _slave_kw(client: Any, unit_id: int) -> dict:
@@ -305,6 +307,30 @@ class AmbiboxModbus:
             self.last_success = time.time()
             self.read_failures = 0
             return regs
+
+    async def async_read_holding(self) -> list[int] | None:
+        """Die Holding-Register zurücklesen — nur für die Diagnose.
+
+        Zeigt, ob die Box einen geschriebenen Sollwert behält oder ihn ein
+        zweiter Regler überschreibt. Ein Fehlschlag zählt nicht als
+        Lesefehler: Nicht jede Firmware muss Holding-Register lesbar machen.
+        """
+        async with self._lock:
+            if not await self.async_connect():
+                return None
+            try:
+                result = await self._client.read_holding_registers(
+                    address=self.holding_base,
+                    count=HOLDING_LENGTH,
+                    **_slave_kw(self._client, self._unit_id),
+                )
+            except Exception:  # noqa: BLE001
+                _LOGGER.debug("Ambibox: Holding-Register nicht lesbar", exc_info=True)
+                return None
+            if result is None or result.isError():
+                return None
+            regs = list(getattr(result, "registers", []) or [])
+            return regs if len(regs) >= HOLDING_LENGTH else None
 
     def _record_error(self, wo: str, exc: Exception | str) -> None:
         self.read_failures += 1

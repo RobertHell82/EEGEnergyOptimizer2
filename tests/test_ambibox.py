@@ -349,6 +349,7 @@ def test_create_ambibox_baut_den_treiber_mit_dem_ladepunkt():
 def _treiber(regs=None):
     t = MagicMock()
     t.async_read_block = AsyncMock(return_value=regs)
+    t.async_read_holding = AsyncMock(return_value=None)
     t.async_close = AsyncMock()
     t.read_failures = 0 if regs is not None else 1
     t.last_error = None
@@ -794,3 +795,24 @@ async def test_ruhezustand_ist_keine_gegenrichtung(monkeypatch):
     jetzt[0] += mod.AMBIBOX_RICHTUNG_ANLAUF_S + 5
     await controller.async_keepalive()
     assert controller.manuell_aktiv is True
+
+
+async def test_rohregister_zeigt_jeden_wert_dreifach_gedeutet():
+    """Beta-Diagnose: Adresse → [u32, i32, f32], Nullwerte weggelassen,
+    Holding-Register zurückgelesen."""
+    treiber = _treiber(_standardblock())
+    holding = [0] * mb.HOLDING_LENGTH
+    holding[0], holding[1] = 0xEC78, 0xFFFF  # −5000 W, niedriges Wort zuerst
+    treiber.async_read_holding = AsyncMock(return_value=holding)
+    controller = AmbiboxController(MagicMock(), {}, treiber)
+    assert controller.rohregister() is None
+
+    await controller.async_lesen()
+
+    roh = controller.rohregister()
+    basis = mb.input_base(1)
+    assert roh["eingang"][str(basis + mb.OFF_POWER_AC)][1] == 7300
+    assert roh["eingang"][str(basis + mb.OFF_SOC)][2] == 62.5
+    assert str(basis + mb.OFF_NUMBER_PHASES) not in roh["eingang"]
+    u32, i32, _ = roh["holding"][str(mb.holding_base(1))]
+    assert (u32, i32) == (0xFFFFEC78, -5000)

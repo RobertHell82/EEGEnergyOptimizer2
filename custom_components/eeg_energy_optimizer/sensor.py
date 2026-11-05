@@ -1545,6 +1545,10 @@ class AutoStatusSensor(_AutoSensor):
     angesteckt war, ohne vier Entitäten nebeneinanderzulegen.
     """
 
+    # Beta-Diagnose der Ambibox: ändert sich alle 15 s und gehört nicht in
+    # die Datenbank.
+    _unrecorded_attributes = frozenset({"rohregister"})
+
     _attr_name = "Auto Status"
     _attr_icon = "mdi:car-electric"
 
@@ -1597,6 +1601,7 @@ class AutoStatusSensor(_AutoSensor):
             "host": st.get("host"),
             "anschluss": st.get("connector"),
             "letzter_fehler": st.get("last_error"),
+            "rohregister": self._controller.rohregister(),
         }
 
 
