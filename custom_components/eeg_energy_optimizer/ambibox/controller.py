@@ -572,13 +572,12 @@ class AmbiboxController:
         return ok
 
     async def async_keepalive(self) -> None:
-        """Den laufenden Test überwachen: Zeit, Fahrzeug, Richtung.
+        """Den Sollwert nachschreiben, solange der Test läuft.
 
-        Der Sollwert wird NICHT nachgeschrieben (Beta-Versuch): Beim
-        Nachschreiben alle 30 s setzte das Auto in Ansfelden (05.11.2026)
-        jede Minute 10–15 s aus, Power AC fiel von 4970 auf −170 W. Ohne
-        Nachschreiben zeigt sich, ob die Pausen verschwinden und ob die Box
-        einen Watchdog hat. Das Ende per Zeitlimit stoppt weiter aktiv.
+        Läuft die Zeit ab, wird gestoppt. Beides gehört zusammen: Der
+        Nachschreib-Takt ist auch die Uhr, die den Test beendet. Ohne
+        Nachschreiben gibt die Box nach ~60 s mit „Fehler“ auf (Ansfelden,
+        05.11.2026); den Takt setzt ``AMBIBOX_KEEPALIVE_S``.
         """
         if not self.manuell_aktiv or self._treiber is None:
             return
@@ -596,6 +595,12 @@ class AmbiboxController:
             )
             await self.async_manuell_stopp("Die Wallbox arbeitet in Gegenrichtung")
             return
+        watt = self._sollwert_watt(self._manuell_richtung or "laden", self._manuell_kw)
+        if not await self._treiber.async_write_target_power(watt):
+            self._manuell_fehler = self._treiber.last_error or "Schreiben fehlgeschlagen"
+            self._melden()
+        else:
+            self._letzter_sollwert_w = watt
 
     def _gegenrichtung(self) -> bool:
         """Meldet die Box nach der Anlaufzeit die entgegengesetzte Richtung?

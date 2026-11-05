@@ -67,7 +67,7 @@ Starten und stoppen dürfen nur **Administratoren** von Home Assistant.
 
 Vier Sicherungen, weil das Verhalten des Geräts nicht ganz bekannt ist:
 
-- **Kein Nachschreiben (Beta-Versuch):** Der Sollwert wird einmal geschrieben. Beim Nachschreiben alle 30 Sekunden setzte ein Auto jede Minute für 10–15 Sekunden aus.
+- **Nachschreiben:** Der Sollwert wird alle 10 Sekunden neu geschrieben. Ein einmal geschriebener Wert startet keine Sitzung, nach rund einer Minute meldet die Wallbox „Fehler“.
 - **Höchstdauer:** Nach der eingestellten Zeit, spätestens nach 60 Minuten, stoppt der Test von selbst. Er endet auch, wenn das Auto abgesteckt wird.
 - **Ende mit der Integration:** Wird die Integration beendet oder neu geladen, stoppt der Test.
 - **Falsche Richtung:** Arbeitet die Wallbox nach einer Minute in die Gegenrichtung (sie entlädt, obwohl du **Laden** gedrückt hast, oder umgekehrt), bricht der Test ab: „Die Wallbox arbeitet in Gegenrichtung — Vorzeichen-Einstellung prüfen.“
@@ -83,7 +83,7 @@ Der Start wird verweigert, wenn kein Fahrzeug angesteckt ist, wenn die Wallbox e
 
 Drei Fragen beantwortet der Hersteller nicht. Dafür gibt es den manuellen Test:
 
-1. **Wie lange gilt ein Sollwert?** Ob die Ambibox einen Wert ohne Nachschreiben verwirft, ist nicht dokumentiert. Die Beta schreibt ihn deshalb nur einmal — hört die Box nach einer Weile von selbst auf, ist das ihr Watchdog.
+1. **Wie lange gilt ein Sollwert?** Ob die Ambibox einen Wert ohne Nachschreiben verwirft, ist nicht dokumentiert. Gemessen: ohne Nachschreiben nach rund 60 Sekunden „Fehler“.
 2. **Welches Vorzeichen heißt Laden?** Steht nirgends. Die Vorgabe „Negativ = laden" folgt der einzigen bekannten anderen Umsetzung. Bei falscher Richtung bricht der Test nach einer Minute selbst ab. Passiert gar nichts oder kommt diese Meldung, stell das Vorzeichen in den Einstellungen um und teste noch einmal.
 3. **Was macht die Ambibox selbst?** Sie regelt mit ihrem eigenen Energiemanagement (sidOS). Was passiert, wenn der Optimizer gleichzeitig einen Sollwert schreibt, ist nicht beschrieben.
 

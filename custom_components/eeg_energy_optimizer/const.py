@@ -753,10 +753,11 @@ AMBIBOX_SIGN_POSITIVE = "positive"   # positiver Sollwert = laden
 DEFAULT_AMBIBOX_CHARGE_SIGN = AMBIBOX_SIGN_NEGATIVE
 
 # Der Sollwert wird zyklisch nachgeschrieben, solange der manuelle Test läuft.
-# Wie lange ein Wert ohne Nachschreiben gilt, steht nicht im Dokument — 30 s
-# ist eng genug für jeden üblichen Watchdog (der Ohmpilot etwa fällt nach 50 s
-# ab) und immer noch wenig Verkehr.
-AMBIBOX_KEEPALIVE_S = 30
+# Gemessen in Ansfelden (05.11.2026): Ein einmal geschriebener Wert startet
+# keine Sitzung, nach ~60 s meldet die Box „Fehler“ (Watchdog). Mit 30 s
+# setzte das Auto jede Minute 10–15 s aus — 10 s ist der Versuch, ob ein
+# engerer Takt die Pausen beseitigt.
+AMBIBOX_KEEPALIVE_S = 10
 # Harte Obergrenze für einen manuellen Lauf. Ein Testknopf darf nichts
 # hinterlassen, das unbeaufsichtigt weiterläuft: Nach Ablauf wird gestoppt,
 # auch wenn niemand mehr hinsieht.

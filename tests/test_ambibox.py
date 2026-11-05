@@ -625,16 +625,15 @@ async def test_laufzeit_wird_gedeckelt():
     assert controller.manuell_restsekunden <= AMBIBOX_MANUAL_MAX_MINUTES * 60
 
 
-async def test_keepalive_schreibt_nicht_nach():
-    """Beta-Versuch: Nachschreiben ließ das Auto jede Minute aussetzen."""
+async def test_keepalive_schreibt_nach():
+    """Ohne Nachschreiben gibt die Box nach ~60 s auf (Ansfelden)."""
     controller = await _bereiter_controller()
     await controller.async_manuell_start("laden", 3.0, 15)
     controller._treiber.async_write_target_power.reset_mock()
 
     await controller.async_keepalive()
 
-    controller._treiber.async_write_target_power.assert_not_awaited()
-    assert controller.manuell_aktiv
+    controller._treiber.async_write_target_power.assert_awaited_once_with(-3000)
 
 
 @pytest.mark.parametrize("watt, richtung, text", [
