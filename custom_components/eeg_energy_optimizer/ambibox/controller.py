@@ -94,9 +94,15 @@ CHARGE_PROTOCOLS = {
     4: "ISO 15118-2 VAS",
     5: "ISO 15118-20",
 }
-# Rückspeisen ins Haus oder Netz setzt ISO 15118-20 voraus; die älteren
-# Protokolle können nur laden.
+# Rückspeisen ins Haus oder Netz ist in ISO 15118-20 genormt. Es ist aber
+# nicht die einzige Spur: Manche Fahrzeuge speisen über ISO 15118-2 mit
+# Herstellererweiterungen zurück — siehe ``_rueckspeisen_moeglich``. DIN 70121
+# kann nur laden.
 CHARGE_PROTOCOL_BIDIREKTIONAL = 5
+CHARGE_PROTOCOL_DIN_70121 = 2
+# VW-Konzern (z. B. Skoda Enyaq 2021): Rückspeisen über ISO 15118-2 mit der
+# herstellereigenen Erweiterung VAS — älter als ISO 15118-20.
+CHARGE_PROTOCOL_VAS = 4
 
 EVCHARGER_ERROR_BITS = {
     0: "Kommunikation mit dem Fahrzeug",
@@ -352,7 +358,6 @@ class AmbiboxController:
         protokoll = mb.read_u32(regs, mb.OFF_CHARGE_PROTOCOL)
         z.charge_protocol = protokoll
         z.protokoll_text = CHARGE_PROTOCOLS.get(protokoll) if protokoll is not None else None
-        z.bidirektional_faehig = protokoll == CHARGE_PROTOCOL_BIDIREKTIONAL
 
         # Fahrzeugbatterie
         z.soc_pct = _runden(mb.read_f32(regs, mb.OFF_SOC), 1)
@@ -389,6 +394,7 @@ class AmbiboxController:
         z.max_charge_kw = _w_to_kw(mb.read_u32(regs, mb.OFF_MAX_CHARGE_POWER))
         z.min_discharge_kw = _w_to_kw(mb.read_u32(regs, mb.OFF_MIN_DISCHARGE_POWER))
         z.max_discharge_kw = _w_to_kw(mb.read_u32(regs, mb.OFF_MAX_DISCHARGE_POWER))
+        z.bidirektional_faehig = _rueckspeisen_moeglich(protokoll, z.max_discharge_kw)
         control_mode = mb.read_u32(regs, mb.OFF_CONTROL_MODE)
         z.control_mode = control_mode
         z.control_mode_text = (
@@ -484,7 +490,9 @@ class AmbiboxController:
         if richtung == "entladen" and not self._zustand.bidirektional_faehig:
             protokoll = self._zustand.protokoll_text or "unbekannt"
             return False, (
-                f"Rückspeisen setzt ISO 15118-20 voraus, das Fahrzeug lädt über {protokoll}."
+                "Rückspeisen setzt ISO 15118-20 oder eine vom Fahrzeug gemeldete "
+                f"Entladeleistung voraus — das Fahrzeug lädt über {protokoll} "
+                "und meldet keine."
             )
 
         minuten = max(1, min(int(minuten or 1), AMBIBOX_MANUAL_MAX_MINUTES))
@@ -675,6 +683,23 @@ class AmbiboxController:
             "vorzeichen": ambibox_charge_sign(self._config),
             "schreibvorgaenge": None if self._treiber is None else getattr(self._treiber, "writes", 0),
         }
+
+
+def _rueckspeisen_moeglich(protokoll: int | None, max_discharge_kw: float | None) -> bool:
+    """Darf der Handtest das Fahrzeug entladen?
+
+    ISO 15118-20 genügt, ebenso VWs Erweiterung VAS auf ISO 15118-2. Sonst
+    entscheidet, was das Fahrzeug selbst als
+    höchste Entladeleistung meldet: Ansfelden, 05.11.2026 — ein Auto, das
+    zurückspeisen kann, handelte ISO 15118-2 aus und meldete 10 kW
+    Entladeleistung; die Sperre auf das Protokoll allein ließ den Test nicht
+    zu. DIN 70121 kennt kein Rückspeisen, dort zählt die Meldung nicht.
+    """
+    if protokoll in (CHARGE_PROTOCOL_BIDIREKTIONAL, CHARGE_PROTOCOL_VAS):
+        return True
+    if protokoll == CHARGE_PROTOCOL_DIN_70121:
+        return False
+    return max_discharge_kw is not None and max_discharge_kw > 0
 
 
 def _runden(wert: float | None, stellen: int) -> float | None:

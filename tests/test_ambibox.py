@@ -572,12 +572,47 @@ async def test_entladen_braucht_iso_15118_20():
     controller = await _bereiter_controller(
         _standardblock({mb.OFF_CHARGE_PROTOCOL: ("I", 2)})  # DIN 70121
     )
+    # DIN 70121 bleibt gesperrt, auch wenn die Box eine Entladeleistung meldet.
+    assert controller.zustand.max_discharge_kw == 10.0
     ok, meldung = await controller.async_manuell_start("entladen", 3.0, 15)
     assert ok is False
     assert "ISO 15118-20" in meldung and "DIN 70121" in meldung
     # Laden bleibt mit demselben Protokoll erlaubt.
     ok2, _ = await controller.async_manuell_start("laden", 3.0, 15)
     assert ok2 is True
+
+
+async def test_entladen_ueber_iso_15118_2_mit_gemeldeter_entladeleistung():
+    """Ansfelden 05.11.2026: ein rückspeisefähiges Auto handelte ISO 15118-2
+    aus und meldete 10 kW Entladeleistung — das genügt für den Handtest."""
+    controller = await _bereiter_controller(
+        _standardblock({mb.OFF_CHARGE_PROTOCOL: ("I", 3)})  # ISO 15118-2
+    )
+    assert controller.zustand.bidirektional_faehig is True
+    ok, _ = await controller.async_manuell_start("entladen", 2.0, 2)
+    assert ok is True
+    controller._treiber.async_write_target_power.assert_awaited_with(2000)
+
+
+async def test_entladen_ueber_vw_vas():
+    """VAS ist VWs Rückspeise-Erweiterung zu ISO 15118-2 — erlaubt, auch wenn
+    die Entladeleistung (noch) als 0 gemeldet wird."""
+    controller = await _bereiter_controller(_standardblock({
+        mb.OFF_CHARGE_PROTOCOL: ("I", 4),  # ISO 15118-2 VAS
+        mb.OFF_MAX_DISCHARGE_POWER: ("I", 0),
+    }))
+    assert controller.zustand.bidirektional_faehig is True
+
+
+async def test_entladen_ohne_gemeldete_entladeleistung_gesperrt():
+    controller = await _bereiter_controller(_standardblock({
+        mb.OFF_CHARGE_PROTOCOL: ("I", 3),  # ISO 15118-2
+        mb.OFF_MAX_DISCHARGE_POWER: ("I", 0),
+    }))
+    ok, meldung = await controller.async_manuell_start("entladen", 2.0, 2)
+    assert ok is False
+    assert "ISO 15118-2" in meldung
+    controller._treiber.async_write_target_power.assert_not_awaited()
 
 
 async def test_laufzeit_wird_gedeckelt():

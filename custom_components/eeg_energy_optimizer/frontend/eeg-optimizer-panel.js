@@ -11672,7 +11672,8 @@ class EegOptimizerPanel extends HTMLElement {
         </div>`;
     }
 
-    // Rückspeisen kann nur, wer ISO 15118-20 spricht — der Knopf bleibt
+    // Rückspeisen braucht ISO 15118-20 oder eine vom Fahrzeug gemeldete
+    // Entladeleistung (Prüfung im Backend) — der Knopf bleibt
     // trotzdem sichtbar und sagt beim Klick, warum es nicht geht.
     return `
       <div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--divider-color,#e0e0e0)">

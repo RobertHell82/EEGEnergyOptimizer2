@@ -12,7 +12,7 @@ Mit einer **Ambibox** (ambiCHARGE) zeigt der Optimizer das angesteckte Auto in d
 
 - Eine **Ambibox** im selben Netzwerk wie Home Assistant, mit **freigeschaltetem Modbus TCP**
 - Für den manuellen Test: ein **angestecktes Fahrzeug**, das die Wallbox nicht als „Nicht steuerbar" meldet
-- Für den Entladetest zusätzlich: ein Fahrzeug, das über **ISO 15118-20** lädt. Ältere Protokolle (CHAdeMO, DIN 70121, ISO 15118-2) können nur laden
+- Für den Entladetest zusätzlich: ein Fahrzeug, das über **ISO 15118-20** lädt oder der Wallbox eine **Entladeleistung** meldet. Autos des VW-Konzerns (etwa Skoda Enyaq ab 2021) speisen über ISO 15118-2 mit der Erweiterung **VW VAS** zurück — die muss in der Ambibox-Oberfläche unter den Ladeprotokollen eingeschaltet sein; mit DIN 70121 geht es nicht
 
 ## Einrichtung
 
@@ -74,7 +74,7 @@ Vier Sicherungen, weil das Verhalten des Geräts nicht ganz bekannt ist:
 
 Beim Stoppen schreibt der Optimizer erst 0 W, dann den Befehl zum Beenden des Ladevorgangs.
 
-Der Start wird verweigert, wenn kein Fahrzeug angesteckt ist, wenn die Wallbox es als nicht steuerbar meldet und — nur beim Entladen — wenn es nicht über ISO 15118-20 lädt. Der Grund steht unter den Knöpfen.
+Der Start wird verweigert, wenn kein Fahrzeug angesteckt ist, wenn die Wallbox es als nicht steuerbar meldet und — nur beim Entladen — wenn es weder über ISO 15118-20 lädt noch eine Entladeleistung meldet. Der Grund steht unter den Knöpfen.
 
 > [!WARNING]
 > **Der Test ist für jemanden, der am Auto steht.** Er ist keine Ladesteuerung für den Alltag. Starte ihn nur, wenn du Wallbox und Fahrzeug dabei beobachtest.
