@@ -862,6 +862,11 @@ class SMAInverter(InverterBase):
         Export vor, die Hauslast legt der Wechselrichter selbst obendrauf."""
         return True
 
+    @property
+    def ladelimit_vom_geraet_gelesen(self) -> bool:
+        """Nein — ``async_get_charge_limit_kw`` gibt den eigenen Block zurück."""
+        return False
+
     async def async_get_charge_limit_kw(self) -> float | None:
         """Aktuell wirksames Ladelimit in kW — aus dem aktiven Block.
 

@@ -499,6 +499,10 @@ def async_register_websocket_commands(hass: HomeAssistant) -> None:
     # aus den Auto-Sensoren; die sind live und brauchen kein Polling.
     websocket_api.async_register_command(hass, ws_probe_ambibox)
     websocket_api.async_register_command(hass, ws_ambibox_manual)
+    # Diagnose der Ansteuerung (diagnose.py) — Einstellungen → System.
+    websocket_api.async_register_command(hass, ws_get_diagnose)
+    websocket_api.async_register_command(hass, ws_diagnose_start)
+    websocket_api.async_register_command(hass, ws_diagnose_stop)
     # Fahrplan (chamo)
     websocket_api.async_register_command(hass, ws_tagesbilanz_jetzt)
     websocket_api.async_register_command(hass, ws_get_schedule_archive)
@@ -3704,3 +3708,78 @@ async def ws_ambibox_manual(
     except Exception as err:  # noqa: BLE001 — die Meldung gehört ins Panel
         _LOGGER.exception("Ambibox: manueller Test fehlgeschlagen")
         connection.send_result(msg["id"], {"success": False, "error": str(err)})
+
+
+# ----------------------------------------------------------------------
+# Diagnose der Ansteuerung (diagnose.py)
+# ----------------------------------------------------------------------
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "eeg_optimizer/get_diagnose",
+        vol.Optional("protokoll"): bool,
+    }
+)
+@websocket_api.async_response
+async def ws_get_diagnose(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict,
+) -> None:
+    """Zustand der Diagnose: je Bereich das letzte Ergebnis, live der Lauf.
+
+    Mit ``protokoll: true`` das vollständige Protokoll des letzten Laufs
+    (Messreihen, Stellwerte, Einstellungen) — für den Download im Panel.
+    """
+    entry, data = _get_entry_data(hass, connection, msg)
+    if entry is None:
+        return
+    diagnose = data.get("diagnose")
+    if diagnose is None:
+        connection.send_result(msg["id"], {"verfuegbar": False})
+        return
+    inverter = data.get("inverter")
+    result = diagnose.status(mit_protokoll=bool(msg.get("protokoll")))
+    result["verfuegbar"] = bool(
+        inverter is not None and getattr(inverter, "supports_schedule_control", False)
+    )
+    connection.send_result(msg["id"], result)
+
+
+@websocket_api.require_admin
+@websocket_api.websocket_command({vol.Required("type"): "eeg_optimizer/diagnose_start"})
+@websocket_api.async_response
+async def ws_diagnose_start(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict,
+) -> None:
+    """Diagnose starten. Schaltet die Optimierung für die Dauer aus."""
+    entry, data = _get_entry_data(hass, connection, msg)
+    if entry is None:
+        return
+    diagnose = data.get("diagnose")
+    if diagnose is None:
+        connection.send_result(
+            msg["id"], {"success": False, "error": "Diagnose nicht verfügbar."}
+        )
+        return
+    ok, meldung = diagnose.async_start()
+    connection.send_result(
+        msg["id"], {"success": ok, "message" if ok else "error": meldung}
+    )
+
+
+@websocket_api.websocket_command({vol.Required("type"): "eeg_optimizer/diagnose_stop"})
+@websocket_api.async_response
+async def ws_diagnose_stop(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict,
+) -> None:
+    """Laufende Diagnose abbrechen — sie gibt danach selbst frei."""
+    entry, data = _get_entry_data(hass, connection, msg)
+    if entry is None:
+        return
+    diagnose = data.get("diagnose")
+    abgebrochen = bool(diagnose is not None and diagnose.abbrechen())
+    connection.send_result(msg["id"], {"success": abgebrochen})

@@ -2324,6 +2324,43 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         await override.async_load()
         data["override"] = override
 
+        # Diagnose der Ansteuerung (Einstellungen → System): probiert jeden
+        # Schreibweg einmal aus und misst die Wirkung. Ergebnis je Bereich
+        # persistent, das Protokoll des letzten Laufs geht an die Telemetrie.
+        from .diagnose import AnsteuerungsDiagnose, befunde, fuer_telemetrie
+
+        async def _diagnose_melden(protokoll: dict) -> None:
+            if not (
+                _telemetry_an()
+                and reporter.is_configured
+                and telemetry_buffer.identity_known()
+            ):
+                return
+            for befund in befunde(protokoll):
+                _emit_failure_dedup(
+                    category="diagnose",
+                    severity="error",
+                    message_hash=f"diagnose_{befund['bereich']}: {befund['art']}",
+                    # Jeder Lauf zählt: Nach einer Korrektur wird gleich
+                    # wieder getestet, und genau dieser Lauf soll ankommen.
+                    dedup_window_s=0,
+                    context={
+                        "inverter_type": config.get(CONF_INVERTER_TYPE),
+                        **befund,
+                    },
+                )
+            try:
+                await reporter.send_diagnose(fuer_telemetrie(protokoll))
+            except Exception:  # noqa: BLE001 — Telemetrie darf nichts kippen
+                _LOGGER.debug("Telemetry: Diagnose nicht gesendet", exc_info=True)
+
+        diagnose = AnsteuerungsDiagnose(
+            hass, entry.entry_id, data, bei_ende=_diagnose_melden
+        )
+        await diagnose.async_load()
+        data["diagnose"] = diagnose
+        data["diagnose_laeuft"] = False
+
         # Telemetrie-Hooks im Closure-Scope für späteren Zugriff (Tests)
         data["_check_sensor_unavailability"] = _check_sensor_unavailability
         data["_check_forecast_streak"] = _check_forecast_streak
@@ -2466,6 +2503,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     _LOGGER.exception("Override: Auswertung fehlgeschlagen")
             if pause_bis is not None:
                 mode = MODE_AUS
+
+            if data.get("diagnose_laeuft"):
+                # Die Diagnose schreibt gerade selbst an den Wechselrichter.
+                # Der Executor bliebe im Modus Aus nicht still — er nähme
+                # Deckel und Limits zurück, die der Test gerade prüft.
+                current_executor.last_status = "Diagnose läuft — der Fahrplan steuert nicht"
+                status = current_executor.status()
+                status["override"] = override_info
+                status_sensor = data.get("decision_sensor")
+                if status_sensor is not None:
+                    status_sensor.update_from_executor(status)
+                return
 
             await current_executor.async_guard_cycle(
                 schedule_state, mode, pause_bis=pause_bis, pause_soc_pct=pause_soc_pct
@@ -3322,6 +3371,14 @@ async def _stilllegen(data: dict) -> None:
     Befehl hinterher.
     """
     data["stopping"] = True
+    # Eine laufende Diagnose bricht ab und gibt selbst frei; auf sie warten,
+    # bevor die eigentliche Freigabe unten läuft.
+    diagnose = data.get("diagnose")
+    if diagnose is not None:
+        try:
+            await diagnose.async_stilllegen(GUARD_STOPP_WARTEN_S)
+        except Exception:  # noqa: BLE001
+            _LOGGER.exception("EEG Energy Optimizer: Diagnose nicht sauber beendet")
     executor = data.get("executor")
     if executor is not None:
         executor.stilllegen()

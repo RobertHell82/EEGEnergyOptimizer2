@@ -131,6 +131,17 @@ class InverterBase(ABC):
         """
         return None
 
+    @property
+    def ladelimit_vom_geraet_gelesen(self) -> bool:
+        """Liest ``async_get_charge_limit_kw`` den Wert wirklich vom Gerät?
+
+        False bei Treibern, die nur ihren eigenen letzten Befehl zurückgeben
+        (SMA: die CmpBMS-Register sagen ohne aktiven Block nichts). Die
+        Diagnose (``diagnose.py``) wertet das Zurücklesen dann nicht als
+        Beweis. Default True.
+        """
+        return True
+
     def get_charge_limit_max_kw(self) -> float | None:
         """Hardware maximum of the charge limit in kW, or None if unknown.
 

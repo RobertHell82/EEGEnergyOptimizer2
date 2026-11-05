@@ -492,6 +492,28 @@ class ScheduleExecutor:
     def stillgelegt(self) -> bool:
         return self._stillgelegt
 
+    def nach_fremdeingriff(self) -> None:
+        """Jemand hat am Executor vorbei direkt am Treiber geschrieben.
+
+        Die Diagnose (``diagnose.py``) setzt Ladelimit, Entladung, Deckel und
+        Netzladung selbst. Danach stimmt nichts von dem, was der Executor zu
+        wissen glaubt — also alles als unbekannt markieren, damit die nächste
+        Freigabe auch einen Deckel aufhebt, den er nie geschrieben hat.
+        """
+        self._written_charge_limit_kw = None
+        self._written_discharge_kw = None
+        self._written_grid_charge_kw = None
+        self._written_target_soc = None
+        self._written_entladedeckel_kw = None
+        self._entladedeckel_offen = bool(
+            getattr(self._inverter, "supports_discharge_limit", False)
+        )
+        self._deckel_warten = 0
+        self._active_kind = None
+        self._release_pending = True
+        self._wirkung_zuruecksetzen()
+        self._deckel_zuruecksetzen()
+
     def _stillgelegt_abbruch(self) -> bool:
         """Wurde während dieses Laufs stillgelegt? Dann nichts mehr schreiben.
 

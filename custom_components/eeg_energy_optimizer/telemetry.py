@@ -254,6 +254,14 @@ class TelemetryReporter:
         if tage:
             await self._send_authed("/v1/forecast", {"days": tage})
 
+    async def send_diagnose(self, protokoll: dict) -> None:
+        """Protokoll eines Diagnoselaufs an /v1/diagnose (siehe diagnose.py).
+
+        Ohne Entitätsnamen und Einstellungen (``diagnose.fuer_telemetrie``).
+        Ein Dict, damit es bei einem Ausfall im Puffer landet.
+        """
+        await self._send_authed("/v1/diagnose", protokoll)
+
     async def send_failure(self, payload: dict) -> None:
         await self._send_authed("/v1/failure", payload)
 

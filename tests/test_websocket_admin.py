@@ -55,6 +55,10 @@ GESICHERT = {
     "eeg_optimizer/telemetry_enable",
     "eeg_optimizer/telemetry_disable",
     "eeg_optimizer/telemetry_forget",
+    # Diagnose: schreibt der Reihe nach jeden Befehl an den Wechselrichter
+    # und schaltet die Optimierung dafür aus — Hardware-Eingriff ohne
+    # Entity-Pendant, wie ambibox_manual.
+    "eeg_optimizer/diagnose_start",
 }
 
 # Bewusst offen. Zwei Gründe, je nach Befehl:
@@ -97,6 +101,10 @@ OFFEN = {
     "eeg_optimizer/get_schedule_archive",
     "eeg_optimizer/get_entity_ids",
     "eeg_optimizer/get_control_state",
+    # Lesend; und der Abbruch nimmt nur zurück (wie clear_override) — er
+    # soll jedem offenstehen, der vor dem Panel steht.
+    "eeg_optimizer/get_diagnose",
+    "eeg_optimizer/diagnose_stop",
 }
 
 

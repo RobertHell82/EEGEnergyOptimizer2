@@ -871,6 +871,14 @@ class EegOptimizerPanel extends HTMLElement {
     // über einen ganzen Tag und ein Archiv-Lesen.
     this._bilanzStatus = null;
     this._bilanzBusy = false;
+    // Diagnose der Ansteuerung (Einstellungen → System): Zustand je Bereich,
+    // live gepollt, solange ein Test läuft. ``_diagnoseDialog`` ist
+    // "start" (Bestätigung vor dem Start) oder "modus" (Hinweis beim
+    // Einschalten, wenn noch nie vollständig geprüft wurde).
+    this._diagnose = null;
+    this._diagnoseBusy = false;
+    this._diagnoseTimer = null;
+    this._diagnoseDialog = null;
     this._peakshareData = null;
     this._peakshareDataLoaded = false;
 
@@ -1287,6 +1295,7 @@ class EegOptimizerPanel extends HTMLElement {
         this._showDialog = null;
         this._overrideDialog = null;
         this._bilanzVerlauf = null;
+        this._diagnoseDialog = null;
         this._render();
         return;
       }
@@ -2213,6 +2222,257 @@ class EegOptimizerPanel extends HTMLElement {
       </div>`;
   }
 
+  // ── Diagnose der Ansteuerung ──────────────────────────────────────
+  async _loadDiagnose() {
+    if (!this._hass) return null;
+    try {
+      this._diagnose = await this._hass.callWS({ type: "eeg_optimizer/get_diagnose" });
+    } catch (e) {
+      console.warn("Diagnose nicht abrufbar:", e);
+      this._diagnose = { verfuegbar: false, fehler: e?.message || String(e) };
+    }
+    // Solange der Test läuft, alle 2 s nachfragen — nur dann, nur in den
+    // Einstellungen (sonst schriebe jede Antwort das Dashboard neu) und
+    // nicht in einer abgehängten Instanz (das globale Flag gehört der
+    // jeweils neuesten). Beim Wiedereinhängen und Öffnen der Einstellungen
+    // geht es von selbst weiter.
+    if (this._diagnoseTimer) { clearTimeout(this._diagnoseTimer); this._diagnoseTimer = null; }
+    if (this._diagnose?.laeuft && this.isConnected && this._view === "settings") {
+      this._diagnoseTimer = setTimeout(() => {
+        this._diagnoseTimer = null;
+        this._loadDiagnose();
+      }, 2000);
+    }
+    this._render();
+    return this._diagnose;
+  }
+
+  async _diagnoseStarten() {
+    if (this._diagnoseBusy || !this._hass) return;
+    this._diagnoseBusy = true;
+    this._diagnoseDialog = null;
+    this._render();
+    try {
+      const res = await this._hass.callWS({ type: "eeg_optimizer/diagnose_start" });
+      if (!res?.success) this._showToast(res?.error || "Diagnose konnte nicht starten.");
+    } catch (e) {
+      this._showToast(`Diagnose konnte nicht starten: ${e?.message || e}`);
+    } finally {
+      this._diagnoseBusy = false;
+      await this._loadDiagnose();
+    }
+  }
+
+  async _diagnoseAbbrechen() {
+    if (!this._hass) return;
+    try {
+      await this._hass.callWS({ type: "eeg_optimizer/diagnose_stop" });
+    } catch (e) {
+      console.warn("Diagnose-Abbruch fehlgeschlagen:", e);
+    }
+    await this._loadDiagnose();
+  }
+
+  async _diagnoseHerunterladen() {
+    if (!this._hass) return;
+    try {
+      const res = await this._hass.callWS({ type: "eeg_optimizer/get_diagnose", protokoll: true });
+      const protokoll = res?.letztes;
+      if (!protokoll) { this._showToast("Es gibt noch kein Diagnoseprotokoll."); return; }
+      const datei = {
+        ...protokoll,
+        // Zum Weitergeben: der Stand aller Bereiche, nicht nur dieses Laufs.
+        bereiche_gesamt: res.bereiche,
+        heruntergeladen: new Date().toISOString(),
+      };
+      const blob = new Blob([JSON.stringify(datei, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const stempel = (protokoll.gestartet || "").replace(/[-:]/g, "").slice(0, 13).replace("T", "-");
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `eeg-diagnose-${stempel || "protokoll"}.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 10000);
+    } catch (e) {
+      this._showToast(`Protokoll nicht abrufbar: ${e?.message || e}`);
+    }
+  }
+
+  // Einschalten aus dem Dashboard: Wurde die Ansteuerung nie vollständig
+  // geprüft (oder läuft der Test gerade), erst ein Hinweis — sonst sofort.
+  async _modusEinMitHinweis() {
+    // Immer frisch: Ein Test kann auf einem anderen Gerät laufen oder dort
+    // längst bestanden sein — der Stand hier ist nur so alt wie der letzte
+    // Besuch der Einstellungen.
+    const diag = await this._loadDiagnose();
+    if (diag?.verfuegbar && (diag.laeuft || diag.nie_vollstaendig)) {
+      this._diagnoseDialog = "modus";
+      this._render();
+      return;
+    }
+    this._modusSetzen("Ein");
+  }
+
+  _modusSetzen(modus) {
+    this._hass.callService("select", "select_option", {
+      entity_id: this._entityIds?.select || "select.eeg_energy_optimizer_optimizer",
+      option: modus,
+    });
+  }
+
+  _diagnoseErgebnisChip(ergebnis) {
+    const ART = {
+      ok: ["mdi:check-circle", "var(--success-color,#43a047)", "bestanden"],
+      teilweise: ["mdi:circle-half-full", "var(--warning-color,#ff9800)", "teilweise"],
+      unklar: ["mdi:help-circle", "var(--warning-color,#ff9800)", "unklar"],
+      fehler: ["mdi:close-circle", "var(--error-color,#db4437)", "fehlgeschlagen"],
+      uebersprungen: ["mdi:minus-circle-outline", "var(--secondary-text-color)", "übersprungen"],
+      abgebrochen: ["mdi:stop-circle-outline", "var(--secondary-text-color)", "abgebrochen"],
+    };
+    const [icon, farbe, text] = ART[ergebnis] || ["mdi:circle-outline", "var(--secondary-text-color)", "noch nie geprüft"];
+    return `<span style="display:inline-flex;align-items:center;gap:4px;color:${farbe};white-space:nowrap">`
+      + `<ha-icon icon="${icon}" style="--mdc-icon-size:16px"></ha-icon>${text}</span>`;
+  }
+
+  _diagnoseZeit(iso) {
+    if (!iso) return "";
+    const t = new Date(iso);
+    if (isNaN(t)) return "";
+    const pad = (n) => String(n).padStart(2, "0");
+    return `${pad(t.getDate())}.${pad(t.getMonth() + 1)}. ${pad(t.getHours())}:${pad(t.getMinutes())}`;
+  }
+
+  _diagnoseKarte() {
+    const g = this._diagnose;
+    const esc = (x) => this._escapeHtml(x == null ? "" : String(x));
+    const titel = `<h3 class="settings-karte-titel" style="margin:0 0 8px">Ansteuerung prüfen</h3>`;
+    if (!g) {
+      return `<div class="card" style="margin-bottom:16px">${titel}
+        <div class="help-text">Wird geladen…</div></div>`;
+    }
+    if (!g.verfuegbar) {
+      return `<div class="card" style="margin-bottom:16px">${titel}
+        <div class="help-text">${g.fehler ? `Nicht abrufbar: ${esc(g.fehler)}` : "Dieser Wechselrichter wird nicht gesteuert — es gibt keine Schreibbefehle zu prüfen."}</div></div>`;
+    }
+    const admin = this._hass?.user?.is_admin !== false;
+    const fmt = (v, d = 2) => (v == null ? "–" : Number(v).toLocaleString("de-AT", { minimumFractionDigits: d, maximumFractionDigits: d }));
+
+    // Liste statt Tabelle: Auf 360 px blieb neben Titel und Ergebnis für den
+    // Text keine Spalte übrig. Titel und Ergebnis in einer Zeile, Zeit und
+    // Text darunter über die volle Breite.
+    const zeilen = (g.reihenfolge || Object.keys(g.bereiche || {})).map((b) => {
+      const e = g.bereiche?.[b] || {};
+      const zeit = e.zeit ? this._diagnoseZeit(e.zeit) : "";
+      const unter = `${zeit ? `${zeit} · ` : ""}${esc(e.text || "")}`;
+      return `<div style="padding:6px 0;border-top:1px solid var(--divider-color)">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
+          <span style="font-weight:500">${esc(e.titel || b)}</span>
+          ${this._diagnoseErgebnisChip(e.ergebnis)}
+        </div>
+        ${unter ? `<div style="color:var(--secondary-text-color);font-size:12px;margin-top:2px">${unter}</div>` : ""}
+      </div>`;
+    }).join("");
+
+    let laufBlock = "";
+    if (g.laeuft) {
+      const p = g.probe || {};
+      const sch = g.schritt;
+      const schritte = (g.lauf?.schritte || []).map((s) => `
+        <li style="display:flex;gap:8px;align-items:baseline;padding:2px 0">
+          ${s.ergebnis ? this._diagnoseErgebnisChip(s.ergebnis)
+            : `<span style="color:var(--primary-color);white-space:nowrap"><ha-icon icon="mdi:progress-clock" style="--mdc-icon-size:16px"></ha-icon> läuft</span>`}
+          <span>${esc(s.titel)}${s.text ? ` <small style="color:var(--secondary-text-color)">— ${esc(s.text)}</small>` : ""}</span>
+        </li>`).join("");
+      laufBlock = `
+        <div style="margin-top:12px;padding:12px;border-radius:8px;background:var(--secondary-background-color,rgba(127,127,127,.08))">
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
+            <strong>Diagnose läuft — die Optimierung ist so lange aus</strong>
+            <button class="btn-secondary" data-action="diagnose-stop">Abbrechen</button>
+          </div>
+          ${sch ? `<div style="margin-top:8px;font-size:13px">Jetzt: <strong>${esc(sch.titel)}</strong>${sch.erwartung ? ` — erwartet: ${esc(sch.erwartung)}` : ""}</div>` : ""}
+          <div style="display:flex;gap:14px;flex-wrap:wrap;margin-top:8px;font-size:13px;font-variant-numeric:tabular-nums">
+            <span>Ladestand <strong>${p.soc == null ? "–" : Math.round(p.soc) + " %"}</strong></span>
+            <span>PV <strong>${fmt(p.pv)} kW</strong></span>
+            <span>Batterie <strong>${fmt(p.batt)} kW</strong></span>
+            <span>Netz <strong>${fmt(p.netz)} kW</strong></span>
+            <span>Haus <strong>${fmt(p.haus)} kW</strong></span>
+          </div>
+          <div class="help-text" style="margin-top:4px">Batterie + = laden, Netz + = Einspeisung.</div>
+          <ol style="list-style:none;margin:10px 0 0;padding:0;font-size:13px">${schritte}</ol>
+        </div>`;
+    }
+
+    let letzterBlock = "";
+    const l = g.letztes;
+    if (l && !g.laeuft) {
+      const modus = l.modus_vorher === "Ein"
+        ? (l.modus_wiederhergestellt
+          ? "Die Optimierung ist wieder eingeschaltet."
+          : "<strong>Die Optimierung ist aus</strong> — bitte im Dashboard wieder einschalten, wenn alles passt.")
+        : "";
+      letzterBlock = `
+        <div style="margin-top:12px;font-size:13px;line-height:1.5">
+          Letzter Lauf: ${this._diagnoseZeit(l.gestartet)} · ${this._diagnoseErgebnisChip(l.ergebnis)}
+          ${l.abbruch_grund ? `<div style="color:var(--secondary-text-color)">Grund: ${esc(l.abbruch_grund)}</div>` : ""}
+          ${modus ? `<div>${modus}</div>` : ""}
+        </div>`;
+    }
+
+    const knoepfe = `
+      <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:12px">
+        ${!g.laeuft && admin ? `<button class="btn-primary" data-action="diagnose-start-frage" ${this._diagnoseBusy ? "disabled" : ""}>Diagnose starten</button>` : ""}
+        ${l && !g.laeuft ? `<button class="btn-secondary" data-action="diagnose-download">Protokoll herunterladen</button>` : ""}
+      </div>
+      ${!admin ? `<div class="help-text" style="margin-top:6px">Starten kann nur ein Administrator.</div>` : ""}`;
+
+    return `
+      <div class="card" style="margin-bottom:16px">
+        ${titel}
+        <div class="help-text" style="margin-bottom:10px">Schickt der Reihe nach jeden Steuerbefehl an den Wechselrichter — Ladelimit, Zwangsentladung, Freigabe, Entladedeckel, Netzladung — und misst, ob er ankommt und wirkt. Dauert etwa 5 bis 15 Minuten. Was sich prüfen lässt, hängt von der Tageszeit ab: Das Ladelimit braucht PV-Überschuss, der Entladedeckel ein Haus, das mehr braucht, als die PV liefert. Ein Bereich, der jetzt nicht prüfbar ist, behält sein letztes Ergebnis.</div>
+        <div class="diagnose-bereiche" style="font-size:13px">${zeilen}</div>
+        ${laufBlock}
+        ${letzterBlock}
+        ${knoepfe}
+        <div class="help-text" style="margin-top:8px">Das Protokoll enthält Befehle, Antworten und Messreihen — schick es bei Problemen mit. Mit eingeschalteter Datenübermittlung geht es automatisch mit.</div>
+      </div>`;
+  }
+
+  _renderDiagnoseDialog() {
+    if (!this._diagnoseDialog) return "";
+    if (this._diagnoseDialog === "start") {
+      return `
+        <div class="dialog-overlay">
+          <div class="dialog-card" style="max-width:460px">
+            <h3 style="margin:0 0 10px">Diagnose starten?</h3>
+            <p style="font-size:14px;line-height:1.5;margin:0 0 8px">Die Optimierung wird für die Dauer des Tests <strong>ausgeschaltet</strong> und danach wieder in den vorigen Modus gestellt. Der Test schreibt kleine Leistungen (etwa 1 kW über dem, was das Haus gerade braucht) für jeweils bis zu zwei Minuten: Laden sperren, ins Netz entladen, Entladung deckeln und kurz aus dem Netz laden.</p>
+            <p style="font-size:13px;line-height:1.5;color:var(--secondary-text-color);margin:0">Das kostet höchstens ein paar Cent. Abbrechen geht jederzeit — danach wird alles freigegeben.</p>
+            <div style="display:flex;gap:12px;margin-top:18px">
+              <button class="btn-secondary" data-action="diagnose-dialog-close" style="flex:1;padding:12px">Abbrechen</button>
+              <button class="btn-primary" data-action="diagnose-start" style="flex:1;padding:12px">Starten</button>
+            </div>
+          </div>
+        </div>`;
+    }
+    const laeuft = this._diagnose?.laeuft;
+    return `
+      <div class="dialog-overlay">
+        <div class="dialog-card" style="max-width:460px">
+          <h3 style="margin:0 0 10px">${laeuft ? "Die Diagnose läuft gerade" : "Ansteuerung noch nicht geprüft"}</h3>
+          <p style="font-size:14px;line-height:1.5;margin:0">${laeuft
+            ? "Einschalten bricht den laufenden Test ab."
+            : "Es wurde noch nicht jeder Steuerbefehl erfolgreich geprüft. Vor dem Einschalten lohnt sich ein Durchlauf der Diagnose unter <em>Einstellungen → System → Ansteuerung prüfen</em> — er zeigt, ob der Wechselrichter die Befehle wirklich umsetzt."}</p>
+          <div style="display:flex;gap:10px;margin-top:18px;flex-wrap:wrap">
+            <button class="btn-secondary" data-action="diagnose-dialog-close" style="flex:1;padding:12px">Abbrechen</button>
+            ${laeuft ? "" : `<button class="btn-secondary" data-action="diagnose-oeffnen" style="flex:1;padding:12px">Zur Diagnose</button>`}
+            <button class="btn-primary" data-action="diagnose-trotzdem-ein" style="flex:1;padding:12px">Trotzdem einschalten</button>
+          </div>
+        </div>
+      </div>`;
+  }
+
+
   async _loadOemagTarif(refresh = false) {
     if (this._oemagBusy || !this._hass) {
       // Ohne hass gab es keinen Versuch — die Sperre darf nicht stehen bleiben.
@@ -2258,6 +2518,7 @@ class EegOptimizerPanel extends HTMLElement {
         // Umschalter eine Behauptung.
         if (this._oemagStatus === null) this._loadOemagTarif();
         this._loadArchivStatus();
+        this._loadDiagnose();
         // Installierte Prognose-Integrationen für die Quellenwahl — nur
         // lesen; _checkPrerequisites würde den Assistenten vorbelegen.
         if (!this._prerequisites && this._hass) {
@@ -2494,13 +2755,41 @@ class EegOptimizerPanel extends HTMLElement {
       case "toggle-mode": {
         const modeState = this._readState(this._entityIds?.select || "select.eeg_energy_optimizer_optimizer");
         const currentMode = modeState ? modeState.state : "Aus";
-        const newMode = currentMode === "Ein" ? "Aus" : "Ein";
-        this._hass.callService("select", "select_option", {
-          entity_id: this._entityIds?.select || "select.eeg_energy_optimizer_optimizer",
-          option: newMode
-        });
+        if (currentMode === "Ein") this._modusSetzen("Aus");
+        else this._modusEinMitHinweis();
         break;
       }
+      case "diagnose-start-frage":
+        this._diagnoseDialog = "start";
+        this._render();
+        break;
+      case "diagnose-start":
+        this._diagnoseStarten();
+        break;
+      case "diagnose-stop":
+        this._diagnoseAbbrechen();
+        break;
+      case "diagnose-download":
+        this._diagnoseHerunterladen();
+        break;
+      case "diagnose-dialog-close":
+        this._diagnoseDialog = null;
+        this._render();
+        break;
+      case "diagnose-trotzdem-ein":
+        this._diagnoseDialog = null;
+        this._modusSetzen("Ein");
+        // Läuft die Diagnose, bricht sie am Moduswechsel ab — nachladen.
+        setTimeout(() => this._loadDiagnose(), 1500);
+        this._render();
+        break;
+      case "diagnose-oeffnen":
+        this._diagnoseDialog = null;
+        this._handleAction("open-settings", {});
+        this._settingsTab = "system";
+        this._savePref("settings_tab", "system");
+        this._render();
+        break;
       case "select-settings-forecast": {
         // Einstellungen: Quellenkarte statt Auswahlliste. Nur ein echter
         // Wechsel belegt die Sensoren neu — ein Klick auf die schon gewählte
@@ -10093,6 +10382,8 @@ class EegOptimizerPanel extends HTMLElement {
               Stellt den Optimizer auf <strong>Ein</strong> — ab dann steuert er deinen Speicher.
               Ohne Haken bleibt er auf <strong>Aus</strong>: Er rechnet und zeigt den Fahrplan,
               schreibt aber nichts an den Wechselrichter. Umschalten kannst du jederzeit im Dashboard.
+              Ob der Wechselrichter die Befehle wirklich umsetzt, zeigt danach
+              <em>Einstellungen → System → Ansteuerung prüfen</em>.
             </span>
           </span>
         </label>
@@ -10411,6 +10702,7 @@ class EegOptimizerPanel extends HTMLElement {
           <div class="help-text">Wie weit zurück der Verbrauch gemittelt wird. Gemittelt wird über zwei Gruppen — Werktage (Mo–Fr) und Wochenende samt Feiertagen —, nicht über einzelne Wochentage: Vier Wochen ergeben so rund 20 Vergleichswerte je Werktagsstunde, und ein einzelner Ausreißer wie eine E-Auto-Ladung fällt kaum mehr auf. Der höchste Wert je Stunde wird zusätzlich verworfen.</div>
         </div>
       </div>` : ""}
+      ${this._diagnoseKarte()}
       ${this._ansichtKarte()}
       ${this._sensorUebersichtKarte(d)}
       ${this._renderTelemetrySection()}
@@ -10578,6 +10870,7 @@ class EegOptimizerPanel extends HTMLElement {
               <li><strong>Bilanztag</strong> (einmal täglich; nach dem Update einmalig das Archiv bis 400 Tage): die Energiemengen der Einspeise-Karte — eingespeist, davon aus der Batterie und an die Gemeinschaft, PV, Netzbezug, Haus- und Heizstabverbrauch, Eigenverbrauch, Anteil im Modus Ein, ob die Batterie wie im Standardbetrieb lief, ob der Gemeinschaftsanteil aus der Abnahmequote stammt, die höchste Viertelstunde Netzbezug mit Uhrzeit, dieselben Mengen im simulierten Standardbetrieb. Keine Geldbeträge</li>
               <li><strong>Prognosetag</strong> (einmal täglich, nur mit Prognosevergleich oder eigener Prognose; nach dem Update einmalig das Archiv bis 400 Tage): gemessene PV-Erzeugung und die Morgenprognosen der Fremdquelle (mit ihrem Namen, z. B. Solcast) und der eigenen Berechnung (mit und ohne Kalibrierung), als Tagessumme mit mittlerer Abweichung und in Halbstunden, dazu wann die Prognosen festgehalten wurden und ob der Tag vollständig gemessen bzw. erst spät festgehalten ist</li>
                 <li><strong>Tagesbilanz</strong> (einmal täglich): PV-Erzeugung, Verbrauch und Einspeisung des Vortags, höchste Leistung, Ladestand am Anfang und Ende, PV- und Verbrauchsprognose für denselben Tag aus dem Fahrplan des Vorabends und dem von zwei Tagen davor</li>
+                <li><strong>Diagnoselauf</strong> (nur nach einer von Hand gestarteten Diagnose der Ansteuerung): gesendete Befehle und die Antwort des Wechselrichters, zurückgelesene Stellwerte (ohne Entity-IDs), die Messreihe je Schritt (Ladestand, PV-, Batterie-, Netz- und Hausleistung) und das Ergebnis je Bereich</li>
             </ul>
             <strong>Nicht übermittelt:</strong>
             <ul style="margin:6px 0 10px 18px;padding:0">
@@ -12914,6 +13207,7 @@ class EegOptimizerPanel extends HTMLElement {
     content += this._renderDialog();
     content += this._renderOverrideDialog();
     content += this._renderBilanzVerlauf();
+    content += this._renderDiagnoseDialog();
 
     this._shadow.innerHTML = `
       <style>
@@ -13598,6 +13892,7 @@ class EegOptimizerPanel extends HTMLElement {
       window.removeEventListener("scroll", this._onScrollHide, { capture: true });
     }
     if (this._resizeTimer) { clearTimeout(this._resizeTimer); this._resizeTimer = null; }
+    if (this._diagnoseTimer) { clearTimeout(this._diagnoseTimer); this._diagnoseTimer = null; }
     this._stopTelemetryRefresh();
   }
 
@@ -13613,6 +13908,9 @@ class EegOptimizerPanel extends HTMLElement {
       console.info("EEG Energy Optimizer: panel reattached, refreshing");
       this._loadConfigPending = false;
       this._loadConfigWithRetry();
+      // Eine laufende Diagnose weiter verfolgen — das Abhängen hat ihren
+      // Abfrage-Timer abgeräumt.
+      if (this._diagnose?.laeuft) this._loadDiagnose();
     }
     // Start watchdog
     this._startWatchdog();
