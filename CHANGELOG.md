@@ -12,6 +12,17 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+## [2.1.71] - 2026-11-05
+
+### Behoben
+
+- **Diagnose: Ein Befehl, der nicht sofort wirkte, war „unklar“.** Der erste echte Lauf (Traun, Huawei, 05.11.) zeigte eine Zwangsentladung, die genau tat, was sie sollte: Die Batterie gab 0,97 kW ab, die Einspeisung stieg von 3,38 auf 4,33 kW. Im Messwert kam das nach rund 35 Sekunden an, weil die Huawei-Sensoren nur alle 30 Sekunden kommen. Die Beobachtung endete nach drei erfüllten Messungen, das Urteil verlangte aber vier, und davor lag eine ohne Wirkung. So wäre auf jedem Gerät mit Verzögerung fast jede Prüfung „unklar“ geworden. Beide verwenden jetzt dieselbe Regel.
+- **Diagnose: treffendere Hinweise.** Bei voller Batterie heißt es jetzt „Batterie ist voll – bei niedrigerem Ladestand wiederholen“ statt „zur Mittagszeit wiederholen“, auch wenn gerade Mittag ist. Beim Entladedeckel steht da, dass die PV das Haus deckt oder die Batterie am Mindest-Ladestand steht. Nach einer Freigabe wartet das Zurücklesen, bis der Wechselrichter das zurückgesetzte Ladelimit meldet; beim Huawei stand direkt danach noch der alte Wert.
+
+### Geändert
+
+- **Diagnose: neue Fortschrittsanzeige.** Während des Tests zeigt eine Schrittleiste die sechs Bereiche, der laufende dreht sich. Darunter steht in einem Satz, was gerade passiert, etwa „Batterie speist ins Netz – die Einspeisung sollte um etwa 1 kW steigen“, mit einem Zeitbalken und dem Hinweis, ob die Wirkung schon da ist. Der Ladestand erscheint als Batterie mit Füllstand, PV, Batterie, Netz und Haus als Kacheln mit Richtung („lädt“, „speist ein“). Im Ruhezustand stehen die Bereiche als sechs Kacheln da, darüber das Ergebnis des letzten Laufs und darunter nur, was noch offen ist.
+
 ## [2.1.70] - 2026-11-05
 
 ### Hinzugefügt
