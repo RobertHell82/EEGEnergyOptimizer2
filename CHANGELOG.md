@@ -12,6 +12,12 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+## [2.1.70] - 2026-11-05
+
+### Hinzugefügt
+
+- **Diagnose der Ansteuerung.** Ob ein Wechselrichter die Befehle wirklich umsetzt, zeigte bisher erst der Betrieb, Tage später und nur in den Lagen, die der Fahrplan zufällig erzeugte. In Grünbach lief am 21.09. eine Entladung 1¾ Stunden lang „erfolgreich“, ohne dass etwas ins Netz kam, und mehrere Treiberwege (Kostal- und Sigenergy-Deckel, Netzladung außer Huawei, Victron ganz) sind am Gerät noch nie gelaufen. Unter **Einstellungen → System → Ansteuerung prüfen** schickt die Integration jetzt der Reihe nach jeden Steuerbefehl an den Wechselrichter: Ladelimit 0 und 1 kW, Zwangsentladung, Freigabe, Entladedeckel 0 und 0,5 kW und dessen Aufheben, Netzladung. Für jeden Befehl prüft sie drei Dinge: ob er angenommen wurde, ob der Wert danach im Gerät steht und ob sich die gemessene Batterie- und Netzleistung so bewegt, wie er es verlangt. Während des Tests ist die Optimierung aus, danach wird der vorige Modus wiederhergestellt; nach einem Abbruch, Fehler oder Neustart wird immer freigegeben. Was sich gerade nicht prüfen lässt — das Ladelimit braucht PV-Überschuss, der Deckel einen Abend, an dem das Haus mehr braucht als die PV liefert —, wird geschrieben und zurückgelesen, aber als „teilweise“ ausgewiesen, nie als bestanden, und überschreibt kein früheres Ergebnis. Je Bereich sieht man, wann er zuletzt lief und mit welchem Ergebnis; wer die Steuerung einschaltet, bevor jeder Bereich geprüft ist, bekommt einen Hinweis. Das Protokoll mit allen Befehlen, Antworten und Messreihen lässt sich herunterladen und geht mit eingeschalteter Datenübermittlung automatisch mit, ohne Entity-IDs, Einstellungen und Adressen; ein gescheiterter Schritt erscheint in der täglichen Prüfung.
+
 ## [2.1.69] - 2026-11-04
 
 ### Hinzugefügt
