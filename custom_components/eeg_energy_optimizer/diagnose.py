@@ -342,7 +342,16 @@ def pruef_laden_bei(ziel_kw: float) -> Callable[[dict], bool | None]:
         ladung = _ladung(p)
         if ladung is None:
             return None
-        return ziel_kw - GUARD_WIRKUNG_MIN_LUECKE_KW <= ladung <= ziel_kw + LIMIT_TOLERANZ_KW
+        if ladung < ziel_kw - GUARD_WIRKUNG_MIN_LUECKE_KW:
+            # Weniger als das Limit — begrenzt das Limit, geht der Rest ins
+            # Netz. Geht nichts ins Netz, fehlt schlicht der Überschuss (Kostal,
+            # 05.11.2026: Haus sprang auf 3,5 kW, für die Batterie blieben
+            # 0,3 kW). Dann sagt die Probe nichts über das Limit.
+            netz = p.get("netz")
+            if netz is None or netz < FREI_KW:
+                return None
+            return False
+        return ladung <= ziel_kw + LIMIT_TOLERANZ_KW
     return _p
 
 
@@ -352,7 +361,14 @@ def pruef_entladen_bei(ziel_kw: float) -> Callable[[dict], bool | None]:
         entladung = _entladung(p)
         if entladung is None:
             return None
-        return ziel_kw - GUARD_WIRKUNG_MIN_LUECKE_KW <= entladung <= ziel_kw + LIMIT_TOLERANZ_KW
+        if entladung < ziel_kw - GUARD_WIRKUNG_MIN_LUECKE_KW:
+            # Spiegelbild zum Ladelimit: Ohne Netzbezug braucht das Haus
+            # gerade weniger als der Deckel erlaubt — nichts zu sehen.
+            netz = p.get("netz")
+            if netz is None or netz > -FREI_KW:
+                return None
+            return False
+        return entladung <= ziel_kw + LIMIT_TOLERANZ_KW
     return _p
 
 

@@ -1146,9 +1146,23 @@ def test_befunde_treibertext_ganz_ausnahme_nur_typ():
 class TestNeuePruefungen:
     def test_laden_bei(self):
         p = d.pruef_laden_bei(1.0)
-        assert p({"batt": 0.9})
-        assert not p({"batt": 0.0})     # Limit 0 steht noch
-        assert not p({"batt": 2.0})
+        assert p({"batt": 0.9, "netz": 2.0})
+        assert not p({"batt": 0.0, "netz": 3.0})     # Limit 0 steht noch, PV geht ins Netz
+        assert not p({"batt": 2.0, "netz": 0.0})
+
+    def test_laden_bei_ohne_ueberschuss_nicht_bewertbar(self):
+        """Kostal, 05.11.2026: Haus sprang auf 3,5 kW, Batterie nahm die
+        übrigen 0,3 kW, ins Netz ging nichts — das Limit begrenzte nicht."""
+        p = d.pruef_laden_bei(1.0)
+        assert p({"batt": 0.33, "netz": 0.0}) is None
+        werte = [p({"batt": b, "netz": n}) for b, n in [(0.35, 0.02), (0.34, 0.0), (0.27, 0.0), (0.24, -0.01)]]
+        assert d.urteil(werte) == d.NICHT_PRUEFBAR
+
+    def test_entladen_bei_ohne_bezug_nicht_bewertbar(self):
+        p = d.pruef_entladen_bei(0.5)
+        assert p({"batt": -0.1, "netz": 0.0}) is None   # Haus braucht weniger als der Deckel
+        assert p({"batt": -0.1, "netz": -1.5}) is False  # hält zu viel zurück
+        assert p({"batt": -0.5, "netz": -1.0}) is True
 
     def test_entladen_ueber(self):
         p = d.pruef_entladen_ueber(0.75, 2.0)
