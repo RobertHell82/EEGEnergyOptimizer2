@@ -68,6 +68,10 @@ SESSION_STATE_CHARGE_LOOP = 5
 BATTERY_STATES = {0: "Ruhezustand", 1: "Bereit", 2: "Lädt", 3: "Entlädt"}
 BATTERY_STATE_CHARGE = 2
 BATTERY_STATE_DISCHARGE = 3
+SESSION_STATE_LAEDT = 5
+# Ab diesem Betrag zählt Power AC als Energiefluss; darunter liegt der
+# Eigenbedarf der Box (~170 W).
+AMBIBOX_RICHTUNG_SCHWELLE_W = 300
 
 # Obergrenze des Handtests, wenn die Wallbox ihren Stellbereich (Max
 # Charge/Discharge Power) nicht meldet: 11 kW, die Nennleistung der Box.
@@ -378,7 +382,11 @@ class AmbiboxController:
         z.zyklen = mb.read_u32(regs, mb.OFF_CYCLES)
         z.zeit_bis_voll_s = mb.read_u32(regs, mb.OFF_TIME_TO_FULL)
 
-        # Leistung als Betrag, Richtung aus dem Batteriezustand
+        # Leistung als Betrag. Die Richtung kommt aus dem Batteriezustand,
+        # wenn das Fahrzeug ihn meldet, sonst aus dem Vorzeichen von Power AC
+        # (positiv = Rückspeisen). Ansfelden, 05.11.2026: Der Skoda meldete
+        # durchgehend Battery State 0, Power AC stand beim Rückspeisen auf
+        # +4970 W, im Leerlauf auf −170 W (Eigenbedarf der Box).
         leistung_w = mb.read_i32(regs, mb.OFF_POWER_AC)
         z.leistung_kw = None if leistung_w is None else round(abs(leistung_w) / 1000.0, 3)
         battery_state = mb.read_u32(regs, mb.OFF_BATTERY_STATE)
@@ -388,12 +396,21 @@ class AmbiboxController:
             z.richtung = "laden"
         elif battery_state == BATTERY_STATE_DISCHARGE:
             z.richtung = "entladen"
+        elif battery_state in (None, 0) and leistung_w is not None and (
+            abs(leistung_w) >= AMBIBOX_RICHTUNG_SCHWELLE_W
+        ):
+            z.richtung = "entladen" if leistung_w > 0 else "laden"
         else:
             z.richtung = "aus"
             # Ohne Ladevorgang ist eine Restleistung Messrauschen der
             # Ladeelektronik, kein Energiefluss ins Auto.
-            if z.leistung_kw is not None and z.leistung_kw < 0.05:
+            if z.leistung_kw is not None and z.leistung_kw < AMBIBOX_RICHTUNG_SCHWELLE_W / 1000:
                 z.leistung_kw = 0.0
+
+        # „Lädt" ist der Sitzungszustand der Box (die Ladeschleife läuft),
+        # in beide Richtungen.
+        if z.richtung == "entladen" and session == SESSION_STATE_LAEDT:
+            z.session_text = "Entlädt"
 
         # Stellbereich — für Schritt 2, aber schon jetzt aussagekräftig:
         # daran sieht man, ob die Box das Fahrzeug überhaupt regeln darf.
@@ -555,10 +572,13 @@ class AmbiboxController:
         return ok
 
     async def async_keepalive(self) -> None:
-        """Den Sollwert nachschreiben, solange der Test läuft.
+        """Den laufenden Test überwachen: Zeit, Fahrzeug, Richtung.
 
-        Läuft die Zeit ab, wird gestoppt. Beides gehört zusammen: Der
-        Nachschreib-Takt ist auch die Uhr, die den Test beendet.
+        Der Sollwert wird NICHT nachgeschrieben (Beta-Versuch): Beim
+        Nachschreiben alle 30 s setzte das Auto in Ansfelden (05.11.2026)
+        jede Minute 10–15 s aus, Power AC fiel von 4970 auf −170 W. Ohne
+        Nachschreiben zeigt sich, ob die Pausen verschwinden und ob die Box
+        einen Watchdog hat. Das Ende per Zeitlimit stoppt weiter aktiv.
         """
         if not self.manuell_aktiv or self._treiber is None:
             return
@@ -574,14 +594,8 @@ class AmbiboxController:
             self._manuell_fehler = (
                 "Die Wallbox arbeitet in Gegenrichtung — Vorzeichen-Einstellung prüfen."
             )
-            await self.async_manuell_stopp("Battery State widerspricht der Richtung")
+            await self.async_manuell_stopp("Die Wallbox arbeitet in Gegenrichtung")
             return
-        watt = self._sollwert_watt(self._manuell_richtung or "laden", self._manuell_kw)
-        if not await self._treiber.async_write_target_power(watt):
-            self._manuell_fehler = self._treiber.last_error or "Schreiben fehlgeschlagen"
-            self._melden()
-        else:
-            self._letzter_sollwert_w = watt
 
     def _gegenrichtung(self) -> bool:
         """Meldet die Box nach der Anlaufzeit die entgegengesetzte Richtung?
@@ -594,11 +608,11 @@ class AmbiboxController:
             return False
         if time.time() - self._manuell_seit < AMBIBOX_RICHTUNG_ANLAUF_S:
             return False
-        state = self._zustand.battery_state
+        richtung = self._zustand.richtung
         if self._manuell_richtung == "laden":
-            return state == BATTERY_STATE_DISCHARGE
+            return richtung == "entladen"
         if self._manuell_richtung == "entladen":
-            return state == BATTERY_STATE_CHARGE
+            return richtung == "laden"
         return False
 
     # -- Beobachter -------------------------------------------------------

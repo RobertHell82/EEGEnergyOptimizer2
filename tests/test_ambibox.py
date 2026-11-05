@@ -625,15 +625,35 @@ async def test_laufzeit_wird_gedeckelt():
     assert controller.manuell_restsekunden <= AMBIBOX_MANUAL_MAX_MINUTES * 60
 
 
-async def test_keepalive_schreibt_nach():
-    """Wie lange ein Sollwert ohne Wiederholung gilt, ist unbekannt."""
+async def test_keepalive_schreibt_nicht_nach():
+    """Beta-Versuch: Nachschreiben ließ das Auto jede Minute aussetzen."""
     controller = await _bereiter_controller()
     await controller.async_manuell_start("laden", 3.0, 15)
     controller._treiber.async_write_target_power.reset_mock()
 
     await controller.async_keepalive()
 
-    controller._treiber.async_write_target_power.assert_awaited_once_with(-3000)
+    controller._treiber.async_write_target_power.assert_not_awaited()
+    assert controller.manuell_aktiv
+
+
+@pytest.mark.parametrize("watt, richtung, text", [
+    (4970, "entladen", "Entlädt"),
+    (-4950, "laden", "Lädt"),
+    (-170, "aus", "Lädt"),
+])
+def test_richtung_aus_power_ac_ohne_batteriezustand(watt, richtung, text):
+    """Ansfelden: Battery State bleibt 0, Power AC trägt die Richtung."""
+    z = _deute(_standardblock({
+        mb.OFF_BATTERY_STATE: ("I", 0),
+        mb.OFF_POWER_AC: ("i", watt),
+    }))
+    assert z.richtung == richtung
+    assert z.session_text == text
+    if richtung == "aus":
+        assert z.leistung_kw == 0.0
+    else:
+        assert z.leistung_kw == pytest.approx(abs(watt) / 1000)
 
 
 async def test_keepalive_ohne_laufenden_test_schreibt_nicht():

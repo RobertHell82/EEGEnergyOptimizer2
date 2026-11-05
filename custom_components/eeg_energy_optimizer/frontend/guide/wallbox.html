@@ -101,7 +101,7 @@
 <p>Starten und stoppen dürfen nur <strong>Administratoren</strong> von Home Assistant.</p>
 <p>Vier Sicherungen, weil das Verhalten des Geräts nicht ganz bekannt ist:</p>
 <ul>
-<li><strong>Nachschreiben:</strong> Der Sollwert wird alle 30 Sekunden neu geschrieben.</li>
+<li><strong>Kein Nachschreiben (Beta-Versuch):</strong> Der Sollwert wird einmal geschrieben. Beim Nachschreiben alle 30 Sekunden setzte ein Auto jede Minute für 10–15 Sekunden aus.</li>
 <li><strong>Höchstdauer:</strong> Nach der eingestellten Zeit, spätestens nach 60 Minuten, stoppt der Test von selbst. Er endet auch, wenn das Auto abgesteckt wird.</li>
 <li><strong>Ende mit der Integration:</strong> Wird die Integration beendet oder neu geladen, stoppt der Test.</li>
 <li><strong>Falsche Richtung:</strong> Arbeitet die Wallbox nach einer Minute in die Gegenrichtung (sie entlädt, obwohl du <strong>Laden</strong> gedrückt hast, oder umgekehrt), bricht der Test ab: „Die Wallbox arbeitet in Gegenrichtung — Vorzeichen-Einstellung prüfen.“</li>
@@ -113,7 +113,7 @@
 <h3>Offene Punkte</h3>
 <p>Drei Fragen beantwortet der Hersteller nicht. Dafür gibt es den manuellen Test:</p>
 <ol>
-<li><strong>Wie lange gilt ein Sollwert?</strong> Ob die Ambibox einen Wert ohne Nachschreiben verwirft, ist nicht dokumentiert. Die 30 Sekunden sind bewusst knapp.</li>
+<li><strong>Wie lange gilt ein Sollwert?</strong> Ob die Ambibox einen Wert ohne Nachschreiben verwirft, ist nicht dokumentiert. Die Beta schreibt ihn deshalb nur einmal — hört die Box nach einer Weile von selbst auf, ist das ihr Watchdog.</li>
 <li><strong>Welches Vorzeichen heißt Laden?</strong> Steht nirgends. Die Vorgabe „Negativ = laden" folgt der einzigen bekannten anderen Umsetzung. Bei falscher Richtung bricht der Test nach einer Minute selbst ab. Passiert gar nichts oder kommt diese Meldung, stell das Vorzeichen in den Einstellungen um und teste noch einmal.</li>
 <li><strong>Was macht die Ambibox selbst?</strong> Sie regelt mit ihrem eigenen Energiemanagement (sidOS). Was passiert, wenn der Optimizer gleichzeitig einen Sollwert schreibt, ist nicht beschrieben.</li>
 </ol>
