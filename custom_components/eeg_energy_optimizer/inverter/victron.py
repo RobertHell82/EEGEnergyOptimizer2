@@ -272,6 +272,15 @@ NETZLADEN_SCHRITT_KW = 1.0
 NETZLADEN_SPERRE_TAKTE = 10
 # Darunter ist die Netzladung eine Freigabe (Netzgrenze lässt nichts zu).
 NETZLADEN_MIN_KW = 0.05
+# Über so viele Takte merkt sich die Nachführung die höchste gemessene PV —
+# fällt die PV darunter, während die Batterie am Deckel steht, ist das die
+# Spur einer Abregelung (siehe _naechster_sollwert_w).
+NETZLADEN_PV_FENSTER_TAKTE = 10
+# Der DVCC-Ladestrom ist eine gespeicherte Einstellung des GX-Geräts. Die
+# Planleistung der Netzladung ändert sich jede Minute mit der Hauslast
+# (Netzgrenze) — mit 0,5 A Toleranz wurde er in 14 Minuten neunmal
+# geschrieben (Vienna, 06.11.2026). Gröber nur hier, nicht beim Ladelimit.
+NETZLADEN_LADESTROM_TOLERANZ_A = 2.0
 
 # Entladedeckel (siehe async_set_discharge_limit): Nachführtakt an der
 # DC-PV, Schreibtoleranz (gespeicherte Einstellung), Verluste des Wandlers
@@ -587,8 +596,14 @@ class VictronInverter(InverterBase):
         # Regelzustand: zuletzt geschriebener Sollwert (W), die letzte
         # Anhebung (kW, Batterieladung davor) und die Anhebe-Sperre (Takte).
         self._netz_soll_w = 0.0
-        self._anhebung: tuple[float, float] | None = None
+        # Letzte Anhebung: (kW, Batterie, Netzbezug, PV davor; PV None = unbekannt)
+        self._anhebung: tuple[float, float, float, float | None] | None = None
         self._anheben_gesperrt = 0
+        # Wirksamer DVCC-Deckel der Netzladung in kW (der Ladestrom wird nur
+        # bei >= NETZLADEN_LADESTROM_TOLERANZ_A neu geschrieben) und die PV der
+        # letzten Takte.
+        self._netzladung_deckel_kw: float | None = None
+        self._pv_verlauf: list[float] = []
         # Laufender Entladedeckel der Spitzenkappung (kW Batterie) und der
         # Abmelder seines Nachführtakts — siehe async_set_discharge_limit().
         self._entladedeckel_kw: float | None = None
@@ -870,6 +885,8 @@ class VictronInverter(InverterBase):
 
     def _nachfuehrung_beenden(self) -> None:
         self._netzladung_kw = None
+        self._netzladung_deckel_kw = None
+        self._pv_verlauf = []
         if self._nachfuehr_abmelden is not None:
             try:
                 self._nachfuehr_abmelden()
@@ -1046,9 +1063,15 @@ class VictronInverter(InverterBase):
             maximum = self._attribut("ladestrom", "max")
             if maximum is not None:
                 ampere = min(ampere, maximum)
+            ampere = round(ampere, 1)
             # Erst der Deckel, dann der Bezug — umgekehrt zöge der Multiplus
             # einen Takt lang mit voller Ladeleistung aus dem Netz.
-            await self._setze("ladestrom", round(ampere, 1), LADESTROM_TOLERANZ_A)
+            aktuell = self._lies("ladestrom")
+            await self._setze("ladestrom", ampere, NETZLADEN_LADESTROM_TOLERANZ_A)
+            wirksam = ampere
+            if aktuell is not None and abs(aktuell - ampere) < NETZLADEN_LADESTROM_TOLERANZ_A:
+                wirksam = aktuell
+            self._netzladung_deckel_kw = wirksam * spannung / 1000.0
             if self._netzladung_kw is None:
                 await self._netzbezug_starten(leistung)
             else:
@@ -1085,15 +1108,22 @@ class VictronInverter(InverterBase):
             except Exception:  # noqa: BLE001
                 _LOGGER.warning("Victron: %s nach Fehler nicht zurückgesetzt", key, exc_info=True)
 
-    def _messung(self) -> tuple[float, float] | None:
-        """(Netzbezug, Batterieladung) in kW, None ohne Messung."""
-        from ..power_readings import compute_battery_now_kw, compute_grid_export_kw
+    def _messung(self) -> tuple[float, float, float | None] | None:
+        """(Netzbezug, Batterieladung, PV) in kW, None ohne Netz/Batterie.
+
+        Die PV darf fehlen (None): Dann regelt die Nachführung vorsichtig wie
+        vor 2.1.78 — am Deckel halbieren, „folgt nicht" an der Batterie."""
+        from ..power_readings import (
+            compute_battery_now_kw,
+            compute_grid_export_kw,
+            compute_pv_now_kw,
+        )
 
         export = compute_grid_export_kw(self._hass, self._config)
         batterie = compute_battery_now_kw(self._hass, self._config)
         if export is None or batterie is None:
             return None
-        return -export, batterie
+        return -export, batterie, compute_pv_now_kw(self._hass, self._config)
 
     def _sollwert_w(self, kw: float) -> float:
         watt = round(max(0.0, kw) * 1000.0 / NETZSOLLWERT_TOLERANZ_W) * NETZSOLLWERT_TOLERANZ_W
@@ -1110,60 +1140,93 @@ class VictronInverter(InverterBase):
         nimmt der nächste Takt sie zurück.
         """
         self._netzladung_kw = leistung
+        self._pv_verlauf = []
         messung = self._messung()
         if messung is None:
             soll_kw, batterie = 0.0, None
         else:
-            bezug, batterie = messung
-            soll_kw = bezug + (leistung - batterie) - NETZLADEN_ABSTAND_KW
+            bezug, batterie, pv = messung
+            ziel = min(leistung, self._netzladung_deckel_kw or leistung)
+            soll_kw = bezug + (ziel - batterie) - NETZLADEN_ABSTAND_KW
+            if pv is not None:
+                self._pv_verlauf = [pv]
         watt = self._sollwert_w(soll_kw)
         await self._setze("netzsollwert", watt, NETZSOLLWERT_TOLERANZ_W)
         self._netz_soll_w = watt
         self._anhebung = None
         if messung is not None:
-            self._anhebung = (max(0.0, watt / 1000.0 - bezug), batterie)
+            self._anhebung = (max(0.0, watt / 1000.0 - bezug), batterie, bezug, pv)
         self._anheben_gesperrt = 0
 
-    def _naechster_sollwert_w(self, bezug: float, batterie: float) -> float:
+    def _naechster_sollwert_w(
+        self, bezug: float, batterie: float, pv: float | None = None
+    ) -> float:
         """Der Regelschritt der Netzladung (rein, ohne Schreiben).
 
         Der Sollwert ist nur eine Erlaubnis zum Bezug; die Ladeleistung
         deckelt der DVCC-Strom. Steht er höher, als die Batterie aufnimmt,
-        hält das ESS ihn, indem es die PV abregelt — Bezug statt Sonne. Drei
-        Fälle:
+        hält das ESS ihn, indem es die PV abregelt — Bezug statt Sonne. Was
+        das Netz mehr liefert, geht an genau drei Stellen: Batterie, Haus oder
+        abgeregelte PV. Nur das Letzte ist ein Schaden, und nur das zeigt sich
+        an der gemessenen PV. Drei Fälle:
 
-        * **Batterie am Deckel** (≥ Leistung − 0,1 kW): Ob die PV gerade
-          abgeregelt wird, sieht man nicht. Also rasch zurück: halbieren,
-          mindestens um den Abstand.
-        * **Batterie folgt der letzten Anhebung nicht** (weniger als die
-          Hälfte davon angekommen — Absorptionsphase, Temperatur, Grenze des
-          Ladegeräts): Die Anhebung ging an die Abregelung. Zurücknehmen und
-          ``NETZLADEN_SPERRE_TAKTE`` lang nicht wieder anheben. Ohne diese
-          Sperre zöge der Sollwert hoch, bis alle PV abgeregelt ist.
-        * **Batterie fehlt Leistung**: anheben um das Fehlende bis zur
-          Leistung − Abstand, höchstens ``NETZLADEN_SCHRITT_KW`` je Takt.
+        * **Batterie am Deckel** (>= Deckel − 0,1 kW): zurück um so viel, wie
+          die PV gerade unter ihrem Höchstwert der letzten
+          ``NETZLADEN_PV_FENSTER_TAKTE`` liegt (so viel kann abgeregelt
+          sein), mindestens um den Abstand, höchstens auf die Hälfte. Bis
+          2.1.77 wurde immer halbiert: Bei 0,8 kW PV fiel der Sollwert von
+          5,8 auf 2,9 kW, die Batterie lud 6 Minuten lang 0,6 statt 2,4 kW
+          (Vienna, 06.11.2026). Ohne PV-Messung wird weiter halbiert.
+        * **Nach einer Anhebung:** Fiel die PV um mindestens die Hälfte der
+          Anhebung, ging sie an die Abregelung (Absorption, Temperatur,
+          Grenze des Ladegeräts) — zurücknehmen und ``NETZLADEN_SPERRE_TAKTE``
+          lang nicht wieder anheben. Ohne diese Sperre zöge der Sollwert hoch,
+          bis alle PV abgeregelt ist. Stieg der Bezug noch nicht mit, wird
+          einen Takt gewartet. Was das Haus von der Anhebung nahm, ist kein
+          Fehler — bis 2.1.77 zählte nur die Batterie, und ein Sprung der
+          Hauslast sperrte das Anheben 5 Minuten lang. Ohne PV-Messung gilt
+          die alte Regel (Batterie legte weniger als die Hälfte zu).
+        * **Batterie fehlt Leistung**: anheben um das Fehlende bis zum
+          Deckel − Abstand, höchstens ``NETZLADEN_SCHRITT_KW`` je Takt.
 
         Dazwischen (Batterie im Band knapp unter dem Deckel) bleibt er stehen.
         """
         leistung = float(self._netzladung_kw or 0.0)
+        if self._netzladung_deckel_kw is not None:
+            leistung = min(leistung, self._netzladung_deckel_kw)
         soll = self._netz_soll_w / 1000.0
         anhebung = self._anhebung
         self._anhebung = None
         if self._anheben_gesperrt > 0:
             self._anheben_gesperrt -= 1
+        pv_hoch = max(self._pv_verlauf) if self._pv_verlauf else None
+        if pv is not None:
+            self._pv_verlauf = (self._pv_verlauf + [pv])[-NETZLADEN_PV_FENSTER_TAKTE:]
+        else:
+            self._pv_verlauf = []
         if batterie >= leistung - NETZLADEN_DECKEL_KW:
-            return self._sollwert_w(min(soll - NETZLADEN_ABSTAND_KW, soll / 2.0))
+            if pv is None or pv_hoch is None:
+                return self._sollwert_w(min(soll - NETZLADEN_ABSTAND_KW, soll / 2.0))
+            schritt = min(soll / 2.0, max(NETZLADEN_ABSTAND_KW, pv_hoch - pv))
+            return self._sollwert_w(soll - schritt)
         if anhebung is not None:
-            delta, batterie_vorher = anhebung
-            if delta > 0 and batterie - batterie_vorher < delta / 2.0:
-                self._anheben_gesperrt = NETZLADEN_SPERRE_TAKTE
-                return self._sollwert_w(soll - delta)
+            delta, batterie_vorher, bezug_vorher, pv_vorher = anhebung
+            if delta > 0:
+                if pv is not None and pv_vorher is not None:
+                    if pv_vorher - pv >= delta / 2.0:
+                        self._anheben_gesperrt = NETZLADEN_SPERRE_TAKTE
+                        return self._sollwert_w(soll - delta)
+                    if bezug - bezug_vorher < delta / 2.0:
+                        return self._netz_soll_w  # das ESS zieht noch nach
+                elif batterie - batterie_vorher < delta / 2.0:
+                    self._anheben_gesperrt = NETZLADEN_SPERRE_TAKTE
+                    return self._sollwert_w(soll - delta)
         fehlt = leistung - NETZLADEN_ABSTAND_KW - batterie
         if fehlt > 0 and self._anheben_gesperrt == 0:
             delta = min(fehlt, NETZLADEN_SCHRITT_KW)
             neu = self._sollwert_w(soll + delta)
             if neu - self._netz_soll_w >= NETZLADEN_NACHFUEHR_TOLERANZ_W:
-                self._anhebung = ((neu - self._netz_soll_w) / 1000.0, batterie)
+                self._anhebung = ((neu - self._netz_soll_w) / 1000.0, batterie, bezug, pv)
             return neu
         return self._netz_soll_w
 

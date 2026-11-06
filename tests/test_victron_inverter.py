@@ -891,15 +891,99 @@ class TestNetzladung:
     async def test_nachfuehrung_senkt_den_bezug_wenn_die_pv_reicht(
         self, mock_hass, anlage, soc_beobachter
     ):
-        """Batterie am Deckel: Ob die PV abgeregelt wird, sieht man nicht —
-        also rasch zurück (halbieren), statt 0,2 kW je Takt."""
+        """Batterie am Deckel, die PV fällt um 1,5 kW unter ihren Höchstwert:
+        so viel kann abgeregelt sein — zurück, höchstens auf die Hälfte."""
+        anlage.setze(DC_PV, 3000.0)
+        inv = _netzlader(mock_hass, anlage)
+        await inv.async_set_grid_charge(3.0, 80)
+        [(takt, _)] = soc_beobachter.takte
+        anlage.setze(BATTERIE, 3000.0)
+        anlage.setze(NETZ, 2300.0)
+        anlage.setze(DC_PV, 1500.0)
+        await takt(None)
+        assert anlage.wert(SOLLWERT) == 1150.0
+
+    async def test_am_deckel_ohne_pv_rueckgang_nur_der_abstand(
+        self, mock_hass, anlage, soc_beobachter
+    ):
+        """Vienna, 06.11.2026: 0,8 kW PV, Batterie erreicht den Deckel. Bis
+        2.1.77 wurde der Sollwert halbiert (5,8 → 2,9 kW) und die Batterie
+        lud 6 Minuten 0,6 statt 2,4 kW. Die PV blieb stehen — es wurde
+        nichts abgeregelt, also nur um den Abstand zurück."""
+        anlage.setze(DC_PV, 800.0)
         inv = _netzlader(mock_hass, anlage)
         await inv.async_set_grid_charge(3.0, 80)
         [(takt, _)] = soc_beobachter.takte
         anlage.setze(BATTERIE, 3000.0)
         anlage.setze(NETZ, 2300.0)
         await takt(None)
+        assert anlage.wert(SOLLWERT) == 2100.0
+
+    async def test_am_deckel_ohne_pv_sensor_wird_halbiert(
+        self, mock_hass, anlage, soc_beobachter
+    ):
+        anlage.setze(NETZ, 500.0)
+        anlage.setze(BATTERIE, 1000.0)
+        anlage.setze(SOC, "50")
+        inv = _treiber(
+            mock_hass,
+            **{k: v for k, v in MESSUNG.items() if k != CONF_PV_POWER_SENSOR},
+        )
+        await inv.async_set_grid_charge(3.0, 80)
+        [(takt, _)] = soc_beobachter.takte
+        anlage.setze(BATTERIE, 3000.0)
+        anlage.setze(NETZ, 2300.0)
+        await takt(None)
         assert anlage.wert(SOLLWERT) == 1150.0
+
+    async def test_hauslast_nimmt_die_anhebung_keine_sperre(
+        self, mock_hass, anlage, soc_beobachter
+    ):
+        """Vienna, 06.11.2026: Nach einer Anhebung um 1 kW sprang das Haus um
+        0,8 kW. Die Batterie legte nicht zu, die PV blieb stehen — keine
+        Abregelung. Bis 2.1.77 wurde das zurückgenommen und 5 Minuten
+        gesperrt; jetzt hebt der nächste Takt weiter an."""
+        anlage.setze(DC_PV, 800.0)
+        inv = _netzlader(mock_hass, anlage)
+        await inv.async_set_grid_charge(3.0, 80)  # Sollwert 2,3 kW
+        [(takt, _)] = soc_beobachter.takte
+        anlage.setze(BATTERIE, 1500.0)
+        anlage.setze(NETZ, 2300.0)
+        await takt(None)  # fehlt 1,3 → +1 kW
+        assert anlage.wert(SOLLWERT) == 3300.0
+        anlage.setze(NETZ, 3300.0)  # Bezug folgt, das Haus nimmt ihn
+        await takt(None)
+        assert anlage.wert(SOLLWERT) == 4300.0
+        assert inv._anheben_gesperrt == 0
+
+    async def test_bezug_zieht_noch_nicht_nach_wird_gewartet(
+        self, mock_hass, anlage, soc_beobachter
+    ):
+        anlage.setze(DC_PV, 800.0)
+        inv = _netzlader(mock_hass, anlage)
+        await inv.async_set_grid_charge(3.0, 80)
+        [(takt, _)] = soc_beobachter.takte
+        anlage.setze(BATTERIE, 1500.0)
+        anlage.setze(NETZ, 2300.0)
+        await takt(None)
+        assert anlage.wert(SOLLWERT) == 3300.0
+        await takt(None)  # Netz noch bei 2,3 kW: ESS zieht nach
+        assert anlage.wert(SOLLWERT) == 3300.0
+        assert inv._anheben_gesperrt == 0
+
+    async def test_kleine_aenderung_schreibt_den_ladestrom_nicht(
+        self, mock_hass, anlage, soc_beobachter
+    ):
+        """Der DVCC-Strom ist eine gespeicherte Einstellung: Er wurde in 14
+        Minuten neunmal geschrieben, weil sich die Planleistung mit der
+        Hauslast jede Minute ändert (Vienna, 06.11.2026)."""
+        inv = _netzlader(mock_hass, anlage)
+        await inv.async_set_grid_charge(3.0, 80)  # 57,0 A
+        await inv.async_set_grid_charge(3.05, 80)  # 58,0 A
+        assert [w for e, w in _schreibvorgaenge(mock_hass) if e == LADESTROM] == [57.0]
+        assert inv._netzladung_deckel_kw == pytest.approx(57.0 * 52.6 / 1000.0)
+        await inv.async_set_grid_charge(3.2, 80)  # 60,8 A
+        assert [w for e, w in _schreibvorgaenge(mock_hass) if e == LADESTROM] == [57.0, 60.8]
 
     async def test_nachfuehrung_hebt_den_bezug_wenn_die_pv_nachlaesst(
         self, mock_hass, anlage, soc_beobachter
@@ -1037,18 +1121,22 @@ class TestNetzladung:
     ):
         """Absorptionsphase: Die Batterie nimmt nur 1,5 kW, das ESS hält den
         Sollwert durch Abregeln der PV. Ohne Sperre stiege er Takt für Takt,
-        bis alle PV abgeregelt wäre."""
+        bis alle PV abgeregelt wäre. Die Abregelung zeigt sich an der PV."""
+        anlage.setze(DC_PV, 3000.0)
         inv = _netzlader(mock_hass, anlage)
         await inv.async_set_grid_charge(3.0, 80)  # Sollwert 2,3 kW
         [(takt, _)] = soc_beobachter.takte
         anlage.setze(BATTERIE, 1500.0)
         sollwerte = []
         for _ in range(30):
-            anlage.setze(NETZ, anlage.wert(SOLLWERT))  # ESS hält den Sollwert
+            soll = anlage.wert(SOLLWERT)
+            anlage.setze(NETZ, soll)  # ESS hält den Sollwert …
+            anlage.setze(DC_PV, 3000.0 - max(0.0, soll - 2300.0))  # … und regelt ab
             await takt(None)
             sollwerte.append(anlage.wert(SOLLWERT))
-        assert max(sollwerte) <= 2300.0
-        assert sollwerte[0] == 500.0  # Anhebung (1,8 kW) zurückgenommen
+        assert max(sollwerte) <= 3300.0
+        assert sollwerte[:2] == [3300.0, 2300.0]  # angehoben, Abregelung gesehen, zurück
+        assert sollwerte.count(3300.0) <= 3  # je Sperre höchstens ein Versuch
 
     async def test_nach_der_sperre_wird_wieder_angehoben(self, mock_hass, anlage, soc_beobachter):
         """Folgt die Batterie wieder (Wolke statt Absorption), steigt der
@@ -1057,11 +1145,13 @@ class TestNetzladung:
             NETZLADEN_SPERRE_TAKTE,
         )
 
+        anlage.setze(DC_PV, 2000.0)
         inv = _netzlader(mock_hass, anlage)
         await inv.async_set_grid_charge(3.0, 80)
         [(takt, _)] = soc_beobachter.takte
         anlage.setze(BATTERIE, 1000.0)
         anlage.setze(NETZ, 2300.0)
+        anlage.setze(DC_PV, 500.0)  # die Anhebung ging in die Abregelung
         await takt(None)  # nicht gefolgt → 0,5 kW, gesperrt
         for _ in range(NETZLADEN_SPERRE_TAKTE - 1):
             await takt(None)
