@@ -566,6 +566,11 @@ class ScheduleInputs:
     # Je Eintrag, ob der Preis feststeht. False = Börsenpreis vom Vortag
     # fortgeschrieben — darauf baut kein Netzkauf. None = alle fest.
     consumption_price_fest: list[bool] | None = None
+    # Vorzug je Eintrag (€/kWh, >= 0, nur zur Steuerung): so viel billiger
+    # sieht das LP den Bezug dort, wo die Gemeinschaft mehr Überschuss hat
+    # (``eeg_bezug_vorzug``). Bilanz und Geldbewertung rechnen weiter mit
+    # ``consumption_price_series`` (``bezugspreis_zu``).
+    consumption_price_vorzug: list[float] | None = None
     # „Aus dem Netz laden": höchste Netzbezugsleistung in die Batterie (kW,
     # AC, = Batterieleistung); 0 = aus. ``netzladen_netzgrenze_kw`` deckelt
     # den GESAMTEN Netzbezug (Haus + Batterie) in Slots mit Netzladung; 0 =
@@ -1331,8 +1336,12 @@ class HAConfig:
             if self._consumption_price_series is None:
                 import pandas as pd
 
+                werte = [float(p) for p in self._inputs.consumption_price_series]
+                vorzug = getattr(self._inputs, "consumption_price_vorzug", None)
+                if vorzug and len(vorzug) == len(werte):
+                    werte = [w - float(v) for w, v in zip(werte, vorzug)]
                 self._consumption_price_series = pd.Series(
-                    [float(p) for p in self._inputs.consumption_price_series],
+                    werte,
                     index=pd.DatetimeIndex(self._inputs.timestamps),
                 )
             return self._consumption_price_series.loc[start_time:]
@@ -1641,6 +1650,51 @@ def eeg_bezug_aus_config(config: dict) -> list[dict]:
             "abgabenfrei": EEG_BEZUG_ABGABENFREI[ebene],
         })
     return ergebnis
+
+
+# Höchster Vorzug für Bezug aus der Gemeinschaft (€/kWh): der Slot mit dem
+# größten Überschuss im Horizont, die anderen anteilig. Klein genug, um nie
+# einen echten Preisunterschied zu überstimmen, groß genug, um bei gleichem
+# Preis zu entscheiden.
+EEG_BEZUG_VORZUG_MAX = 0.002
+
+
+def eeg_bezug_vorzug(
+    config: dict,
+    stamps: list[datetime],
+    eeg_bedarf: dict[str, dict[int, float]] | None,
+) -> list[float] | None:
+    """Vorzug je Zeitpunkt: mehr Überschuss in der Gemeinschaft → billiger.
+
+    Der Bezugspreis aus der Gemeinschaft fragt nur, OB ihr Überschuss
+    unseren Bezug deckt (``bezugsreihe_netzladen``) — mit zig kWh je
+    Viertelstunde ist das untertags überall so, der Preis ist flach, und die
+    Pflichtladung nahm bei Gleichstand die späteste Viertelstunde: Kurz vor
+    Sonnenuntergang, wo der Überschuss schrumpft und die Prognose am
+    unsichersten ist (Vienna 06.11.2026). Der Überschuss ist eine Prognose;
+    wo mehr da ist, ist der Bezug sicherer wirklich gedeckt — und dort soll
+    bezogen werden. Gewichtet mit dem Aufteilungsschlüssel, bezogen auf den
+    größten Überschuss im Horizont, höchstens ``EEG_BEZUG_VORZUG_MAX``.
+    Nur Steuerung: Bilanz und Geldbewertung sehen ihn nie.
+    """
+    if not eeg_bedarf:
+        return None
+    gemeinschaften = [g for g in eeg_bezug_aus_config(config) if g["name"] in eeg_bedarf]
+    if not gemeinschaften:
+        return None
+    ueberschuss = []
+    for stamp in stamps:
+        viertel = int(stamp.timestamp() // 900)
+        summe = 0.0
+        for g in gemeinschaften:
+            saldo = eeg_bedarf[g["name"]].get(viertel)
+            if saldo is not None and saldo < 0:
+                summe += g["anteil"] * -float(saldo)
+        ueberschuss.append(summe)
+    hoechster = max(ueberschuss, default=0.0)
+    if hoechster <= 0:
+        return None
+    return [round(EEG_BEZUG_VORZUG_MAX * u / hoechster, 6) for u in ueberschuss]
 
 
 def bezugsreihe_netzladen(
@@ -2372,6 +2426,13 @@ def _solcast_detailed(
             "gewählten Prognose-Sensoren zu dieser Anlage gehören.",
             ", ".join(sorted(fremde)),
         )
+    if not any(erwartung > 0 for erwartung, _ in werte.values()):
+        # Lauter Nullen über alle Tage sind keine Prognose, sondern eine
+        # Quelle ohne Daten (Traun 68ef86a6, 10.10.–05.11.2026). Als leer
+        # behandelt, greifen die Rückfälle: Forecast.Solar bzw. wh_hours in
+        # der Steuerung, empirischer p10 bzw. 60 % statt eines geliehenen
+        # p10 = Erwartung, im Vergleich die andere Fremdquelle.
+        return {}
     return werte
 
 
@@ -3242,7 +3303,7 @@ async def async_collect_inputs(
     reserve_netz_kw = (
         spitzenreserve_netz_kw(config, inverter) if spitzenreserve_info is not None else 0.0
     )
-    bezug_reihe = bezug_fest = None
+    bezug_reihe = bezug_fest = bezug_vorzug = None
     if netzlade_kw > 0 or reserve_netz_kw > 0:
         spot_netto = spot_fest = None
         if str(config.get(CONF_SCHEDULE_BEZUG_QUELLE) or "").lower() == BEZUG_QUELLE_SPOT:
@@ -3255,6 +3316,8 @@ async def async_collect_inputs(
             spot_netto, spot_fest, eeg_bedarf, consumption, production,
             max(netzlade_kw, reserve_netz_kw),
         )
+        if bezug_reihe is not None:
+            bezug_vorzug = eeg_bezug_vorzug(config, stamps, eeg_bedarf)
 
     inputs = ScheduleInputs(
         start=start,
@@ -3287,6 +3350,7 @@ async def async_collect_inputs(
         consumption_price_winap=bezug_winap,
         consumption_price_series=bezug_reihe,
         consumption_price_fest=bezug_fest,
+        consumption_price_vorzug=bezug_vorzug,
         netzladen_max_kw=netzlade_kw,
         netzladen_netzgrenze_kw=netzladen_netzgrenze_kw(config) if netzlade_kw > 0 else 0.0,
         netzladen_vorteil=netzladen_vorteil(config),
@@ -3412,7 +3476,7 @@ _ENDLICH_SKALARE = (
 )
 _ENDLICH_REIHEN = (
     "consumption_kw", "production_kw", "min_production_kw", "eeg_bonus",
-    "feedin_price_series", "consumption_price_series",
+    "feedin_price_series", "consumption_price_series", "consumption_price_vorzug",
 )
 
 

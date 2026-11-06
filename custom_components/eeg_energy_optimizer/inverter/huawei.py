@@ -75,6 +75,9 @@ BACKUP_SOC_SUFFIXES = (
 )
 
 
+# Darunter ist eine Netzladung eine Freigabe (wie in den anderen Treibern).
+NETZLADEN_MIN_KW = 0.05
+
 class HuaweiInverter(InverterBase):
     """Huawei SUN2000 inverter control via HA Huawei Solar services."""
 
@@ -736,6 +739,13 @@ class HuaweiInverter(InverterBase):
         """
         if self._nicht_endlich(power_kw, target_soc):
             return False
+        if float(power_kw) < NETZLADEN_MIN_KW:
+            # Nichts aus dem Netz (die Netzgrenze lässt gerade nichts zu, etwa
+            # beim Kochen an der Spitzenkappungsgrenze): eine Freigabe wie bei
+            # den anderen sechs Treibern. Eine Zwangsladung mit 0 kW hielte die
+            # Batterie fest, und das Haus käme ganz aus dem Netz — über die
+            # Grenze, die gerade geschützt werden soll (Review 06.11.2026).
+            return await self.async_stop_forcible()
         soc = 100 if target_soc is None else int(math.ceil(float(target_soc)))
         soc = max(12, min(100, soc))
         distribution = self._compute_charge_distribution(power_kw)

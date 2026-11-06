@@ -521,6 +521,21 @@ async def test_huawei_netzladung(mock_hass):
     assert aufrufe[1].args[2] == {"device_id": "dev", "power": "3200", "target_soc": 62}
 
 
+async def test_huawei_netzladung_mit_null_ist_eine_freigabe(mock_hass):
+    """Review 06.11.2026: Lässt die Netzgrenze nichts zu (Haus schon an der
+    Grenze), kam beim Huawei eine Zwangsladung mit 0 kW an — die Batterie
+    stünde, das Haus käme ganz aus dem Netz. Wie die anderen Treiber: frei."""
+    from custom_components.eeg_energy_optimizer.inverter.huawei import HuaweiInverter
+
+    mock_hass.states.get = MagicMock(return_value=None)
+    mock_hass.states.async_all = MagicMock(return_value=[])
+    inv = HuaweiInverter(mock_hass, {"huawei_device_id": "dev"})
+    await inv.async_set_grid_charge(0.0, target_soc=80)
+    dienste = [c.args[1] for c in mock_hass.services.async_call.await_args_list]
+    assert "forcible_charge_soc" not in dienste
+    assert "stop_forcible_charge" in dienste
+
+
 async def test_huawei_netzladung_fehler_mit_grund(mock_hass):
     from custom_components.eeg_energy_optimizer.inverter.huawei import HuaweiInverter
 
@@ -642,3 +657,64 @@ async def test_treiber_am_ziel_ist_nicht_wirkungslos(mock_hass, mock_inverter):
                 await ex.async_guard_cycle(_state(_netzslot(soc=80.0)), MODE_EIN,
                                            now=NOW + timedelta(seconds=30 * i))
     assert ex.status()["netzladung_wirkungslos"] is False
+
+
+def test_eeg_vorzug_mehr_ueberschuss_heisst_billiger():
+    """Vienna 06.11.2026: Untertags deckt die Gemeinschaft jede Viertelstunde,
+    der Bezugspreis ist flach, und die Netzladung landete kurz vor
+    Sonnenuntergang, wo der Überschuss schrumpft. Der Vorzug macht den Bezug
+    dort, wo mehr übrig ist, ein wenig billiger — nur für die Steuerung."""
+    config = {
+        "peakshare_community": "BEG", "peakshare_share_pct": 1,
+        "peakshare_bezug_price": 0.137, "peakshare_bezug_ebene": "beg",
+        "peakshare_community_2": "FHW", "peakshare_share_pct_2": 99,
+        "peakshare_bezug_price_2": 0.137, "peakshare_bezug_ebene_2": "regional",
+    }
+    v = [int(s.timestamp() // 900) for s in STAMPS]
+    bedarf = {"FHW": {v[0]: -40.0, v[1]: -20.0, v[2]: 5.0}, "BEG": {v[0]: -1.0}}
+    vorzug = sched.eeg_bezug_vorzug(config, STAMPS, bedarf)
+    assert vorzug[0] == pytest.approx(sched.EEG_BEZUG_VORZUG_MAX)
+    assert vorzug[1] == pytest.approx(sched.EEG_BEZUG_VORZUG_MAX * 0.99 * 20 / (0.99 * 40 + 0.01), abs=1e-6)
+    assert vorzug[2] == 0.0 and vorzug[3] == 0.0
+    assert sched.eeg_bezug_vorzug(config, STAMPS, None) is None
+    assert sched.eeg_bezug_vorzug({}, STAMPS, bedarf) is None
+
+
+def test_eeg_vorzug_nur_fuer_die_steuerung():
+    """Das LP sieht den Vorzug, Bilanz und Geldbewertung (bezugspreis_zu) nicht."""
+    inputs = sched.ScheduleInputs(
+        start=STAMPS[0], time_res_s=1800, timestamps=STAMPS,
+        consumption_kw=[0.5] * 4, production_kw=[0.0] * 4, min_production_kw=None,
+        worst_case_factor=0.6, feedin_price_night=None, night_start_hour=None,
+        night_end_hour=None, battery_cost=0.01, battery_free_kwh=5.0, battery_capacity_kwh=10.0, battery_power_limit_kw=5.0,
+        soc_pct=50.0, ac_limit_kw=5.0, feedin_limit_kw=5.0, feedin_price=0.08,
+        consumption_price=0.25, consumption_price_series=[0.19] * 4,
+        consumption_price_vorzug=[0.002, 0.001, 0.0, 0.0],
+    )
+    lp = sched.HAConfig(inputs).consumption_price(STAMPS[0])
+    assert list(lp.values) == pytest.approx([0.188, 0.189, 0.19, 0.19])
+    assert sched.bezugspreis_zu(inputs, STAMPS[0]) == 0.19
+
+
+async def test_nach_dem_ziel_sinkender_ladestand_ist_kein_fehlalarm(mock_hass, mock_inverter):
+    """Review 06.11.2026: Victron, SolaX, SMA, Fronius und Sigenergy geben am
+    Ziel selbst frei. Steht der Befehl bei uns weiter und fällt der Ladestand
+    danach (Batterie entlädt ins Haus), ist das keine wirkungslose
+    Netzladung."""
+    from unittest.mock import patch
+
+    from custom_components.eeg_energy_optimizer.const import GUARD_WIRKUNG_RUNS
+
+    ex = _make_executor(mock_hass, mock_inverter)
+    ex._active_kind = "grid_charge"
+    ex._written_grid_charge_kw = 3.0
+    ex._written_target_soc = 60.0
+    soc = {"wert": 60.0}
+    with patch.object(ex, "_batterie_soc_pct", side_effect=lambda: soc["wert"]):
+        with _messwerte(haus=0.6, pv=0.5, batt=0.0):
+            ex._netzladung_pruefen()  # am Ziel gesehen
+        soc["wert"] = 57.0
+        for _ in range(GUARD_WIRKUNG_RUNS + 2):
+            with _messwerte(haus=0.6, pv=0.5, batt=-0.5):
+                ex._netzladung_pruefen()
+    assert ex._netzladung_wirkungslos is False

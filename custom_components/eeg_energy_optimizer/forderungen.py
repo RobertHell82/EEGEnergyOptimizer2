@@ -285,29 +285,16 @@ class Forderungen:
         """
         if self.v.ladeziel_kwh <= 0 or self.n == 0:
             return []
-        enden = pv_enden(self.lage.ueberschuss, self.tage)
-        w = self.wirtschaftlich
-        if w is None:
-            return enden
-        # Mit wirtschaftlichem Netzladen liegt der Termin eines Tages am
-        # Sonnenuntergang, sobald nach dem PV-Ende (oder an einem Tag ganz
-        # ohne Überschuss) noch ein günstiger Slot kommt: Das Ziel muss erst
-        # stehen, wenn der teure Abend beginnt. Bis 2.1.78 galt das PV-Ende
-        # — an einem trüben Tag 12:00, danach forderte nur noch die
-        # Mindestladung (Vienna 06.11.2026: 91 % statt 100 %, obwohl der
-        # Tagesbezug aus der EEG billiger war als die Nacht).
-        pv_ende_je_tag = {self.tage[i]: i for i in enden}
-        termine = set(enden)
-        for abend in self.netz_abende:
-            tag = self.tage[abend]
-            ende = pv_ende_je_tag.get(tag)
-            if abend == ende:
-                continue
-            ab = ende + 1 if ende is not None else 0
-            if any(w[j] < 0 and self.tage[j] == tag for j in range(ab, abend + 1)):
-                termine.discard(ende)
-                termine.add(abend)
-        return sorted(termine)
+        # Der Termin bleibt das PV-Ende, auch mit wirtschaftlichem Netzladen
+        # bis zum Sonnenuntergang (``netz_abende``). 2.1.79 legte ihn auf den
+        # Untergang, sobald danach noch ein günstiger Slot kam; die vorsichtige
+        # Rückwärtskette lief dann über den Nachmittag und verlangte schon
+        # morgens eine volle Batterie — Netzkauf vor einem sonnigen Mittag,
+        # keine Abend-Einspeisung vor Sonnenuntergang, an dunklen Tagen mehr
+        # Kauf am Horizontende (Replay-Korpus, Review 06.11.2026). Das offene
+        # Fenster allein reicht: das LP füllt die Batterie von sich aus, wenn
+        # sich der Kauf rechnet (Vienna 06.11.2026: 100 % um 16:30).
+        return pv_enden(self.lage.ueberschuss, self.tage)
 
     @cached_property
     def netz_abende(self) -> list[int]:

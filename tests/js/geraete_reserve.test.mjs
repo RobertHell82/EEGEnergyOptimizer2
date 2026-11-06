@@ -116,14 +116,18 @@ test("Warnung bei zu großer Mindestreserve der Spitzenkappung (Häusler, Nov. 2
   const d = {
     inverter_type: "huawei_sun2000", spitzenkappung_enabled: true,
     schedule_min_soc_pct: 35, spitzenkappung_reserve_min_pct: 40,
-    spitzenkappung_reserve_netz: true,
+    spitzenkappung_reserve_max_pct: 45, spitzenkappung_reserve_netz: true,
   };
   const html = p._kappungReserveWarnung(d);
   assert.match(html, /75 %/);
+  // Wie im Backend: Mindestreserve höchstens die Maximalreserve (Vorgabe 30)
+  assert.match(p._kappungReserveWarnung({ ...d, spitzenkappung_reserve_max_pct: undefined }), /65 %/);
+  // Maximalreserve 0 schaltet die Reserve ab — keine Warnung
+  assert.doesNotMatch(p._kappungReserveWarnung({ ...d, spitzenkappung_reserve_max_pct: 0 }), /%/);
   assert.match(html, /vor Sonnenuntergang zugekauft/);
   // Ohne Nachladen aus dem Netz: Warnung ohne den Satz zum Zukauf
   assert.doesNotMatch(p._kappungReserveWarnung({ ...d, spitzenkappung_reserve_netz: false }), /zugekauft/);
   // Bis 50 % zusammen oder ohne Mindestreserve: keine Warnung
-  assert.equal(p._kappungReserveWarnung({ ...d, spitzenkappung_reserve_min_pct: 15 }), "");
-  assert.equal(p._kappungReserveWarnung({ ...d, schedule_min_soc_pct: 60, spitzenkappung_reserve_min_pct: 0 }), "");
+  assert.equal(p._kappungReserveWarnungText({ ...d, spitzenkappung_reserve_min_pct: 15 }), "");
+  assert.equal(p._kappungReserveWarnungText({ ...d, schedule_min_soc_pct: 60, spitzenkappung_reserve_min_pct: 0 }), "");
 });

@@ -1403,6 +1403,11 @@ class EegOptimizerPanel extends HTMLElement {
             if (realField === "schedule_energy_price" || realField === "schedule_network_fee") {
               this._syncBezugspreis("settings_");
             }
+            // Die Warnung zur Mindestreserve rechnet ebenso live mit.
+            if (["spitzenkappung_reserve_min_pct", "spitzenkappung_reserve_max_pct",
+                 "schedule_min_soc_pct", "schedule_max_soc_pct"].includes(realField)) {
+              this._syncKappungWarnung();
+            }
           } else {
             this._settingsData[realField] = target.value;
           }
@@ -10421,17 +10426,33 @@ class EegOptimizerPanel extends HTMLElement {
   }
 
   _kappungReserveWarnung(d) {
+    // Hülle immer da: _syncKappungWarnung tauscht nur ihren Inhalt, ohne
+    // Render (der den Speichern-Knopf austauschen würde).
+    return `<div data-kappung-warnung>${this._kappungReserveWarnungText(d)}</div>`;
+  }
+
+  _kappungReserveWarnungText(d) {
     // Mindest-Ladestand + Mindestreserve über der Hälfte: Die Batterie steht
     // dann fast immer still, und mit „aus dem Netz nachladen“ wird die
     // Reserve jeden Abend gekauft (Häusler, Nov. 2026: 35 % + 40 Punkte,
     // 34,5 kWh — das Haus lief nachts ganz aus dem Netz, nachmittags wurden
-    // 6 kWh nur für die Reserve gekauft). Nur ein Hinweis, kein Verbot.
-    const boden = this._optZahl(d.schedule_min_soc_pct) ?? 10;
-    const rMin = this._optZahl(d.spitzenkappung_reserve_min_pct) ?? 0;
-    const summe = boden + rMin;
-    if (!(rMin > 0 && summe > KAPPUNG_RESERVE_WARNUNG_PCT)) return "";
+    // 6 kWh nur für die Reserve gekauft). Gerechnet wie im Backend: der
+    // Boden mit seinem Deckel (_socGrenzen), die Mindestreserve höchstens so
+    // groß wie die Maximalreserve (Vorgabe 30), die Summe höchstens bis zum
+    // höchsten Boden. Nur ein Hinweis, kein Verbot.
+    const { boden, maxBoden } = this._socGrenzen(d);
+    const rMax = this._optZahl(d.spitzenkappung_reserve_max_pct) ?? 30;
+    const rMin = Math.min(this._optZahl(d.spitzenkappung_reserve_min_pct) ?? 0, rMax);
+    if (!(rMin > 0)) return "";
+    const summe = Math.min(boden + rMin, Math.max(boden, maxBoden));
+    if (!(summe > KAPPUNG_RESERVE_WARNUNG_PCT)) return "";
     const netz = d.spitzenkappung_reserve_netz && this._kappungReserveNetz(d);
     return `<div class="help-text" style="margin:-4px 0 12px;color:var(--error-color,#db4437)">Mindest-Ladestand und Mindestreserve zusammen ergeben ${summe} %: Darunter gibt die Batterie nur noch für Spitzen über dem Grenzwert etwas ab, die übrige Zeit kommt das Haus aus dem Netz.${netz ? " Weil die Reserve aus dem Netz nachgeladen wird, wird sie zudem jeden Abend vor Sonnenuntergang zugekauft, auch wenn keine Spitze kommt." : ""} Die Statistik rechnet die nötige Reserve selbst aus, meist reicht eine Mindestreserve von 0 bis 10 %.</div>`;
+  }
+
+  _syncKappungWarnung() {
+    const el = this._shadow?.querySelector("[data-kappung-warnung]");
+    if (el) el.innerHTML = this._kappungReserveWarnungText(this._settingsData || {});
   }
 
   _heizstabFields(d, prefix) {

@@ -836,6 +836,16 @@ def test_solcast_detailed_wird_eingelesen():
     assert detailed[sechs_uhr] == (0.48, 0.21)
 
 
+def test_solcast_nur_mit_nullen_gilt_als_leer():
+    """Traun 68ef86a6, 10.10.–05.11.2026: Solcast lieferte nur Nullen. Der
+    geliehene p10 war dann gleich der Erwartung — kein vorsichtiger Pfad —,
+    und die Steuerung plante ohne PV statt auf wh_hours zurückzufallen."""
+    hass = MagicMock()
+    nullen = [(uhr, 0.0, 0.0) for uhr, _, _ in SOLCAST_TAG]
+    hass.states.async_all.return_value = [_solcast_state(NOW, nullen)]
+    assert sched._solcast_detailed(hass, BASE_CONFIG) == {}
+
+
 def test_worst_case_kommt_aus_p10_nicht_aus_faktor():
     hass = MagicMock()
     hass.states.async_all.return_value = [_solcast_state(NOW, SOLCAST_TAG)]

@@ -637,3 +637,20 @@ def test_telemetrie_profil_kennt_spitzenkappung_und_netzladen():
     assert "spitzenkappung_verbraucher" not in settings
     assert settings["schedule_netzladen"] is True
     assert settings["schedule_bezug_quelle"] == "spot"
+
+
+def test_spaete_fremdquelle_nimmt_der_eigenen_nicht_den_p10_tag():
+    """Review 06.11.2026: Seit eine Solcast-Nullreihe als fehlend gilt, kommt
+    die Fremdquelle mitunter erst nach 8 Uhr. Der Tag ist dann für den
+    Vergleich spät — für den empirischen p10 der eigenen Prognose nicht."""
+    v = _vergleich()
+    slots = [s.isoformat() for s in pv.tagesslots(HEUTE)]
+    frueh = datetime(2026, 9, 27, 4, 0, tzinfo=UTC)   # 06:00 MESZ
+    mittag = datetime(2026, 9, 27, 10, 0, tzinfo=UTC)  # 12:00 MESZ
+    v.festhalten(HEUTE, frueh, None, None, _reihe(slots, 12, 36, 1.0))
+    v.festhalten(HEUTE, mittag, "forecast_solar", _reihe(slots, 12, 36, 1.2), None)
+    tag = v.tag(HEUTE)
+    assert tag["spaet"] is True and tag["spaet_fremd"] is True
+    assert not tag.get("spaet_eigen")
+    assert v._spaet(tag, pv.QUELLE_EIGEN) is False
+    assert v._spaet(tag, pv.QUELLE_FREMD) is True

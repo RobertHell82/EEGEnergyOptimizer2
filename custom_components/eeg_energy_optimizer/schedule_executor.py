@@ -416,6 +416,7 @@ class ScheduleExecutor:
         # Wirkungskontrolle der Netzladung (nur melden, siehe async_guard_cycle).
         self._netzladung_runs = 0
         self._netzladung_wirkungslos = False
+        self._netzladung_ziel_erreicht = False
         self._netzladung_ist_kw: float | None = None
         # Wirkungskontrolle des Entladedeckels (nur melden, _deckel_pruefen),
         # in beide Richtungen: „zu_viel" (entlädt über dem Deckel) und
@@ -686,6 +687,7 @@ class ScheduleExecutor:
         if self._active_kind != "grid_charge":
             self._netzladung_runs = 0
             self._netzladung_wirkungslos = False
+            self._netzladung_ziel_erreicht = False
             return
         soll = float(self._written_grid_charge_kw or 0.0)
         ist = compute_battery_now_kw(self._hass, self._config)
@@ -701,6 +703,13 @@ class ScheduleExecutor:
         # SOC-Vergleich oben fängt das nicht immer: Der Treiber hält mit
         # eigener Hysterese an, und der Sensor kann einen Punkt nachhinken.
         am_ziel = am_ziel or getattr(self._inverter, "netzladung_am_ziel", False) is True
+        # Victron, SolaX, SMA, Fronius und Sigenergy geben am Ziel selbst
+        # frei; der Befehl steht bei uns weiter, und sinkt der Ladestand
+        # danach, sah es aus wie eine wirkungslose Netzladung (Review
+        # 06.11.2026). Einmal am Ziel gilt für diesen Befehl als erfüllt.
+        if am_ziel:
+            self._netzladung_ziel_erreicht = True
+        am_ziel = am_ziel or getattr(self, "_netzladung_ziel_erreicht", False)
         if soll < 0.5 or ist is None or am_ziel or self._wirkung_erfuellt(soll, max(0.0, ist)):
             self._netzladung_runs = 0
             self._netzladung_wirkungslos = False
@@ -2119,6 +2128,7 @@ class ScheduleExecutor:
             self._active_kind = "grid_charge"
             self._written_grid_charge_kw = power
             self._written_target_soc = ziel_soc
+            self._netzladung_ziel_erreicht = False
             self.last_status = f"Netzladung {power:.2f} kW{soc_text} (Plan aus PV und Netz{grenz_text})"
         else:
             self.write_failures += 1

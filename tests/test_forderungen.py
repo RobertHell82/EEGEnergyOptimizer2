@@ -211,20 +211,21 @@ def test_wirtschaftliches_netzladen_bis_zum_sonnenuntergang():
     Bis 2.1.78 durfte wirtschaftlich nur bis zum PV-Ende geladen werden — am
     trüben Tag gar nicht, das Ladeziel 100 % blieb bei der Mindestladung
     (91 %), obwohl der Tagesbezug billiger war als die Nacht. Jetzt gilt der
-    Nachmittag bis zum Sonnenuntergang, und dort steht auch das Ladeziel."""
+    Nachmittag bis zum Sonnenuntergang. Der Termin des Ladeziels bleibt das
+    PV-Ende (2.1.79 legte ihn auf den Untergang — Netzkauf vor sonnigen
+    Mittagen, Review 06.11.2026); das offene Fenster füllt das LP selbst."""
     rechnung = _mit_eeg_bezug(_rechnung(ladeziel_kwh=13.0))
     w = rechnung.wirtschaftlich
     assert w is not None
     heute = rechnung.untergaenge[0]
     assert all(w[j] < 0 for j in range(0, heute + 1)), "heute bis 16:45 günstig"
     assert w[heute + 1] == 0.0, "nach Sonnenuntergang ist es die teure Nacht"
-    assert [_uhr(rechnung, i) for i in rechnung.termine_ladeziel] == ["03. 16:30", "04. 16:30"]
+    assert [_uhr(rechnung, i) for i in rechnung.termine_ladeziel] == ["04. 13:45"]
 
 
 def test_mindestvorteil_schliesst_das_fenster_wieder():
     """19,1 ct ÷ 0,95² + 1 ct Alterung = 22,2 ct < 22,8 ct; mit 1 ct
-    Mindestvorteil 23,2 ct — dann lohnt es nicht, und das Ladeziel bleibt am
-    PV-Ende."""
+    Mindestvorteil 23,2 ct — dann lohnt es nicht."""
     rechnung = _mit_eeg_bezug(_rechnung(ladeziel_kwh=13.0), vorteil=0.01)
     assert rechnung.wirtschaftlich is None
     assert [_uhr(rechnung, i) for i in rechnung.termine_ladeziel] == ["04. 13:45"]

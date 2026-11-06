@@ -331,6 +331,8 @@ class Prognosevergleich:
                     if tag.get("fremd") is not None and not hat_ertrag(tag.get("fremd")):
                         for k in ("fremd", "fremd_name", "festgehalten_fremd"):
                             tag.pop(k, None)
+                        if tag.pop(f"spaet_{QUELLE_FREMD}", None) and not tag.get(f"spaet_{QUELLE_EIGEN}"):
+                            tag.pop("spaet", None)
                 self._tage.update(tage)
                 if archiv:
                     self._archiv_stand = frozenset(tage)
@@ -403,10 +405,14 @@ class Prognosevergleich:
             tag["fremd"] = fremd
             tag["fremd_name"] = fremd_name
             tag["festgehalten_fremd"] = jetzt.isoformat()
+            if spaet:
+                tag["spaet_fremd"] = True
             neu = True
         if eigen and tag.get("eigen") is None:
             tag["eigen"] = eigen
             tag["festgehalten_eigen"] = jetzt.isoformat()
+            if spaet:
+                tag["spaet_eigen"] = True
             neu = True
         # Die Lerndaten der Kalibrierung dürfen auch später kommen: eine
         # Prognose vom Mittag ist für den Faktor so gut wie eine vom Morgen
@@ -493,7 +499,7 @@ class Prognosevergleich:
     def _tagesverhaeltnisse(self, quelle: str) -> list[float]:
         werte: list[float] = []
         for tag in self._auswertung():
-            if not tag.get("vollstaendig") or tag.get("spaet"):
+            if not tag.get("vollstaendig") or self._spaet(tag, quelle):
                 continue
             reihe = tag.get(quelle)
             if not reihe:
@@ -503,6 +509,16 @@ class Prognosevergleich:
                 continue
             werte.append(_energie_kwh(tag.get("gemessen")) / prognose)
         return werte
+
+    @staticmethod
+    def _spaet(tag: dict[str, Any], quelle: str) -> bool:
+        """Kam DIESE Quelle zu spät? Eine Fremdprognose, die erst mittags
+        nachkam, macht den Vergleich des Tages unfair (``spaet``), aber nicht
+        den empirischen p10 der eigenen. Tage von vor dem Flag je Quelle
+        zählen wie bisher als ganz spät."""
+        if f"spaet_{QUELLE_FREMD}" in tag or f"spaet_{QUELLE_EIGEN}" in tag:
+            return bool(tag.get(f"spaet_{quelle}"))
+        return bool(tag.get("spaet"))
 
     def p10_faktor(self, quelle: str) -> tuple[float | None, int]:
         """(Faktor, Anzahl Tage) — Faktor None unter ``P10_MIN_TAGE``."""

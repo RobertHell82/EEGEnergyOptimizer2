@@ -971,6 +971,44 @@ class TestNetzladung:
         assert anlage.wert(SOLLWERT) == 3300.0
         assert inv._anheben_gesperrt == 0
 
+    async def test_nachts_gedrosselter_lader_kein_hochziehen(
+        self, mock_hass, anlage, soc_beobachter
+    ):
+        """Review 06.11.2026: Nachts (PV 0) hält der Lader oder das BMS die
+        Batterie bei 1,5 kW, unter dem Deckel von 3 kW. Der Bezug kann nicht
+        steigen — nichts nimmt ihn auf. In 2.1.78 zog der Sollwert trotzdem
+        um 1 kW je Minute hoch (11,7 kW nach 10 Minuten)."""
+        inv = _netzlader(mock_hass, anlage)  # PV 0
+        await inv.async_set_grid_charge(3.0, 80)  # Sollwert 2,3 kW
+        [(takt, _)] = soc_beobachter.takte
+        anlage.setze(BATTERIE, 1500.0)
+        anlage.setze(NETZ, 2000.0)  # Haus 0,5 + Batterie 1,5
+        sollwerte = []
+        for _ in range(30):
+            await takt(None)
+            sollwerte.append(anlage.wert(SOLLWERT))
+        assert max(sollwerte) <= 3300.0
+        assert inv._anheben_gesperrt > 0 or sollwerte[-1] <= 3300.0
+
+    async def test_anhebung_nach_dem_warten_noch_einmal_geprueft(
+        self, mock_hass, anlage, soc_beobachter
+    ):
+        """Zieht der Bezug auch nach dem Wartetakt nicht nach, wird die
+        Anhebung zurückgenommen — die Beobachtung geht nicht verloren."""
+        anlage.setze(DC_PV, 800.0)
+        inv = _netzlader(mock_hass, anlage)
+        await inv.async_set_grid_charge(3.0, 80)
+        [(takt, _)] = soc_beobachter.takte
+        anlage.setze(BATTERIE, 1500.0)
+        anlage.setze(NETZ, 2300.0)
+        await takt(None)  # +1 kW → 3,3 kW
+        assert anlage.wert(SOLLWERT) == 3300.0
+        await takt(None)  # Bezug noch 2,3: warten
+        assert anlage.wert(SOLLWERT) == 3300.0
+        await takt(None)  # immer noch nicht: zurück und sperren
+        assert anlage.wert(SOLLWERT) == 2300.0
+        assert inv._anheben_gesperrt > 0
+
     async def test_kleine_aenderung_schreibt_den_ladestrom_nicht(
         self, mock_hass, anlage, soc_beobachter
     ):

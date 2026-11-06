@@ -604,6 +604,8 @@ class VictronInverter(InverterBase):
         # letzten Takte.
         self._netzladung_deckel_kw: float | None = None
         self._pv_verlauf: list[float] = []
+        # Nach einer Anhebung schon einen Takt auf den Bezug gewartet?
+        self._gewartet = False
         # Laufender Entladedeckel der Spitzenkappung (kW Batterie) und der
         # Abmelder seines Nachführtakts — siehe async_set_discharge_limit().
         self._entladedeckel_kw: float | None = None
@@ -1069,7 +1071,11 @@ class VictronInverter(InverterBase):
             aktuell = self._lies("ladestrom")
             await self._setze("ladestrom", ampere, NETZLADEN_LADESTROM_TOLERANZ_A)
             wirksam = ampere
-            if aktuell is not None and abs(aktuell - ampere) < NETZLADEN_LADESTROM_TOLERANZ_A:
+            if (
+                aktuell is not None
+                and aktuell >= 0
+                and abs(aktuell - ampere) < NETZLADEN_LADESTROM_TOLERANZ_A
+            ):
                 wirksam = aktuell
             self._netzladung_deckel_kw = wirksam * spannung / 1000.0
             if self._netzladung_kw is None:
@@ -1157,6 +1163,7 @@ class VictronInverter(InverterBase):
         if messung is not None:
             self._anhebung = (max(0.0, watt / 1000.0 - bezug), batterie, bezug, pv)
         self._anheben_gesperrt = 0
+        self._gewartet = False
 
     def _naechster_sollwert_w(
         self, bezug: float, batterie: float, pv: float | None = None
@@ -1214,10 +1221,25 @@ class VictronInverter(InverterBase):
             if delta > 0:
                 if pv is not None and pv_vorher is not None:
                     if pv_vorher - pv >= delta / 2.0:
+                        # Die Anhebung ging an die Abregelung.
                         self._anheben_gesperrt = NETZLADEN_SPERRE_TAKTE
                         return self._sollwert_w(soll - delta)
-                    if bezug - bezug_vorher < delta / 2.0:
-                        return self._netz_soll_w  # das ESS zieht noch nach
+                    if bezug - bezug_vorher < delta / 2.0 and not self._gewartet:
+                        # Das ESS zieht noch nach: einen Takt warten und
+                        # DIESELBE Anhebung danach noch einmal beurteilen.
+                        self._anhebung = anhebung
+                        self._gewartet = True
+                        return self._netz_soll_w
+                    # Gefolgt ist, was Batterie oder Haus aufgenommen haben
+                    # (Haus = PV + Bezug − Batterie). Nimmt keins von beiden
+                    # die Anhebung — Lader oder BMS halten die Batterie unter
+                    # dem Deckel, nachts gibt es keine PV, die fallen könnte —,
+                    # zurück und sperren. Ohne diese Regel zog der Sollwert
+                    # nachts um 1 kW je Minute hoch (Review 06.11.2026).
+                    haus = (pv - pv_vorher) + (bezug - bezug_vorher) - (batterie - batterie_vorher)
+                    if batterie - batterie_vorher < delta / 2.0 and haus < delta / 2.0:
+                        self._anheben_gesperrt = NETZLADEN_SPERRE_TAKTE
+                        return self._sollwert_w(soll - delta)
                 elif batterie - batterie_vorher < delta / 2.0:
                     self._anheben_gesperrt = NETZLADEN_SPERRE_TAKTE
                     return self._sollwert_w(soll - delta)
@@ -1227,6 +1249,7 @@ class VictronInverter(InverterBase):
             neu = self._sollwert_w(soll + delta)
             if neu - self._netz_soll_w >= NETZLADEN_NACHFUEHR_TOLERANZ_W:
                 self._anhebung = ((neu - self._netz_soll_w) / 1000.0, batterie, bezug, pv)
+                self._gewartet = False
             return neu
         return self._netz_soll_w
 
@@ -1240,7 +1263,9 @@ class VictronInverter(InverterBase):
             return  # ohne Messung halten
         neu = self._naechster_sollwert_w(*messung)
         if abs(neu - self._netz_soll_w) < NETZLADEN_NACHFUEHR_TOLERANZ_W:
-            self._anhebung = None
+            # Nichts zu schreiben. Eine gemerkte Anhebung bleibt stehen: Der
+            # Wartetakt gibt den Sollwert unverändert zurück und will sie im
+            # nächsten Takt noch einmal beurteilen.
             return
         await self._setze("netzsollwert", neu, NETZSOLLWERT_TOLERANZ_W)
         self._netz_soll_w = neu
