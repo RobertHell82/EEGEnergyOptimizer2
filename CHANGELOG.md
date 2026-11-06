@@ -12,6 +12,16 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+## [2.1.77] - 2026-11-06
+
+### Behoben
+
+- **Prognosevergleich: Solcast mit lauter Nullen gilt als fehlend.** Liefert die Solcast-Integration für den Tag nur Nullen, wurde das als „Solcast 0 kWh“ festgehalten. An einer Anlage war das vier Wochen lang jeden Tag so: Die Karte zeigte 0, und „wer lag näher“ zählte immer für die eigene Prognose. Jetzt gilt eine solche Reihe als fehlend, dann wird Forecast.Solar versucht, sonst bleibt die Spalte leer. Bereits gespeicherte Nullreihen werden beim Start verworfen.
+
+### Geändert
+
+- **Spitzenkappung: Warnung bei zu großer Mindestreserve.** Ergeben Mindest-Ladestand und Mindestreserve zusammen mehr als 50 %, warnen die Einstellungen: Die Batterie gibt darunter nur noch für Spitzen etwas ab, das Haus läuft die übrige Zeit aus dem Netz, und mit „Reserve aus dem Netz nachladen“ wird die Reserve jeden Abend zugekauft. An einer Anlage mit 35 % plus 40 Punkten lief das Haus nachts ganz aus dem Netz, nachmittags wurden rund 6 kWh nur für die Reserve gekauft. Die Anleitung zur Spitzenkappung sagt dasselbe.
+
 ## [2.1.76] - 2026-11-05
 
 ### Behoben
