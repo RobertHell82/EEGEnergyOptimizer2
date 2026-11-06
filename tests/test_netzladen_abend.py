@@ -226,3 +226,37 @@ def test_pflicht_rechnung_deckelt_die_entladung_nicht():
             schritt = -sched._entladeleistung_fuer_dc(-werte[k], kapazitaet)
         stand = min(kapazitaet, max(0.0, stand + schritt * 0.25))
     assert stand >= forderung[-1] - 1e-6
+
+
+def test_vorsichtige_hauslast_kommt_in_die_kette():
+    """Die Reihe aus den Eingaben landet je LP-Slot in der Lage, nie unter
+    der Prognose — und nur dort; der Plan bleibt lösbar."""
+    basis = _abend(abend=50.0)
+    n = len(basis.timestamps)
+    inputs = dataclasses.replace(basis, haus_vorsichtig_kw=[3.5] * n)
+    plan = sched.solve(inputs)
+    assert plan["slots"]
+    ohne = sched.solve(basis)
+    # Die Kette fordert mit mehr Hauslast eher mehr, nie weniger
+    assert _soc_am_abendtermin(plan)[0] >= _soc_am_abendtermin(ohne)[0] - 0.5
+
+
+def test_haus_vorsichtig_aus_dem_verlauf():
+    from datetime import timedelta, timezone
+
+    class Reserve:
+        def __init__(self, verlauf):
+            self._v = verlauf
+
+        def verlauf_nach_zeit(self):
+            return self._v
+
+    tz = timezone(timedelta(hours=1))
+    stamps = [datetime(2026, 11, 6, 15, 0, tzinfo=tz), datetime(2026, 11, 6, 15, 15, tzinfo=tz)]
+    verlauf = {
+        datetime(2026, 11, 6, 15, 0) - timedelta(days=k): 4.5 for k in range(1, 29)
+    }
+    config = {"schedule_netzladen_abend_pct": 90}
+    werte = sched._haus_vorsichtig({"spitzenreserve": Reserve(verlauf)}, config, stamps, [2.4, 2.4])
+    assert werte == [4.5, 2.4]  # zweiter Slot ohne Verlauf: die Prognose
+    assert sched._haus_vorsichtig({"spitzenreserve": Reserve(verlauf)}, {}, stamps, [2.4, 2.4]) is None

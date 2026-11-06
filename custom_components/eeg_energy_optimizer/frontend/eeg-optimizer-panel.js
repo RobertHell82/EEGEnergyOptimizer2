@@ -11448,16 +11448,23 @@ class EegOptimizerPanel extends HTMLElement {
     // nicht im Webinterface — in Graz blieben dort 49 % aus der
     // Vorgängerversion drei Wochen unbemerkt stehen (Oktober 2026).
     if (a.geraete_reserve_pct != null && a.geraete_reserve_einstellung_pct != null) {
-      const fronius = this._config?.inverter_type === "fronius_gen24";
+      // Klar sagen, WO der Wert steht: am Gerät, nicht hier — die
+      // Integration hat ihn nicht gesetzt und setzt ihn auch nicht zurück
+      // (Victron 06.11.2026: ESS-Mindest-SOC 20 % gegen 10 % hier, die
+      // Meldung las sich wie eine Einstellung der Integration).
+      const typ = this._config?.inverter_type;
+      const ort = {
+        fronius_gen24: "Beim Fronius ist das der Modbus-Wert MinRsvPct, der im Webinterface nicht angezeigt wird; eine ältere Version des Optimizers kann ihn angehoben zurückgelassen haben.",
+        victron_ess: "Beim Victron ist das am GX-Gerät „Einstellungen → ESS → Minimum SoC“ (bei „Optimiert mit BatteryLife“ hebt das Gerät die Grenze zusätzlich an).",
+        huawei_sun2000: "Beim Huawei ist das der Backup- bzw. Entladeschluss-SOC in der FusionSolar-App.",
+      }[typ] || "Er steht in den Einstellungen bzw. der App des Wechselrichters.";
+      const geraet = fmtDe(a.geraete_reserve_pct, 0), hier = fmtDe(a.geraete_reserve_einstellung_pct, 0);
       warnings += warnRow("mdi:battery-lock", "#ff9800",
-        `Der Wechselrichter hält <strong>${fmtDe(a.geraete_reserve_pct, 0)} %</strong> Reserve, `
-        + `eingestellt sind ${fmtDe(a.geraete_reserve_einstellung_pct, 0)} %. Darunter entlädt er die Batterie nicht, `
-        + "auch nicht fürs Haus — der Plan rechnet deshalb mit dem höheren Wert. "
-        + (fronius
-          ? "Beim Fronius ist das der Modbus-Wert MinRsvPct, der im Webinterface nicht angezeigt wird; "
-            + "eine ältere Version des Optimizers kann ihn angehoben zurückgelassen haben. "
-          : "")
-        + "Ist das nicht gewollt, die Reserve am Wechselrichter zurücksetzen.");
+        `<strong>Am Wechselrichter selbst</strong> ist eine Reserve von <strong>${geraet} %</strong> eingestellt, `
+        + `hier in der Integration ein Mindest-Ladestand von ${hier} %. Darunter entlädt das Gerät die Batterie nicht, `
+        + `auch nicht fürs Haus — der Plan rechnet deshalb mit ${geraet} %. `
+        + `Diesen Wert hat nicht die Integration gesetzt, sie ändert ihn auch nicht. ${ort} `
+        + `Ist die Reserve gewollt, den Mindest-Ladestand hier ebenfalls auf ${geraet} % stellen; sonst sie am Gerät senken.`);
     }
     if (!gesteuert) {
       warnings += warnRow("mdi:information-outline", "var(--info-color, #2196f3)",

@@ -24,8 +24,8 @@ test("Reserve über dem Mindest-Ladestand erscheint als Warnung, beim Fronius mi
   const html = p._renderSteuerungZeilen(zustand({
     geraete_reserve_pct: 49, geraete_reserve_einstellung_pct: 20,
   }));
-  assert.match(html, /hält <strong>49 %<\/strong> Reserve/);
-  assert.match(html, /eingestellt sind 20 %/);
+  assert.match(html, /Am Wechselrichter selbst<\/strong> ist eine Reserve von <strong>49 %<\/strong>/);
+  assert.match(html, /Mindest-Ladestand von 20 %/);
   assert.match(html, /MinRsvPct/);
 });
 
@@ -35,7 +35,8 @@ test("andere Treiber: Warnung ohne den Fronius-Satz", () => {
   const html = p._renderSteuerungZeilen(zustand({
     geraete_reserve_pct: 30, geraete_reserve_einstellung_pct: 10,
   }));
-  assert.match(html, /hält <strong>30 %<\/strong> Reserve/);
+  assert.match(html, /Reserve von <strong>30 %<\/strong>/);
+  assert.match(html, /FusionSolar/);
   assert.doesNotMatch(html, /MinRsvPct/);
 });
 
@@ -130,4 +131,14 @@ test("Warnung bei zu großer Mindestreserve der Spitzenkappung (Häusler, Nov. 2
   // Bis 50 % zusammen oder ohne Mindestreserve: keine Warnung
   assert.equal(p._kappungReserveWarnungText({ ...d, spitzenkappung_reserve_min_pct: 15 }), "");
   assert.equal(p._kappungReserveWarnungText({ ...d, schedule_min_soc_pct: 60, spitzenkappung_reserve_min_pct: 0 }), "");
+});
+
+test("Victron: Hinweis nennt das GX-Gerät", () => {
+  const p = neuesPanel();
+  p._config = { inverter_type: "victron_ess" };
+  const html = p._renderSteuerungZeilen(zustand({
+    geraete_reserve_pct: 20, geraete_reserve_einstellung_pct: 10,
+  }));
+  assert.match(html, /GX-Gerät/);
+  assert.match(html, /nicht die Integration gesetzt/);
 });

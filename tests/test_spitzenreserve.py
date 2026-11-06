@@ -383,3 +383,18 @@ def test_grenze_je_slot():
     assert kurve[7] == pytest.approx(0.25 / sr.ENTLADE_WIRKUNGSGRAD, abs=1e-3)
     # Falsche Länge: lieber keine Kurve als eine verschobene.
     assert sr.reservekurve(verlauf, slots, [False] * 8, [5.0] * 7, 10.0) == ([], 0)
+
+
+def test_nettolast_quantil_je_uhrzeit():
+    """Die Nettolast, die an 9 von 10 Tagen derselben Uhrzeit nicht
+    überschritten wurde — für die Mindestladung am Abend."""
+    from datetime import datetime, timedelta
+
+    from custom_components.eeg_energy_optimizer.spitzenreserve import nettolast_quantil
+
+    jetzt = datetime(2026, 11, 6, 15, 0)
+    verlauf = {jetzt - timedelta(days=k): (5.0 if k <= 3 else 2.0) for k in range(1, 29)}
+    [wert] = nettolast_quantil(verlauf, [jetzt])
+    assert wert == 5.0  # 28 Tage, 0,9 → der drittgrößte Wert
+    [leer] = nettolast_quantil({jetzt - timedelta(days=1): 9.0}, [jetzt])
+    assert leer is None  # weniger als MIN_TAGE Tage

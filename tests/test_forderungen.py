@@ -229,3 +229,22 @@ def test_mindestvorteil_schliesst_das_fenster_wieder():
     rechnung = _mit_eeg_bezug(_rechnung(ladeziel_kwh=13.0), vorteil=0.01)
     assert rechnung.wirtschaftlich is None
     assert [_uhr(rechnung, i) for i in rechnung.termine_ladeziel] == ["04. 13:45"]
+
+
+def test_mindestladung_beginnt_mit_vorsichtiger_hauslast_frueher():
+    """Vienna 06.11.2026: Netzgrenze 6 kW für Haus und Batterie, das Profil
+    sagte 2,4 kW Hauslast, gemessen wurden oft 4–5 kW — 85 % statt 90 % bei
+    Sonnenuntergang. Mit der vorsichtigen Hauslast bleibt der Batterie in
+    der Kette weniger Platz, sie fordert früher."""
+    def erste_forderung(rechnung):
+        f = rechnung.abend_forderung
+        return next(i for i, x in enumerate(f) if x > 0)
+
+    normal = _rechnung(abend_kwh=10.0, stand=1.0)
+    normal.v.netzladen_netzgrenze_kw = 6.0
+    vorsichtig = _rechnung(abend_kwh=10.0, stand=1.0)
+    vorsichtig.v.netzladen_netzgrenze_kw = 6.0
+    vorsichtig.lage.haus_vorsichtig = [4.5] * vorsichtig.n
+    assert erste_forderung(vorsichtig) < erste_forderung(normal)
+    # Was je Slot geladen werden darf, rechnet weiter mit der Prognose
+    assert vorsichtig.netz_erlaubt_kw(4.0) == normal.netz_erlaubt_kw(4.0)

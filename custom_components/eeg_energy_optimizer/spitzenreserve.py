@@ -165,6 +165,34 @@ def verlauf_nach_zeit(verlauf: dict[str, float]) -> dict[datetime, float]:
     return ergebnis
 
 
+def nettolast_quantil(
+    verlauf: dict[datetime, float],
+    slot_starts_lokal: Sequence[datetime],
+    *,
+    tage: int = TAGE,
+    quantil: float = QUANTIL,
+    min_tage: int = MIN_TAGE,
+) -> list[float | None]:
+    """Nettolast (Haus − PV, kW) je Slot, die an 9 von 10 Tagen nicht
+    überschritten wurde — dieselbe Wanduhrzeit an den letzten ``tage``
+    Tagen. ``None``, wo weniger als ``min_tage`` Werte da sind.
+
+    Für die Mindestladung am Abend: Sie teilt die Netzgrenze mit dem Haus,
+    und das Profil (ein Mittel) unterschätzt die Nachmittage, an denen
+    gekocht oder das Auto geladen wird (Vienna 06.11.2026: Profil 2,4 kW,
+    gemessen oft 4–5 kW, 85 % statt 90 % bei Sonnenuntergang).
+    """
+    ergebnis: list[float | None] = []
+    for t in slot_starts_lokal:
+        naiv = t.replace(tzinfo=None)
+        werte = [
+            float(w) for k in range(1, tage + 1)
+            if (w := verlauf.get(naiv - timedelta(days=k))) is not None
+        ]
+        ergebnis.append(round(_quantil(werte, quantil), 3) if len(werte) >= min_tage else None)
+    return ergebnis
+
+
 def reservekurve(
     verlauf: dict[datetime, float],
     slot_starts_lokal: Sequence[datetime],

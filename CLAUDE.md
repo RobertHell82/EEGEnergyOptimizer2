@@ -578,7 +578,7 @@ the event loop is long enough for HA to flag a blocking call.
   still needed with only `MINDESTLADUNG_LEISTUNG_ANTEIL` (70 %) of the allowed grid charge
   power plus the expected PV (`abend_termin_je_slot` maps chain slots to their termin for the
   reason text) — without it the plan charged in exactly the last quarter-hours (Traun
-  03.11.2026). The plan carries
+  03.11.2026). The chain counts the meter limit against a **cautious house load** (`Lage.haus_vorsichtig`, from `schedule._haus_vorsichtig`: the 90 % quantile of Haus − PV at the same wall-clock time over the last 28 days, `spitzenreserve.nettolast_quantil`, never below the forecast) — with the profile's mean the plan expected 3.6 kW of room under a 6-kW limit and found 1–2 kW (Vienna 06.11.2026: 85 % instead of 90 % at sunset); `pflicht` and the LP still use the forecast. The plan carries
   `netzladen_abend` (`ziel_pct`, `termine` with planned SOC) like `ladeziel`;
   a missed evening is reported as telemetry `abendladung`. Tests:
   `tests/test_netzladen_abend.py`. The series replaces scalar and window prices in

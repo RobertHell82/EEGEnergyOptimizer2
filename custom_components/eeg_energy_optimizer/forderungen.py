@@ -217,6 +217,9 @@ class Lage:
     preise: list[float] | None = None  # Bezugspreis €/kWh
     fest: list[bool] | None = None     # Preis veröffentlicht?
     vorsichtig: list[float] | None = None  # Überschuss auf dem p10-Pfad
+    # Hauslast (AC), die an 9 von 10 Tagen nicht überschritten wurde — nur
+    # für die Rückwärtskette der Mindestladung (``abend_forderung``).
+    haus_vorsichtig: list[float] | None = None
 
 
 class Forderungen:
@@ -425,7 +428,7 @@ class Forderungen:
 
     # -- Netzgrenzen ----------------------------------------------------
 
-    def netz_erlaubt_kw(self, max_kw: float) -> list[float]:
+    def netz_erlaubt_kw(self, max_kw: float, haus: list[float] | None = None) -> list[float]:
         """Was die Batterie je Slot höchstens aus dem Netz ziehen darf (kW, AC).
 
         Eine Regel für beide Wege, wirtschaftliches Netzladen und
@@ -438,9 +441,11 @@ class Forderungen:
         Executor kappte, und die Batterie lud weniger als geplant
         (Replay-Korpus, Huawei 02.11.2026: 4 kW Bezug bei 3 kW Grenze).
         """
-        return [kw for kw, _, _ in self.netz_begrenzung(max_kw)]
+        return [kw for kw, _, _ in self.netz_begrenzung(max_kw, haus)]
 
-    def netz_begrenzung(self, max_kw: float) -> list[tuple[float, str | None, float]]:
+    def netz_begrenzung(
+        self, max_kw: float, haus: list[float] | None = None
+    ) -> list[tuple[float, str | None, float]]:
         """Je Slot (erlaubte Netzladung kW, bindende Grenze, deren Wert in kW).
 
         Die Grenze ist ``"kappung"`` (Spitzenkappung), ``"netzgrenze"``
@@ -449,7 +454,8 @@ class Forderungen:
         """
         v = self.v
         ergebnis = []
-        for t, h in zip(self.lage.stempel, self.lage.haus):
+        haus = haus if haus is not None and len(haus) == self.n else self.lage.haus
+        for t, h in zip(self.lage.stempel, haus):
             erlaubt, quelle, wert = max_kw, None, max_kw
             if v.reserve_aktiv:
                 grenze = v.kappung_kw.get(int(t.timestamp()), v.kappung_standard_kw)
@@ -627,7 +633,12 @@ class Forderungen:
         a = self.akku
         max_kw = max(float(self.v.spitzenreserve_netz_kw or 0.0),
                      float(self.v.netzladen_max_kw or 0.0))
-        netz = self.netz_erlaubt_kw(max_kw)
+        # Mit der vorsichtigen Hauslast: Die Netzgrenze gilt für Haus und
+        # Batterie zusammen, und an Nachmittagen mit viel Hauslast blieb der
+        # Batterie weniger als geplant (Vienna 06.11.2026: 85 % statt 90 %).
+        # Die Kette beginnt dann früher; was in welchem Slot geladen wird,
+        # entscheiden ``pflicht`` und das LP weiter mit der Prognose.
+        netz = self.netz_erlaubt_kw(max_kw, self.lage.haus_vorsichtig)
         schritt = [
             min(
                 ladeleistung_aus_dc(p + MINDESTLADUNG_LEISTUNG_ANTEIL * n / a.eta, a.kapazitaet),

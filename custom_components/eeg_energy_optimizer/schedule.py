@@ -571,6 +571,10 @@ class ScheduleInputs:
     # (``eeg_bezug_vorzug``). Bilanz und Geldbewertung rechnen weiter mit
     # ``consumption_price_series`` (``bezugspreis_zu``).
     consumption_price_vorzug: list[float] | None = None
+    # Hauslast je ``timestamps``-Eintrag (kW, AC), die an 9 von 10 Tagen
+    # nicht überschritten wurde (``spitzenreserve.nettolast_quantil``,
+    # mindestens die Prognose) — nur für die Kette der Mindestladung.
+    haus_vorsichtig_kw: list[float] | None = None
     # „Aus dem Netz laden": höchste Netzbezugsleistung in die Batterie (kW,
     # AC, = Batterieleistung); 0 = aus. ``netzladen_netzgrenze_kw`` deckelt
     # den GESAMTEN Netzbezug (Haus + Batterie) in Slots mit Netzladung; 0 =
@@ -1041,11 +1045,20 @@ class HAConfig:
         preise = None
         if "consumption_price" in parameters:
             preise = [float(v) / p2e for v in parameters["consumption_price"].values]
+        haus_vorsichtig = None
+        reihe = getattr(self._inputs, "haus_vorsichtig_kw", None)
+        if reihe and len(reihe) == len(self._inputs.timestamps):
+            ts = self._inputs.timestamps
+            haus_vorsichtig = []
+            for t, h in zip(stempel, haus):
+                pos = min(max(bisect.bisect_right(ts, t) - 1, 0), len(reihe) - 1)
+                haus_vorsichtig.append(max(float(h), float(reihe[pos])))
         return Lage(
             stempel=stempel,
             ueberschuss=werte,
             pv=pv_werte,
             haus=haus,
+            haus_vorsichtig=haus_vorsichtig,
             einspeisegrenze=spalte("feedin_limit"),
             preise=preise,
             fest=self._preis_fest_je_slot(stempel),
@@ -1814,6 +1827,36 @@ def spitzenkappung_batterie_aktiv(config: dict, inverter: Any) -> bool:
     return bool(getattr(inverter, "supports_schedule_control", False)) and bool(
         getattr(inverter, "supports_discharge_limit", False)
     )
+
+
+def _haus_vorsichtig(
+    data: dict, config: dict, stamps: list[datetime], consumption: list[float]
+) -> list[float] | None:
+    """Vorsichtige Hauslast je Zeitpunkt für die Mindestladung am Abend.
+
+    Nur mit Mindestladung und Netzladen. Aus dem Nettolast-Verlauf der
+    Spitzenreserve (läuft immer mit): der 90-%-Wert derselben Uhrzeit der
+    letzten vier Wochen, nie unter der Prognose. Ohne genug Verlauf die
+    Prognose selbst — dann None, und alles bleibt wie bisher.
+    """
+    if not (_endlicher_preis(config.get(CONF_SCHEDULE_NETZLADEN_ABEND_PCT)) or 0.0) > 0:
+        return None
+    reserve = data.get("spitzenreserve")
+    if reserve is None:
+        return None
+    try:
+        from .spitzenreserve import nettolast_quantil
+
+        werte = nettolast_quantil(reserve.verlauf_nach_zeit(), stamps)
+    except Exception:  # noqa: BLE001 — eine Verfeinerung, nie ein Abbruch
+        _LOGGER.debug("Vorsichtige Hauslast nicht berechenbar", exc_info=True)
+        return None
+    if not any(w is not None for w in werte):
+        return None
+    return [
+        round(max(float(c), w if w is not None else 0.0), 3)
+        for c, w in zip(consumption, werte)
+    ]
 
 
 def _spitzenreserve_fuer_plan(
@@ -3351,6 +3394,7 @@ async def async_collect_inputs(
         consumption_price_series=bezug_reihe,
         consumption_price_fest=bezug_fest,
         consumption_price_vorzug=bezug_vorzug,
+        haus_vorsichtig_kw=_haus_vorsichtig(data, config, stamps, consumption),
         netzladen_max_kw=netzlade_kw,
         netzladen_netzgrenze_kw=netzladen_netzgrenze_kw(config) if netzlade_kw > 0 else 0.0,
         netzladen_vorteil=netzladen_vorteil(config),
@@ -3477,6 +3521,7 @@ _ENDLICH_SKALARE = (
 _ENDLICH_REIHEN = (
     "consumption_kw", "production_kw", "min_production_kw", "eeg_bonus",
     "feedin_price_series", "consumption_price_series", "consumption_price_vorzug",
+    "haus_vorsichtig_kw",
 )
 
 
