@@ -12,6 +12,16 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+## [2.1.81] - 2026-11-06
+
+### Behoben
+
+- **Mindestladung am Abend: Mit einer Netzgrenze fängt der Plan früh genug an.** Die Netzgrenze gilt für Haus und Batterie zusammen. Der Plan schätzte den Hausverbrauch aus dem Profil, einem Mittelwert, und rechnete deshalb mit mehr Platz für die Batterie, als an Nachmittagen mit Kochen oder Autoladen übrig bleibt. Eine Anlage mit 6 kW Grenze erwartete 2,4 kW Hausverbrauch, gemessen wurden oft 4–5 kW, und bei Sonnenuntergang standen 85 % statt 90 %. Für die Mindestladung rechnet der Plan jetzt mit dem Hausverbrauch, der an 9 von 10 der letzten vier Wochen zur selben Uhrzeit nicht überschritten wurde. Diese Statistik führt die Integration für die Spitzenkappung ohnehin. Er beginnt dann früher. Zusätzlich gekauft wird nichts, und der übrige Plan rechnet weiter mit dem Profil.
+
+### Geändert
+
+- **Statuskarte: Der Hinweis auf eine höhere Reserve am Wechselrichter sagt, wo sie steht.** Er klang, als käme der Wert aus der Integration. Jetzt steht ausdrücklich da, dass er am Gerät eingestellt ist, die Integration ihn nicht gesetzt hat und nicht ändert, und wo man ihn findet: bei Victron am GX-Gerät unter ESS → Minimum SoC, bei Huawei in der FusionSolar-App, bei Fronius als Modbus-Wert MinRsvPct. Dazu kommt, was zu tun ist: entweder den Mindest-Ladestand in der Integration gleich setzen oder die Reserve am Gerät senken.
+
 ## [2.1.80] - 2026-11-06
 
 Ergebnisse eines unabhängigen Reviews der Versionen 2.1.77 bis 2.1.79 (sechs parallele Prüfungen samt vollem Replay-Korpus).
