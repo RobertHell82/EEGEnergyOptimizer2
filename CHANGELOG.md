@@ -12,6 +12,13 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+## [2.1.78] - 2026-11-06
+
+### Behoben
+
+- **Victron: Die Netzladung brach bei wenig Sonne für Minuten ein.** Erreichte die Batterie ihre Ladeleistung, halbierte der Treiber den erlaubten Netzbezug, weil man nicht sieht, ob gerade PV abgeregelt wird. An einer Anlage mit 0,8 kW PV fiel der Bezug von 5,8 auf 2,9 kW, und die Batterie lud 0,6 statt 2,4 kW. Hob der Treiber danach wieder an und nahm gerade das Haus mehr, galt das als Abregelung und sperrte jede Anhebung für 5 Minuten. Jetzt entscheidet die gemessene PV: Zurückgenommen wird höchstens so viel, wie die PV unter ihrem Höchstwert der letzten 5 Minuten liegt (mindestens 0,2 kW), und gesperrt wird nur, wenn die PV bei einer Anhebung wirklich fällt. Was das Haus nimmt, ist kein Fehler. Ohne PV-Sensor bleibt es beim bisherigen, vorsichtigen Verhalten.
+- **Victron: Der DVCC-Ladestrom wird seltener geschrieben.** Er ist eine gespeicherte Einstellung des GX-Geräts. Weil sich die geplante Ladeleistung bei einer Netzgrenze jede Minute mit dem Hausverbrauch ändert, wurde er in 14 Minuten neunmal geschrieben. Jetzt erst ab 2 A Unterschied.
+
 ## [2.1.77] - 2026-11-06
 
 ### Behoben
