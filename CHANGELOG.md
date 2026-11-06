@@ -12,6 +12,24 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+## [2.1.80] - 2026-11-06
+
+Ergebnisse eines unabhängigen Reviews der Versionen 2.1.77 bis 2.1.79 (sechs parallele Prüfungen samt vollem Replay-Korpus).
+
+### Behoben
+
+- **Victron: Der Netzsollwert konnte bei der Netzladung hochlaufen (seit 2.1.78).** Hielten Lader oder BMS die Batterie unter der geplanten Leistung, etwa nachts, in der Absorptionsphase oder bei Kälte, stieg der erlaubte Netzbezug um 1 kW je Minute, simuliert auf über 11 kW nach zehn Minuten. Eine Anhebung, die weder Batterie noch Haus aufnehmen, wird jetzt wieder zurückgenommen und für fünf Minuten gesperrt. Zieht der Bezug nur langsam nach, wird ein Takt gewartet und dieselbe Anhebung danach noch einmal beurteilt.
+- **Netzladen: Das Ladeziel steht wieder am Ende der Sonne (Rücknahme aus 2.1.79).** 2.1.79 legte den Termin auf den Sonnenuntergang, sobald danach noch günstiger Strom kam. Die vorsichtige Rückwärtsrechnung verlangte dann schon morgens eine volle Batterie: Netzkauf vor einem sonnigen Mittag, keine Einspeisung zwischen dem Ende der Sonne und dem Sonnenuntergang, an dunklen Tagen mehr Kauf am Ende des Planungszeitraums. Das Fenster zum günstigen Laden bis Sonnenuntergang bleibt, und es reicht: Der Plan füllt die Batterie von sich aus, wenn sich der Kauf rechnet.
+- **Solcast mit lauter Nullen auch in der Steuerung als fehlend.** 2.1.77 hatte nur den Prognosevergleich repariert. Mit eigener Prognose wurde der vorsichtige Wert (p10) von Solcast geliehen und war dann gleich der Erwartung, ohne jeden Abschlag. Mit Solcast als steuernder Quelle plante der Fahrplan ohne PV, statt auf die Ersatzwerte zurückzufallen.
+- **Huawei: keine Zwangsladung mit 0 kW mehr.** Ließ die Netzgrenze gerade nichts zu, etwa beim Kochen an der Grenze der Spitzenkappung, ging trotzdem eine Zwangsladung mit 0 kW ans Gerät. Jetzt gibt der Treiber frei wie die anderen sechs.
+- **Telemetrie: kein Fehlalarm „Netzladung wirkungslos“ nach dem Ziel-Ladestand.** Victron, SolaX, SMA, Fronius und Sigenergy geben am Ziel selbst frei. Sank der Ladestand danach, sah das aus wie eine Netzladung ohne Wirkung.
+- **Prognosevergleich: Eine spät nachgekommene Fremdprognose nimmt der eigenen Prognose den Tag nicht mehr.** Der Tag zählt im Vergleich weiter als spät, für den empirischen p10 der eigenen Prognose aber mit.
+- **Spitzenkappung: Die Warnung zur Mindestreserve rechnet wie die Steuerung und läuft beim Tippen mit.** Die Mindestreserve gilt höchstens bis zur Maximalreserve, der Mindest-Ladestand mit seinem Deckel. Bei 35 % plus 40 Punkten und Maximalreserve 30 sind das 65 %, nicht 75 %.
+
+### Geändert
+
+- **Netzladen mit Bezug aus der Energiegemeinschaft: Die Batterie lädt dort, wo die Gemeinschaft mehr übrig hat.** Der Bezugspreis fragt nur, ob ihr Überschuss den eigenen Bezug deckt. Untertags ist das fast überall so, der Preis ist dann flach, und der Plan lud bei Gleichstand möglichst spät, kurz vor Sonnenuntergang, wo der Überschuss schrumpft. Jetzt bevorzugt er die Viertelstunden mit dem größeren Überschuss. Der Vorzug beträgt höchstens 0,2 ct, entscheidet also nur bei gleichem Preis, und geht nie in die Geldbilanz ein.
+
 ## [2.1.79] - 2026-11-06
 
 ### Behoben
