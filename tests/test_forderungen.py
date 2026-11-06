@@ -190,3 +190,41 @@ def test_mindestreserve_ohne_netz_schalter_fordert_nichts():
     rechnung = _mit_flacher_reserve(_rechnung(stand=0.0))
     rechnung.v.spitzenreserve_netz_kw = 0.0
     assert rechnung.reserve_forderung is None
+
+
+def _mit_eeg_bezug(rechnung, vorteil=0.0):
+    """Vienna 06.11.2026: untertags Bezug aus der EEG zu 19,1 ct, ab dem
+    Sonnenuntergang bis 10 Uhr früh der Lieferant zu 22,8 ct; Alterung 1 ct."""
+    untergaenge = {u.date(): u for u in UNTERGAENGE}
+    rechnung.lage.preise = [
+        0.2284 if (u := untergaenge.get(t.date())) is not None and t >= u
+        or t.hour < 10 else 0.1912
+        for t in rechnung.lage.stempel
+    ]
+    rechnung.v.battery_cost = 0.01
+    rechnung.v.netzladen_vorteil = vorteil
+    return rechnung
+
+
+def test_wirtschaftliches_netzladen_bis_zum_sonnenuntergang():
+    """Vienna 06.11.2026: Der Überschuss endete mittags (heute gar keiner).
+    Bis 2.1.78 durfte wirtschaftlich nur bis zum PV-Ende geladen werden — am
+    trüben Tag gar nicht, das Ladeziel 100 % blieb bei der Mindestladung
+    (91 %), obwohl der Tagesbezug billiger war als die Nacht. Jetzt gilt der
+    Nachmittag bis zum Sonnenuntergang, und dort steht auch das Ladeziel."""
+    rechnung = _mit_eeg_bezug(_rechnung(ladeziel_kwh=13.0))
+    w = rechnung.wirtschaftlich
+    assert w is not None
+    heute = rechnung.untergaenge[0]
+    assert all(w[j] < 0 for j in range(0, heute + 1)), "heute bis 16:45 günstig"
+    assert w[heute + 1] == 0.0, "nach Sonnenuntergang ist es die teure Nacht"
+    assert [_uhr(rechnung, i) for i in rechnung.termine_ladeziel] == ["03. 16:30", "04. 16:30"]
+
+
+def test_mindestvorteil_schliesst_das_fenster_wieder():
+    """19,1 ct ÷ 0,95² + 1 ct Alterung = 22,2 ct < 22,8 ct; mit 1 ct
+    Mindestvorteil 23,2 ct — dann lohnt es nicht, und das Ladeziel bleibt am
+    PV-Ende."""
+    rechnung = _mit_eeg_bezug(_rechnung(ladeziel_kwh=13.0), vorteil=0.01)
+    assert rechnung.wirtschaftlich is None
+    assert [_uhr(rechnung, i) for i in rechnung.termine_ladeziel] == ["04. 13:45"]

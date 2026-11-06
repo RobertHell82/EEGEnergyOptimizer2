@@ -534,8 +534,7 @@ the event loop is long enough for HA to flag a blocking call.
   end, compared per kWh after `ac_efficiency`², aging (`battery_cost`) and
   `schedule_netzladen_vorteil` (default 2 ct). Whether the night needs the
   energy is deliberately not asked: what is left is exported later if that
-  pays, the price of "full in the evening". Slots before each day's PV end
-  (`pv_enden`), only with published prices (`consumption_price_fest`; spot
+  pays, the price of "full in the evening". Slots up to each day's evening (`Forderungen.netz_abende`: sunset, or the PV end if later — until 2.1.78 the PV end, which on a dull day was noon or nothing: Vienna 06.11.2026 stopped at the 90 % Mindestladung although EEG day purchase at 19.1 ct beat the 22.8-ct night); on a day with such a slot after its PV end the Ladeziel termin moves to that sunset too (`termine_ladeziel`), only with published prices (`consumption_price_fest`; spot
   never extrapolated), never above the max SOC nor faster than the battery
   power. `schedule_netzladen_max_kw` is the limit **at the meter** (house +
   battery, `netzladen_netzgrenze_kw`, empty = none; until beta.2 it capped

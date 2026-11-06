@@ -285,7 +285,47 @@ class Forderungen:
         """
         if self.v.ladeziel_kwh <= 0 or self.n == 0:
             return []
-        return pv_enden(self.lage.ueberschuss, self.tage)
+        enden = pv_enden(self.lage.ueberschuss, self.tage)
+        w = self.wirtschaftlich
+        if w is None:
+            return enden
+        # Mit wirtschaftlichem Netzladen liegt der Termin eines Tages am
+        # Sonnenuntergang, sobald nach dem PV-Ende (oder an einem Tag ganz
+        # ohne Überschuss) noch ein günstiger Slot kommt: Das Ziel muss erst
+        # stehen, wenn der teure Abend beginnt. Bis 2.1.78 galt das PV-Ende
+        # — an einem trüben Tag 12:00, danach forderte nur noch die
+        # Mindestladung (Vienna 06.11.2026: 91 % statt 100 %, obwohl der
+        # Tagesbezug aus der EEG billiger war als die Nacht).
+        pv_ende_je_tag = {self.tage[i]: i for i in enden}
+        termine = set(enden)
+        for abend in self.netz_abende:
+            tag = self.tage[abend]
+            ende = pv_ende_je_tag.get(tag)
+            if abend == ende:
+                continue
+            ab = ende + 1 if ende is not None else 0
+            if any(w[j] < 0 and self.tage[j] == tag for j in range(ab, abend + 1)):
+                termine.discard(ende)
+                termine.add(abend)
+        return sorted(termine)
+
+    @cached_property
+    def netz_abende(self) -> list[int]:
+        """Je Kalendertag das Ende des Fensters für wirtschaftliches
+        Netzladen: der Sonnenuntergang, oder das PV-Ende, falls später.
+
+        Davor ist Tag, danach die Nacht, deren Bezugspreis die Batterie
+        ersetzt. Auch ein Tag ganz ohne Überschuss hat einen Abend — an
+        trüben Novembertagen ist genau das der Fall, in dem Laden aus dem
+        Netz sich lohnt.
+        """
+        abende: dict = {}
+        for i in pv_enden(self.lage.ueberschuss, self.tage):
+            abende[self.tage[i]] = i
+        for u in self.untergaenge:
+            tag = self.tage[u]
+            abende[tag] = max(abende.get(tag, u), u)
+        return sorted(abende.values())
 
     @cached_property
     def termine_abend(self) -> list[int]:
@@ -475,10 +515,11 @@ class Forderungen:
         höchstens ``netzladen_max_kw`` (AC). None heißt: nirgends — dann ist
         das Modell Zeile für Zeile das ohne Netzladen.
 
-        Erlaubt ist ein Slot vor dem Ende der PV-Zeit eines Tages (ab dem
-        vorigen PV-Ende), wenn Netzstrom dort billiger ist als der Strom, den
-        die Batterie danach ersetzt: der nach Hauslast gewichtete Bezugspreis
-        der Nacht bis zum nächsten Überschuss. Billiger heißt nach beiden
+        Erlaubt ist ein Slot bis zum Abend eines Tages (``netz_abende``:
+        Sonnenuntergang, bis 2.1.78 das Ende der PV-Zeit — an trüben Tagen
+        mittags oder gar nicht), wenn Netzstrom dort billiger ist als der
+        Strom, den die Batterie danach ersetzt: der nach Hauslast gewichtete
+        Bezugspreis der Nacht bis zum nächsten Überschuss. Billiger heißt nach beiden
         Wandlungen (AC→DC→AC, ``eta``²), Alterung (``battery_cost``) und
         Mindestvorteil (``netzladen_vorteil``). Ein Slot mit
         fortgeschriebenem Börsenpreis ist nie erlaubt.
@@ -500,7 +541,7 @@ class Forderungen:
         untergrenze = [0.0] * self.n
         self.ersetzt_preis: list[float | None] = [None] * self.n
         von = 0
-        for i in pv_enden(werte, self.tage):
+        for i in self.netz_abende:
             k = i + 1
             gewicht = summe = 0.0
             while k < self.n and werte[k] <= 0:
