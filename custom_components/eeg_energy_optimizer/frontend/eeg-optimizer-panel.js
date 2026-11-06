@@ -272,6 +272,9 @@ const netzladenLuecken = (d, serverBezug) => {
 const istWaehlbarerWr = (key) => SCHEDULE_CONTROL_INVERTERS.includes(key);
 
 
+// Ab dieser Summe aus Mindest-Ladestand und Mindestreserve warnt die Spitzenkappung.
+const KAPPUNG_RESERVE_WARNUNG_PCT = 50;
+
 const WIZARD_DEFAULTS = {
   inverter_type: "huawei_sun2000",
   battery_soc_sensor: "",
@@ -10394,6 +10397,7 @@ class EegOptimizerPanel extends HTMLElement {
             <div class="help-text">Mehr hält sie nie zurück, egal was die Statistik sagt. 0 schaltet die Reserve ab, leer heißt 30. Beide Werte liegen über dem Mindest-Ladestand.</div>
           </div>
         </div>
+        ${this._kappungReserveWarnung(d)}
         ${this._kappungReserveNetz(d) ? `
         <div class="field-group">
           <label style="display:flex;align-items:center;gap:12px;cursor:pointer">
@@ -10414,6 +10418,20 @@ class EegOptimizerPanel extends HTMLElement {
           </button>
         </div>`,
     });
+  }
+
+  _kappungReserveWarnung(d) {
+    // Mindest-Ladestand + Mindestreserve über der Hälfte: Die Batterie steht
+    // dann fast immer still, und mit „aus dem Netz nachladen“ wird die
+    // Reserve jeden Abend gekauft (Häusler, Nov. 2026: 35 % + 40 Punkte,
+    // 34,5 kWh — das Haus lief nachts ganz aus dem Netz, nachmittags wurden
+    // 6 kWh nur für die Reserve gekauft). Nur ein Hinweis, kein Verbot.
+    const boden = this._optZahl(d.schedule_min_soc_pct) ?? 10;
+    const rMin = this._optZahl(d.spitzenkappung_reserve_min_pct) ?? 0;
+    const summe = boden + rMin;
+    if (!(rMin > 0 && summe > KAPPUNG_RESERVE_WARNUNG_PCT)) return "";
+    const netz = d.spitzenkappung_reserve_netz && this._kappungReserveNetz(d);
+    return `<div class="help-text" style="margin:-4px 0 12px;color:var(--error-color,#db4437)">Mindest-Ladestand und Mindestreserve zusammen ergeben ${summe} %: Darunter gibt die Batterie nur noch für Spitzen über dem Grenzwert etwas ab, die übrige Zeit kommt das Haus aus dem Netz.${netz ? " Weil die Reserve aus dem Netz nachgeladen wird, wird sie zudem jeden Abend vor Sonnenuntergang zugekauft, auch wenn keine Spitze kommt." : ""} Die Statistik rechnet die nötige Reserve selbst aus, meist reicht eine Mindestreserve von 0 bis 10 %.</div>`;
   }
 
   _heizstabFields(d, prefix) {

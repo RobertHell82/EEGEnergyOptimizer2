@@ -110,3 +110,20 @@ test("Spitzenkappung: Deckel gemeldet oder noch kein Laufzeitwert → Typliste g
   mitKappung(p, { schwelle_kw: 5, abgeschaltet: [], batterie: null });
   assert.equal(p._kappungMitBatterie({ inverter_type: "huawei_sun2000" }), true);
 });
+
+test("Warnung bei zu großer Mindestreserve der Spitzenkappung (Häusler, Nov. 2026)", () => {
+  const p = neuesPanel();
+  const d = {
+    inverter_type: "huawei_sun2000", spitzenkappung_enabled: true,
+    schedule_min_soc_pct: 35, spitzenkappung_reserve_min_pct: 40,
+    spitzenkappung_reserve_netz: true,
+  };
+  const html = p._kappungReserveWarnung(d);
+  assert.match(html, /75 %/);
+  assert.match(html, /vor Sonnenuntergang zugekauft/);
+  // Ohne Nachladen aus dem Netz: Warnung ohne den Satz zum Zukauf
+  assert.doesNotMatch(p._kappungReserveWarnung({ ...d, spitzenkappung_reserve_netz: false }), /zugekauft/);
+  // Bis 50 % zusammen oder ohne Mindestreserve: keine Warnung
+  assert.equal(p._kappungReserveWarnung({ ...d, spitzenkappung_reserve_min_pct: 15 }), "");
+  assert.equal(p._kappungReserveWarnung({ ...d, schedule_min_soc_pct: 60, spitzenkappung_reserve_min_pct: 0 }), "");
+});

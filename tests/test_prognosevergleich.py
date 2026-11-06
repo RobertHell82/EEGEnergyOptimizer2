@@ -359,6 +359,58 @@ async def test_tick_faellt_auf_forecast_solar_zurueck():
     assert tag["eigen"] is None  # leere eigene Reihe wird nicht als „festgehalten" gewertet
 
 
+async def test_solcast_nur_mit_nullen_gilt_als_fehlend():
+    """Traun 68ef86a6, 10.10.–05.11.2026: Solcast lieferte für den Tag nur
+    Nullen, festgehalten wurde „Solcast 0 kWh“. Eine Nullreihe ist keine
+    Prognose — dann gilt Forecast.Solar, sonst bleibt die Fremdquelle leer."""
+    slots = pv.tagesslots(HEUTE)
+    stunde = slots[20].replace(minute=0)
+    hass = _hass_mit_provider({slots[i]: 0.8 for i in range(12, 36)})
+    with patch.object(pv, "Store", None):
+        v = pv.Prognosevergleich(hass, "entry1")
+    nullen = {slots[i]: (0.0, 0.0) for i in range(len(slots))}
+    ist = AsyncMock(return_value={"reihen": {}})
+    pfad = "custom_components.eeg_energy_optimizer.schedule_archive.async_ist_verlauf"
+    with (
+        patch.object(sched, "_solcast_detailed", return_value=nullen),
+        patch.object(sched, "_async_solar_forecast_wh", AsyncMock(return_value={})),
+        patch(pfad, ist),
+    ):
+        await v.async_tick({}, JETZT)
+    tag = v.tag(HEUTE)
+    assert tag["fremd"] is None and tag.get("fremd_name") is None
+    assert tag["eigen"] is not None
+    # Nächster Takt mit Forecast.Solar: die Fremdquelle kommt nach
+    with (
+        patch.object(sched, "_solcast_detailed", return_value=nullen),
+        patch.object(sched, "_async_solar_forecast_wh", AsyncMock(return_value={stunde.isoformat(): 1500.0})),
+        patch(pfad, ist),
+    ):
+        await v.async_tick({}, JETZT + timedelta(minutes=30))
+    assert v.tag(HEUTE)["fremd_name"] == "forecast_solar"
+
+
+def test_festhalten_verwirft_eine_nullreihe():
+    v = _vergleich()
+    slots = [s.isoformat() for s in pv.tagesslots(HEUTE)]
+    assert v.festhalten(HEUTE, JETZT, "solcast_solar", _reihe(slots, 0, 48, 0.0), None) is False
+    assert v.tage() == []
+
+
+async def test_gespeicherte_nullreihen_werden_beim_laden_verworfen():
+    gestern = (JETZT.date() - timedelta(days=1)).isoformat()
+    alt = _tag_mit(0.0, 0.7, 0.9, gestern)
+    gut = _tag_mit(1.0, 0.7, 0.9, HEUTE)
+    with patch.object(pv, "Store", None):
+        v = pv.Prognosevergleich(MagicMock(), "entry1")
+    v._store = MagicMock(async_load=AsyncMock(return_value={"tage": {HEUTE: gut}}))
+    v._archiv_store = MagicMock(async_load=AsyncMock(return_value={"tage": {gestern: alt}}))
+    await v.async_load()
+    assert v.tag(gestern).get("fremd") is None and v.tag(gestern).get("fremd_name") is None
+    assert v.tag(gestern)["eigen"]  # die eigene Reihe bleibt
+    assert v.tag(HEUTE)["fremd_name"] == "solcast_solar"
+
+
 async def test_tick_ueberlebt_fehler_der_quellen():
     hass = _hass_mit_provider({})
     hass.data[sched.DOMAIN]["entry1"]["pvprognose"].halbstunden.side_effect = RuntimeError("kaputt")

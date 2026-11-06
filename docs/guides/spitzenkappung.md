@@ -121,7 +121,7 @@ Die Spitzenkappung findest du in den **Einstellungen** im Tab **Spitzenkappung**
 
 Ohne Batterie-Stufe (andere Wechselrichter) brauchst du mindestens einen Verbraucher. Sonst täte die Funktion nichts.
 
-**Wann lohnt sich eine Mindestreserve?** Wenn ein großer Verbraucher neu ist, etwa ein E-Auto: 5 bis 10 % überbrücken die Zeit, bis die Statistik (letzte vier Wochen) ihn kennt. Sonst lass sie bei 0, denn sie hält die Batterie auch in Nächten ohne Spitze zurück.
+**Wann lohnt sich eine Mindestreserve?** Wenn ein großer Verbraucher neu ist, etwa ein E-Auto: 5 bis 10 % überbrücken die Zeit, bis die Statistik (letzte vier Wochen) ihn kennt. Sonst lass sie bei 0, denn sie hält die Batterie auch in Nächten ohne Spitze zurück. Mindest-Ladestand und Mindestreserve zusammen über 50 % lassen die Batterie fast nur noch herumstehen: Das Haus läuft dann nachts aus dem Netz, und mit „aus dem Netz nachladen“ wird die Reserve jeden Abend zugekauft. Die Einstellungen warnen in diesem Fall.
 
 _Alle Felder wirken ohne Neustart der Integration._
 

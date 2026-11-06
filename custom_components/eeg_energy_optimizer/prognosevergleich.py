@@ -157,6 +157,14 @@ def reihe_exakt(werte: dict[datetime, Any], slots: list[datetime]) -> dict[str, 
     return ergebnis
 
 
+def hat_ertrag(reihe: dict[str, float] | None) -> bool:
+    """Trägt die Reihe überhaupt eine Prognose? Ein ganzer Tag mit lauter
+    Nullen ist keine Vorhersage, sondern eine Quelle ohne Daten für den Tag
+    (Traun 68ef86a6: vom 10.10. bis 05.11.2026 jeden Tag „Solcast 0 kWh“ —
+    die Karte zeigte 0, „wer lag näher“ zählte immer für die eigene)."""
+    return any(isinstance(w, (int, float)) and w > 0 for w in (reihe or {}).values())
+
+
 def reihe_aus_stunden(wh_hours: dict[str, float], slots: list[datetime]) -> dict[str, float]:
     """Wh je Stunde (Forecast.Solar) → kW je Halbstunde, beide Hälften gleich."""
     nach_stunde: dict[float, float] = {}
@@ -318,6 +326,11 @@ class Prognosevergleich:
                 continue
             if isinstance(stored, dict) and isinstance(stored.get("tage"), dict):
                 tage = {str(k): v for k, v in stored["tage"].items() if isinstance(v, dict)}
+                for tag in tage.values():
+                    # Nullreihen von vor 2.1.77 als fehlend werten
+                    if tag.get("fremd") is not None and not hat_ertrag(tag.get("fremd")):
+                        for k in ("fremd", "fremd_name", "festgehalten_fremd"):
+                            tag.pop(k, None)
                 self._tage.update(tage)
                 if archiv:
                     self._archiv_stand = frozenset(tage)
@@ -377,6 +390,8 @@ class Prognosevergleich:
         sonst als „Tag ohne Prognose" in der Übersicht, obwohl nur die
         Quellen noch nicht da waren.
         """
+        if not hat_ertrag(fremd):
+            fremd = None
         if not fremd and not eigen:
             return False
         tag = self._tag(datum)
@@ -596,7 +611,8 @@ class Prognosevergleich:
                         if detailed:
                             fremd = reihe_exakt(detailed, slots)
                             fremd_name = "solcast_solar"
-                        else:
+                        if not hat_ertrag(fremd):
+                            fremd, fremd_name = None, None
                             wh = await sched._async_solar_forecast_wh(self._hass, "forecast_solar")
                             if wh:
                                 fremd = reihe_aus_stunden(wh, slots)
