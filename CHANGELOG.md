@@ -12,6 +12,12 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+## [2.1.79] - 2026-11-06
+
+### Behoben
+
+- **Netzladen: Günstig laden geht jetzt bis zum Sonnenuntergang, nicht nur bis zum Ende der Sonne.** Das Ladeziel durfte aus dem Netz nur bis zum Ende des PV-Überschusses erreicht werden. An einem trüben Novembertag ist das mittags oder gar nicht, danach lud nur noch die Mindestladung am Abend. An einer Anlage mit Bezug aus der Energiegemeinschaft (19,1 ct untertags, 22,8 ct in der Nacht) blieb die Batterie so bei 91 % statt 100 %, obwohl jede Kilowattstunde vom Nachmittag billiger war als die der Nacht. Jetzt gilt der ganze Tag bis zum Sonnenuntergang. Lohnt sich das Laden nach dem Ende der Sonne noch, soll das Ladeziel bei Sonnenuntergang erreicht sein. Lohnt es sich nicht, bleibt alles wie bisher.
+
 ## [2.1.78] - 2026-11-06
 
 ### Behoben
