@@ -985,6 +985,29 @@ def test_kappung_beim_start_nur_merken():
     assert merker == {"monat": "2026-11", "kw": 4.24}
 
 
+def test_kappung_spitze_im_modus_aus_wird_nicht_gemeldet():
+    """Grünbach 08.11.2026: Optimierung Aus, 16,2 kW absichtlich ausgelöst,
+    wieder Ein — der Telemetrie-Block läuft im Modus Aus nicht, der Merker
+    hielt die 2,66 kW von davor und der erste Lauf in Ein meldete die
+    Spitze. ``_abendladung_merker_ruhe`` leert ihn jetzt mit."""
+    from custom_components.eeg_energy_optimizer import (
+        _abendladung_merker_ruhe,
+        _check_spitzenkappung_health,
+    )
+
+    calls, emit = _sammler()
+    data = {"telemetry_spitze_merker": {}}
+    merker = data["telemetry_spitze_merker"]
+    _check_spitzenkappung_health({}, MODE_EIN, KAPPUNG_AN, _spitze("2026-11", 2.66), None, merker, 47.0, emit)
+    _abendladung_merker_ruhe(data, MODE_EIN)
+    assert merker  # im Modus Ein bleibt er
+    _abendladung_merker_ruhe(data, MODE_AUS)
+    assert merker == {}
+    _check_spitzenkappung_health({}, MODE_EIN, KAPPUNG_AN, _spitze("2026-11", 16.2), None, merker, 47.0, emit)
+    assert calls == []
+    assert merker == {"monat": "2026-11", "kw": 16.2}
+
+
 def test_kappung_neue_spitze_ueber_der_grenze_wird_gemeldet():
     """01.11.2026: erste Novemberspitze 4,24 kW bei 3,5 kW Grenze, Batterie leer."""
     from custom_components.eeg_energy_optimizer import _check_spitzenkappung_health

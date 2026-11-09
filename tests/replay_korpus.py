@@ -254,6 +254,7 @@ def _mit_spitzenreserve(
         "grenze_kw": grenze_kw,
         "entlade_kw": entlade,
         "kurve": [[t.isoformat(), p] for t, p in zip(viertel, kurve_pct)],
+        "kurve_kwh": [None if k is None else round(float(k), 3) for k in kurve_kwh],
         "grenzen": grenzen,
         "plan_pct": round(plan_pct, 1),
         "im_ueberschuss": bool(ueberschuss and ueberschuss[0]),

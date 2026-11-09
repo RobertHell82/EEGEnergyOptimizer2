@@ -270,6 +270,13 @@ NETZLADEN_DECKEL_KW = 0.1
 # Anhebung, der die Batterie nicht folgte, nicht wieder angehoben wird.
 NETZLADEN_SCHRITT_KW = 1.0
 NETZLADEN_SPERRE_TAKTE = 10
+# Fällt die Batterie während der Sperre um so viel unter ihren Stand vor der
+# zurückgenommenen Anhebung, hat das Haus mehr genommen — das ESS hält den
+# Netzbezug auf dem Sollwert, die Batterie gleicht jeden Lastsprung aus. Das
+# Urteil der Sperre (Lader/BMS/Abregelung nehmen nicht mehr) sagt darüber
+# nichts; die Sperre fällt (Vienna 08.11.2026: Haus +2,7 kW in der Sperre,
+# Batterie 3 Minuten mit −1,5 kW statt +1,8 kW, Meldung guard_wirkung).
+NETZLADEN_SPERRE_LOESEN_KW = 0.5
 # Darunter ist die Netzladung eine Freigabe (Netzgrenze lässt nichts zu).
 NETZLADEN_MIN_KW = 0.05
 # Über so viele Takte merkt sich die Nachführung die höchste gemessene PV —
@@ -599,6 +606,8 @@ class VictronInverter(InverterBase):
         # Letzte Anhebung: (kW, Batterie, Netzbezug, PV davor; PV None = unbekannt)
         self._anhebung: tuple[float, float, float, float | None] | None = None
         self._anheben_gesperrt = 0
+        # Batterieleistung (kW), an der die Sperre gemessen wird
+        self._sperre_batterie_kw: float | None = None
         # Wirksamer DVCC-Deckel der Netzladung in kW (der Ladestrom wird nur
         # bei >= NETZLADEN_LADESTROM_TOLERANZ_A neu geschrieben) und die PV der
         # letzten Takte.
@@ -1193,6 +1202,9 @@ class VictronInverter(InverterBase):
           Fehler — bis 2.1.77 zählte nur die Batterie, und ein Sprung der
           Hauslast sperrte das Anheben 5 Minuten lang. Ohne PV-Messung gilt
           die alte Regel (Batterie legte weniger als die Hälfte zu).
+          Fällt die Batterie in der Sperre um ``NETZLADEN_SPERRE_LOESEN_KW``
+          unter ihren Stand vor der Anhebung, hat das Haus zugelegt — die
+          Sperre fällt, sonst trüge die Batterie den Lastsprung 5 Minuten.
         * **Batterie fehlt Leistung**: anheben um das Fehlende bis zum
           Deckel − Abstand, höchstens ``NETZLADEN_SCHRITT_KW`` je Takt.
 
@@ -1206,6 +1218,13 @@ class VictronInverter(InverterBase):
         self._anhebung = None
         if self._anheben_gesperrt > 0:
             self._anheben_gesperrt -= 1
+            bezug_batterie = self._sperre_batterie_kw
+            if (
+                bezug_batterie is not None
+                and batterie < bezug_batterie - NETZLADEN_SPERRE_LOESEN_KW
+            ):
+                # Neue Last im Haus, nicht der Grund der Sperre.
+                self._anheben_gesperrt = 0
         pv_hoch = max(self._pv_verlauf) if self._pv_verlauf else None
         if pv is not None:
             self._pv_verlauf = (self._pv_verlauf + [pv])[-NETZLADEN_PV_FENSTER_TAKTE:]
@@ -1222,7 +1241,7 @@ class VictronInverter(InverterBase):
                 if pv is not None and pv_vorher is not None:
                     if pv_vorher - pv >= delta / 2.0:
                         # Die Anhebung ging an die Abregelung.
-                        self._anheben_gesperrt = NETZLADEN_SPERRE_TAKTE
+                        self._sperren(batterie_vorher)
                         return self._sollwert_w(soll - delta)
                     if bezug - bezug_vorher < delta / 2.0 and not self._gewartet:
                         # Das ESS zieht noch nach: einen Takt warten und
@@ -1238,10 +1257,10 @@ class VictronInverter(InverterBase):
                     # nachts um 1 kW je Minute hoch (Review 06.11.2026).
                     haus = (pv - pv_vorher) + (bezug - bezug_vorher) - (batterie - batterie_vorher)
                     if batterie - batterie_vorher < delta / 2.0 and haus < delta / 2.0:
-                        self._anheben_gesperrt = NETZLADEN_SPERRE_TAKTE
+                        self._sperren(batterie_vorher)
                         return self._sollwert_w(soll - delta)
                 elif batterie - batterie_vorher < delta / 2.0:
-                    self._anheben_gesperrt = NETZLADEN_SPERRE_TAKTE
+                    self._sperren(batterie_vorher)
                     return self._sollwert_w(soll - delta)
         fehlt = leistung - NETZLADEN_ABSTAND_KW - batterie
         if fehlt > 0 and self._anheben_gesperrt == 0:
@@ -1252,6 +1271,16 @@ class VictronInverter(InverterBase):
                 self._gewartet = False
             return neu
         return self._netz_soll_w
+
+    def _sperren(self, batterie_vorher: float) -> None:
+        """Anheben ``NETZLADEN_SPERRE_TAKTE`` lang sperren.
+
+        Gemessen wird die Sperre am Stand der Batterie VOR der Anhebung:
+        Nach dem Zurücknehmen fällt sie ungefähr dorthin zurück. Liegt sie
+        später deutlich darunter, löst ``_naechster_sollwert_w`` die Sperre.
+        """
+        self._anheben_gesperrt = NETZLADEN_SPERRE_TAKTE
+        self._sperre_batterie_kw = batterie_vorher
 
     async def _nachfuehren(self) -> None:
         """Ein Takt: am Ziel zurücknehmen (auch als Wiederholung), sonst regeln."""

@@ -1081,9 +1081,13 @@ class HAConfig:
         i = self._inputs
         info = i.spitzenreserve or {}
         reserve_pct: dict = {}
+        reserve_roh: dict = {}
         kappung: dict = {}
-        for (t, wert), g in zip(
-            info.get("kurve") or [], (info.get("grenzen") or []) + [None] * len(info.get("kurve") or [])
+        kurve = info.get("kurve") or []
+        roh = list(info.get("kurve_kwh") or [])
+        roh += [None] * (len(kurve) - len(roh))
+        for (t, wert), g, r in zip(
+            kurve, (info.get("grenzen") or []) + [None] * len(kurve), roh
         ):
             try:
                 stempel = int(datetime.fromisoformat(t).timestamp())
@@ -1093,6 +1097,11 @@ class HAConfig:
                 reserve_pct[stempel] = float(wert)
             except (TypeError, ValueError):
                 pass
+            if r is not None:
+                try:
+                    reserve_roh[stempel] = float(r)
+                except (TypeError, ValueError):
+                    pass
             if g is not None:
                 kappung[stempel] = float(g)
         return Vorgaben(
@@ -1105,6 +1114,7 @@ class HAConfig:
             spitzenreserve_netz_kw=float(i.spitzenreserve_netz_kw or 0.0),
             reserve_aktiv=bool(info),
             reserve_pct=reserve_pct,
+            reserve_roh_kwh=reserve_roh,
             kappung_kw=kappung,
             kappung_standard_kw=float(info.get("grenze_kw") or 0.0),
             sicherheit_kw=SICHERHEIT_KW,
@@ -1936,6 +1946,11 @@ def _spitzenreserve_fuer_plan(
         "grenze_kw": round(grenze, 2),
         "entlade_kw": round(float(entlade), 2),
         "kurve": [[t.isoformat(), p] for t, p in zip(viertel, kurve_pct)],
+        # Dieselbe Kurve in kWh, VOR der Klammer auf Mindest-/Maximalreserve
+        # (None ohne Statistik): Wo sie fällt, kennt die Historie Bezug über
+        # der Grenze — dort wird die Mindestreserve gebraucht, auch wenn die
+        # gekappte Kurve flach auf ihr liegt (``Forderungen.reserve_forderung``).
+        "kurve_kwh": [None if k is None else round(float(k), 3) for k in kurve_kwh],
         # Grenze je Viertelstunde, gleich lang wie die Kurve — das Nachladen
         # aus dem Netz bleibt darunter (HAConfig._netz_untergrenze).
         "grenzen": [round(g, 2) for g in grenzen],

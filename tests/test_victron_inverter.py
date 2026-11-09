@@ -1197,6 +1197,48 @@ class TestNetzladung:
         await takt(None)
         assert anlage.wert(SOLLWERT) == 1500.0
 
+    async def test_lastsprung_in_der_sperre_hebt_sofort_an(
+        self, mock_hass, anlage, soc_beobachter
+    ):
+        """Vienna 08.11.2026, 13:36–13:42: Eine kleine Anhebung wurde
+        zurückgenommen und gesperrt. In der Sperre sprang das Haus um 2,7 kW;
+        das ESS hielt den Netzbezug auf dem Sollwert, die Batterie entlud
+        3 Minuten mit 1,5 kW statt zu laden. Der Sprung löst die Sperre."""
+        inv = _netzlader(mock_hass, anlage)  # PV 0
+        await inv.async_set_grid_charge(3.0, 80)  # Sollwert 2,3 kW
+        [(takt, _)] = soc_beobachter.takte
+        anlage.setze(BATTERIE, 1500.0)
+        anlage.setze(NETZ, 2000.0)
+        await takt(None)  # fehlt 1,3 → +1 kW auf 3,3
+        await takt(None)  # Bezug zieht nicht nach: warten
+        await takt(None)  # immer noch nicht: zurück und sperren
+        assert inv._anheben_gesperrt > 0
+        soll = anlage.wert(SOLLWERT)
+        await takt(None)  # in der Sperre, Batterie unverändert: hält
+        assert anlage.wert(SOLLWERT) == soll
+        anlage.setze(BATTERIE, -1500.0)  # das Haus nimmt 3 kW mehr
+        await takt(None)
+        assert inv._anheben_gesperrt == 0
+        assert anlage.wert(SOLLWERT) == soll + 1000.0
+
+    async def test_kleine_schwankung_in_der_sperre_hebt_nicht_an(
+        self, mock_hass, anlage, soc_beobachter
+    ):
+        """Unter ``NETZLADEN_SPERRE_LOESEN_KW`` bleibt die Sperre — sonst
+        zöge ein nachts gedrosselter Lader den Sollwert wieder hoch."""
+        inv = _netzlader(mock_hass, anlage)
+        await inv.async_set_grid_charge(3.0, 80)
+        [(takt, _)] = soc_beobachter.takte
+        anlage.setze(BATTERIE, 1500.0)
+        anlage.setze(NETZ, 2000.0)
+        for _ in range(3):
+            await takt(None)
+        soll = anlage.wert(SOLLWERT)
+        anlage.setze(BATTERIE, 1200.0)
+        await takt(None)
+        assert inv._anheben_gesperrt > 0
+        assert anlage.wert(SOLLWERT) == soll
+
     async def test_takt_ohne_messung_haelt(self, mock_hass, anlage, soc_beobachter):
         inv = _netzlader(mock_hass, anlage)
         await inv.async_set_grid_charge(3.0, 80)

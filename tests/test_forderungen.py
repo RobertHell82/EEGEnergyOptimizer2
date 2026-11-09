@@ -180,6 +180,49 @@ def test_mindestreserve_wird_aus_dem_netz_nachgeladen():
     assert termin in rechnung.mindestreserve_slots
 
 
+def _mit_rohkurve(rechnung, spitze_ab):
+    """Rohkurve (kWh, vor der Klammer) wie aus ``reservekurve``: 0,4 kWh
+    Bedarf in der Viertelstunde ab ``spitze_ab``, sonst keiner — die gekappte
+    Kurve bleibt flach auf der Mindestreserve."""
+    schritt = timedelta(minutes=15)
+    stempel = rechnung.lage.stempel + [rechnung.lage.stempel[-1] + schritt]
+    rechnung.v.reserve_roh_kwh = {
+        int(t.timestamp()): (0.4 if t <= spitze_ab else 0.0) for t in stempel
+    }
+    return rechnung
+
+
+def test_mindestreserve_steht_vor_der_naechsten_bekannten_spitze():
+    """HAG-0013 07.11.2026: Reserve über Nacht verloren, den Vormittag auf dem
+    Boden, die Lasten um 09:30/10:30 trafen eine leere Batterie (6,08 kW bei
+    4 kW). Gefordert wurde sie erst zum nächsten Sonnenuntergang. Jetzt zum
+    Ende des Slots vor der Viertelstunde, in der die Historie Bezug über der
+    Grenze kennt — und bis dahin im günstigsten Slot, hier nachts."""
+    start = datetime(2026, 11, 3, 19, 0, tzinfo=WIEN)
+    rechnung = _mit_flacher_reserve(_rechnung(stand=0.0, start=start))
+    spitze = datetime(2026, 11, 4, 9, 30, tzinfo=WIEN)
+    _mit_rohkurve(rechnung, spitze)
+    rechnung.lage.preise = [
+        0.15 if 1 <= t.hour < 5 else 0.25 for t in rechnung.lage.stempel
+    ]
+    forderung = rechnung.netz_forderung
+    termin = next(i for i, f in enumerate(forderung) if f > 0)
+    assert _uhr(rechnung, termin) == "04. 09:15"
+    assert termin in rechnung.mindestreserve_slots
+    assert termin < rechnung.untergaenge[0]
+    gewaehlt = [i for i, p in enumerate(rechnung.pflicht) if p < 0]
+    assert gewaehlt and all(1 <= rechnung.lage.stempel[i].hour < 5 for i in gewaehlt)
+    assert all(i <= termin for i in gewaehlt)
+
+
+def test_spitze_erst_nach_dem_untergang_laesst_den_untergang_stehen():
+    rechnung = _mit_flacher_reserve(_rechnung(stand=0.0))
+    _mit_rohkurve(rechnung, datetime(2026, 11, 3, 19, 0, tzinfo=WIEN))
+    forderung = rechnung.netz_forderung
+    termin = next(i for i, f in enumerate(forderung) if f > 0)
+    assert termin == rechnung.untergaenge[0]
+
+
 def test_gehaltene_mindestreserve_fordert_nichts():
     """Hält der Boden die Reserve schon, ist nichts nachzuladen."""
     rechnung = _mit_flacher_reserve(_rechnung(stand=5.0), boden=21.0)

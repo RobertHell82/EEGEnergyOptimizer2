@@ -784,7 +784,8 @@ def _abend_merker_leeren(merker: dict) -> None:
 
 
 def _abendladung_merker_ruhe(data: dict, mode: str) -> None:
-    """Merker der Mindestladung leeren, solange nicht gesteuert wird.
+    """Merker der Mindestladung und der Monatsspitze leeren, solange nicht
+    gesteuert wird.
 
     Läuft in jedem Guard-Lauf, außerhalb des Telemetrie-Blocks: Der ruft
     ``_check_abendladung_health`` nur mit ``mode != MODE_AUS`` auf, deren
@@ -797,6 +798,14 @@ def _abendladung_merker_ruhe(data: dict, mode: str) -> None:
         merker = data.get("telemetry_abend_merker")
         if merker:
             _abend_merker_leeren(merker)
+        # Dasselbe Loch hatte die Monatsspitze: Ihr Merker hielt im Modus Aus
+        # die Spitze von davor, und der erste Lauf im Modus Ein meldete eine
+        # Spitze, die ohne Steuerung entstanden war (Grünbach 08.11.2026:
+        # 16,2 kW, absichtlich ausgelöst bei Optimierung Aus). Leer beginnt
+        # der Merker wieder mit „nur merken".
+        spitze_merker = data.get("telemetry_spitze_merker")
+        if spitze_merker:
+            spitze_merker.clear()
 
 
 PLATFORMS: list[str] = ["sensor", "select"]

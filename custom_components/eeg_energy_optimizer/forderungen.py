@@ -193,6 +193,10 @@ class Vorgaben:
     # gilt für jede Netzladung.
     reserve_aktiv: bool = False
     reserve_pct: dict = field(default_factory=dict)
+    # Dieselbe Kurve in kWh vor der Klammer auf Mindest-/Maximalreserve
+    # (Epoche → kWh, nur wo die Statistik reicht) — zeigt, wann die Historie
+    # Bezug über der Grenze kennt, auch unter der Mindestreserve.
+    reserve_roh_kwh: dict = field(default_factory=dict)
     kappung_kw: dict = field(default_factory=dict)
     kappung_standard_kw: float = 0.0
     sicherheit_kw: float = 0.3
@@ -602,9 +606,20 @@ class Forderungen:
         # keine einzige Netzladung, Spitzen 9–12 kW bei 6 kW Grenze. Jetzt
         # wird ihr Stand spätestens zum nächsten Sonnenuntergang gefordert,
         # bis dahin im günstigsten Slot.
+        #
+        # Spätestens — früher, wenn die Historie schon vorher Bezug über der
+        # Grenze kennt: dann zum Ende des Slots davor (``_mindestreserve_bedarf``).
+        # Bis 2.1.81 galt nur der Untergang, und eine verbrauchte Reserve kam
+        # erst am nächsten Abend zurück: HAG-0013 07.11.2026 verlor sie über
+        # Nacht, stand den Vormittag auf dem Boden, Spitze 6,08 kW bei 4 kW
+        # Grenze; Kloibhofer brauchte sie um 16 und 18 Uhr auf, die Last um
+        # 19:15 traf eine leere Batterie (4,66 kW bei 3,5 kW).
         werte = [v.reserve_pct.get(t) for t in stempel]
         werte = [w for w in werte if w is not None]
         termin = self.untergaenge[0] if self.untergaenge else None
+        bedarf = self._mindestreserve_bedarf(stempel, schritt_s)
+        if bedarf is not None and (termin is None or bedarf < termin):
+            termin = bedarf
         if werte and termin is not None:
             kwh = kap * (float(v.boden_basis_pct) + min(werte) - float(v.boden_pct)) / 100.0
             kwh = min(self.akku.kapazitaet, max(0.0, kwh))
@@ -612,6 +627,29 @@ class Forderungen:
                 forderung[termin] = kwh
                 self.mindestreserve_slots.add(termin)
         return forderung if any(f > 0 for f in forderung) else None
+
+    def _mindestreserve_bedarf(self, stempel: list[int], schritt_s: int) -> int | None:
+        """Erster Slot, an dessen Ende die Mindestreserve stehen muss, weil
+        die Historie in der Viertelstunde danach Bezug über der Grenze kennt.
+
+        Dieselbe Regel wie für die Kurve selbst (sie fällt dort um mehr als
+        ``RESERVE_NETZ_BEDARF_MIN_KWH``), nur auf der Kurve VOR der Klammer:
+        Liegt der Bedarf unter der Mindestreserve, ist die gekappte Kurve
+        flach und fällt nirgends. Bis zu diesem Slot bleibt jede
+        Viertelstunde zum Nachladen gleich gut — ``pflicht`` nimmt die
+        günstigste. None ohne Rohkurve (alte Archive, keine Statistik).
+        """
+        roh = self.v.reserve_roh_kwh
+        if not roh:
+            return None
+        for k in range(self.n - 1):
+            jetzt = roh.get(stempel[k + 1])
+            danach = roh.get(stempel[k + 2] if k + 2 < self.n else stempel[-1] + schritt_s)
+            if jetzt is None or danach is None:
+                continue
+            if jetzt - danach > RESERVE_NETZ_BEDARF_MIN_KWH:
+                return k
+        return None
 
     @cached_property
     def mindestreserve_slots(self) -> set[int]:
@@ -897,7 +935,9 @@ class Forderungen:
                         text += f", am Planungsrand auf {zahl(pct(netz[termin]))} % abgesenkt"
                     return text
                 if j in self.mindestreserve_slots:
-                    return f"die Mindestreserve der Spitzenkappung (bis {uhr(j)})"
+                    if j in self.untergaenge:
+                        return f"die Mindestreserve der Spitzenkappung (bis {uhr(j)})"
+                    return f"die Mindestreserve der Spitzenkappung (Spitze um {uhr(j + 1)})"
                 return f"die Spitzenreserve (Spitze um {uhr(j + 1)})"
             return None
 
