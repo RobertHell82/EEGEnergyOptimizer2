@@ -12,6 +12,14 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+## [2.1.82] - 2026-11-09
+
+### Behoben
+
+- **Spitzenkappung mit Reserve aus dem Netz: Die Mindestreserve steht vor der nächsten Spitze, nicht erst beim Sonnenuntergang.** Bisher verlangte der Plan die Mindestreserve nur zum nächsten Sonnenuntergang. War sie danach aufgebraucht, holte er sie erst am nächsten Abend zurück. Eine Anlage verlor sie über Nacht, stand morgens am Boden und bezog 6,08 kW bei 4 kW Grenze. Eine andere brauchte sie um 16 und 18 Uhr auf und war für die Last um 19:15 leer. Jetzt gilt als Termin die Viertelstunde vor der ersten Spitze, die die Verlaufsdaten der letzten vier Wochen kennen. Liegt sie später als der Sonnenuntergang, bleibt der Sonnenuntergang der Termin. Bis dahin lädt der Plan im günstigsten freien Slot, meist in der Nacht. Im Fahrplan steht dann der Grund „Mindestreserve der Spitzenkappung (Spitze um 09:30)“.
+- **Victron: Die Netzladung trägt einen Lastsprung im Haus nicht mehr minutenlang aus der Batterie.** Das ESS hält den Netzbezug auf dem Sollwert, die Batterie gleicht jede Änderung der Hauslast aus. Wurde eine kleine Anhebung des Sollwerts als wirkungslos zurückgenommen, waren weitere Anhebungen fünf Minuten gesperrt. Schaltete in dieser Zeit ein großer Verbraucher zu, entlud die Batterie drei Minuten lang mit 1,5 kW, statt mit 1,8 kW zu laden. Fällt die Batterie in der Sperre um mehr als 0,5 kW, gilt die Sperre jetzt als überholt, und der Sollwert zieht sofort nach.
+- **Telemetrie: Keine Meldung „Monatsspitze überschritten“ mehr für eine Spitze, die im Modus Aus entstand.** Im Modus Aus prüft die Telemetrie nichts. Beim ersten Lauf zurück in Ein meldete sie die neue Monatsspitze trotzdem, als hätte die Spitzenkappung versagt. Jetzt merkt sie sich die Spitze dann nur, wie nach einem Neustart. Gemessen und abgerechnet wird die Spitze unverändert.
+
 ## [2.1.81] - 2026-11-06
 
 ### Behoben
