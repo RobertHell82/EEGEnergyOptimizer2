@@ -12,6 +12,13 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+## [2.1.83] - 2026-11-11
+
+### Behoben
+
+- **Spitzenkappung: Der Entladedeckel geht beim Wechsel auf Normalbetrieb nicht mehr verloren.** Wechselte der Fahrplan von „Laden blockiert“ zurück auf Normalbetrieb, während die Batterie in der Reserve stand, hob die Freigabe den Deckel auf, und gleich danach setzte die Spitzenkappung ihn wieder. Am Wechselrichter lagen damit zwei Schreibvorgänge auf dasselbe Register in derselben Sekunde. Eine SolaX behielt den ersten Wert (30 A, also kein Deckel), die Integration hielt den zweiten (0 A, halten) für gesetzt und schrieb ihn nie neu. Die Batterie entlud zwei Stunden lang mit 2,6 kW aus der Reserve, bis 12 % und damit unter den Mindest-Ladestand von 15 %. Jetzt schreibt in diesem Fall nur noch die Spitzenkappung, einmal.
+- **Spitzenkappung: Ein Entladedeckel, der nachweislich nicht wirkt, wird neu geschrieben.** Entlädt die Batterie drei Minuten lang deutlich über dem Deckel, wird er jetzt erneut an den Wechselrichter geschickt, höchstens zweimal hintereinander. Bisher wurde das nur gemeldet, und ein Wert, der am Gerät verloren ging, blieb verloren, solange sich der Deckel nicht änderte. Hält ein Gerät den Deckel grundsätzlich nicht, bleibt es bei der Meldung.
+
 ## [2.1.82] - 2026-11-09
 
 ### Behoben
