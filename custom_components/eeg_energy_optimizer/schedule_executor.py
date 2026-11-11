@@ -427,6 +427,8 @@ class ScheduleExecutor:
         self._deckel_wirkungslos = False
         self._deckel_richtung: str | None = None
         self._deckel_ist_kw: float | None = None
+        # Wie oft ein wirkungsloser Deckel („zu_viel") neu geschrieben wurde.
+        self._deckel_neu_geschrieben = 0
 
         # Not-Aus (Guard 2): anhaltender Netzbezug während einer Entladung.
         self._emergency_runs = 0
@@ -754,11 +756,30 @@ class ScheduleExecutor:
             return
         if entladung <= deckel + GUARD_WIRKUNG_MIN_LUECKE_KW or entladung <= deckel * 1.5:
             self._deckel_runs = 0
+            # Der Deckel hält (wieder): Ein späterer Verlust darf erneut
+            # geheilt werden — die Reserve kann tagelang stehen.
+            self._deckel_neu_geschrieben = 0
             if self._deckel_richtung == "zu_viel":
                 self._deckel_wirkungslos = False
                 self._deckel_richtung = None
             return
         self._deckel_runs += 1
+        # Neu schreiben, nicht nur melden: Was am Gerät steht, kann ein
+        # anderer Wert sein als der, den der Executor für geschrieben hält
+        # (ein verlorener Schreibvorgang, ein Gerät, das zurücksetzt) — im
+        # Totband schriebe er ihn sonst nie neu. Je ``GUARD_WIRKUNG_RUNS``
+        # Läufe einmal, höchstens ``GUARD_WIRKUNG_MAX_NEUVERSUCHE``-mal, dann
+        # bleibt es bei der Meldung (ein Gerät, das den Deckel nie hält).
+        if (
+            self._deckel_runs % GUARD_WIRKUNG_RUNS == 0
+            and self._deckel_neu_geschrieben < GUARD_WIRKUNG_MAX_NEUVERSUCHE
+        ):
+            self._deckel_neu_geschrieben += 1
+            self._entladedeckel_offen = True
+            _LOGGER.warning(
+                "Executor: Entladedeckel %.2f kW wirkt nicht (%.2f kW Entladung) "
+                "— wird neu geschrieben", deckel, entladung,
+            )
         # Nach der Richtung fragen, nicht nach dem Flag: Stand der Befund
         # schon auf „steht", gilt jetzt das Gegenteil — sonst bliebe die
         # alte Richtung (und ihre Telemetrie-Kennung) stehen.
@@ -834,6 +855,7 @@ class ScheduleExecutor:
     def _deckel_zuruecksetzen(self) -> None:
         """Wirkungskontrolle des Deckels zurück auf null (kein Deckel mehr)."""
         self._deckel_runs = 0
+        self._deckel_neu_geschrieben = 0
         self._deckel_steht_runs = 0
         self._deckel_wirkungslos = False
         self._deckel_richtung = None
@@ -851,8 +873,16 @@ class ScheduleExecutor:
         # Wirkungskontrolle des Entladedeckels (nur melden, _deckel_pruefen).
         self._deckel_zuruecksetzen()
 
-    async def async_release(self) -> bool:
+    async def async_release(self, deckel_aufheben: bool = True) -> bool:
         """Wechselrichter freigeben: erzwungene Modi stoppen, Automatik läuft.
+
+        ``deckel_aufheben=False`` nur aus dem Guard-Lauf, wenn der Schritt der
+        Spitzenkappung im selben Lauf folgt: Er setzt den Deckel neu oder hebt
+        ihn selbst auf. Aufheben und gleich danach wieder deckeln schrieb
+        dasselbe Register zweimal in einer Sekunde — die SolaX behielt den
+        ERSTEN Wert (30 A), der Executor hielt 0 für geschrieben, und die
+        Batterie entlud zwei Stunden lang 2,6 kW in der Reserve, bis unter den
+        Mindest-Ladestand (Werenka 10.11.2026, 12:25:49 UTC).
 
         Bei Huawei stellt ``async_stop_forcible`` das Ladelimit auf das
         Maximum der Number-Entität zurück — also auf den anlagenspezifischen
@@ -886,8 +916,10 @@ class ScheduleExecutor:
         self._deckel_nach_stopp(ok)
         # Ungebremst: Die Freigabe ist auch der Weg beim Entladen der
         # Integration — eine Wartezeit aus einem früheren Fehlschlag darf
-        # einen Huawei-Deckel dort nicht über das Entladen retten.
-        await self._entladedeckel_aufheben(bremse=False)
+        # einen Huawei-Deckel dort nicht über das Entladen retten. Scheitert
+        # der Stopp, folgt kein Schritt der Spitzenkappung — dann hier.
+        if deckel_aufheben or not ok:
+            await self._entladedeckel_aufheben(bremse=False)
         self._kappung_aktiv = False
         self.spitzenkappung = None
         # Ohne Deckel gibt es nichts mehr zu melden. Failsafe, Not-Aus und
@@ -1331,7 +1363,7 @@ class ScheduleExecutor:
             if self._stillgelegt_abbruch():
                 return
         if action.kind == "release":
-            await self._apply_release(action.reason or "Normalbetrieb")
+            await self._apply_release(action.reason or "Normalbetrieb", deckel_folgt=True)
         elif action.kind == "charge_limit":
             await self._apply_charge_limit(action)
         elif action.kind == "grid_charge":
@@ -1922,11 +1954,14 @@ class ScheduleExecutor:
     # ------------------------------------------------------------------
     # Ausführung (nur hier wird geschrieben — ausschließlich via InverterBase)
     # ------------------------------------------------------------------
-    async def _apply_release(self, status_text: str) -> None:
+    async def _apply_release(self, status_text: str, deckel_folgt: bool = False) -> None:
+        """Freigeben; ``deckel_folgt``: der Schritt der Spitzenkappung kommt
+        im selben Lauf und kümmert sich um den Deckel (``async_release``)."""
         if self._active_kind == "release":
             self.last_status = status_text
             return
-        ok = await self.async_release()  # setzt last_write_ok selbst
+        # setzt last_write_ok selbst
+        ok = await self.async_release(deckel_aufheben=not deckel_folgt)
         self.last_status = (
             f"{status_text} — Wechselrichter freigegeben"
             if ok

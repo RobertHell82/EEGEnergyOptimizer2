@@ -429,6 +429,60 @@ async def test_freigabe_hebt_ungebremst_auf(mock_hass, inverter):
     assert ex._entladedeckel_offen is False
 
 
+async def test_freigabe_in_der_reserve_schreibt_den_deckel_nur_einmal(mock_hass, inverter):
+    """Werenka 10.11.2026: Ladelimit → Freigabe in der Reserve. Bis 2.1.82
+    hob die Freigabe den Deckel auf (30 A) und der Schritt danach setzte ihn
+    in derselben Sekunde wieder (0 A) — die SolaX behielt den ersten Wert,
+    die Batterie entlud zwei Stunden lang. Jetzt schreibt nur der Schritt."""
+    ex = _executor(_hass(mock_hass, soc=25.0), inverter)
+    ex._active_kind = "charge_limit"
+    ex._written_entladedeckel_kw = 0.0
+    with _messung(export=-1.0, batt=0.0):
+        await ex.async_guard_cycle(_state(), MODE_EIN, now=NOW)
+    assert ex._active_kind == "release"
+    assert inverter.async_set_discharge_limit.await_args_list == [call(0.0)]
+    assert ex._written_entladedeckel_kw == 0.0
+
+
+async def test_freigabe_ueber_der_reserve_hebt_den_deckel_einmal_auf(mock_hass, inverter):
+    """Liegt der Ladestand über der Schwelle, hebt der Schritt auf — auch
+    das nur einmal."""
+    ex = _executor(_hass(mock_hass, soc=40.0), inverter)
+    ex._active_kind = "charge_limit"
+    ex._written_entladedeckel_kw = 0.0
+    with _messung(export=-1.0, batt=0.0):
+        await ex.async_guard_cycle(_state(), MODE_EIN, now=NOW)
+    assert inverter.async_set_discharge_limit.await_args_list == [call(None)]
+    assert ex._written_entladedeckel_kw is None
+    assert ex._entladedeckel_offen is False
+
+
+async def test_wirkungsloser_deckel_wird_neu_geschrieben(mock_hass, inverter):
+    """Steht am Gerät ein anderer Wert, als der Executor geschrieben zu haben
+    glaubt, hilft nur neu schreiben: je sechs Läufe einmal, höchstens zweimal
+    — ein Gerät, das den Deckel nie hält, wird gemeldet, nicht beschossen."""
+    ex = _executor(_hass(mock_hass, soc=25.0), inverter)
+    with _messung(export=-1.0, batt=0.0):
+        await ex.async_guard_cycle(_state(), MODE_EIN, now=NOW)
+    assert inverter.async_set_discharge_limit.await_args_list == [call(0.0)]
+    for i in range(1, 25):  # unter 15 min — sonst greift der Failsafe
+        with _messung(export=-1.1, batt=-2.66):
+            await ex.async_guard_cycle(
+                _state(), MODE_EIN, now=NOW + timedelta(seconds=30 * i)
+            )
+        if i == 6:
+            assert ex._deckel_wirkungslos is True
+            assert inverter.async_set_discharge_limit.await_count == 1
+        if i == 7:
+            assert inverter.async_set_discharge_limit.await_count == 2
+    assert inverter.async_set_discharge_limit.await_args_list == [call(0.0)] * 3
+    assert ex._deckel_wirkungslos is True
+    # Hält der Deckel wieder, darf ein späterer Verlust erneut heilen.
+    with _messung(export=-3.7, batt=0.0):
+        await ex.async_guard_cycle(_state(), MODE_EIN, now=NOW + timedelta(minutes=13))
+    assert ex._deckel_neu_geschrieben == 0
+
+
 async def test_deckel_pendelt_nicht_an_der_schwelle(mock_hass, inverter):
     """Bedarf so, dass der Deckel um 0,2 kW schwankt: Wer hält, deckt erst ab
     0,4 kW — kein Schreiben je Lauf."""
