@@ -12,6 +12,12 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+## [2.1.84] - 2026-11-19
+
+### Hinzugefügt
+
+- **energy agent als Quelle für den Bedarf der Gemeinschaft.** Neben der PeakShare-Prognose und der festen Abnahmequote lässt sich jetzt „energy agent“ wählen. Man trägt seinen persönlichen API-Schlüssel ein (anzulegen auf der energy-agent-Startseite, beginnt mit „ea_“), die Integration prüft ihn sofort und übernimmt die Gemeinschaften, in denen man Mitglied ist. energy agent liefert Erzeugung und Verbrauch der ganzen Gemeinschaft je Viertelstunde; daraus entsteht derselbe Saldo wie bei PeakShare (Bedarf oder Überschuss), und der Fahrplan legt die Einspeisung wie gewohnt in die Stunden, in denen die Gemeinschaft Strom braucht. Getestet mit einer BEG: 192 Viertelstunden über 48 Stunden. Tarife, Anteil und Gewichtung trägt man weiter selbst ein, wie bei PeakShare; die Schnittstelle liefert sie nicht. Steht „BEG“ im Namen, ist die Art der Gemeinschaft für das Laden aus dem Netz vorbelegt. Der Schlüssel landet weder im Plan-Archiv noch in der Telemetrie. Schlägt der Abruf fehl, etwa weil der Schlüssel abgelaufen ist oder die noch nicht stabile Schnittstelle sich geändert hat, meldet die Telemetrie das.
+
 ## [2.1.83] - 2026-11-11
 
 ### Behoben
