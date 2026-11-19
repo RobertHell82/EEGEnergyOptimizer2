@@ -50,6 +50,8 @@ GESICHERT = {
     # Eigene PV-Prognose: löst einen Abruf bei Open-Meteo mit frei wählbaren
     # Flächen aus — gehört zur probe_*-Familie, auch wenn der Host fest ist.
     "eeg_optimizer/probe_pvprognose",
+    # energy agent: prüft einen mitgeschickten API-Schlüssel beim Anbieter.
+    "eeg_optimizer/probe_energy_agent",
     "eeg_optimizer/ambibox_manual",
     "eeg_optimizer/refresh_consumption_profile",
     "eeg_optimizer/telemetry_enable",

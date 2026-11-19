@@ -488,6 +488,7 @@ def async_register_websocket_commands(hass: HomeAssistant) -> None:
     # test_websocket_admin.py, dass jeder Befehl der Datei hier steht.
     websocket_api.async_register_command(hass, ws_get_pvprognose)
     websocket_api.async_register_command(hass, ws_probe_pvprognose)
+    websocket_api.async_register_command(hass, ws_probe_energy_agent)
     websocket_api.async_register_command(hass, ws_get_prognosevergleich)
     # Phase 8 — Telemetry-Steuerung (D-32 / D-33)
     websocket_api.async_register_command(hass, ws_telemetry_get_status)
@@ -2880,6 +2881,41 @@ async def ws_get_prognosevergleich(
     provider = data.get("pvprognose")
     ergebnis["kalibrierung"] = provider.kalibrierung_status() if provider is not None else None
     connection.send_result(msg["id"], ergebnis)
+
+
+@websocket_api.require_admin
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "eeg_optimizer/probe_energy_agent",
+        vol.Required("api_key"): str,
+    }
+)
+@websocket_api.async_response
+async def ws_probe_energy_agent(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict,
+) -> None:
+    """Schlüssel prüfen und die Gemeinschaften des Mitglieds liefern.
+
+    Mit dem (noch ungespeicherten) Schlüssel aus dem Panel — speichert
+    nichts. Antwort ``{ok, communities: [Name], fehler}``; ein falscher
+    Schlüssel ist kein WS-Fehler, sondern ``ok: False`` mit Grund.
+    """
+    from .energy_agent import EnergyAgentFehler, EnergyAgentProvider
+
+    probe = EnergyAgentProvider(hass, "temp", msg["api_key"])
+    try:
+        gemeinschaften = await probe.async_gemeinschaften()
+    except EnergyAgentFehler as err:
+        connection.send_result(
+            msg["id"], {"ok": False, "communities": [], "fehler": err.grund}
+        )
+        return
+    connection.send_result(
+        msg["id"],
+        {"ok": True, "communities": [g["name"] for g in gemeinschaften], "fehler": None},
+    )
 
 
 @websocket_api.require_admin

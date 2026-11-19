@@ -79,7 +79,7 @@ EINSTELLUNGEN_KEYS = frozenset({
 })
 # Auch innerhalb der Präfixe nichts mitnehmen, was eine Anlage erreichbar
 # macht oder eine Person benennt.
-EINSTELLUNGEN_SPERRE = ("host", "ip", "port", "token", "password", "user", "serial")
+EINSTELLUNGEN_SPERRE = ("host", "ip", "port", "token", "password", "user", "serial", "api_key")
 
 
 # Gemessene Reihen, die zum Plan gehören. Dieselben Sensoren zeichnet das

@@ -1390,6 +1390,15 @@ class EegOptimizerPanel extends HTMLElement {
           this._overridePct = parseFloat(target.value) || 80;
           return;
         }
+        // energy agent: Schlüssel übernehmen und sofort prüfen — die
+        // gefundenen Gemeinschaften füllen die Auswahl darunter.
+        if (field === "energy_agent_api_key" || field === "settings_energy_agent_api_key") {
+          const d = field.startsWith("settings_") ? this._settingsData : this._wizardData;
+          d.energy_agent_api_key = String(target.value || "").trim();
+          if (d === this._wizardData) this._saveWizardProgress();
+          this._probeEnergyAgent(d);
+          return;
+        }
         if (field.startsWith("settings_")) {
           const realField = field.replace("settings_", "");
           const type = target.type;
@@ -1489,7 +1498,7 @@ class EegOptimizerPanel extends HTMLElement {
           if (type === "checkbox") {
             this._settingsData[realField] = target.checked;
             if (realField === "enable_peakshare" && target.checked && this._peakshareCommunitiesCache.length === 0) {
-              this._loadPeakShareCommunities();
+              this._loadPeakShareCommunities(this._settingsData);
             }
             // Re-render only for toggles that change UI visibility (e.g. enable_peakshare reveals the community dropdown).
             // For simple number/text inputs we skip _render() — otherwise a click on "Speichern" right after editing
@@ -1535,7 +1544,12 @@ class EegOptimizerPanel extends HTMLElement {
             if (realField === "energie_ag_variante") this._render();
             // Die Bedarfsquelle tauscht die PeakShare-Auswahl gegen Namens-
             // und Quotenfelder.
-            if (realField === "eeg_demand_source") this._render();
+            if (realField === "eeg_demand_source") {
+              // PeakShare und energy agent kennen verschiedene Gemeinschaften.
+              this._peakshareCommunitiesCache = [];
+              if (target.value !== "quote") this._loadPeakShareCommunities(this._settingsData);
+              this._render();
+            }
             // Der Wallbox-Typ blendet Adresse, Port, Unit-ID, Ladepunkt und
             // den Verbindungstest ein. Ohne Render war die Auswahl gesetzt,
             // aber es gab kein Feld für die IP-Adresse.
@@ -1555,7 +1569,7 @@ class EegOptimizerPanel extends HTMLElement {
         if (field === "enable_peakshare") {
           this._wizardData[field] = target.checked;
           if (target.checked && this._peakshareCommunitiesCache.length === 0) {
-            this._loadPeakShareCommunities();
+            this._loadPeakShareCommunities(this._wizardData);
           }
           this._saveWizardProgress();
           this._render();
@@ -1577,9 +1591,13 @@ class EegOptimizerPanel extends HTMLElement {
             if (target.value === "energie_ag" || target.value === "energie_ag_estimate") this._ensureEnergieAgStatus();
             this._saveWizardProgress();
             this._render();
+          } else if (field === "eeg_demand_source") {
+            this._peakshareCommunitiesCache = [];
+            if (target.value !== "quote") this._loadPeakShareCommunities(this._wizardData);
+            this._saveWizardProgress();
+            this._render();
           } else if (
             field === "awattar_sunny_vertrag"
-            || field === "eeg_demand_source"
             // Der Netzbereich tauscht den Hinweis mit dem Satz aus der
             // Verordnung und blendet bei „Von Hand eintragen" das Feld ein.
             || field === "schedule_netzbereich"
@@ -2731,7 +2749,7 @@ class EegOptimizerPanel extends HTMLElement {
           this._ensurePvPrognoseStatus();
         }
         if (this._settingsData.enable_peakshare !== false && this._peakshareCommunitiesCache.length === 0) {
-          this._loadPeakShareCommunities();
+          this._loadPeakShareCommunities(this._settingsData);
         }
         this._render();
         break;
@@ -3379,7 +3397,7 @@ class EegOptimizerPanel extends HTMLElement {
     }
     // Gemeinschaftsliste beim Betreten des Tarif-Schritts laden
     if (name === "Tarife & Gemeinschaft" && this._wizardData.enable_peakshare !== false && this._peakshareCommunitiesCache.length === 0) {
-      this._loadPeakShareCommunities();
+      this._loadPeakShareCommunities(this._wizardData);
     }
     this._render();
   }
@@ -4209,7 +4227,11 @@ class EegOptimizerPanel extends HTMLElement {
     }
   }
 
-  async _loadPeakShareCommunities() {
+  async _loadPeakShareCommunities(d) {
+    const daten = d || (this._view === "settings" ? this._settingsData : this._wizardData);
+    if ((daten?.eeg_demand_source || "peakshare") === "energy_agent") {
+      return this._probeEnergyAgent(daten);
+    }
     if (!this._hass || this._peakshareCommunitiesLoading) return;
     this._peakshareCommunitiesLoading = true;
     try {
@@ -4224,6 +4246,43 @@ class EegOptimizerPanel extends HTMLElement {
     } finally {
       this._peakshareCommunitiesLoading = false;
     }
+  }
+
+  // energy agent: Gemeinschaften kommen aus dem Schlüssel des Mitglieds.
+  // Sie werden übernommen (Wizard UND Einstellungen) — es gibt nichts zu
+  // wählen, solange der Schlüssel nicht mehr als zwei kennt. Ein Name, den
+  // der Schlüssel nicht (mehr) kennt, fliegt raus.
+  async _probeEnergyAgent(d) {
+    if (!this._hass || !d) return;
+    const key = String(d.energy_agent_api_key || "").trim();
+    if (!key) {
+      this._peakshareCommunitiesCache = [];
+      this._energyAgentStatus = null;
+      this._render();
+      return;
+    }
+    const nr = (this._energyAgentNr = (this._energyAgentNr || 0) + 1);
+    this._energyAgentStatus = { busy: true };
+    this._render();
+    let r;
+    try {
+      r = await this._hass.callWS({ type: "eeg_optimizer/probe_energy_agent", api_key: key });
+    } catch (e) {
+      r = { ok: false, communities: [], fehler: e?.message || "Abfrage fehlgeschlagen" };
+    }
+    if (nr !== this._energyAgentNr) return;
+    const liste = r?.communities || [];
+    this._peakshareCommunitiesCache = liste;
+    this._energyAgentStatus = { busy: false, ok: !!r?.ok, fehler: r?.fehler || null, anzahl: liste.length };
+    if (r?.ok && liste.length) {
+      if (!liste.includes(d.peakshare_community)) d.peakshare_community = liste[0];
+      if (d.peakshare_community_2 && !liste.includes(d.peakshare_community_2)) d.peakshare_community_2 = "";
+      if (!d.peakshare_community_2 && liste.length === 2) {
+        d.peakshare_community_2 = liste.find(n => n !== d.peakshare_community) || "";
+      }
+      if (d === this._wizardData) this._saveWizardProgress();
+    }
+    this._render();
   }
 
   // Vorauswahl im WIZARD: Gemeinschaft 1 die BEG, Gemeinschaft 2 die erste
@@ -9075,7 +9134,7 @@ class EegOptimizerPanel extends HTMLElement {
               ${beg ? `<div class="help-text">Am Namen als Bürgerenergiegemeinschaft erkannt.</div>` : ""}
             </div>
           </div>
-          <div class="help-text" style="margin-bottom:8px">Zählt nur, wenn die Batterie aus dem Netz lädt. Energiepreis der Gemeinschaft inklusive Mehrwertsteuer; die Netzgebühr rechnet der Fahrplan selbst dazu, ohne SNAP und WiNAP. Aus der Gemeinschaft kommt höchstens dein Anteil, und nur so viel, wie sie laut PeakShare übrig hat — der Rest kostet den Preis deines Lieferanten. Leer = kein Bezug aus dieser Gemeinschaft.</div>`;
+          <div class="help-text" style="margin-bottom:8px">Zählt nur, wenn die Batterie aus dem Netz lädt. Energiepreis der Gemeinschaft inklusive Mehrwertsteuer; die Netzgebühr rechnet der Fahrplan selbst dazu, ohne SNAP und WiNAP. Aus der Gemeinschaft kommt höchstens dein Anteil, und nur so viel, wie sie laut Prognose übrig hat — der Rest kostet den Preis deines Lieferanten. Leer = kein Bezug aus dieser Gemeinschaft.</div>`;
   }
 
   // Boden und Deckel des Ladestands — genau die Regeln aus dem Backend
@@ -9235,6 +9294,30 @@ class EegOptimizerPanel extends HTMLElement {
       </div>` : ""}`;
   }
 
+  // energy agent: persönlicher API-Schlüssel (anlegen auf der Startseite von
+  // energy agent) und das Ergebnis der Prüfung. Die Gemeinschaften füllt
+  // _probeEnergyAgent in die Auswahl darunter.
+  _energyAgentFeld(d, prefix) {
+    const st = this._energyAgentStatus;
+    let status = "Den Schlüssel legst du auf deiner energy-agent-Startseite an (beginnt mit „ea_“). Er gilt für dich, nicht für die Gemeinschaft — alle Gemeinschaften, in denen du Mitglied bist, werden übernommen.";
+    let farbe = "";
+    if (st?.busy) status = "Schlüssel wird geprüft…";
+    else if (st && !st.ok) { status = `✗ ${this._escapeHtml(st.fehler || "Prüfung fehlgeschlagen")}`; farbe = "color:var(--error-color,#db4437)"; }
+    else if (st?.ok && st.anzahl === 0) { status = "Schlüssel gültig, aber keine aktive Mitgliedschaft gefunden."; farbe = "color:var(--warning-color,#ffa600)"; }
+    else if (st?.ok) {
+      const namen = (this._peakshareCommunitiesCache || []).map(n => this._escapeHtml(n)).join(", ");
+      status = `✓ ${namen}${st.anzahl > 2 ? " — die Integration rechnet mit höchstens zwei, wähle sie unten aus." : ""}`;
+      farbe = "color:var(--success-color,#43a047)";
+    }
+    return `
+        <div class="field-group">
+          <label>API-Schlüssel energy agent</label>
+          <input type="password" autocomplete="off" data-field="${prefix}energy_agent_api_key"
+                 value="${this._escapeHtml(d.energy_agent_api_key || "")}" placeholder="ea_…">
+          <div class="help-text" style="${farbe}">${status}</div>
+        </div>`;
+  }
+
   _gemeinschaftFields(d, prefix) {
     const on = d.enable_peakshare !== false;
     if (on) this._ensureGemTarif(d);
@@ -9242,6 +9325,12 @@ class EegOptimizerPanel extends HTMLElement {
     // Feste Abnahmequote statt PeakShare-Prognose: Name als Freitext, je
     // Gemeinschaft eine Quote für Tag und Nacht, Vorschau als Mischpreis.
     const quoten = (d.eeg_demand_source || "peakshare") === "quote";
+    const energyAgent = d.eeg_demand_source === "energy_agent";
+    if (on && energyAgent && d.energy_agent_api_key && !this._energyAgentStatus
+        && communities.length === 0) {
+      this._energyAgentStatus = { busy: true };
+      queueMicrotask(() => this._probeEnergyAgent(d));
+    }
     // Basistarif wie im Backend bestimmen (schedule.py): bei Quelle OeMAG
     // zählt der geholte Tarif, nicht die Handeingabe — sonst zeigt die
     // Vorschau einen Aufschlag, den der Fahrplan so nie rechnet. Ohne
@@ -9362,7 +9451,9 @@ class EegOptimizerPanel extends HTMLElement {
         ? `<input type="text" data-field="${prefix}peakshare_community${s}" value="${this._escapeHtml(name)}" maxlength="60"
                   placeholder="${nr === 2 ? "Name der zweiten Gemeinschaft (optional)" : "Name der Gemeinschaft, z. B. EEG Musterdorf"}">`
         : communities.length === 0 && !name
-        ? `<div class="help-text">Gemeinschaften werden geladen…</div>`
+        ? `<div class="help-text">${energyAgent && !d.energy_agent_api_key
+            ? "Erst oben den API-Schlüssel von energy agent eintragen."
+            : "Gemeinschaften werden geladen…"}</div>`
         : `<select data-field="${prefix}peakshare_community${s}">
              <option value="" ${name ? "" : "selected"}>${nr === 2 ? "— keine —" : "— bitte wählen —"}</option>
              ${namen.map(c => `<option value="${this._escapeHtml(c)}" ${c === name ? "selected" : ""}>${this._escapeHtml(c)}</option>`).join("")}
@@ -9518,13 +9609,17 @@ class EegOptimizerPanel extends HTMLElement {
         <div class="field-group">
           <label>Bedarfsdaten der Gemeinschaft</label>
           <select data-field="${prefix}eeg_demand_source">
-            <option value="peakshare" ${quoten ? "" : "selected"}>PeakShare-Prognose (EW Ansfelden)</option>
+            <option value="peakshare" ${quoten || energyAgent ? "" : "selected"}>PeakShare-Prognose (EW Ansfelden)</option>
+            <option value="energy_agent" ${energyAgent ? "selected" : ""}>energy agent</option>
             <option value="quote" ${quoten ? "selected" : ""}>Feste Abnahmequote (Gemeinschaft ohne PeakShare)</option>
           </select>
-          <div class="help-text">${quoten
+          <div class="help-text">${energyAgent
+            ? "Holt Erzeugung und Verbrauch deiner Gemeinschaft von energy agent und rechnet daraus, wann sie Strom braucht und wann sie Überschuss hat — wie bei PeakShare. Tarife kommen weiter aus den Feldern unten."
+            : quoten
             ? "Ohne Bedarfsprognose rechnet der Fahrplan mit einem Mischpreis: Anteil × Abnahmequote zum Gemeinschaftssatz, der Rest zur Standardvergütung — getrennt für Tag und Nacht. Das ist eine erklärte Annahme aus deiner Abrechnung, kein Steuersignal nach Stunden; auch die Gewinn- und Bilanzkarten rechnen damit."
             : "Holt die Bedarfsprognose der Gemeinschaften. Der Fahrplan rechnet daraus einen Preisaufschlag: Stunden mit hohem Bedarf werden wertvoller, dorthin verschiebt er die Einspeisung. Das funktioniert nur für Gemeinschaften, die über PeakShare der EW Ansfelden abgewickelt werden — für alle anderen die feste Abnahmequote wählen."}</div>
         </div>
+        ${energyAgent ? this._energyAgentFeld(d, prefix) : ""}
         ${block(1)}
         ${zweiterBlock}
         <div class="help-text" style="color:${summeFarbe}">${summeText}</div>
@@ -10749,7 +10844,8 @@ class EegOptimizerPanel extends HTMLElement {
 
     const quote = (d.eeg_demand_source || "peakshare") === "quote";
     zeile("gemeinschaft", "Energiegemeinschaft", d.enable_peakshare !== false
-      ? `${d.peakshare_community || "BEG"} — ${quote ? "feste Abnahmequote" : "PeakShare-Prognose"}`
+      ? `${d.peakshare_community || "BEG"} — ${quote ? "feste Abnahmequote"
+          : d.eeg_demand_source === "energy_agent" ? "energy-agent-Prognose" : "PeakShare-Prognose"}`
       : "Aus");
     for (const [sfx, name] of [["", d.peakshare_community], ["_2", d.peakshare_community_2]]) {
       if (!name || !(Number(d[`peakshare_share_pct${sfx}`] ?? 0) > 0)) continue;

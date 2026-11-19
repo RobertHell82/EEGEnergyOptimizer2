@@ -105,12 +105,17 @@ DECKEL_ABSTAND = 0.001
 CONF_EEG_DEMAND_SOURCE = "eeg_demand_source"
 DEMAND_SOURCE_PEAKSHARE = "peakshare"
 DEMAND_SOURCE_QUOTE = "quote"
+# energy agent (``energy_agent.py``): Saldo aus Erzeugung und Verbrauch der
+# Gemeinschaft, sonst wie PeakShare — gleiche Intervalle, gleicher Provider-Platz.
+DEMAND_SOURCE_ENERGY_AGENT = "energy_agent"
 
 
 def bedarfsquelle(config: dict[str, Any]) -> str:
-    """„quote" nur bei ausdrücklicher Wahl — alles andere ist PeakShare."""
+    """„quote“/„energy_agent“ nur bei ausdrücklicher Wahl — sonst PeakShare."""
     wert = str(config.get(CONF_EEG_DEMAND_SOURCE) or "").strip().lower()
-    return DEMAND_SOURCE_QUOTE if wert == DEMAND_SOURCE_QUOTE else DEMAND_SOURCE_PEAKSHARE
+    if wert in (DEMAND_SOURCE_QUOTE, DEMAND_SOURCE_ENERGY_AGENT):
+        return wert
+    return DEMAND_SOURCE_PEAKSHARE
 
 
 @dataclass(frozen=True)

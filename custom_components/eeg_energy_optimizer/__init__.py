@@ -2051,8 +2051,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     # PeakShare: Bedarfsprognose der Gemeinschaften. Seit der EEG-Preisfunktion
     # keine reine Anzeige mehr — der Fahrplan rechnet damit.
-    from .peakshare import PeakShareProvider
-    peakshare_provider = PeakShareProvider(hass, entry.entry_id)
+    # Mit energy agent als Bedarfsquelle liegt dessen Provider auf demselben
+    # Platz — er hat dieselbe Schnittstelle (energy_agent.py).
+    from .eeg_price import DEMAND_SOURCE_ENERGY_AGENT, bedarfsquelle
+    if bedarfsquelle(config) == DEMAND_SOURCE_ENERGY_AGENT:
+        from .energy_agent import CONF_ENERGY_AGENT_KEY, EnergyAgentProvider
+        peakshare_provider = EnergyAgentProvider(
+            hass, entry.entry_id, config.get(CONF_ENERGY_AGENT_KEY)
+        )
+    else:
+        from .peakshare import PeakShareProvider
+        peakshare_provider = PeakShareProvider(hass, entry.entry_id)
     await peakshare_provider.async_load()
     data["peakshare"] = peakshare_provider
     # Nur abrufen, wenn die Gemeinschaft aktiv ist und ihren Bedarf aus der
@@ -2874,6 +2883,24 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                         await quelle.async_fetch()
                     except Exception:
                         _LOGGER.debug("%s: Abruf fehlgeschlagen", name, exc_info=True)
+
+                # energy agent: ein gescheiterter Abruf (Schlüssel ungültig,
+                # Prognose nicht eingerichtet, API geändert — v0 ist nicht
+                # stabil) lässt den Fahrplan still ohne Bedarfsverlauf laufen.
+                bedarf = data.get("peakshare")
+                grund = getattr(bedarf, "letzter_fehler", None)
+                if "peakshare" in namen and grund:
+                    _emit_failure_dedup(
+                        category="eeg_bedarf",
+                        severity="warning",
+                        message_hash=f"energy_agent: {grund}",
+                        context={"quelle": "energy_agent", "grund": grund},
+                        dedup_window_s=FAILURE_PERSISTENT_DEDUP_WINDOW_S,
+                    )
+                elif "peakshare" in namen:
+                    dedup = data["telemetry_failure_dedup"]
+                    for k in [k for k in dedup if k[0] == "eeg_bedarf"]:
+                        dedup.pop(k, None)
 
                 # Prognosevergleich: morgens beide Prognosen festhalten, die
                 # Messung nachziehen — nach den Abrufen, damit die eigene
