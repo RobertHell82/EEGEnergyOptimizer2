@@ -4107,6 +4107,12 @@ class EegOptimizerPanel extends HTMLElement {
         this._peakshareData = null;
         if (this._peakshareAktiv()) this._loadPeakShareData();
       }
+      // Quelle oder Schlüssel gewechselt: die Integration lädt dafür neu
+      // (anderer Provider), der Abruf oben kommt ihr zuvor. Nachholen, statt
+      // bis zur 5-Minuten-Auffrischung ohne Bedarfskurve zu bleiben.
+      if ("eeg_demand_source" in changed || "energy_agent_api_key" in changed) {
+        setTimeout(() => { if (this._peakshareAktiv()) this._loadPeakShareData(); }, 15000);
+      }
       this._view = "dashboard";
       this._render();
     } catch (err) {

@@ -3250,6 +3250,9 @@ _RELOAD_CONFIG_KEYS = frozenset({
     # Der Vergleichsschalter entscheidet, ob der Provider überhaupt holt —
     # ein Neustart des Setups stößt den ersten Abruf sofort an.
     CONF_PV_PROGNOSE_VERGLEICH,
+    # energy agent: der Provider liest den Schlüssel beim Bau. Der Wechsel
+    # der Bedarfsquelle selbst steht in _requires_full_reload.
+    "energy_agent_api_key",
 })
 # Präfixe decken Inverter-Anbindung (Modbus-Hosts/Ports, Geräte-IDs,
 # Steuer-Entities) und Forecast-Quellen ab, ohne jeden Key einzeln zu pflegen.
@@ -3261,6 +3264,16 @@ _RELOAD_CONFIG_PREFIXES = (
 
 def _requires_full_reload(old: dict, new: dict) -> bool:
     """True, wenn sich ein Reload-pflichtiger Config-Schlüssel geändert hat."""
+    # PeakShare- und energy-agent-Provider sitzen auf demselben Platz
+    # (data["peakshare"]) und werden nur beim Setup gewählt. Ein Hot-Reload
+    # ließ nach dem Umschalten auf energy agent den PeakShare-Provider stehen,
+    # der dessen Gemeinschaft nicht kennt — kein Bedarf im Fahrplan
+    # (19.11.2026). PeakShare ↔ Quote braucht das nicht: derselbe Provider.
+    from .eeg_price import DEMAND_SOURCE_ENERGY_AGENT, bedarfsquelle
+    if (bedarfsquelle(old) == DEMAND_SOURCE_ENERGY_AGENT) != (
+        bedarfsquelle(new) == DEMAND_SOURCE_ENERGY_AGENT
+    ):
+        return True
     for key in set(old) | set(new):
         if key in _RELOAD_CONFIG_KEYS or key.startswith(_RELOAD_CONFIG_PREFIXES):
             if old.get(key) != new.get(key):

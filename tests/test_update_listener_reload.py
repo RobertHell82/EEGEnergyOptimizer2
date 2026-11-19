@@ -93,3 +93,13 @@ async def test_hot_reload_holt_fremddaten_und_rechnet_neu():
     assert len(tasks) == 1
     await tasks[0]
     nachlauf.assert_awaited_once()
+
+
+def test_bedarfsquelle_wechsel_requires_reload():
+    """PeakShare ↔ energy agent tauscht den Provider — nur beim Setup."""
+    alt = {**BASE, "eeg_demand_source": "peakshare"}
+    assert _requires_full_reload(alt, {**alt, "eeg_demand_source": "energy_agent"}) is True
+    # Quote ↔ PeakShare bleibt Hot-Reload: derselbe Provider.
+    assert _requires_full_reload(alt, {**alt, "eeg_demand_source": "quote"}) is False
+    ea = {**BASE, "eeg_demand_source": "energy_agent", "energy_agent_api_key": "ea_a"}
+    assert _requires_full_reload(ea, {**ea, "energy_agent_api_key": "ea_b"}) is True
