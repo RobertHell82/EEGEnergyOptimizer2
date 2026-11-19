@@ -2085,10 +2085,16 @@ async def ws_get_peakshare_communities(
     if entry is None:
         return
 
+    from .peakshare import PeakShareProvider
+
     peakshare = data.get("peakshare")
+    # Mit energy agent als Quelle liegt dessen Provider auf diesem Platz —
+    # wer gerade zurück auf PeakShare schaltet, bekäme sonst die Namen von
+    # energy agent statt der PeakShare-Liste (19.11.2026).
+    if not isinstance(peakshare, PeakShareProvider):
+        peakshare = None
     if not peakshare:
         # Fetch directly if no provider yet (during setup wizard)
-        from .peakshare import PeakShareProvider
 
         temp = PeakShareProvider(hass, "temp")
         api_data = await temp.async_fetch()

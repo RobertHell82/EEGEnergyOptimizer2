@@ -1547,7 +1547,7 @@ class EegOptimizerPanel extends HTMLElement {
             if (realField === "eeg_demand_source") {
               // PeakShare und energy agent kennen verschiedene Gemeinschaften.
               this._peakshareCommunitiesCache = [];
-              if (target.value !== "quote") this._loadPeakShareCommunities(this._settingsData);
+              if (target.value !== "quote") this._loadPeakShareCommunities(this._settingsData, true);
               this._render();
             }
             // Der Wallbox-Typ blendet Adresse, Port, Unit-ID, Ladepunkt und
@@ -1593,7 +1593,7 @@ class EegOptimizerPanel extends HTMLElement {
             this._render();
           } else if (field === "eeg_demand_source") {
             this._peakshareCommunitiesCache = [];
-            if (target.value !== "quote") this._loadPeakShareCommunities(this._wizardData);
+            if (target.value !== "quote") this._loadPeakShareCommunities(this._wizardData, true);
             this._saveWizardProgress();
             this._render();
           } else if (
@@ -4233,7 +4233,7 @@ class EegOptimizerPanel extends HTMLElement {
     }
   }
 
-  async _loadPeakShareCommunities(d) {
+  async _loadPeakShareCommunities(d, nachQuellwechsel = false) {
     const daten = d || (this._view === "settings" ? this._settingsData : this._wizardData);
     if ((daten?.eeg_demand_source || "peakshare") === "energy_agent") {
       return this._probeEnergyAgent(daten);
@@ -4244,7 +4244,20 @@ class EegOptimizerPanel extends HTMLElement {
       const result = await this._hass.callWS({
         type: "eeg_optimizer/get_peakshare_communities",
       });
-      this._peakshareCommunitiesCache = result?.communities || [];
+      const liste = result?.communities || [];
+      this._peakshareCommunitiesCache = liste;
+      // Nach dem Wechsel von energy agent stehen dort noch dessen Namen —
+      // PeakShare kennt sie nicht, und ohne passenden Namen bleibt der
+      // Bedarf leer (19.11.2026). Ersetzen (BEG zuerst) bzw. leeren.
+      if (nachQuellwechsel && daten && liste.length) {
+        if (!liste.includes(daten.peakshare_community)) {
+          daten.peakshare_community = liste.find(n => istBeg(n)) || "";
+        }
+        if (daten.peakshare_community_2 && !liste.includes(daten.peakshare_community_2)) {
+          daten.peakshare_community_2 = "";
+        }
+        if (daten === this._wizardData) this._saveWizardProgress();
+      }
       this._gemeinschaftenVorbelegen();
       this._render();
     } catch (e) {
