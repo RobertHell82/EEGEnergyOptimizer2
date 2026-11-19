@@ -12,6 +12,12 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+## [2.1.85] - 2026-11-19
+
+### Behoben
+
+- **energy agent: Der Bedarf der Gemeinschaft erscheint nach dem Umschalten sofort im Fahrplan.** Wer in den Einstellungen von PeakShare auf energy agent umschaltete, sah im Fahrplan keinen Bedarf und keinen Überschuss der Gemeinschaft, bis Home Assistant neu startete. Die Einstellungen wurden im laufenden Betrieb übernommen, dabei blieb der PeakShare-Abruf aktiv, und der kennt die energy-agent-Gemeinschaft nicht. Jetzt startet die Integration beim Wechsel zu oder weg von energy agent und bei einem neuen Schlüssel neu, und das Panel holt die Bedarfskurve kurz danach nach. Der Wechsel zwischen PeakShare und fester Abnahmequote bleibt ohne Neustart.
+
 ## [2.1.84] - 2026-11-19
 
 ### Hinzugefügt
