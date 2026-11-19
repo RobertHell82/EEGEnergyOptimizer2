@@ -12,6 +12,12 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+## [2.1.86] - 2026-11-19
+
+### Behoben
+
+- **Zurück von energy agent auf PeakShare: Die Gemeinschaft stimmt wieder, der Bedarf erscheint im Fahrplan.** Beim Zurückschalten bot die Auswahl weiter nur die Gemeinschaft von energy agent an, weil die Liste noch vom energy-agent-Abruf kam. Gespeichert wurde damit ein Name, den PeakShare nicht kennt, und der Fahrplan zeigte keinen Bedarf, auch nicht nach dem Neustart. Jetzt kommt die Liste immer von PeakShare, und nach einem Wechsel der Quelle werden Namen, die die neue Quelle nicht kennt, ersetzt: Gemeinschaft 1 durch die BEG der Liste, Gemeinschaft 2 wird geleert.
+
 ## [2.1.85] - 2026-11-19
 
 ### Behoben
