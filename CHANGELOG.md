@@ -12,6 +12,12 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+## [2.1.87] - 2026-11-22
+
+### Behoben
+
+- **SolaX ohne Entladestrom-Entität: kein stündlicher Fehlversuch mehr beim Aufheben des Entladedeckels.** Auf einer SolaX-Anlage, deren solax_modbus-Integration die Entität `battery_discharge_max_current` nicht anbietet, meldete der Treiber trotzdem, er könne den Entladedeckel der Spitzenkappung setzen. Nach der ersten Diagnose der Ansteuerung galt der Deckel als „Zustand unbekannt“, und der Executor versuchte von da an jede Stunde, ihn aufzuheben – vergeblich, weil es nichts zu schreiben gab (EWA-HAG-0012, 21.11. 19:42 bis 22.11.). Jetzt bietet der SolaX-Treiber den Deckel nur an, wenn die Entität existiert (Zustand vorhanden oder aktiviert in der Entitätsregistrierung) oder ein von uns gesetzter Deckel gespeichert ist. Fehlt sie und haben wir nie gedeckelt, gilt das Aufheben als erledigt; die Diagnose überspringt den Bereich.
+
 ## [2.1.86] - 2026-11-19
 
 ### Behoben
