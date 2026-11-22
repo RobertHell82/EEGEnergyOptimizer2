@@ -1412,3 +1412,38 @@ class TestEntladungFehlerpfade:
         assert inverter._discharge_active is False
         assert len(takt.takte) == 1                 # kein neuer Takt
         assert inverter._mode1_watt is None
+
+
+# --- Entladedeckel ohne Entität (EWA-HAG-0012, 21.11.2026) -----------------
+
+DECKEL_ENTITY = "number.solax_inverter_battery_discharge_max_current"
+
+
+def test_ohne_entladestrom_entitaet_kein_deckel(mock_hass, inverter):
+    """Gibt es die Entität nicht, bietet der Treiber keinen Deckel an."""
+    mock_hass.states.get = _states({})
+    mock_hass.states.async_all = lambda domain=None: []
+    assert inverter.supports_discharge_limit is False
+
+
+def test_mit_entladestrom_entitaet_deckel(mock_hass, inverter):
+    mock_hass.states.get = _states({DECKEL_ENTITY: "30"}, {DECKEL_ENTITY: {"max": 30}})
+    assert inverter.supports_discharge_limit is True
+
+
+async def test_aufheben_ohne_entitaet_und_ohne_vorwert_ist_erledigt(mock_hass, inverter):
+    """Nach einer Diagnose wurde endlos versucht aufzuheben — es stand nie etwas."""
+    mock_hass.states.get = _states({})
+    mock_hass.states.async_all = lambda domain=None: []
+    assert await inverter.async_set_discharge_limit(None) is True
+    assert not mock_hass.services.async_call.called
+
+
+async def test_aufheben_ohne_entitaet_mit_vorwert_scheitert(mock_hass, inverter):
+    """Haben wir gedeckelt, ist eine fehlende Entität ein echtes Problem."""
+    mock_hass.states.get = _states({})
+    mock_hass.states.async_all = lambda domain=None: []
+    await inverter._state_store.async_save_original_discharge_current(30.0)
+    assert inverter.supports_discharge_limit is True
+    assert await inverter.async_set_discharge_limit(None) is False
+    assert "nicht verfügbar" in (inverter.last_write_error or "")

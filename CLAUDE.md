@@ -372,7 +372,14 @@ InverterBase (ABC)
   │                                              count it as ineffective)
   ├── supports_discharge_limit → bool           (default False; all seven True,
   │                                              Victron only with a writable −1
-  │                                              on „Max. Wechselrichterleistung")
+  │                                              on „Max. Wechselrichterleistung",
+  │                                              SolaX only when
+  │                                              battery_discharge_max_current
+  │                                              exists — state or enabled in
+  │                                              the registry — or a cap of ours
+  │                                              is stored; a lift without the
+  │                                              entity and nothing stored is a
+  │                                              no-op True)
   ├── async_set_discharge_limit(kw | None)      (Spitzenkappung: cap the
   │                                              discharge in automatic mode,
   │                                              0 = hold, None = lift; coexists

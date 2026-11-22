@@ -933,8 +933,46 @@ class SolaXInverter(InverterBase):
         bis zu diesem Strom; 0 A heißt, die Batterie gibt nichts ab. Am Gerät
         noch nicht geprüft (Stand 29.10.2026) — bis dahin ist das der Weg,
         den die Entität verspricht.
+
+        Nur, wenn es die Entität gibt (EWA-HAG-0012, 21.11.2026: nicht
+        vorhanden — nach einer Diagnose versuchte der Executor alle paar
+        Minuten, einen Deckel aufzuheben, den es nie gab). Strukturell wie bei
+        Victron: Zustand ODER Registry, damit ein Start, bei dem solax_modbus
+        noch lädt, nicht als „gibt es nicht“ zählt. Hat der Treiber schon
+        einmal gedeckelt (Vorwert gesichert), bleibt der Deckel unterstützt —
+        sonst ließe er sich nie wieder aufheben.
         """
-        return True
+        if self._state_store.original_discharge_current is not None:
+            return True
+        return self._entladestrom_entitaet_da()
+
+    def _entladestrom_entitaet_da(self) -> bool:
+        """Gibt es ``battery_discharge_max_current`` — im Zustand oder aktiv in der Registry?"""
+        entity_id = self._resolve_entity("battery_discharge_max_current")
+        try:
+            if self._hass.states.get(entity_id) is not None:
+                return True
+        except Exception:  # noqa: BLE001 — Testumgebung ohne State-Machine
+            return True
+        try:
+            from homeassistant.helpers import entity_registry as er
+
+            registry = er.async_get(self._hass)
+        except Exception:  # noqa: BLE001 — ohne Registry: wie bisher annehmen
+            return True
+        _, muster = SOLAX_CONTROL_ENTITY_PATTERNS["battery_discharge_max_current"]
+        try:
+            eintraege = list(registry.entities.values())
+        except Exception:  # noqa: BLE001
+            return True
+        for eintrag in eintraege:
+            eid = str(getattr(eintrag, "entity_id", "") or "")
+            if not eid.startswith("number."):
+                continue
+            if eid == entity_id or muster.search(eid.split(".", 1)[1]):
+                if not getattr(eintrag, "disabled_by", None):
+                    return True
+        return False
 
     def _read_discharge_current(self) -> tuple[float | None, float | None]:
         """(aktueller Wert, Maximum) der Entladestrom-Entität in A."""
@@ -966,6 +1004,10 @@ class SolaXInverter(InverterBase):
             await self._state_store.async_load()
             aktuell, maximum = self._read_discharge_current()
             if aktuell is None and maximum is None:
+                # Aufheben ohne Entität und ohne gesicherten Vorwert: von uns
+                # steht dort nichts — erledigt, statt endlos zu scheitern.
+                if power_kw is None and self._state_store.original_discharge_current is None:
+                    return self._erfolg()
                 return self._fehler("Entladestrom-Entität nicht verfügbar")
             if power_kw is None:
                 ziel = self._state_store.original_discharge_current
