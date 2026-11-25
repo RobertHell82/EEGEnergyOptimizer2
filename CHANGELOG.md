@@ -12,6 +12,13 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+## [2.1.88] - 2026-11-25
+
+### Behoben
+
+- **Nach einem langsamen Start von Home Assistant lädt sich die Integration selbst neu, statt tot liegen zu bleiben.** Dauert der Start zu lange, bricht Home Assistant die Integrationen ab, die noch einrichten, und versucht es bei ihnen nicht noch einmal. Bei einer Huawei-Anlage zog die Huawei-Integration den Start nach einem Absturz am 23.11. auf 485 s, und das Setup des Optimizers wurde nach 16 s abgebrochen. Die Messsensoren liefen weiter, Fahrplan, Steuerung und Telemetrie aber zweieinhalb Tage lang nicht. Weil die Spitzenkappung vor dem Absturz die Batterie mit einem Entladedeckel von 0 W gehalten hatte und Huawei diesen Wert behält, blieb die Batterie gesperrt: Sie lud aus der PV bis 95 %, und das Haus lief trotzdem ganz aus dem Netz. Jetzt erkennt die Integration den Abbruch, räumt auf und lädt sich 30 s nach dem Start von Home Assistant neu. Der Neustart hebt dann den Deckel auf. Der Abbruch wird an die Telemetrie gemeldet (`setup_abgebrochen`).
+- **Schnellerer Start.** Das erste Verbrauchsprofil und der erste Abruf der Bedarfsprognose halten das Setup höchstens 8 bzw. 5 Sekunden auf und laden danach im Hintergrund fertig. Nach einem Absturz brauchte allein das Profil 22 Sekunden, weil die Datenbank beim Start langsam war.
+
 ## [2.1.87] - 2026-11-22
 
 ### Behoben
