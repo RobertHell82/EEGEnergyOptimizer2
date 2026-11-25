@@ -112,6 +112,23 @@ try:
 except ImportError:  # pragma: no cover — only triggered outside HA
     EVENT_HOMEASSISTANT_STOP = "homeassistant_stop"  # type: ignore[assignment]
 
+try:
+    from homeassistant.const import EVENT_HOMEASSISTANT_STARTED
+except ImportError:  # pragma: no cover — only triggered outside HA
+    EVENT_HOMEASSISTANT_STARTED = "homeassistant_started"  # type: ignore[assignment]
+
+# Abgebrochenes Setup (siehe ``async_setup_entry``): so lange nach dem Start
+# von Home Assistant wird neu geladen. Die Plattformen richtet HA hinter
+# ``asyncio.shield`` weiter ein — sie sollen fertig sein, bevor sie wieder
+# entladen werden.
+NEUSTART_NACH_ABBRUCH_S = 30
+# So lange wartet das Setup auf den ersten Abruf der Bedarfsprognose.
+ERSTABRUF_WARTEN_S = 5
+# entry_id → Zeitpunkt (UTC, ISO) des abgebrochenen Setups. Modulzustand,
+# weil ``hass.data`` des Eintrags beim Neuladen neu angelegt wird; das
+# nächste gelungene Setup meldet den Abbruch an die Telemetrie.
+_SETUP_ABGEBROCHEN: dict[str, str] = {}
+
 # So lange wartet das Entladen / der HA-Stopp auf einen laufenden Guard-Lauf,
 # bevor es trotzdem freigibt. Ein Lauf dauert normalerweise unter einer
 # Sekunde; hängt ein Modbus-Aufruf, soll das Herunterfahren nicht mithängen.
@@ -1736,7 +1753,98 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Set up EEG Energy Optimizer from a config entry."""
+    """Set up EEG Energy Optimizer from a config entry.
+
+    Bricht Home Assistant das Setup ab, bleibt der Eintrag ohne eigenes
+    Zutun tot: HA versucht nur ``ConfigEntryNotReady`` erneut, einen Abbruch
+    nicht. Genau das passiert, wenn der Start länger dauert als die
+    Bootstrap-Frist („Global task timeout: Bootstrap stage 2 timeout“) —
+    Anderlik 23.11.2026: huawei_solar zog den Start auf 485 s, unser Setup
+    lief erst 16 s, als HA es abbrach. Die Messsensoren liefen weiter (HA
+    richtet Plattformen hinter ``asyncio.shield`` fertig ein), Fahrplan,
+    Steuerung und Telemetrie nicht — und ein Entladedeckel 0 der
+    Spitzenkappung blieb zweieinhalb Tage im Huawei stehen, die Batterie
+    voll und das Haus am Netz. Deshalb: nach einem Abbruch selbst neu laden.
+    """
+    try:
+        return await _async_setup_entry(hass, entry)
+    except asyncio.CancelledError:
+        _neu_laden_nach_abbruch(hass, entry)
+        raise
+
+
+def _neu_laden_nach_abbruch(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Neuladen planen, sobald HA läuft — nicht beim Herunterfahren.
+
+    Ein Bus-Listener bzw. Timer, keine Aufgabe: Er überlebt den Abbruch,
+    der gerade durch dieses Setup läuft.
+    """
+    if getattr(hass, "is_stopping", False) is True:
+        return
+    _SETUP_ABGEBROCHEN[entry.entry_id] = _now_utc().isoformat()
+    _LOGGER.warning(
+        "EEG Energy Optimizer: Setup von Home Assistant abgebrochen (Start "
+        "dauerte zu lange) — wird nach dem Start neu geladen"
+    )
+
+    # Beide als Coroutinen: HA führt eine schlichte Funktion ohne @callback
+    # als Timer oder Listener im Executor-Thread aus, und von dort darf
+    # nichts an hass.config_entries.
+    async def _neu_laden(_now: Any = None) -> None:
+        await _aufraeumen_nach_abbruch(hass, entry)
+        hass.config_entries.async_schedule_reload(entry.entry_id)
+
+    def _planen() -> None:
+        if async_call_later is not None:
+            async_call_later(hass, NEUSTART_NACH_ABBRUCH_S, _neu_laden)
+        else:  # pragma: no cover — Fallback ohne HA-Helper
+            hass.async_create_task(_neu_laden())
+
+    async def _nach_start(_event: Any = None) -> None:
+        _planen()
+
+    # CoreState.running hat den Wert "RUNNING" — über den Wert verglichen,
+    # damit der Pfad ohne HA-Import testbar bleibt.
+    zustand = getattr(hass, "state", None)
+    if str(getattr(zustand, "value", zustand)).upper() == "RUNNING":
+        _planen()
+    else:
+        hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, _nach_start)
+
+
+async def _aufraeumen_nach_abbruch(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Was das abgebrochene Setup hinterließ, vor dem Neuladen abbauen.
+
+    HA setzt den Eintrag auf „Setup-Fehler“ und ruft beim Neuladen deshalb
+    NICHT ``async_unload_entry`` — die schon eingerichteten Plattformen
+    blieben stehen, und das erneute Einrichten scheiterte an „already been
+    setup“. Also hier: unsere Takte stilllegen, die Sensor-Takte abmelden
+    (ihr ``async_on_unload`` kam erst nach dem Abbruch und läuft nie) und
+    die Plattformen direkt über ihre Komponente entladen — der Weg über
+    ``async_forward_entry_unload`` verlangt die Setup-Sperre.
+    """
+    import importlib
+
+    data = hass.data.get(DOMAIN, {}).get(entry.entry_id) or {}
+    try:
+        await _stilllegen(data)
+    except Exception:  # noqa: BLE001 — Aufräumen darf das Neuladen nicht kippen
+        _LOGGER.debug("Abbruch: Stilllegen fehlgeschlagen", exc_info=True)
+    for abmelden in data.pop("sensor_takte", None) or []:
+        try:
+            abmelden()
+        except Exception:  # noqa: BLE001
+            _LOGGER.debug("Abbruch: Sensor-Takt nicht abgemeldet", exc_info=True)
+    for plattform in PLATFORMS:
+        try:
+            modul = importlib.import_module(f"homeassistant.components.{plattform}")
+            await modul.async_unload_entry(hass, entry)
+        except Exception:  # noqa: BLE001 — nie eingerichtet: nichts zu entladen
+            _LOGGER.debug("Abbruch: Plattform %s nicht entladen", plattform, exc_info=True)
+
+
+async def _async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Das eigentliche Setup (siehe ``async_setup_entry``)."""
     from homeassistant.components.frontend import (
         async_register_built_in_panel,
         async_remove_panel,
@@ -2069,7 +2177,21 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # ohne PeakShare) gibt es dort nichts zu holen — der Anbieter bleibt fürs
     # Panel geladen, geht aber nicht ins Netz.
     if _peakshare_gewuenscht(config):
-        await peakshare_provider.async_fetch()
+        # Begrenzt wie das erste Verbrauchsprofil (sensor.py): Ein langsamer
+        # Abruf darf das Setup nicht in die Bootstrap-Frist schieben. Er
+        # läuft im Hintergrund fertig; der Cache aus async_load gilt bis dahin.
+        abruf = asyncio.ensure_future(peakshare_provider.async_fetch())
+        abruf.add_done_callback(
+            lambda t: t.cancelled() or t.exception() is None or _LOGGER.warning(
+                "Bedarfsprognose: erster Abruf fehlgeschlagen: %s", t.exception()
+            )
+        )
+        try:
+            await asyncio.wait_for(asyncio.shield(abruf), ERSTABRUF_WARTEN_S)
+        except (asyncio.TimeoutError, TimeoutError):
+            _LOGGER.info("Bedarfsprognose: Abruf dauert — läuft im Hintergrund weiter")
+        except Exception:  # noqa: BLE001 — gemeldet im done-Callback
+            pass
 
     if coordinator and provider:
         # ----------------------------------------------------------
@@ -2407,6 +2529,20 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         data["_check_forecast_streak"] = _check_forecast_streak
         data["_collect_snapshot"] = _collect_snapshot
         data["_emit_failure_dedup"] = _emit_failure_dedup
+
+        # Kam dieses Setup nach einem abgebrochenen (async_setup_entry)? Dann
+        # war die Integration bis zum Neuladen tot — melden, auch wenn sie
+        # sich selbst gefangen hat: Ein Start, der an die Bootstrap-Frist
+        # stößt, wiederholt sich bei der nächsten Gelegenheit.
+        abgebrochen_um = _SETUP_ABGEBROCHEN.pop(entry.entry_id, None)
+        if abgebrochen_um is not None:
+            _emit_failure_dedup(
+                category="setup_abgebrochen",
+                severity="error",
+                message_hash="setup_abgebrochen: Bootstrap-Frist",
+                context={"abgebrochen_um": abgebrochen_um},
+                dedup_window_s=0,
+            )
 
         # Activity log: persistent ring buffer (last 5000 entries)
         from homeassistant.helpers.storage import Store

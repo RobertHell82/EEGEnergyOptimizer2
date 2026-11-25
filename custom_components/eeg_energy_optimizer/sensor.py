@@ -63,6 +63,10 @@ from .forecast_provider import (
 
 _LOGGER = logging.getLogger(__name__)
 
+# So lange wartet das Setup auf das erste Verbrauchsprofil (siehe
+# async_setup_entry), dann läuft das Laden im Hintergrund weiter.
+ERSTLADEN_WARTEN_S = 8
+
 # Timezone/time utilities - imported at module level for easy test patching
 try:
     from homeassistant.util import dt as dt_util
@@ -2148,8 +2152,30 @@ async def async_setup_entry(
 
     lookback_weeks = config.get(CONF_LOOKBACK_WEEKS, DEFAULT_LOOKBACK_WEEKS)
     coordinator = ConsumptionCoordinator(hass, CONSUMPTION_SENSOR, lookback_weeks)
-    # Single initial load — backfill runs in background and refreshes after
-    await coordinator.async_update()
+    # Single initial load — backfill runs in background and refreshes after.
+    # Begrenzt: Nach einem unsauberen Herunterfahren ist der Recorder beim
+    # Start langsam (Anderlik 23.11.2026: 22 s), und solange das Setup
+    # wartet, kann HA es wegen der Bootstrap-Frist abbrechen. Was länger
+    # dauert, läuft im Hintergrund fertig — bis dahin ist das Profil leer,
+    # wie direkt nach der Installation.
+    erstladen = asyncio.ensure_future(coordinator.async_update())
+
+    def _erstladen_fertig(task: asyncio.Future) -> None:
+        if not task.cancelled() and task.exception() is not None:
+            _LOGGER.error(
+                "Verbrauchsprofil: erstes Laden fehlgeschlagen", exc_info=task.exception()
+            )
+
+    erstladen.add_done_callback(_erstladen_fertig)
+    try:
+        await asyncio.wait_for(asyncio.shield(erstladen), ERSTLADEN_WARTEN_S)
+    except (asyncio.TimeoutError, TimeoutError):
+        _LOGGER.info(
+            "Verbrauchsprofil: Statistik lädt noch (> %d s) — läuft im Hintergrund weiter",
+            ERSTLADEN_WARTEN_S,
+        )
+    except Exception:  # noqa: BLE001 — gemeldet von _erstladen_fertig
+        pass
 
     async def _refresh_profil() -> None:
         refresh = data.get("refresh_consumption_profile")
@@ -2401,6 +2427,11 @@ async def async_setup_entry(
         )
         entry.async_on_unload(unsub_slow)
         entry.async_on_unload(unsub_fast)
+        # Auch hier ablegen: Bricht HA das Setup ab, kommt dieses
+        # async_on_unload zu spät (HA arbeitet die Liste beim Abbruch ab,
+        # die Plattform richtet sich danach hinter asyncio.shield fertig
+        # ein). __init__._aufraeumen_nach_abbruch meldet sie dann ab.
+        data["sensor_takte"] = [unsub_slow, unsub_fast]
 
         # Initial sensor update in background — don't block setup
         # Optimizer timer will keep them current every 30s anyway
