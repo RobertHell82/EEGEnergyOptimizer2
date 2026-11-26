@@ -618,6 +618,11 @@ class ScheduleInputs:
     # Die Gemeinschaft nimmt je Viertelstunde nur auf, was ihr Saldo hergibt —
     # der Rest der Einspeisung fällt zum Basistarif an den Restabnehmer.
     eeg_bedarf: dict[str, dict[int, float]] | None = None
+    # OpenADR (eeg_price.DEMAND_SOURCE_OPENADR): ``eeg_bedarf`` trägt dann die
+    # OLS der Einspeisung (0..1 je Viertelstunde, Tarife mit "ols": True), und
+    # hier steht die OLS des Bezugs — der Anteil meines Bezugs, den die
+    # Gemeinschaft liefert (für den EEG-Bezugspreis beim Netzladen).
+    eeg_ols_bezug: dict[str, dict[int, float]] | None = None
     # Nachtfenster der Gemeinschafts-Nachtsätze — EEG/BEG-Verträge können ein
     # anderes Fenster haben als die Standardvergütung (night_start/end_hour).
     # None = wie das Standard-Fenster.
@@ -1686,6 +1691,7 @@ def eeg_bezug_vorzug(
     config: dict,
     stamps: list[datetime],
     eeg_bedarf: dict[str, dict[int, float]] | None,
+    eeg_ols_bezug: dict[str, dict[int, float]] | None = None,
 ) -> list[float] | None:
     """Vorzug je Zeitpunkt: mehr Überschuss in der Gemeinschaft → billiger.
 
@@ -1699,7 +1705,26 @@ def eeg_bezug_vorzug(
     bezogen werden. Gewichtet mit dem Aufteilungsschlüssel, bezogen auf den
     größten Überschuss im Horizont, höchstens ``EEG_BEZUG_VORZUG_MAX``.
     Nur Steuerung: Bilanz und Geldbewertung sehen ihn nie.
+
+    Mit OpenADR (``eeg_ols_bezug``) zählt statt des Überschusses die OLS des
+    Bezugs: wo die Gemeinschaft einen größeren Teil liefert, ist es sicherer.
     """
+    if eeg_ols_bezug:
+        gem_ols = [g for g in eeg_bezug_aus_config(config) if g["name"] in eeg_ols_bezug]
+        if not gem_ols:
+            return None
+        gewicht = [
+            sum(
+                g["anteil"]
+                * float(eeg_ols_bezug[g["name"]].get(int(stamp.timestamp() // 900)) or 0.0)
+                for g in gem_ols
+            )
+            for stamp in stamps
+        ]
+        hoechster = max(gewicht, default=0.0)
+        if hoechster <= 0:
+            return None
+        return [round(EEG_BEZUG_VORZUG_MAX * u / hoechster, 6) for u in gewicht]
     if not eeg_bedarf:
         return None
     gemeinschaften = [g for g in eeg_bezug_aus_config(config) if g["name"] in eeg_bedarf]
@@ -1733,6 +1758,7 @@ def bezugsreihe_netzladen(
     consumption_kw: list[float],
     production_kw: list[float],
     max_kw: float,
+    eeg_ols_bezug: dict[str, dict[int, float]] | None = None,
 ) -> tuple[list[float] | None, list[bool] | None]:
     """Bezugspreis je Zeitpunkt mit Spot- und EEG-Bezug (€/kWh brutto).
 
@@ -1752,6 +1778,9 @@ def bezugsreihe_netzladen(
       (Aufteilungsschlüssel) des Bezugs angeboten und liefert davon, was sie
       laut Saldo übrig hat; der Rest kostet den Lieferantenpreis. Als Bezug
       gilt, was wir höchstens beziehen (Hausdefizit + Netzladeleistung).
+    * **OpenADR** (``eeg_ols_bezug``): Die Gemeinschaft sagt selbst, welchen
+      Anteil meines Bezugs sie liefert (OLS des Bezugs, bei Teilnahmefaktor
+      1) — je Gemeinschaft Anteil × OLS statt eines Saldovergleichs.
     """
     # Beides braucht die Netzgebühr: Ohne sie wäre der Spot- wie der
     # EEG-Preis reine Energie und läge weit unter einem Bezugspreis, der sie
@@ -1763,9 +1792,15 @@ def bezugsreihe_netzladen(
         and bool(spot_netto)
         and len(spot_netto) == len(stamps)
     )
-    gemeinschaften = [
-        g for g in eeg_bezug_aus_config(config) if eeg_bedarf and g["name"] in eeg_bedarf
-    ]
+    if eeg_ols_bezug:
+        # OpenADR: eeg_bedarf trägt dann die OLS der Einspeisung, kein Saldo.
+        gemeinschaften = [
+            g for g in eeg_bezug_aus_config(config) if g["name"] in eeg_ols_bezug
+        ]
+    else:
+        gemeinschaften = [
+            g for g in eeg_bezug_aus_config(config) if eeg_bedarf and g["name"] in eeg_bedarf
+        ]
     if not spot and not gemeinschaften:
         return None, None
 
@@ -1802,12 +1837,18 @@ def bezugsreihe_netzladen(
         # Förderbeitrag entfallen bei einer EEG (siehe EEG_BEZUG_REDUKTION),
         # das Netzverlustentgelt bleibt.
         for g in gemeinschaften:
-            if hoechstens_kwh <= 0:
-                break
-            saldo = eeg_bedarf[g["name"]].get(viertel)
-            if saldo is None or saldo >= 0:
-                continue  # kein Überschuss in der Gemeinschaft
-            anteil = min(g["anteil"], -float(saldo) / hoechstens_kwh, anteil_frei)
+            if eeg_ols_bezug:
+                ols = eeg_ols_bezug[g["name"]].get(viertel)
+                if not ols or ols <= 0:
+                    continue  # die Gemeinschaft liefert hier nichts
+                anteil = min(g["anteil"] * min(1.0, float(ols)), anteil_frei)
+            else:
+                if hoechstens_kwh <= 0:
+                    break
+                saldo = eeg_bedarf[g["name"]].get(viertel)
+                if saldo is None or saldo >= 0:
+                    continue  # kein Überschuss in der Gemeinschaft
+                anteil = min(g["anteil"], -float(saldo) / hoechstens_kwh, anteil_frei)
             netzanteil = netz.netznutzung * (1 - g["reduktion"]) + (
                 netz.netzverlust if g["abgabenfrei"] else rest
             )
@@ -2775,6 +2816,9 @@ def _eeg_bedarf_sammeln(
     provider = data.get("peakshare")
     if provider is None or not namen:
         return None
+    # OpenADR: die OLS der Einspeisung je Viertelstunde (0..1), kein Saldo.
+    if hasattr(provider, "ols"):
+        return {name: provider.ols(name, "einspeisung") for name in namen}
     bedarf: dict[str, dict[int, float]] = {}
     for name in namen:
         try:
@@ -2847,6 +2891,10 @@ def _eeg_aufschlag(
         return eeg_price.quoten_aufschlag_reihe(
             gemeinschaften, stamps, basis, ist_nacht_eeg
         )
+    if eeg_price.bedarfsquelle(config) == eeg_price.DEMAND_SOURCE_OPENADR:
+        return eeg_price.ols_aufschlag_reihe(
+            gemeinschaften, bedarf or {}, stamps, basis, ist_nacht_eeg
+        )
     return eeg_price.aufschlag_reihe(
         gemeinschaften, bedarf or {}, stamps, basis, ist_nacht_eeg
     )
@@ -2872,6 +2920,21 @@ async def async_collect_inputs(
             config, tarifquelle.daten, _now_local().date(),
             gemeinschaftstarif.sonnenstand(hass),
         )
+    # OpenADR: konstante Preise vom VTN der Gemeinschaft gehen noch darüber —
+    # sie kommen von der Gemeinschaft selbst (openadr.tarife_ueberlagern).
+    if eeg_price.bedarfsquelle(config) == eeg_price.DEMAND_SOURCE_OPENADR:
+        from . import openadr
+
+        config, preis_hinweise = openadr.tarife_ueberlagern(
+            config, data.get("peakshare"), _now_local()
+        )
+        # Ein zeitvariabler Preis bleibt draußen — das soll im Log stehen,
+        # gedrosselt wie die übrigen Dauerhinweise zum Preis.
+        if _preishinweis_faellig("openadr_preis", bool(preis_hinweise)):
+            _LOGGER.warning(
+                "OpenADR: %s — es gelten die eingetragenen Sätze",
+                "; ".join(preis_hinweise),
+            )
     coordinator = data.get("coordinator")
     inverter = data.get("inverter")
 
@@ -3325,6 +3388,15 @@ async def async_collect_inputs(
         eeg_bedarf = None
     else:
         eeg_bedarf = _eeg_bedarf_sammeln(data, alle_namen)
+    # OpenADR: dazu die OLS des Bezugs (Anteil meines Bezugs aus der
+    # Gemeinschaft) — nur dort gibt es sie.
+    eeg_ols_bezug = None
+    if eeg_price.bedarfsquelle(config) == eeg_price.DEMAND_SOURCE_OPENADR:
+        ols_provider = data.get("peakshare")
+        if ols_provider is not None and hasattr(ols_provider, "ols"):
+            eeg_ols_bezug = {
+                name: ols_provider.ols(name, "bezug") for name in alle_namen
+            } or None
 
     # Nachtfenster: das der Standardvergütung und — seit es getrennt
     # einstellbar ist — das der Gemeinschaften. Ein leeres Gemeinschafts-
@@ -3372,10 +3444,10 @@ async def async_collect_inputs(
         bezug_reihe, bezug_fest = bezugsreihe_netzladen(
             config, stamps, bezug, bezug_snap, bezug_winap, netz,
             spot_netto, spot_fest, eeg_bedarf, consumption, production,
-            max(netzlade_kw, reserve_netz_kw),
+            max(netzlade_kw, reserve_netz_kw), eeg_ols_bezug,
         )
         if bezug_reihe is not None:
-            bezug_vorzug = eeg_bezug_vorzug(config, stamps, eeg_bedarf)
+            bezug_vorzug = eeg_bezug_vorzug(config, stamps, eeg_bedarf, eeg_ols_bezug)
 
     inputs = ScheduleInputs(
         start=start,
@@ -3442,6 +3514,7 @@ async def async_collect_inputs(
         # Gemeinschaft laut Prognose tatsächlich aufnimmt.
         eeg_tarife=echte_tarife or None,
         eeg_bedarf=eeg_bedarf,
+        eeg_ols_bezug=eeg_ols_bezug,
         heizstab_max_kw=heizstab_max_kw(config),
         heizstab_waermewert=heizstab_waermewert(config),
         # Aufnahmefähigkeit des Puffers — bei jedem Lauf frisch aus der
@@ -4286,6 +4359,11 @@ def _eeg_zuteilung(
         if quote is not None:
             # Quotenmodus: die erklärte Abnahmequote statt des Saldos.
             aufgenommen = angeboten * min(1.0, max(0.0, float(quote)))
+        elif tarif.get("ols"):
+            # OpenADR: die OLS der Gemeinschaft ist die Quote dieser
+            # Viertelstunde. Ohne OLS nimmt sie nichts auf (kein erfundener Erlös).
+            ols = (bedarf.get(tarif["name"]) or {}).get(viertel)
+            aufgenommen = 0.0 if ols is None else angeboten * min(1.0, max(0.0, float(ols)))
         else:
             saldo = (bedarf.get(tarif["name"]) or {}).get(viertel)
             aufgenommen = (

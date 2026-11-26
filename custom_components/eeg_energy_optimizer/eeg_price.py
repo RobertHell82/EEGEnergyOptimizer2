@@ -85,6 +85,14 @@ Die Quote ist eine erklärte Annahme des Nutzers, keine erfundene Prognose —
 deshalb darf sie, anders als fehlende Saldodaten, auch in die Geldbewertung
 eingehen (``schedule.bewerte_geldfluesse``). Eine Differenz unter null zählt
 hier mit: der Mischpreis ist der erwartete echte Erlös, kein Steuersignal.
+
+**OpenADR: Abnahmequote je Viertelstunde** (``eeg_demand_source = "openadr"``,
+``openadr.py``). Die Gemeinschaft liefert nach Harald Geyers EEG-Profil die
+OLS (Optimum Load Shape) — genau die Größe, die der Quotenmodus als festen
+Wert annimmt, nur je Viertelstunde und von der Gemeinschaft selbst
+prognostiziert. Dieselbe Formel mit ``Quote_i(t) = OLS_i(t)``
+(``ols_aufschlag_reihe``); eine Viertelstunde ohne OLS trägt nichts bei —
+keine Prognose, kein erfundener Erlös.
 """
 
 from __future__ import annotations
@@ -108,12 +116,15 @@ DEMAND_SOURCE_QUOTE = "quote"
 # energy agent (``energy_agent.py``): Saldo aus Erzeugung und Verbrauch der
 # Gemeinschaft, sonst wie PeakShare — gleiche Intervalle, gleicher Provider-Platz.
 DEMAND_SOURCE_ENERGY_AGENT = "energy_agent"
+# OpenADR 3.1 (``openadr.py``): Abnahmequote je Viertelstunde (OLS) vom VTN
+# der Gemeinschaft — die OLS ersetzt die feste Quote des Quotenmodus.
+DEMAND_SOURCE_OPENADR = "openadr"
 
 
 def bedarfsquelle(config: dict[str, Any]) -> str:
-    """„quote“/„energy_agent“ nur bei ausdrücklicher Wahl — sonst PeakShare."""
+    """„quote“/„energy_agent“/„openadr“ nur bei ausdrücklicher Wahl — sonst PeakShare."""
     wert = str(config.get(CONF_EEG_DEMAND_SOURCE) or "").strip().lower()
-    if wert in (DEMAND_SOURCE_QUOTE, DEMAND_SOURCE_ENERGY_AGENT):
+    if wert in (DEMAND_SOURCE_QUOTE, DEMAND_SOURCE_ENERGY_AGENT, DEMAND_SOURCE_OPENADR):
         return wert
     return DEMAND_SOURCE_PEAKSHARE
 
@@ -130,6 +141,8 @@ class Gemeinschaft:
     # angebotenen Energie erfahrungsgemäß in der Gemeinschaft landet.
     quote_tag: float | None = None
     quote_nacht: float | None = None
+    # OpenADR: die Quote kommt je Viertelstunde als OLS (``ols_aufschlag_reihe``).
+    ols: bool = False
 
     def wert(self, ist_nacht: bool) -> float:
         return self.wert_nacht if ist_nacht else self.wert_tag
@@ -187,6 +200,7 @@ def gemeinschaften_aus_config(config: dict[str, Any]) -> list[Gemeinschaft]:
 
     roh = _roh_gemeinschaften(config)
     quotenmodus = bedarfsquelle(config) == DEMAND_SOURCE_QUOTE
+    ols = bedarfsquelle(config) == DEMAND_SOURCE_OPENADR
 
     ergebnis: list[Gemeinschaft] = []
     for name, anteil_pct, preis, preis_nacht, gewichtung, q_pct, q_nacht_pct in roh:
@@ -217,6 +231,7 @@ def gemeinschaften_aus_config(config: dict[str, Any]) -> list[Gemeinschaft]:
                 wert_nacht=nacht + gew,
                 quote_tag=quote_tag,
                 quote_nacht=quote_nacht,
+                ols=ols,
             )
         )
     return ergebnis
@@ -261,6 +276,10 @@ def echte_tarife_aus_config(config: dict[str, Any]) -> list[dict[str, Any]]:
             # Quote statt des Saldos. Ohne die Schlüssel bleibt alles wie
             # bisher (Saldo, ohne Saldo Basistarif).
             eintrag["quote_tag"], eintrag["quote_nacht"] = _quoten(q_pct, q_nacht_pct)
+        elif bedarfsquelle(config) == DEMAND_SOURCE_OPENADR:
+            # OpenADR: ``eeg_bedarf`` trägt dann die OLS der Einspeisung je
+            # Viertelstunde (0..1) statt eines Saldos in kWh.
+            eintrag["ols"] = True
         ergebnis.append(eintrag)
     return ergebnis
 
@@ -433,6 +452,71 @@ def quoten_aufschlag_reihe(
             aufschlaege[i] += zuschlag
             hoechster = max(hoechster, zuschlag)
             tiefster = min(tiefster, zuschlag)
+        eintrag["max_aufschlag_ct"] = round(hoechster * 100, 2)
+        eintrag["max_abschlag_ct"] = round(tiefster * 100, 2)
+        diagnose.append(eintrag)
+
+    return aufschlaege, diagnose
+
+
+def ols_aufschlag_reihe(
+    gemeinschaften: list[Gemeinschaft],
+    ols: dict[str, dict[int, float]],
+    stamps: list[datetime],
+    basis: float | list[float],
+    ist_nacht: list[bool] | None = None,
+) -> tuple[list[float], list[dict[str, Any]]]:
+    """Mischpreis mit der OLS je Viertelstunde — der Quotenmodus mit Zeitverlauf.
+
+    ``ols`` ist ``{Name: {Epochenviertelstunde: 0..1}}`` aus ``openadr.py``.
+    Je Zeitpunkt ``Anteil · OLS(t) · (Wert − Basistarif)``, wie
+    ``quoten_aufschlag_reihe``; eine Viertelstunde ohne OLS trägt nichts bei.
+    """
+    anzahl = len(stamps)
+    aufschlaege = [0.0] * anzahl
+    basis_reihe = (
+        list(basis) if isinstance(basis, (list, tuple)) else [float(basis)] * anzahl
+    )
+    if len(basis_reihe) < anzahl:
+        fehlt = anzahl - len(basis_reihe)
+        basis_reihe += [basis_reihe[-1] if basis_reihe else 0.0] * fehlt
+    nacht_reihe = ist_nacht if ist_nacht is not None else [False] * anzahl
+    diagnose: list[dict[str, Any]] = []
+
+    for g in gemeinschaften:
+        werte = ols.get(g.name) or {}
+        eintrag: dict[str, Any] = {
+            "name": g.name,
+            "anteil_pct": round(g.anteil * 100, 1),
+            "wert_tag_ct": round(g.wert_tag * 100, 2),
+            "wert_nacht_ct": round(g.wert_nacht * 100, 2),
+            "max_aufschlag_ct": 0.0,
+            "max_abschlag_ct": 0.0,
+            "stunden": 0,
+            "hinweis": "OpenADR-Abnahmequote (OLS)",
+        }
+        hoechster = tiefster = 0.0
+        treffer = 0
+        quoten: list[float] = []
+        for i, stamp in enumerate(stamps):
+            quote = werte.get(int(stamp.timestamp() // 900))
+            if quote is None:
+                continue
+            treffer += 1
+            quoten.append(quote)
+            if quote <= 0:
+                continue
+            nacht = bool(nacht_reihe[i])
+            zuschlag = g.anteil * quote * (g.wert(nacht) - basis_reihe[i])
+            aufschlaege[i] += zuschlag
+            hoechster = max(hoechster, zuschlag)
+            tiefster = min(tiefster, zuschlag)
+        eintrag["stunden"] = treffer
+        if quoten:
+            eintrag["ols_min_pct"] = round(min(quoten) * 100, 1)
+            eintrag["ols_max_pct"] = round(max(quoten) * 100, 1)
+        else:
+            eintrag["hinweis"] = "keine OLS-Daten"
         eintrag["max_aufschlag_ct"] = round(hoechster * 100, 2)
         eintrag["max_abschlag_ct"] = round(tiefster * 100, 2)
         diagnose.append(eintrag)

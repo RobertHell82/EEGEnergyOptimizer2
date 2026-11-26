@@ -52,6 +52,8 @@ GESICHERT = {
     "eeg_optimizer/probe_pvprognose",
     # energy agent: prüft einen mitgeschickten API-Schlüssel beim Anbieter.
     "eeg_optimizer/probe_energy_agent",
+    # OpenADR: fragt eine frei eingetragene VTN-Adresse an.
+    "eeg_optimizer/probe_openadr",
     "eeg_optimizer/ambibox_manual",
     "eeg_optimizer/refresh_consumption_profile",
     "eeg_optimizer/telemetry_enable",

@@ -37,7 +37,7 @@ Der Assistent hat sieben Schritte. In Schritt 1–3 ordnest du einmalig die Sens
 | **3. Batterie** | Ladestand und Kapazität — als Sensor oder von Hand eingetragen |
 | **4. PV-Prognose** | Quelle: Solcast, Forecast.Solar oder **eigene Berechnung** (Flächen mit kWp, Neigung und Ausrichtung, ohne Konto). Optional der Prognosevergleich: eine zweite Quelle läuft zum Vergleich mit |
 | **5. Anlage & Batterie** | Pflicht: AC-Grenzleistung des Wechselrichters, PV-Spitzenleistung, Batterie-Leistungsgrenze, Mindest-Ladestand. Dazu Einspeisegrenze des Netzbetreibers und Maximum-Ladestand |
-| **6. Tarife & Gemeinschaft** | Standardvergütung (fester Wert, OeMAG, Energie AG, aWATTar SUNNY oder Börsen-Spotpreis), Arbeitspreis und Netzbereich; optional bis zu zwei Energiegemeinschaften — mit PeakShare-Bedarfsprognose oder fester Abnahmequote |
+| **6. Tarife & Gemeinschaft** | Standardvergütung (fester Wert, OeMAG, Energie AG, aWATTar SUNNY oder Börsen-Spotpreis), Arbeitspreis und Netzbereich; optional bis zu zwei Energiegemeinschaften — mit Bedarfsprognose (PeakShare, energy agent oder OpenADR) oder fester Abnahmequote |
 | **7. Zusammenfassung** | Überblick, Haken **„Steuerung nach dem Fertigstellen einschalten“**, dann **„Fertig“** |
 
 > [!IMPORTANT]

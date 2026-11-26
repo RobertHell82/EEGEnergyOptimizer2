@@ -2173,11 +2173,21 @@ async def _async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # keine reine Anzeige mehr — der Fahrplan rechnet damit.
     # Mit energy agent als Bedarfsquelle liegt dessen Provider auf demselben
     # Platz — er hat dieselbe Schnittstelle (energy_agent.py).
-    from .eeg_price import DEMAND_SOURCE_ENERGY_AGENT, bedarfsquelle
+    # OpenADR (openadr.py) ebenso: OLS und Preise vom VTN der Gemeinschaft.
+    from .eeg_price import (
+        DEMAND_SOURCE_ENERGY_AGENT,
+        DEMAND_SOURCE_OPENADR,
+        bedarfsquelle,
+    )
     if bedarfsquelle(config) == DEMAND_SOURCE_ENERGY_AGENT:
         from .energy_agent import CONF_ENERGY_AGENT_KEY, EnergyAgentProvider
         peakshare_provider = EnergyAgentProvider(
             hass, entry.entry_id, config.get(CONF_ENERGY_AGENT_KEY)
+        )
+    elif bedarfsquelle(config) == DEMAND_SOURCE_OPENADR:
+        from .openadr import OpenAdrProvider, quellen_aus_config
+        peakshare_provider = OpenAdrProvider(
+            hass, entry.entry_id, quellen_aus_config(config)
         )
     else:
         from .peakshare import PeakShareProvider
@@ -3032,17 +3042,19 @@ async def _async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     except Exception:
                         _LOGGER.debug("%s: Abruf fehlgeschlagen", name, exc_info=True)
 
-                # energy agent: ein gescheiterter Abruf (Schlüssel ungültig,
-                # Prognose nicht eingerichtet, API geändert — v0 ist nicht
-                # stabil) lässt den Fahrplan still ohne Bedarfsverlauf laufen.
+                # energy agent / OpenADR: ein gescheiterter Abruf (Schlüssel
+                # ungültig, Prognose nicht eingerichtet, API geändert — v0 ist
+                # nicht stabil; VTN nicht erreichbar, keine OLS) lässt den
+                # Fahrplan still ohne Bedarfsverlauf laufen.
                 bedarf = data.get("peakshare")
                 grund = getattr(bedarf, "letzter_fehler", None)
+                quelle_bedarf = getattr(bedarf, "QUELLE", "energy_agent")
                 if "peakshare" in namen and grund:
                     _emit_failure_dedup(
                         category="eeg_bedarf",
                         severity="warning",
-                        message_hash=f"energy_agent: {grund}",
-                        context={"quelle": "energy_agent", "grund": grund},
+                        message_hash=f"{quelle_bedarf}: {grund}",
+                        context={"quelle": quelle_bedarf, "grund": grund},
                         dedup_window_s=FAILURE_PERSISTENT_DEDUP_WINDOW_S,
                     )
                 elif "peakshare" in namen:
@@ -3401,6 +3413,9 @@ _RELOAD_CONFIG_KEYS = frozenset({
     # energy agent: der Provider liest den Schlüssel beim Bau. Der Wechsel
     # der Bedarfsquelle selbst steht in _requires_full_reload.
     "energy_agent_api_key",
+    # OpenADR: der Provider liest Adressen und Namen beim Bau.
+    "openadr_url",
+    "openadr_url_2",
 })
 # Präfixe decken Inverter-Anbindung (Modbus-Hosts/Ports, Geräte-IDs,
 # Steuer-Entities) und Forecast-Quellen ab, ohne jeden Key einzeln zu pflegen.
@@ -3417,9 +3432,19 @@ def _requires_full_reload(old: dict, new: dict) -> bool:
     # ließ nach dem Umschalten auf energy agent den PeakShare-Provider stehen,
     # der dessen Gemeinschaft nicht kennt — kein Bedarf im Fahrplan
     # (19.11.2026). PeakShare ↔ Quote braucht das nicht: derselbe Provider.
-    from .eeg_price import DEMAND_SOURCE_ENERGY_AGENT, bedarfsquelle
-    if (bedarfsquelle(old) == DEMAND_SOURCE_ENERGY_AGENT) != (
-        bedarfsquelle(new) == DEMAND_SOURCE_ENERGY_AGENT
+    # Dasselbe für OpenADR — und dort hängt der Provider zusätzlich an den
+    # Namen der Gemeinschaften (je Name eine VTN-Adresse).
+    from .eeg_price import (
+        DEMAND_SOURCE_ENERGY_AGENT,
+        DEMAND_SOURCE_OPENADR,
+        bedarfsquelle,
+    )
+    for sonder in (DEMAND_SOURCE_ENERGY_AGENT, DEMAND_SOURCE_OPENADR):
+        if (bedarfsquelle(old) == sonder) != (bedarfsquelle(new) == sonder):
+            return True
+    if bedarfsquelle(new) == DEMAND_SOURCE_OPENADR and any(
+        old.get(k) != new.get(k)
+        for k in ("peakshare_community", "peakshare_community_2")
     ):
         return True
     for key in set(old) | set(new):

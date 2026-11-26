@@ -69,11 +69,13 @@ Kommt eine befohlene Entladung nicht an — die Batterie (bei SMA: die Einspeisu
 
 **Bezugsspitze.** Die Zeile „Bezugsspitze *Monat*" zeigt den höchsten Viertelstunden-Netzbezug des Monats. Orange heißt: Die Hochrechnung der laufenden Viertelstunde liegt darüber, gerade entsteht eine neue Spitze. Greift die Spitzenkappung, steht ein Hinweis daneben („Batterie hält Reserve", „Batterie deckt nur Spitzen", „Wallbox aus"). Ein Tipp springt zur Karte **Bezugsspitze & Spitzenkappung** (siehe unten).
 
-**Zeitstempel.** Ganz unten: die letzten Läufe von Plan, Steuerung, Verbrauchsprofil und (mit PeakShare) Bedarfsprognose. Rot mit ⚠ heißt: Dieser Teil läuft nicht im Takt oder der Plan konnte nicht gerechnet werden. Ein Tipp darauf nennt den Grund.
+**Zeitstempel.** Ganz unten: die letzten Läufe von Plan, Steuerung, Verbrauchsprofil und (mit PeakShare, energy agent oder OpenADR) Bedarfsprognose. Rot mit ⚠ heißt: Dieser Teil läuft nicht im Takt oder der Plan konnte nicht gerechnet werden. Ein Tipp darauf nennt den Grund.
 
 ## Optimierungsplan
 
 Das Diagramm zeigt den Fahrplan: PV- und Verbrauchsprognose, geplante Netzleistung, Laden und Entladen als Balken, darunter den geplanten Ladestand mit dem Mindest-Ladestand als rote Linie und (mit Spitzenkappung) der Spitzenreserve als orange gestrichelte Linie. Je nach Einrichtung kommen Einspeisepreis, Bedarf der Energiegemeinschaften, geplante Heizstab-Leistung und voraussichtliche Puffertemperatur dazu. Ein Klick auf einen Legenden-Eintrag blendet die Kurve aus und ein.
+
+Der Bedarf der Gemeinschaft hat eine eigene Achse rechts: über der Nulllinie braucht sie Strom, darunter hat sie Überschuss. Mit PeakShare und energy agent in kWh je Viertelstunde. Bei OpenADR in Prozent: die Quote, mit der sie deine Einspeisung aufnimmt, minus die Quote, mit der sie deinen Bezug liefert. Der Tipp auf eine Viertelstunde zeigt beide Quoten. Meldet die Gemeinschaft keine Quote für den Bezug, zeigt die Kurve nur ihren Überschuss.
 
 - **Plan**: gezeigter Ausschnitt, 24, 36 oder 48 Stunden. Gerechnet wird immer der volle Horizont.
 - **Verlauf**: Messung blass daneben — aus, letzte 12 Stunden oder ab gestern.
@@ -87,7 +89,7 @@ Im Ladestand markiert ein blauer Kreis das **Ladeziel** und eine violette Raute 
 
 ## Was deine PV bringt
 
-Die Karte zeigt die **Ersparnis durch PV** für heute, Monat und Jahr: nicht gekaufter Strom plus Einspeiseerlös, mit Heizstab auch die Wärme. Das ist eine **Messung**: Jede kWh ist gemessen, die Preise werden je Viertelstunde so festgehalten, wie sie damals galten. „Woraus setzt sich das zusammen?" zeigt die Posten des Tages. Welcher Teil der Einspeisung zum Gemeinschaftssatz zählt, beruht auf der Bedarfsprognose (PeakShare) bzw. im Quotenmodus auf der Abnahmequote; endgültig steht es erst mit der EEG-Abrechnung fest.
+Die Karte zeigt die **Ersparnis durch PV** für heute, Monat und Jahr: nicht gekaufter Strom plus Einspeiseerlös, mit Heizstab auch die Wärme. Das ist eine **Messung**: Jede kWh ist gemessen, die Preise werden je Viertelstunde so festgehalten, wie sie damals galten. „Woraus setzt sich das zusammen?" zeigt die Posten des Tages. Welcher Teil der Einspeisung zum Gemeinschaftssatz zählt, beruht auf der Bedarfsprognose (PeakShare, energy agent), bei OpenADR auf der Abnahmequote, die die Gemeinschaft je Viertelstunde meldet, bzw. im Quotenmodus auf der eingestellten Abnahmequote; endgültig steht es erst mit der EEG-Abrechnung fest.
 
 Die Sensoren **Ersparnis durch Optimierung** (heute, Monat, Jahr) sind dagegen eine **Modellrechnung**: der Unterschied zu einem simulierten Standardbetrieb mit den gemessenen PV- und Verbrauchswerten.
 
@@ -108,7 +110,7 @@ Diese Karte zeigt in **Energie** (nicht in Geld), was ins Netz ging, woher es ka
 |---|---|
 | **eingespeist** | Alles, was ins Netz ging |
 | **aus der Batterie** | Einspeisung in Viertelstunden **ohne PV-Leistung** (unter 50 W) — egal, ob die Optimierung dabei entladen hat. Darunter der Anteil an der gesamten Einspeisung |
-| **bei Gemeinschaftsbedarf** | Einspeisung in Viertelstunden, in denen deine Gemeinschaft laut PeakShare-Prognose zu wenig Strom hatte, höchstens ihr Restbedarf. Das ist **nicht** alles, was die Gemeinschaft aufnimmt (auch bei Überschuss bekommt jeder Erzeuger anteilig etwas, das lässt sich aber ohne ihre Daten nicht berechnen). Nur mit eingerichteter Gemeinschaft; im Quotenmodus heißt die Kachel „an die Gemeinschaft (Quote)“ und folgt der Abnahmequote — eine Annahme, keine Messung |
+| **bei Gemeinschaftsbedarf** | Einspeisung in Viertelstunden, in denen deine Gemeinschaft laut PeakShare-Prognose zu wenig Strom hatte, höchstens ihr Restbedarf. Das ist **nicht** alles, was die Gemeinschaft aufnimmt (auch bei Überschuss bekommt jeder Erzeuger anteilig etwas, das lässt sich aber ohne ihre Daten nicht berechnen). Nur mit eingerichteter Gemeinschaft; im Quotenmodus heißt die Kachel „an die Gemeinschaft (Quote)“ und folgt der Abnahmequote — eine Annahme, keine Messung; bei OpenADR heißt sie „an die Gemeinschaft (OpenADR)“ und folgt der Quote, die die Gemeinschaft je Viertelstunde meldet — eine Prognose, keine Messung |
 | **Erlös je kWh** | Einspeiseerlös geteilt durch eingespeiste Energie — der Durchschnittspreis je kWh |
 | **Autarkie** | Anteil des Verbrauchs (Haus und Heizstab), der nicht aus dem Netz kam |
 | **Eigenverbrauch** | Anteil der PV-Erzeugung, der nicht ins Netz ging |

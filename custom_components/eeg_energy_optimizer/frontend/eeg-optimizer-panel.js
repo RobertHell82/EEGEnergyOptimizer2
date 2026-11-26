@@ -191,6 +191,16 @@ const anteilssummePct = (d) =>
 // aktive Einträge (Name und Anteil > 0). Ohne Quote nimmt die Gemeinschaft im
 // Modell nichts auf, die Eingabe wäre wirkungslos; deshalb Pflichtfeld.
 // Rückgabe: die Namen für die Meldung.
+// OpenADR: Gemeinschaften ohne VTN-Adresse — ohne sie kommt keine OLS, die
+// Gemeinschaft wirkt nicht. Rückgabe wie quoteLuecken: die Namen.
+const openadrLuecken = (d) => {
+  if (d.enable_peakshare === false || d.eeg_demand_source !== "openadr") return [];
+  return [["", d.peakshare_community], ["_2", d.peakshare_community_2]]
+    .filter(([sfx, name]) => name && Number(d[`peakshare_share_pct${sfx}`] ?? 0) > 0
+      && !/^https?:\/\/[^\s/]+/i.test(String(d[`openadr_url${sfx}`] || "").trim()))
+    .map(([, name]) => name);
+};
+
 const quoteLuecken = (d) => {
   if (d.enable_peakshare === false || (d.eeg_demand_source || "peakshare") !== "quote") return [];
   return [["", d.peakshare_community], ["_2", d.peakshare_community_2]]
@@ -1392,6 +1402,9 @@ class EegOptimizerPanel extends HTMLElement {
         }
         // energy agent: Schlüssel übernehmen und sofort prüfen — die
         // gefundenen Gemeinschaften füllen die Auswahl darunter.
+        // OpenADR: eine neue Adresse macht das alte Prüfergebnis ungültig.
+        const openadrFeld = /^(settings_)?openadr_url(_2)?$/.exec(field || "");
+        if (openadrFeld && this._openadrStatus) delete this._openadrStatus[openadrFeld[2] || ""];
         if (field === "energy_agent_api_key" || field === "settings_energy_agent_api_key") {
           const d = field.startsWith("settings_") ? this._settingsData : this._wizardData;
           d.energy_agent_api_key = String(target.value || "").trim();
@@ -1547,7 +1560,7 @@ class EegOptimizerPanel extends HTMLElement {
             if (realField === "eeg_demand_source") {
               // PeakShare und energy agent kennen verschiedene Gemeinschaften.
               this._peakshareCommunitiesCache = [];
-              if (target.value !== "quote") this._loadPeakShareCommunities(this._settingsData, true);
+              if (!["quote", "openadr"].includes(target.value)) this._loadPeakShareCommunities(this._settingsData, true);
               this._render();
             }
             // Der Wallbox-Typ blendet Adresse, Port, Unit-ID, Ladepunkt und
@@ -1593,7 +1606,7 @@ class EegOptimizerPanel extends HTMLElement {
             this._render();
           } else if (field === "eeg_demand_source") {
             this._peakshareCommunitiesCache = [];
-            if (target.value !== "quote") this._loadPeakShareCommunities(this._wizardData, true);
+            if (!["quote", "openadr"].includes(target.value)) this._loadPeakShareCommunities(this._wizardData, true);
             this._saveWizardProgress();
             this._render();
           } else if (
@@ -3078,6 +3091,9 @@ class EegOptimizerPanel extends HTMLElement {
       case "probe-pvprognose":
         this._probePvPrognose(dataset?.scope || "");
         break;
+      case "probe-openadr":
+        this._probeOpenAdr(dataset?.scope || "", dataset?.sfx || "");
+        break;
       case "refresh-pvprognose":
         this._loadPvPrognoseStatus(true);
         break;
@@ -3887,6 +3903,11 @@ class EegOptimizerPanel extends HTMLElement {
           this._showValidationError(`Bitte die Abnahmequote eintragen: ${quoteFehlt.join(", ")}.`);
           return false;
         }
+        const adresseFehlt = openadrLuecken(this._wizardData);
+        if (adresseFehlt.length) {
+          this._showValidationError(`Bitte eine gültige OpenADR-Adresse (http:// oder https://) eintragen: ${adresseFehlt.join(", ")}.`);
+          return false;
+        }
         return true;
       }
       default:
@@ -4058,6 +4079,7 @@ class EegOptimizerPanel extends HTMLElement {
       fehlt.push(`Anteile der Gemeinschaften (Summe ${fmtDe(anteile, 0)} % statt maximal 100 %)`);
     }
     for (const name of quoteLuecken(d)) fehlt.push(`Abnahmequote der Gemeinschaft ${name}`);
+    for (const name of openadrLuecken(d)) fehlt.push(`gültige OpenADR-Adresse (http/https) der Gemeinschaft ${name}`);
     for (const luecke of netzladenLuecken(d, this._serverBezug(d))) fehlt.push(luecke);
     return fehlt;
   }
@@ -4110,7 +4132,8 @@ class EegOptimizerPanel extends HTMLElement {
       // Quelle oder Schlüssel gewechselt: die Integration lädt dafür neu
       // (anderer Provider), der Abruf oben kommt ihr zuvor. Nachholen, statt
       // bis zur 5-Minuten-Auffrischung ohne Bedarfskurve zu bleiben.
-      if ("eeg_demand_source" in changed || "energy_agent_api_key" in changed) {
+      if ("eeg_demand_source" in changed || "energy_agent_api_key" in changed
+          || "openadr_url" in changed || "openadr_url_2" in changed) {
         setTimeout(() => { if (this._peakshareAktiv()) this._loadPeakShareData(); }, 15000);
       }
       this._view = "dashboard";
@@ -4238,6 +4261,8 @@ class EegOptimizerPanel extends HTMLElement {
     if ((daten?.eeg_demand_source || "peakshare") === "energy_agent") {
       return this._probeEnergyAgent(daten);
     }
+    // OpenADR: jede Gemeinschaft hat ihre eigene Adresse, eine Liste gibt es nicht.
+    if (daten?.eeg_demand_source === "openadr") return;
     if (!this._hass || this._peakshareCommunitiesLoading) return;
     this._peakshareCommunitiesLoading = true;
     try {
@@ -4593,8 +4618,12 @@ class EegOptimizerPanel extends HTMLElement {
         let serien = [];
         try { serien = JSON.parse(d.eegj); } catch (e) { serien = []; }
         for (const e of serien) {
-          tt.innerHTML +=
-            `<div style="display:flex;gap:8px;justify-content:space-between;margin-top:2px">
+          tt.innerHTML += e.t
+            ? `<div style="display:flex;gap:8px;justify-content:space-between;margin-top:2px">
+               <span style="color:var(--secondary-text-color)">${chip(e.f)}${this._escapeHtml(e.n)}</span>
+               <strong>${this._escapeHtml(e.t)}</strong>
+             </div>`
+            : `<div style="display:flex;gap:8px;justify-content:space-between;margin-top:2px">
                <span style="color:var(--secondary-text-color)">${chip(e.f)}${e.u ? "Überschuss" : "Bedarf"} ${this._escapeHtml(e.n)}</span>
                <strong>${e.v} kWh</strong>
              </div>`;
@@ -4761,10 +4790,31 @@ class EegOptimizerPanel extends HTMLElement {
       eegSerien = rohSerien.map((serie, i) => {
         // Viertelstundenraster wie die API (V2): 192 Intervalle über 48 h.
         const jeViertel = new Map();
+        let ols = false;
         for (const h of (serie?.intervals || [])) {
-          if (!h?.timestamp || h.saldoKwh == null) continue;
+          // OpenADR liefert statt des Saldos die beiden Abnahmequoten (OLS).
+          const mitOls = h?.olsEinspeisung != null || h?.olsBezug != null;
+          if (!h?.timestamp || (h.saldoKwh == null && !mitOls)) continue;
           const t = new Date(h.timestamp).getTime();
           if (isNaN(t)) continue;
+          if (mitOls) {
+            // Nach Haralds Profil ist je Viertelstunde eine der beiden 1:
+            // braucht die Gemeinschaft Strom, nimmt sie alles auf (Einspeise-
+            // OLS 1) und liefert nur einen Teil des Bezugs — und umgekehrt.
+            // Die Differenz ist damit dieselbe Aussage wie der Saldo:
+            // positiv Bedarf, negativ Überschuss, in Prozent. Fehlt eine
+            // Richtung, gilt sie als 1 (die andere bestimmt die Lage).
+            ols = true;
+            const ein = h.olsEinspeisung != null ? Number(h.olsEinspeisung) : 1;
+            const bez = h.olsBezug != null ? Number(h.olsBezug) : 1;
+            const signal = (ein - bez) * 100;
+            jeViertel.set(Math.floor(t / 900000), {
+              v: Math.abs(signal), ueber: signal < 0,
+              ein: h.olsEinspeisung != null ? ein : null,
+              bez: h.olsBezug != null ? bez : null,
+            });
+            continue;
+          }
           const saldo = Number(h.saldoKwh);
           // Betrag zeichnen, Vorzeichen merken: positiv ist Bedarf,
           // negativ Überschuss (siehe peakshare.py).
@@ -4785,7 +4835,7 @@ class EegOptimizerPanel extends HTMLElement {
         punkte.sort((a, b) => a.t - b.t);
         return { name: serie?.name || `Gemeinschaft ${i + 1}`,
                  farbe: eegFarben[i % eegFarben.length],
-                 punkte, jeViertel };
+                 punkte, jeViertel, ols };
       }).filter(s => s.punkte.some(p => p.v > 0));
     }
     // Gemeinsame Skala über beide Kurven — zwei Gemeinschaften sind nur
@@ -5039,7 +5089,8 @@ class EegOptimizerPanel extends HTMLElement {
         eegAxis += `<text x="${(W - padR + 4).toFixed(1)}" y="${(yEeg(m) + 3.5).toFixed(1)}" text-anchor="start" font-size="${fsAchse}" fill="${achsFarbe}">${m.text}</text>`;
       });
       // Einheit direkt an die Nulllinie, wo auf beiden Seiten Platz ist.
-      eegAxis += `<text x="${(W - padR + 4).toFixed(1)}" y="${(zeroY + 3.5).toFixed(1)}" text-anchor="start" font-size="${fsKlein}" fill="${achsFarbe}">kWh</text>`;
+      const eegEinheit = sichtbareSerien.every(serie => serie.ols) ? "%" : "kWh";
+      eegAxis += `<text x="${(W - padR + 4).toFixed(1)}" y="${(zeroY + 3.5).toFixed(1)}" text-anchor="start" font-size="${fsKlein}" fill="${achsFarbe}">${eegEinheit}</text>`;
     }
 
     // Raster und Achsen
@@ -5315,9 +5366,16 @@ class EegOptimizerPanel extends HTMLElement {
       const eegHier = eegSerien
         .map(serie => {
           const e = serie.jeViertel.get(Math.floor(sp.t / 900000));
-          return e == null ? null
-            : { n: serie.name, f: serie.farbe,
-                v: fmtDe(e.v, e.v >= 100 ? 0 : 1), u: e.ueber ? 1 : 0 };
+          if (e == null) return null;
+          if (serie.ols) {
+            // OpenADR: die beiden Quoten selbst, nicht die Differenz.
+            const teile = [];
+            if (e.ein != null) teile.push(`nimmt ${fmtDe(e.ein * 100, 0)} %`);
+            if (e.bez != null) teile.push(`liefert ${fmtDe(e.bez * 100, 0)} %`);
+            return { n: serie.name, f: serie.farbe, t: teile.join(", ") };
+          }
+          return { n: serie.name, f: serie.farbe,
+                   v: fmtDe(e.v, e.v >= 100 ? 0 : 1), u: e.ueber ? 1 : 0 };
         })
         .filter(Boolean);
       hits += `<rect class="sched-hit" x="${hitL.toFixed(1)}" y="${padT}" width="${(hitR - hitL).toFixed(1)}" height="${(socBottom - padT).toFixed(1)}" fill="transparent"`
@@ -5927,9 +5985,12 @@ class EegOptimizerPanel extends HTMLElement {
         [batterieAnteil, vergleichZeile("batterie_export_kwh", kwh)].filter(Boolean).join("<br>"),
         "Einspeisung in Viertelstunden ohne PV-Leistung."),
       d.gemeinschaft ? kachel(pct(k.eeg_anteil),
-        d.quotenmodus ? "an die Gemeinschaft (Quote)" : "bei Gemeinschaftsbedarf",
+        d.ols ? "an die Gemeinschaft (OpenADR)"
+          : d.quotenmodus ? "an die Gemeinschaft (Quote)" : "bei Gemeinschaftsbedarf",
         vergleichZeile("eeg_anteil", pct),
-        d.quotenmodus
+        d.ols
+          ? "Nach der Abnahmequote, die deine Gemeinschaft je Viertelstunde meldet (OpenADR) — eine Prognose, keine Messung."
+          : d.quotenmodus
           ? "Nach der eingestellten Abnahmequote — eine Annahme aus deiner EEG-Abrechnung, keine Messung."
           : EINSP_BEDARF_HINWEIS) : "",
       kachel(ct(k.erloes_je_kwh), "Erlös je kWh", vergleichZeile("erloes_je_kwh", ct)),
@@ -5953,7 +6014,9 @@ class EegOptimizerPanel extends HTMLElement {
     // Die Erklärungen der Kacheln stehen im title — den zeigt ein Handy nie.
     // Die eine, ohne die die Zahl missverständlich ist, steht deshalb hier.
     const hinweise = ["„Aus der Batterie“ ist die Einspeisung in Viertelstunden ohne PV-Leistung."];
-    if (d.gemeinschaft && d.quotenmodus) {
+    if (d.gemeinschaft && d.ols) {
+      hinweise.push("„An die Gemeinschaft“ folgt der Abnahmequote, die deine Gemeinschaft je Viertelstunde meldet (OpenADR) — eine Prognose, keine Messung.");
+    } else if (d.gemeinschaft && d.quotenmodus) {
       hinweise.push("„An die Gemeinschaft“ folgt der eingestellten Abnahmequote — eine Annahme, keine Messung.");
     } else if (d.gemeinschaft) {
       hinweise.push(EINSP_BEDARF_HINWEIS);
@@ -6661,9 +6724,10 @@ class EegOptimizerPanel extends HTMLElement {
       // Nur mit aktiver Gemeinschaft — bei Spot/OeMAG ohne EEG sagt sie nichts.
       const eegAktiv = this._config?.enable_peakshare !== false
         && !!this._config?.peakshare_community;
-      const quoteModus = (this._config?.eeg_demand_source || "peakshare") === "quote";
+      const quelleEeg = this._config?.eeg_demand_source || "peakshare";
+      const quoteModus = quelleEeg === "quote";
       const eegZuteilung = (eegAktiv && m.eeg_kwh != null && o.eeg_kwh != null)
-        ? ` Zur Gemeinschaft vergütet${quoteModus ? " (angenommene Abnahmequote)" : ""}: mit Optimierung ${fmtDe(m.eeg_kwh, 1)}&nbsp;von&nbsp;${fmtDe(m.export_kwh ?? 0, 1)}&nbsp;kWh, ohne ${fmtDe(o.eeg_kwh, 1)}&nbsp;von&nbsp;${fmtDe(o.export_kwh ?? 0, 1)}&nbsp;kWh.`
+        ? ` Zur Gemeinschaft vergütet${quoteModus ? " (angenommene Abnahmequote)" : quelleEeg === "openadr" ? " (Abnahmequote der Gemeinschaft)" : ""}: mit Optimierung ${fmtDe(m.eeg_kwh, 1)}&nbsp;von&nbsp;${fmtDe(m.export_kwh ?? 0, 1)}&nbsp;kWh, ohne ${fmtDe(o.eeg_kwh, 1)}&nbsp;von&nbsp;${fmtDe(o.export_kwh ?? 0, 1)}&nbsp;kWh.`
         : "";
       // Kosten stehen als negative Beträge in der Tabelle, damit die
       // Summenzeile schlicht die Spaltensumme ist.
@@ -9337,6 +9401,69 @@ class EegOptimizerPanel extends HTMLElement {
         </div>`;
   }
 
+  // OpenADR: Adresse des VTN dieser Gemeinschaft prüfen (probe_openadr, mit
+  // dem ungespeicherten Feldinhalt). Ergebnis je Gemeinschaft (sfx).
+  async _probeOpenAdr(scope, sfx) {
+    if (!this._hass) return;
+    const d = scope === "settings_" ? this._settingsData : this._wizardData;
+    const url = String(d?.[`openadr_url${sfx}`] || "").trim();
+    this._openadrStatus = this._openadrStatus || {};
+    if (!url) {
+      this._openadrStatus[sfx] = { ok: false, fehler: "Erst die Adresse eintragen." };
+      this._render();
+      return;
+    }
+    // Ein Zähler je Gemeinschaft: zwei Prüfungen nebeneinander dürfen sich
+    // nicht gegenseitig verwerfen.
+    this._openadrNr = this._openadrNr || {};
+    const nr = (this._openadrNr[sfx] = (this._openadrNr[sfx] || 0) + 1);
+    this._openadrStatus[sfx] = { busy: true };
+    this._render();
+    let r;
+    try {
+      r = await this._hass.callWS({ type: "eeg_optimizer/probe_openadr", url });
+    } catch (e) {
+      r = { ok: false, fehler: e?.message || "Abfrage fehlgeschlagen" };
+    }
+    if (nr !== this._openadrNr[sfx]) return;
+    this._openadrStatus[sfx] = { busy: false, ...r };
+    this._render();
+  }
+
+  _openadrFeld(d, prefix, s) {
+    const st = (this._openadrStatus || {})[s];
+    let status = "Adresse des OpenADR-Servers (VTN) deiner Gemeinschaft, z. B. https://meine-eeg.at/OpenADR/3.1.1 — steht in der Anleitung deiner Gemeinschaft. Abgerufen werden nur öffentliche Daten, ohne Anmeldung.";
+    let farbe = "";
+    if (st?.busy) status = "Verbindung wird geprüft…";
+    else if (st && !st.ok) {
+      status = `✗ ${this._escapeHtml(st.fehler || "Prüfung fehlgeschlagen")}`;
+      farbe = "color:var(--error-color,#db4437)";
+    } else if (st?.ok) {
+      const richtung = (r, wort) => {
+        if (!r || !r.ols_viertel) return `${wort}: keine Abnahmequote`;
+        const spanne = r.ols_min_pct === r.ols_max_pct
+          ? `${fmtDe(r.ols_min_pct, 0)} %`
+          : `${fmtDe(r.ols_min_pct, 0)}–${fmtDe(r.ols_max_pct, 0)} %`;
+        const preis = r.preis != null ? `, ${fmtDe(r.preis * 100, 2)} ct/kWh`
+          : r.preis_variabel ? ", zeitvariabler Preis (wird noch nicht übernommen)" : "";
+        return `${wort}: Quote ${spanne}, ${fmtDe(r.vorlauf_h, 0)} h voraus${preis}`;
+      };
+      status = `✓ ${richtung(st.einspeisung, "Einspeisung")} · ${richtung(st.bezug, "Bezug")}`
+        + ((st.warnungen || []).length ? `<br>Hinweis: ${st.warnungen.map(w => this._escapeHtml(w)).join("; ")}` : "");
+      farbe = "color:var(--success-color,#43a047)";
+    }
+    return `
+          <div class="field-group">
+            <label>OpenADR-Adresse *</label>
+            <div style="display:flex;gap:8px;align-items:center">
+              <input type="url" style="flex:1" data-field="${prefix}openadr_url${s}"
+                     value="${this._escapeHtml(d[`openadr_url${s}`] || "")}" placeholder="https://…/OpenADR/3.1.1">
+              <button class="btn-secondary" data-action="probe-openadr" data-scope="${prefix}" data-sfx="${s}" ${st?.busy ? "disabled" : ""}>Verbindung prüfen</button>
+            </div>
+            <div class="help-text" style="${farbe}">${status}</div>
+          </div>`;
+  }
+
   _gemeinschaftFields(d, prefix) {
     const on = d.enable_peakshare !== false;
     if (on) this._ensureGemTarif(d);
@@ -9345,6 +9472,7 @@ class EegOptimizerPanel extends HTMLElement {
     // Gemeinschaft eine Quote für Tag und Nacht, Vorschau als Mischpreis.
     const quoten = (d.eeg_demand_source || "peakshare") === "quote";
     const energyAgent = d.eeg_demand_source === "energy_agent";
+    const openadr = d.eeg_demand_source === "openadr";
     if (on && energyAgent && d.energy_agent_api_key && !this._energyAgentStatus
         && communities.length === 0) {
       this._energyAgentStatus = { busy: true };
@@ -9466,7 +9594,7 @@ class EegOptimizerPanel extends HTMLElement {
       // (noch) nicht kennt — sonst leert das Speichern das Feld. Im
       // Quotenmodus ist der Name nur ein Etikett: Freitext statt Liste.
       const namen = !name || communities.includes(name) ? communities : [name, ...communities];
-      const auswahl = quoten
+      const auswahl = quoten || openadr
         ? `<input type="text" data-field="${prefix}peakshare_community${s}" value="${this._escapeHtml(name)}" maxlength="60"
                   placeholder="${nr === 2 ? "Name der zweiten Gemeinschaft (optional)" : "Name der Gemeinschaft, z. B. EEG Musterdorf"}">`
         : communities.length === 0 && !name
@@ -9487,6 +9615,11 @@ class EegOptimizerPanel extends HTMLElement {
         wirkung = "Anteil 0 % — diese Gemeinschaft wirkt nicht auf den Fahrplan.";
       } else if (quoten && quoteTag <= 0 && quoteNacht <= 0) {
         wirkung = "Abnahmequote fehlt — ohne sie nimmt die Gemeinschaft im Modell nichts auf und wirkt nicht.";
+      } else if (openadr) {
+        wirkung = `Die Gemeinschaft sagt je Viertelstunde selbst, welchen Teil deiner Einspeisung sie aufnimmt`
+          + ` (Abnahmequote, OpenADR). Der Fahrplan rechnet mit ${fmtDe(pct, 0)} % Anteil × dieser Quote`
+          + ` zum Gemeinschaftssatz, der Rest zur Standardvergütung (${fmtDe(basis * 100, 2)} ct).`
+          + ` Liefert die Gemeinschaft einen festen Preis mit, ersetzt er die Vergütung unten.`;
       } else if (quoten) {
         // Vorschau rechnet die Backend-Formel nach (bewerte_geldfluesse):
         // was eine eingespeiste Kilowattstunde im Mittel wirklich bringt.
@@ -9519,6 +9652,7 @@ class EegOptimizerPanel extends HTMLElement {
                    value="${pct}" min="0" max="100" step="1">
             <div class="help-text">Dein Aufteilungsschlüssel — gilt für Einspeisung und Bezug.</div>
           </div>
+          ${openadr ? this._openadrFeld(d, prefix, s) : ""}
           ${this._gemeinschaftBezug(d, prefix, s, name) ? tarifAbschnitt("einspeisung", "Einspeisung in die Gemeinschaft") : ""}
           <div style="display:flex;gap:12px;flex-wrap:wrap">
             <div class="field-group" style="flex:1;min-width:120px">
@@ -9623,16 +9757,19 @@ class EegOptimizerPanel extends HTMLElement {
       feature: "enable_peakshare",
       icon: "mdi:account-group-outline",
       titel: "Energiegemeinschaft",
-      beschreibung: "Bist du Mitglied einer Energiegemeinschaft, bekommt ein Teil deiner Einspeisung deren Vergütung statt der Standardvergütung. Der Fahrplan rechnet damit — und mit dem, was die Gemeinschaft davon wirklich aufnimmt: aus der PeakShare-Bedarfsprognose oder aus einer festen Abnahmequote. Ohne Anteil (0 %) ist es reine Anzeige.",
+      beschreibung: "Bist du Mitglied einer Energiegemeinschaft, bekommt ein Teil deiner Einspeisung deren Vergütung statt der Standardvergütung. Der Fahrplan rechnet damit — und mit dem, was die Gemeinschaft davon wirklich aufnimmt: aus einer Prognose der Gemeinschaft (PeakShare, energy agent, OpenADR) oder aus einer festen Abnahmequote. Ohne Anteil (0 %) ist es reine Anzeige.",
       params: `
         <div class="field-group">
           <label>Bedarfsdaten der Gemeinschaft</label>
           <select data-field="${prefix}eeg_demand_source">
-            <option value="peakshare" ${quoten || energyAgent ? "" : "selected"}>PeakShare-Prognose (EW Ansfelden)</option>
+            <option value="peakshare" ${quoten || energyAgent || openadr ? "" : "selected"}>PeakShare-Prognose (EW Ansfelden)</option>
             <option value="energy_agent" ${energyAgent ? "selected" : ""}>energy agent</option>
+            <option value="openadr" ${openadr ? "selected" : ""}>OpenADR (Beta)</option>
             <option value="quote" ${quoten ? "selected" : ""}>Feste Abnahmequote (Gemeinschaft ohne PeakShare)</option>
           </select>
-          <div class="help-text">${energyAgent
+          <div class="help-text">${openadr
+            ? "Für Gemeinschaften mit OpenADR-3.1-Schnittstelle (EEG-Profil von Harald Geyer). Die Gemeinschaft liefert je Viertelstunde, welchen Teil deiner Einspeisung sie aufnimmt und welchen Teil deines Bezugs sie liefert, oft auch ihre Preise. Je Gemeinschaft eine eigene Adresse; abgerufen wird höchstens stündlich."
+            : energyAgent
             ? "Holt Erzeugung und Verbrauch deiner Gemeinschaft von energy agent und rechnet daraus, wann sie Strom braucht und wann sie Überschuss hat — wie bei PeakShare. Tarife kommen weiter aus den Feldern unten."
             : quoten
             ? "Ohne Bedarfsprognose rechnet der Fahrplan mit einem Mischpreis: Anteil × Abnahmequote zum Gemeinschaftssatz, der Rest zur Standardvergütung — getrennt für Tag und Nacht. Das ist eine erklärte Annahme aus deiner Abrechnung, kein Steuersignal nach Stunden; auch die Gewinn- und Bilanzkarten rechnen damit."
@@ -10864,7 +11001,8 @@ class EegOptimizerPanel extends HTMLElement {
     const quote = (d.eeg_demand_source || "peakshare") === "quote";
     zeile("gemeinschaft", "Energiegemeinschaft", d.enable_peakshare !== false
       ? `${d.peakshare_community || "BEG"} — ${quote ? "feste Abnahmequote"
-          : d.eeg_demand_source === "energy_agent" ? "energy-agent-Prognose" : "PeakShare-Prognose"}`
+          : d.eeg_demand_source === "energy_agent" ? "energy-agent-Prognose"
+          : d.eeg_demand_source === "openadr" ? "OpenADR" : "PeakShare-Prognose"}`
       : "Aus");
     for (const [sfx, name] of [["", d.peakshare_community], ["_2", d.peakshare_community_2]]) {
       if (!name || !(Number(d[`peakshare_share_pct${sfx}`] ?? 0) > 0)) continue;
@@ -11206,10 +11344,10 @@ class EegOptimizerPanel extends HTMLElement {
           <div class="help-text" style="margin-top:10px;line-height:1.5">
             <strong>Übermittelt:</strong>
             <ul style="margin:6px 0 10px 18px;padding:0">
-              <li><strong>Profil</strong> (bei Setup, Restart, Settings-Change): App-/HA-Version, Wechselrichter-Typ, Batterie-Kapazität, PV-Peak, Prognose-Quelle, Land, ausgewählte EEG-Community (sofern PeakShare aktiv), Whitelist-Settings (numerische/kategorische Werte, keine Entity-IDs)</li>
+              <li><strong>Profil</strong> (bei Setup, Restart, Settings-Change): App-/HA-Version, Wechselrichter-Typ, Batterie-Kapazität, PV-Peak, Prognose-Quelle, Land, Name der EEG-Community und Bedarfsquelle (sofern eine Gemeinschaft aktiv ist; keine OpenADR-Adresse, kein API-Schlüssel), Whitelist-Settings (numerische/kategorische Werte, keine Entity-IDs)</li>
               <li><strong>Failure</strong> (bei Auftreten): Kategorie, Schweregrad, gehashte Fehlermeldung, technischer Kontext (z. B. Wechselrichter-Typ, Grund)</li>
               <li><strong>Momentaufnahme</strong> (alle 30 Minuten): Ladestand, PV-, Haus-, Netz- und Batterieleistung, Modus, was die Steuerung gerade tut, Mindest-Ladestand des Fahrplans</li>
-              <li><strong>Bilanztag</strong> (einmal täglich; nach dem Update einmalig das Archiv bis 400 Tage): die Energiemengen der Einspeise-Karte — eingespeist, davon aus der Batterie und an die Gemeinschaft, PV, Netzbezug, Haus- und Heizstabverbrauch, Eigenverbrauch, Anteil im Modus Ein, ob die Batterie wie im Standardbetrieb lief, ob der Gemeinschaftsanteil aus der Abnahmequote stammt, die höchste Viertelstunde Netzbezug mit Uhrzeit, dieselben Mengen im simulierten Standardbetrieb. Keine Geldbeträge</li>
+              <li><strong>Bilanztag</strong> (einmal täglich; nach dem Update einmalig das Archiv bis 400 Tage): die Energiemengen der Einspeise-Karte — eingespeist, davon aus der Batterie und an die Gemeinschaft, PV, Netzbezug, Haus- und Heizstabverbrauch, Eigenverbrauch, Anteil im Modus Ein, ob die Batterie wie im Standardbetrieb lief, ob der Gemeinschaftsanteil aus einer Abnahmequote stammt (fest eingestellt oder per OpenADR), die höchste Viertelstunde Netzbezug mit Uhrzeit, dieselben Mengen im simulierten Standardbetrieb. Keine Geldbeträge</li>
               <li><strong>Prognosetag</strong> (einmal täglich, nur mit Prognosevergleich oder eigener Prognose; nach dem Update einmalig das Archiv bis 400 Tage): gemessene PV-Erzeugung und die Morgenprognosen der Fremdquelle (mit ihrem Namen, z. B. Solcast) und der eigenen Berechnung (mit und ohne Kalibrierung), als Tagessumme mit mittlerer Abweichung und in Halbstunden, dazu wann die Prognosen festgehalten wurden und ob der Tag vollständig gemessen bzw. erst spät festgehalten ist</li>
                 <li><strong>Tagesbilanz</strong> (einmal täglich): PV-Erzeugung, Verbrauch und Einspeisung des Vortags, höchste Leistung, Ladestand am Anfang und Ende, PV- und Verbrauchsprognose für denselben Tag aus dem Fahrplan des Vorabends und dem von zwei Tagen davor</li>
                 <li><strong>Diagnoselauf</strong> (nur nach einer von Hand gestarteten Diagnose der Ansteuerung): gesendete Befehle und die Antwort des Wechselrichters, zurückgelesene Stellwerte (ohne Entity-IDs), die Messreihe je Schritt (Ladestand, PV-, Batterie-, Netz- und Hausleistung) und das Ergebnis je Bereich</li>
@@ -12765,8 +12903,10 @@ class EegOptimizerPanel extends HTMLElement {
 
     if (this._peakshareAktiv()) {
       const ageMin = this._peakshareData?.cache_age_minutes;
+      const quelleBedarf = this._config?.eeg_demand_source;
       jobs.push({
-        label: "PeakShare",
+        label: quelleBedarf === "openadr" ? "OpenADR"
+          : quelleBedarf === "energy_agent" ? "energy agent" : "PeakShare",
         text: ageMin != null ? (ageMin < 60 ? `vor ${ageMin} min` : `vor ${Math.round(ageMin / 60)} h`) : "\u2014",
         stale: ageMin != null && ageMin > 420,
       });

@@ -744,6 +744,13 @@ class EnergieBilanz:
             if wert is not None:
                 salden[name] = round(float(wert), 3)
         slot["eeg"] = salden
+        # OpenADR: die Werte sind Abnahmequoten (0..1), kein Saldo in kWh.
+        # Markiert, damit ein Quellwechsel am selben Tag sie nicht als die
+        # jeweils andere Größe liest (_inputs_fuer).
+        if any(t.get("ols") for t in (getattr(inputs, "eeg_tarife", None) or [])):
+            slot["eeg_art"] = "ols"
+        else:
+            slot.pop("eeg_art", None)
 
     # ------------------------------------------------------------------
     # Tagesabschluss
@@ -964,8 +971,11 @@ class EnergieBilanz:
             ergebnis["pv_ersparnis"] = ergebnis["vermieden"]
             return ergebnis
 
+        # OpenADR (``ols``) zählt dazu: auch dort ist der Gemeinschaftsanteil
+        # Einspeisung × Quote, nur kommt die Quote je Viertelstunde vom VTN.
         ergebnis["quotenmodus"] = any(
-            t.get("quote_tag") is not None for t in (getattr(inputs, "eeg_tarife", None) or [])
+            t.get("quote_tag") is not None or t.get("ols")
+            for t in (getattr(inputs, "eeg_tarife", None) or [])
         )
         datum = tag.get("datum") or bilanz_datum(datetime.now())
         ist_slots = self._als_slots(paare, datum)
@@ -1096,7 +1106,15 @@ class EnergieBilanz:
             for s in slots
         ]
         bedarf: dict[str, dict[int, float]] = {}
+        # Nur Werte derselben Art wie die heutigen Tarife: Quote (OpenADR)
+        # oder Saldo. Nach einem Quellwechsel zählt der Rest des Tages ohne
+        # Gemeinschaft — kein erfundener Erlös aus der falschen Größe.
+        art = "ols" if any(
+            t.get("ols") for t in (getattr(inputs, "eeg_tarife", None) or [])
+        ) else None
         for slot, stempel in zip(slots, zeiten):
+            if slot.get("eeg_art") != art:
+                continue
             viertel = int(stempel.timestamp() // SLOT_SEKUNDEN)
             for name, wert in (slot.get("eeg") or {}).items():
                 bedarf.setdefault(name, {})[viertel] = wert
@@ -1366,7 +1384,9 @@ class EnergieBilanz:
             "batterie_seit": mit_batterie[0] if mit_batterie else None,
             "erster_tag": min(tage) if tage else None,
             "gemeinschaft": bool(tarife),
-            "quotenmodus": any(t.get("quote_tag") is not None for t in tarife),
+            "quotenmodus": any(t.get("quote_tag") is not None or t.get("ols") for t in tarife),
+            # OpenADR: die Quote kommt je Viertelstunde von der Gemeinschaft.
+            "ols": any(t.get("ols") for t in tarife),
             "reihe": self._einspeise_reihe(zeitraum, tage, inputs, auswahl, heute_datum),
         }
 

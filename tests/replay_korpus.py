@@ -82,11 +82,13 @@ def inputs_aus_eintrag(eintrag: dict[str, Any]) -> sched.ScheduleInputs:
             wert = datetime.fromisoformat(wert)
         werte[name] = wert
 
-    if werte.get("eeg_bedarf"):
-        werte["eeg_bedarf"] = {
-            name: {int(k): float(v) for k, v in reihe.items()}
-            for name, reihe in werte["eeg_bedarf"].items()
-        }
+    # JSON kennt nur Text-Schlüssel; der Fahrplan sucht Epochenviertelstunden.
+    for feld in ("eeg_bedarf", "eeg_ols_bezug"):
+        if werte.get(feld):
+            werte[feld] = {
+                name: {int(k): float(v) for k, v in reihe.items()}
+                for name, reihe in werte[feld].items()
+            }
 
     zeiten = [datetime.fromisoformat(s["t"]) for s in slots]
     nach_zeit = dict(zip(zeiten, slots))
@@ -162,11 +164,12 @@ def anonymisieren(eintrag: dict[str, Any], kuerzel: str) -> dict[str, Any]:
         alt = str(tarif.get("name") or "")
         namen.setdefault(alt, f"G{len(namen) + 1}")
         tarif["name"] = namen[alt]
-    if eingaben.get("eeg_bedarf"):
-        eingaben["eeg_bedarf"] = {
-            namen.setdefault(alt, f"G{len(namen) + 1}"): reihe
-            for alt, reihe in eingaben["eeg_bedarf"].items()
-        }
+    for feld in ("eeg_bedarf", "eeg_ols_bezug"):   # OpenADR: OLS des Bezugs
+        if eingaben.get(feld):
+            eingaben[feld] = {
+                namen.setdefault(alt, f"G{len(namen) + 1}"): reihe
+                for alt, reihe in eingaben[feld].items()
+            }
     eingaben.pop("eeg_details", None)
     plan = eintrag["plan"]
     gewinn = plan.get("gewinn") or {}

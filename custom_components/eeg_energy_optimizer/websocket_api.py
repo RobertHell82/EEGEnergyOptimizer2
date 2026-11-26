@@ -489,6 +489,7 @@ def async_register_websocket_commands(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_get_pvprognose)
     websocket_api.async_register_command(hass, ws_probe_pvprognose)
     websocket_api.async_register_command(hass, ws_probe_energy_agent)
+    websocket_api.async_register_command(hass, ws_probe_openadr)
     websocket_api.async_register_command(hass, ws_get_prognosevergleich)
     # Phase 8 — Telemetry-Steuerung (D-32 / D-33)
     websocket_api.async_register_command(hass, ws_telemetry_get_status)
@@ -2922,6 +2923,77 @@ async def ws_probe_energy_agent(
         msg["id"],
         {"ok": True, "communities": [g["name"] for g in gemeinschaften], "fehler": None},
     )
+
+
+@websocket_api.require_admin
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "eeg_optimizer/probe_openadr",
+        vol.Required("url"): str,
+    }
+)
+@websocket_api.async_response
+async def ws_probe_openadr(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict,
+) -> None:
+    """VTN-Adresse einer Gemeinschaft prüfen (OpenADR, ``openadr.py``).
+
+    Mit der (noch ungespeicherten) Adresse aus dem Panel — speichert nichts.
+    Admin, weil die Integration dabei eine frei gewählte Adresse anfragt.
+    Antwort ``{ok, fehler, url, einspeisung, bezug, warnungen}``; je Richtung
+    die OLS (Spanne, Viertelstunden, Vorlauf in Stunden) und der Preis
+    (konstant in €/kWh oder ``variabel``).
+    """
+    from .openadr import (
+        VIERTEL_S,
+        OpenAdrFehler,
+        OpenAdrProvider,
+        basis_url,
+        konstanter_wert,
+    )
+
+    basis = basis_url(msg["url"])
+    if basis is None:
+        connection.send_result(msg["id"], {
+            "ok": False, "fehler": "Keine gültige http(s)-Adresse", "url": None,
+        })
+        return
+    from homeassistant.util import dt as dt_util
+
+    probe = OpenAdrProvider(hass, "temp", [])
+    jetzt = dt_util.utcnow()
+    try:
+        daten = await probe.abrufen_einzeln(basis, jetzt)
+    except OpenAdrFehler as err:
+        connection.send_result(
+            msg["id"], {"ok": False, "fehler": err.grund, "url": basis}
+        )
+        return
+    jetzt_v = int(jetzt.timestamp() // VIERTEL_S)
+
+    def _richtung(ols: dict, preis: dict) -> dict:
+        kuenftig = {v: w for v, w in ols.items() if v >= jetzt_v}
+        konstant = konstanter_wert(preis, jetzt_v) if preis else None
+        return {
+            "ols_viertel": len(kuenftig),
+            "ols_min_pct": round(min(kuenftig.values()) * 100, 1) if kuenftig else None,
+            "ols_max_pct": round(max(kuenftig.values()) * 100, 1) if kuenftig else None,
+            "ols_jetzt_pct": round(ols[jetzt_v] * 100, 1) if jetzt_v in ols else None,
+            "vorlauf_h": round((max(ols) + 1 - jetzt_v) * VIERTEL_S / 3600, 1) if kuenftig else 0,
+            "preis": konstant,
+            "preis_variabel": bool(preis) and konstant is None,
+        }
+
+    connection.send_result(msg["id"], {
+        "ok": True,
+        "fehler": None,
+        "url": basis,
+        "einspeisung": _richtung(daten["ols_einspeisung"], daten["preis_einspeisung"]),
+        "bezug": _richtung(daten["ols_bezug"], daten["preis_bezug"]),
+        "warnungen": daten["warnings"] + ([daten["fehler"]] if daten.get("fehler") else []),
+    })
 
 
 @websocket_api.require_admin
