@@ -928,8 +928,8 @@ async def test_executor_nach_fremdeingriff_hebt_deckel_auf(mock_hass, mock_inver
     mock_inverter.supports_discharge_limit = True
     mock_inverter.async_set_discharge_limit = AsyncMock(return_value=True)
     ex = ScheduleExecutor(mock_hass, "e1", {}, mock_inverter)
-    # Ohne Spitzenkappung glaubt der Executor, es stehe kein Deckel.
-    assert ex._entladedeckel_offen is False
+    # Nach der ersten Freigabe glaubt der Executor, es stehe kein Deckel.
+    ex._entladedeckel_offen = False
     ex.nach_fremdeingriff()
     assert ex.hat_eingriff
     assert await ex.async_release()

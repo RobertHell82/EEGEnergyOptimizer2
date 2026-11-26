@@ -315,6 +315,15 @@ EIGEN_TOLERANZ: dict[str, float] = {
     "entladedeckel": ENTLADEDECKEL_SCHRITT_W / 2.0,
 }
 
+# Store-Schlüssel des zuletzt geschriebenen Entladedeckels (W). Die Menge der
+# eigenen Werte lebt nur im Speicher; nach einem Neustart sähe ein Deckel von
+# uns, der im Gerät stehen blieb, wie ein Wert des Betreibers aus. EWA-HAG-0002,
+# 11.–26.11.2026: Nach dem GX-Ausfall stand „Max. Wechselrichterleistung"
+# zwei Wochen auf 500 W, ohne Vorwert im Store — das Aufheben tat nichts und
+# meldete Erfolg, die Batterie gab nie mehr als 0,7 kW, die Monatsspitze
+# stieg auf 22 kW.
+DECKEL_EIGEN_KEY = "entladedeckel_eigen"
+
 
 def _short_id_muster(short_id: str) -> re.Pattern:
     """unique_id endet auf ``_<geräte-id>_<short_id>``.
@@ -681,7 +690,13 @@ class VictronInverter(InverterBase):
 
     def _ist_eigen(self, key: str, wert: float) -> bool:
         toleranz = EIGEN_TOLERANZ.get(key, 0.0)
-        return any(abs(wert - w) <= toleranz for w in self._eigene_werte.get(key, ()))
+        if any(abs(wert - w) <= toleranz for w in self._eigene_werte.get(key, ())):
+            return True
+        if key == "entladedeckel" and wert >= 0:
+            # Über Neustarts hinweg: der zuletzt geschriebene Deckel.
+            eigen = self._state_store.vorwert(DECKEL_EIGEN_KEY)
+            return eigen is not None and abs(wert - eigen) <= toleranz
+        return False
 
     def _echo_vergessen(self, key: str) -> None:
         self._eigene_werte.pop(key, None)
@@ -731,6 +746,11 @@ class VictronInverter(InverterBase):
         if aktuell is None:
             raise VictronFehler(f"Vorwert {key} unlesbar")
         if eigen:
+            if key == "entladedeckel":
+                # Ein alter Deckel von uns ohne Vorwert (nach einem Neustart):
+                # Vorher stand „unbegrenzt" — nur dann bietet der Treiber den
+                # Deckel überhaupt an (−1 schreibbar).
+                return -1.0
             # Ohne zurückgeschriebenen Vorwert kaum erreichbar (gelöscht wird
             # der Store nur beim Zurückschreiben) — aber lieber nicht stellen,
             # als den eigenen Wert für immer festzuschreiben.
@@ -1564,6 +1584,10 @@ class VictronInverter(InverterBase):
 
     async def _deckel_schreiben(self, watt: float) -> None:
         self._senken_takte = 0
+        # Vor dem Schreiben sichern: Auch ein Schreiben, dessen Antwort
+        # ausbleibt, kann im Gerät angekommen sein.
+        if self._state_store.vorwert(DECKEL_EIGEN_KEY) != float(watt):
+            await self._state_store.async_sichern(DECKEL_EIGEN_KEY, watt)
         await self._schreibe("entladedeckel", watt)
 
     def _vorrat_nehmen(self, erzwungen: bool = False) -> bool:
@@ -1594,9 +1618,64 @@ class VictronInverter(InverterBase):
         Der Takt endet erst nach dem Zurückschreiben: Scheitert es, steht der
         Deckel weiter im Gerät — ohne Takt folgte er der DC-PV nicht mehr,
         und stiege die Sonne, kaufte das Haus zu.
+
+        Ohne gesicherten Vorwert: ``_alten_deckel_aufheben``.
         """
-        await self._zuruecksetzen("entladedeckel", 1.0)
+        await self._state_store.async_load()
+        if self._state_store.vorwert("entladedeckel") is None:
+            await self._alten_deckel_aufheben()
+        else:
+            await self._zuruecksetzen("entladedeckel", 1.0)
         self._deckel_nachfuehrung_beenden()
+
+    async def _alten_deckel_aufheben(self) -> None:
+        """Aufheben ohne Vorwert: einen eigenen Deckel zurücknehmen, sonst nichts.
+
+        Bis 2.1.88 endete das still mit Erfolg — ein Deckel von uns, dessen
+        Vorwert verloren war, blieb für immer im Gerät (``DECKEL_EIGEN_KEY``).
+        Zeigt die Entität den zuletzt geschriebenen Deckel, ist es unserer:
+        zurück auf den zuletzt zurückgeschriebenen Vorwert, sonst −1. Einen
+        anderen Wert ≥ 0 hat der Betreiber eingestellt — der bleibt, der
+        Executor meldet ihn (``entladedeckel_fremd_w``).
+        """
+        key = "entladedeckel"
+        aktuell = self._lies(key)
+        if aktuell is None:
+            return
+        if aktuell < 0:
+            # Unbegrenzt: Ein Deckel von uns steht sicher nicht mehr.
+            await self._state_store.async_loeschen(DECKEL_EIGEN_KEY)
+            return
+        if not self._ist_eigen(key, aktuell):
+            return
+        ziel = self._zurueckgeschrieben.get(key, -1.0)
+        minimum = self._attribut(key, "min")
+        if minimum is not None and ziel < minimum:
+            raise VictronFehler("Entladedeckel −1 nicht schreibbar")
+        _LOGGER.warning(
+            "Victron: alter Entladedeckel von uns im Gerät ohne gesicherten "
+            "Vorwert — „Max. Wechselrichterleistung“ wird zurückgesetzt"
+        )
+        await self._schreibe(key, ziel, eingriff=False)
+        self._zurueckgeschrieben[key] = ziel
+        self._zurueck_ziel[key] = ziel
+
+    @property
+    def entladedeckel_fremd_w(self) -> float | None:
+        """Begrenzt „Max. Wechselrichterleistung" die Batterie ohne unser Zutun?
+
+        Der Wert in W, wenn kein Deckel von uns läuft, keiner auf seine
+        Rücknahme wartet (Vorwert im Store) und die Entität trotzdem ≥ 0
+        zeigt; sonst None. Nur lesen — der Executor fragt es in jedem Lauf.
+        """
+        if self._entladedeckel_kw is not None or not self.supports_discharge_limit:
+            return None
+        if self._state_store.vorwert("entladedeckel") is not None:
+            return None
+        wert = self._lies("entladedeckel")
+        if wert is None or wert < 0:
+            return None
+        return wert
 
     def _deckel_nachfuehrung_beenden(self) -> None:
         self._entladedeckel_kw = None

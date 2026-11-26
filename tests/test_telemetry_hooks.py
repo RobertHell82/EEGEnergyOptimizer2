@@ -967,6 +967,21 @@ def test_schedule_health_meldet_stehende_batterie_trotz_deckel():
     assert m["context"]["deckel_kw"] == 1.2
 
 
+
+def test_schedule_health_meldet_fremden_entladedeckel():
+    """EWA-HAG-0002: 500 W „Max. Wechselrichterleistung", nicht von uns."""
+    from custom_components.eeg_energy_optimizer import _check_schedule_health
+
+    calls, emit = _sammler()
+    _check_schedule_health(
+        {"error": None},
+        {"supported": True, "deckel_fremd_w": 500, "plan_action": {}},
+        MODE_EIN, {CONF_INVERTER_TYPE: "victron"}, {}, emit,
+    )
+    [m] = calls
+    assert (m["category"], m["message_hash"]) == ("guard_wirkung", "deckel_fremd")
+    assert m["context"]["geraet_w"] == 500
+
 def _spitze(monat, kw):
     return SimpleNamespace(monat=monat, spitze={"kw": kw, "start": "2026-11-01T06:30:00+00:00"})
 

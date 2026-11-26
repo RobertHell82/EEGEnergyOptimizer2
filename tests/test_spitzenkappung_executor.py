@@ -274,6 +274,43 @@ async def test_nach_dem_start_wird_ein_unbekannter_deckel_aufgehoben(mock_hass, 
     assert ex._entladedeckel_offen is False
 
 
+
+async def test_nach_dem_start_ohne_funktion_wird_ein_deckel_aufgehoben(mock_hass, inverter):
+    """Anderlik 23.–25.11.2026: Spitzenkappung aus, ein Huawei-Deckel 0 aus
+    der Zeit davor stand noch — die erste Freigabe nach dem Start hebt ihn
+    auch ohne eingeschaltete Funktion auf."""
+    cfg = {**CFG, "spitzenkappung_enabled": False}
+    ex = ScheduleExecutor(_hass(mock_hass, soc=60.0), "entry1", cfg, inverter)
+    assert ex._entladedeckel_offen is True
+    ex._created_at = NOW - timedelta(minutes=10)
+    with _messung():
+        await ex.async_guard_cycle(_state(), MODE_EIN, now=NOW)
+    assert call(None) in inverter.async_set_discharge_limit.await_args_list
+    assert ex._entladedeckel_offen is False
+
+
+async def test_fremder_deckel_einmal_aufheben_dann_melden(mock_hass, inverter):
+    """EWA-HAG-0002: Das Gerät begrenzt auf 500 W, ohne Deckel von uns. Erst
+    ein Aufheben (ein alter eigener Deckel verschwände dabei), dann melden —
+    nie überschreiben."""
+    cfg = {**CFG, "spitzenkappung_enabled": False}
+    inverter.entladedeckel_fremd_w = 500.0
+    ex = _executor(_hass(mock_hass, soc=60.0), inverter, cfg)
+    t = NOW
+    with _messung():
+        await ex.async_guard_cycle(_state(), MODE_EIN, now=t)
+        assert ex._entladedeckel_offen is True  # Aufheben für den nächsten Lauf
+        for i in range(1, 8):
+            await ex.async_guard_cycle(_state(), MODE_EIN, now=t + timedelta(seconds=30 * i))
+    assert inverter.async_set_discharge_limit.await_args_list == [call(None)]
+    assert ex.status()["deckel_fremd_w"] == 500
+    assert "500 W" in ex.last_status
+    # Verschwindet der Wert, ist der Befund weg.
+    inverter.entladedeckel_fremd_w = None
+    with _messung():
+        await ex.async_guard_cycle(_state(), MODE_EIN, now=t + timedelta(minutes=5))
+    assert ex.status()["deckel_fremd_w"] is None
+
 async def test_ohne_funktion_kein_deckel(mock_hass, inverter):
     cfg = {**CFG, "spitzenkappung_enabled": False}
     ex = _executor(_hass(mock_hass, soc=12.0), inverter, cfg)

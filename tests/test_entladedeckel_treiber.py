@@ -846,7 +846,8 @@ async def test_victron_neustart_im_halten_sichert_die_eigene_null_nicht(
     assert neu._state_store.vorwert("entladedeckel") == -1.0
     assert await neu.async_set_discharge_limit(None) is True
     assert anlage.wert(WR_GRENZE) == -1.0
-    assert store.data == {}
+    # Der Vorwert ist weg; nur der zuletzt geschriebene Deckel bleibt vermerkt.
+    assert store.data == {"entladedeckel_eigen": 50.0}
 
     # Und ohne Store: Nach dem Aufheben ist er leer, das Echo von −1 hängt,
     # die Entität zeigt noch unser 50-W-Halten. Der nächste Deckel darf es
@@ -855,12 +856,61 @@ async def test_victron_neustart_im_halten_sichert_die_eigene_null_nicht(
     anlage.echo_verzoegert = True
     assert await neu.async_set_discharge_limit(None) is True
     assert anlage.wert(WR_GRENZE) == 50.0  # Echo steht aus
-    assert store.data == {}
+    assert store.data == {"entladedeckel_eigen": 50.0}
     assert await neu.async_set_discharge_limit(0.0) is True
     assert neu._state_store.vorwert("entladedeckel") == -1.0
     anlage.echo()
     assert await neu.async_set_discharge_limit(None) is True
     assert anlage.wert(WR_GRENZE) == -1.0
+
+
+async def test_victron_alter_eigener_deckel_ohne_vorwert_wird_aufgehoben(
+    mock_hass, anlage, soc_beobachter
+):
+    """EWA-HAG-0002, 11.–26.11.2026: Unser Deckel blieb im Gerät, der Vorwert
+    war weg. Bis 2.1.88 tat das Aufheben nichts und meldete Erfolg."""
+    store = _Store()
+    inv = _treiber(mock_hass, store=store)
+    await inv.async_set_discharge_limit(0.4)
+    assert anlage.wert(WR_GRENZE) == 500.0
+    # Vorwert verloren (Aufheben vom Treiber gemeldet, im Gerät nie angekommen).
+    store.data = {"entladedeckel_eigen": 500.0}
+
+    neu = _treiber(mock_hass, store=store)
+    mock_hass.services.async_call.reset_mock()
+    assert await neu.async_set_discharge_limit(None) is True
+    assert anlage.wert(WR_GRENZE) == -1.0
+    assert neu.entladedeckel_fremd_w is None
+    # Ein zweites Aufheben sieht −1 und räumt den Vermerk ab.
+    assert await neu.async_set_discharge_limit(None) is True
+    assert store.data == {}
+
+
+async def test_victron_neuer_deckel_nimmt_den_alten_eigenen_nicht_als_vorwert(
+    mock_hass, anlage, soc_beobachter
+):
+    store = _Store()
+    anlage.setze(WR_GRENZE, "500")
+    store.data = {"entladedeckel_eigen": 500.0}
+    inv = _treiber(mock_hass, store=store)
+    assert await inv.async_set_discharge_limit(0.0) is True
+    assert inv._state_store.vorwert("entladedeckel") == -1.0
+    assert await inv.async_set_discharge_limit(None) is True
+    assert anlage.wert(WR_GRENZE) == -1.0
+
+
+async def test_victron_fremder_wert_ohne_vorwert_bleibt_und_wird_gemeldet(
+    mock_hass, anlage, soc_beobachter
+):
+    anlage.setze(WR_GRENZE, "3000")
+    inv = _treiber(mock_hass)
+    assert await inv.async_set_discharge_limit(None) is True
+    mock_hass.services.async_call.assert_not_called()
+    assert anlage.wert(WR_GRENZE) == 3000.0
+    assert inv.entladedeckel_fremd_w == 3000.0
+    # Während ein Deckel von uns läuft, ist nichts „fremd".
+    await inv.async_set_discharge_limit(0.0)
+    assert inv.entladedeckel_fremd_w is None
 
 
 async def test_victron_freigabe_und_neuer_deckel_im_selben_lauf(mock_hass, anlage, soc_beobachter):

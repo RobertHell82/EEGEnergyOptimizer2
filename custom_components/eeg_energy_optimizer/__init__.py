@@ -596,6 +596,18 @@ def _check_schedule_health(schedule_state, status, mode, config, dedup, emit):
                 "slot": action.get("slot"),
             },
         )
+    if status.get("deckel_fremd_w") is not None:
+        # Das Gerät begrenzt die Entladung, ohne Deckel von uns (Victron
+        # „Max. Wechselrichterleistung" ≥ 0) — siehe _fremddeckel_pruefen.
+        emit(
+            category="guard_wirkung",
+            severity="warning",
+            message_hash="deckel_fremd",
+            context={
+                "inverter_type": config.get(CONF_INVERTER_TYPE),
+                "geraet_w": status.get("deckel_fremd_w"),
+            },
+        )
     if status.get("netzladung_wirkungslos"):
         emit(
             category="guard_wirkung",

@@ -385,11 +385,16 @@ class ScheduleExecutor:
 
         # Spitzenkappung: zuletzt geschriebener Entladedeckel (None = keiner
         # von uns). ``_entladedeckel_offen`` heißt „ob einer steht, ist
-        # unbekannt" — nach dem Start mit eingeschalteter Funktion: Ein
+        # unbekannt" — nach jedem Start bei einem Treiber mit Deckel: Ein
         # Huawei behält die Number-Entität über einen Absturz hinweg, und die
-        # erste Freigabe muss sie dann zurücksetzen.
+        # erste Freigabe muss sie dann zurücksetzen. Nicht nur bei
+        # eingeschalteter Spitzenkappung: Wer sie ausschaltet, während ein
+        # Deckel steht, und dann neu startet, behielt ihn sonst für immer
+        # (Anderlik 23.–25.11.2026, Huawei-Deckel 0 nach abgebrochenem Setup).
         self._written_entladedeckel_kw: float | None = None
-        self._entladedeckel_offen = spitzenkappung_batterie_aktiv(config, inverter)
+        self._entladedeckel_offen = bool(
+            getattr(inverter, "supports_discharge_limit", False)
+        ) if inverter is not None else False
         self._kappung_aktiv = False
         self._deckel_fehlversuche = 0
         self._deckel_warten = 0
@@ -429,6 +434,12 @@ class ScheduleExecutor:
         self._deckel_ist_kw: float | None = None
         # Wie oft ein wirkungsloser Deckel („zu_viel") neu geschrieben wurde.
         self._deckel_neu_geschrieben = 0
+        # Ein Entladedeckel im Gerät, den wir nicht geschrieben haben
+        # (``_fremddeckel_pruefen``): einmal aufheben versucht, Läufe seither,
+        # gemeldeter Wert in W.
+        self._fremddeckel_versucht = False
+        self._fremddeckel_runs = 0
+        self._fremddeckel_w: float | None = None
 
         # Not-Aus (Guard 2): anhaltender Netzbezug während einer Entladung.
         self._emergency_runs = 0
@@ -1380,6 +1391,48 @@ class ScheduleExecutor:
                 return
             await self._spitzenkappung_schritt(schedule_state, now)
         self._deckel_pruefen()
+        self._fremddeckel_pruefen()
+
+    def _fremddeckel_pruefen(self) -> None:
+        """Begrenzt das Gerät die Entladung, ohne dass wir einen Deckel halten?
+
+        Der Treiber sagt es (``entladedeckel_fremd_w``, bisher nur Victron:
+        „Max. Wechselrichterleistung" ≥ 0, kein Deckel von uns, kein Vorwert
+        offen). Zuerst einmal aufheben — ist es ein alter Deckel von uns,
+        nimmt der Treiber ihn zurück. Steht er danach noch
+        ``GUARD_WIRKUNG_RUNS`` Läufe, ist es ein Wert des Betreibers: nur
+        melden (Statuszeile, Telemetrie ``guard_wirkung``/``deckel_fremd``),
+        nie überschreiben. EWA-HAG-0002, 11.–26.11.2026: 500 W standen zwei
+        Wochen im Gerät, der Status sagte „kein Deckel".
+        """
+        wert = None
+        if self._written_entladedeckel_kw is None and not self._entladedeckel_offen:
+            try:
+                wert = getattr(self._inverter, "entladedeckel_fremd_w", None)
+            except Exception:  # noqa: BLE001 — nur lesen, nie den Lauf stören
+                wert = None
+        if not isinstance(wert, (int, float)) or isinstance(wert, bool):
+            self._fremddeckel_versucht = False
+            self._fremddeckel_runs = 0
+            self._fremddeckel_w = None
+            return
+        if not self._fremddeckel_versucht:
+            self._fremddeckel_versucht = True
+            self._entladedeckel_offen = True  # der nächste Lauf hebt auf
+            return
+        self._fremddeckel_runs += 1
+        if self._fremddeckel_runs >= GUARD_WIRKUNG_RUNS and self._fremddeckel_w is None:
+            self._fremddeckel_w = round(float(wert))
+            _LOGGER.warning(
+                "Executor: Das Gerät begrenzt die Entladung auf %.0f W, ohne "
+                "Entladedeckel der Integration — Wert bleibt stehen",
+                float(wert),
+            )
+        if self._fremddeckel_w is not None:
+            self.last_status = (
+                f"{self.last_status} · Gerät begrenzt die Entladung auf "
+                f"{self._fremddeckel_w:.0f} W (nicht von der Integration)"
+            )
 
     def status(self) -> dict[str, Any]:
         """Zustand für Panel, Statussensor und WebSocket."""
@@ -1422,6 +1475,9 @@ class ScheduleExecutor:
             # Deckel und Netzbezug über der Grenze nichts) — None ohne Befund.
             "deckel_richtung": self._deckel_richtung,
             "deckel_ist_kw": self._deckel_ist_kw,
+            # Entladegrenze im Gerät, die nicht von uns ist (W), siehe
+            # _fremddeckel_pruefen.
+            "deckel_fremd_w": self._fremddeckel_w,
             "batterie_gesperrt": self._batterie_gesperrt(),
             "heizstab": None if self._heizstab is None else self._heizstab.status(),
             "written_entladedeckel_kw": self._written_entladedeckel_kw,
