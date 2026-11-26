@@ -12,6 +12,12 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+## [2.1.90] - 2026-11-26
+
+### Hinzugefügt
+
+- **OpenADR als Bedarfsquelle der Energiegemeinschaft (Beta).** Eine Wiener EEG wird nicht über PeakShare abgewickelt, sondern über Colibri, und hat mit Colibri den Datenaustausch über OpenADR 3.1 vereinbart (der VTN soll bis 20.01.2027 stehen). Die Integration liest jetzt Gemeinschaften, die das EEG-Profil von Harald Geyer umsetzen. Je Gemeinschaft trägt man im Panel die OpenADR-Adresse ein und prüft sie mit „Verbindung prüfen“. Abgeholt werden die Programme `ec_feedin` und `ec_demand`: je Viertelstunde die Abnahmequote (OLS), also welchen Teil der Einspeisung die Gemeinschaft aufnimmt und welchen Teil des Bezugs sie liefert, dazu ihre Preise. Die Einspeise-Quote wirkt wie die feste Abnahmequote, nur mit Zeitverlauf: im Preissignal des Fahrplans, in der Geldbewertung und in der Bilanz. Die Bezugs-Quote fließt in den Gemeinschaftsbezug beim Laden aus dem Netz ein; das geht damit erstmals ohne PeakShare. Ein konstanter Preis der Gemeinschaft ersetzt die eingetragenen Sätze, ein zeitvariabler wird noch nicht übernommen. Die Bedarfskurve im Fahrplan zeigt die Lage der Gemeinschaft in Prozent. Gelesen werden nur öffentliche Daten, höchstens stündlich, und es wird nichts an die Gemeinschaft geschickt. Getestet ist das gegen einen lokalen Server im Format von Haralds Static VTN, noch nicht gegen einen echten VTN. Ein gescheiterter Abruf oder eine fehlende Einspeise-Quote geht an die Telemetrie (`eeg_bedarf`, `quelle: openadr`).
+
 ## [2.1.89] - 2026-11-26
 
 ### Behoben
