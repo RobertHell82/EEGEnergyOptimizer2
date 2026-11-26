@@ -12,6 +12,13 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+## [2.1.89] - 2026-11-26
+
+### Behoben
+
+- **Victron: Ein alter Entladedeckel bleibt nicht mehr unbemerkt im Gerät stehen.** Auf einer Victron-Anlage stand die „Max. Wechselrichterleistung“ nach einem Ausfall des GX am 11.11. zwei Wochen lang auf 500 W. Die Batterie gab dem Haus nie mehr als 0,7 kW, Spitzen kamen aus dem Netz, und die Monatsspitze stieg auf 22 kW. Die Integration meldete dabei „kein Entladedeckel“: Das Aufheben fand keinen gespeicherten Vorwert und endete still mit Erfolg. Jetzt merkt sich der Treiber den zuletzt geschriebenen Deckel über Neustarts hinweg. Steht dieser Wert noch im Gerät, setzt das Aufheben ihn auf „unbegrenzt“ (−1) zurück. Einen anderen Wert, den der Betreiber selbst eingestellt hat, lässt er stehen. Die Integration zeigt ihn dann aber in der Statuszeile („Gerät begrenzt die Entladung auf … W“) und meldet ihn an die Telemetrie (`guard_wirkung`/`deckel_fremd`).
+- **Nach jedem Start wird ein stehender Entladedeckel aufgehoben, auch bei ausgeschalteter Spitzenkappung.** Bisher galt der Deckel nach dem Start nur dann als „Zustand unbekannt“, wenn die Spitzenkappung eingeschaltet war. Wer sie ausschaltete, während die Batterie gedeckelt war, behielt den Deckel über jeden Neustart hinweg. Bei einer Huawei-Anlage scheiterte so am 25.11. die Diagnose der Entladung an einem Deckel von 0 W.
+
 ## [2.1.88] - 2026-11-25
 
 ### Behoben
