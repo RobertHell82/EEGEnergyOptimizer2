@@ -251,11 +251,15 @@ _KEEPALIVE_INTERVAL_SECONDS = 60
 # Sicherheitsnetz für den Fall, dass HA während der Entladung ausfällt.
 _MINRSV_SAFETY_MARGIN_PCT = 5.0
 
-# Sanity bound for WChaMax (max battery power in W). No residential Fronius
-# Gen24 + battery setup exceeds this; a larger value almost certainly comes
-# from a corrupted Modbus response and would compress every charge/discharge
+# Sanity bound for WChaMax. A larger value almost certainly comes from a
+# corrupted Modbus response and would compress every charge/discharge
 # percentage calculation toward zero, making the battery appear inert.
-_WCHAMAX_SANITY_LIMIT = 25000
+# Der Gen24 meldet in WChaMax die Batteriekapazität in Wh, nicht die
+# Ladeleistung (Linz 11059, Vienna 33177). Bis 2.1.91 lag die Grenze bei
+# 25000 W — Vienna (33,2 kWh) bekam WChaMax „unbekannt“, und jedes
+# Ladelimit, jede Entladung und Netzladung scheiterte (Diagnose 26.11.2026).
+# 100 kWh deckt auch große BYD-HVL-Stapel ab.
+_WCHAMAX_SANITY_LIMIT = 100000
 # Und nach unten: Die kleinste BYD-/Fronius-Batterie am Gen24 lädt mit gut
 # 1 kW. Ein Wert von wenigen Watt (Registermüll, falscher Skalenfaktor)
 # ließe jeden Sollwert auf 100 % springen — aus „0,3 kW entladen" würde

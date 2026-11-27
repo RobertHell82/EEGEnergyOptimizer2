@@ -197,6 +197,19 @@ class TestAsyncSetChargeLimit:
         result = await inverter.async_set_charge_limit(0)
         assert result is False
 
+    async def test_grosse_batterie_wchamax_wird_angenommen(
+        self, inverter, mock_modbus_client
+    ):
+        """Vienna 26.11.2026: Der Gen24 meldet in WChaMax die Kapazität in Wh,
+        33177 bei 33,2 kWh — die alte Grenze von 25000 W machte daraus
+        „unbekannt“, und kein Ladelimit ging durch."""
+        inverter._wchamax = None
+        inverter._wchamax_date = None
+        mock_modbus_client.read_holding_registers = AsyncMock(
+            return_value=_ok_response([33177])
+        )
+        assert await inverter._read_wchamax() == 33177
+
 
 class TestAsyncSetDischarge:
     """Force discharge via InWRte=0, OutWRte=%, optional MinRsvPct, then StorCtl_Mod=3."""
