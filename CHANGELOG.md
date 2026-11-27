@@ -12,6 +12,13 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+## [2.1.91] - 2026-11-27
+
+### Behoben
+
+- **energy agent: Der API-Schlüssel ist jetzt Pflichtfeld.** Wer die Bedarfsquelle auf energy agent umstellte, konnte ohne Schlüssel speichern, solange noch ein Gemeinschaftsname eingetragen war. Die Gemeinschaft wirkte dann nicht, und das fiel nur in der Telemetrie auf. Assistent und Einstellungen verlangen den Schlüssel jetzt, sobald eine Gemeinschaft aktiv ist.
+- **Fronius: Ein gescheitertes Ladelimit nennt jetzt den Grund.** Als einziger Schreibpfad gab das Ladelimit bei einem Fehlschlag keinen Grund an, etwa bei fehlender Verbindung, nicht gefundenem SunSpec-Model 124 oder unbekanntem WChaMax. Die Diagnose meldete deshalb nur „Treiber meldet Fehlschlag“. Ein erfolgreiches Ladelimit löscht jetzt auch einen alten Fehlergrund.
+
 ## [2.1.90] - 2026-11-26
 
 ### Hinzugefügt
