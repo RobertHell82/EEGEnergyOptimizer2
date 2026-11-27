@@ -891,14 +891,17 @@ class FroniusInverter(InverterBase):
         return ok
 
     async def _write_charge_limit(self, power_kw: float) -> bool:
+        # Jeder Fehlschlag mit Grund wie bei Entladung und Netzladung: Bis
+        # 2.1.90 kam das Ladelimit ohne an, die Diagnose meldete nur
+        # „Treiber meldet Fehlschlag" (Vienna 26.11.2026).
         try:
             if not await self._ensure_model124():
-                return False
+                return self._fehler("Model 124 nicht erreichbar")
 
             wchamax = await self._read_wchamax()
             if wchamax is None or wchamax == 0:
                 _LOGGER.error("Fronius: cannot set charge limit — WChaMax unknown or zero")
-                return False
+                return self._fehler("WChaMax unbekannt oder null")
 
             # Write the rate register BEFORE activating the limit mode.
             # If StorCtl_Mod=1 succeeded first and InWRte then failed, the
@@ -952,12 +955,12 @@ class FroniusInverter(InverterBase):
                 "Fronius: charge limit set (power_kw=%.2f, WChaMax=%d W)",
                 power_kw, wchamax,
             )
-            return True
+            return self._erfolg()
 
         except Exception:
             _LOGGER.exception("Fronius: failed to set charge limit")
             self._close_client()
-            return False
+            return self._fehler("Ausnahme beim Setzen des Ladelimits")
 
     # ------------------------------------------------------------------
     # Entladedeckel (Spitzenkappung)

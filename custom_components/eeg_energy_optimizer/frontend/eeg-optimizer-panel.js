@@ -187,10 +187,16 @@ const anteilssummePct = (d) =>
 // Der Flag bleibt als Schalter erhalten, falls ein Treiber künftig erneut
 // vorübergehend aus Release-Builds ausgeblendet werden soll (DEV-Erkennung
 // über den Cache-Buster der Script-URL, siehe Git-Historie zu 1.3.11).
-// Gemeinschaften im Quotenmodus, denen die Tages-Abnahmequote fehlt — nur
-// aktive Einträge (Name und Anteil > 0). Ohne Quote nimmt die Gemeinschaft im
-// Modell nichts auf, die Eingabe wäre wirkungslos; deshalb Pflichtfeld.
-// Rückgabe: die Namen für die Meldung.
+// energy agent: eine aktive Gemeinschaft ohne API-Schlüssel — ohne ihn kommt
+// kein Bedarf, die Gemeinschaft wirkt nicht (Vienna 26.11.2026: Quelle auf
+// energy agent umgestellt, Name von PeakShare stehen geblieben, kein
+// Schlüssel; nur die Telemetrie merkte es).
+const energyAgentLuecke = (d) => d.enable_peakshare !== false
+  && d.eeg_demand_source === "energy_agent"
+  && !String(d.energy_agent_api_key || "").trim()
+  && [["", d.peakshare_community], ["_2", d.peakshare_community_2]]
+    .some(([sfx, name]) => name && Number(d[`peakshare_share_pct${sfx}`] ?? 0) > 0);
+
 // OpenADR: Gemeinschaften ohne VTN-Adresse — ohne sie kommt keine OLS, die
 // Gemeinschaft wirkt nicht. Rückgabe wie quoteLuecken: die Namen.
 const openadrLuecken = (d) => {
@@ -201,6 +207,10 @@ const openadrLuecken = (d) => {
     .map(([, name]) => name);
 };
 
+// Gemeinschaften im Quotenmodus, denen die Tages-Abnahmequote fehlt — nur
+// aktive Einträge (Name und Anteil > 0). Ohne Quote nimmt die Gemeinschaft im
+// Modell nichts auf, die Eingabe wäre wirkungslos; deshalb Pflichtfeld.
+// Rückgabe: die Namen für die Meldung.
 const quoteLuecken = (d) => {
   if (d.enable_peakshare === false || (d.eeg_demand_source || "peakshare") !== "quote") return [];
   return [["", d.peakshare_community], ["_2", d.peakshare_community_2]]
@@ -3908,6 +3918,10 @@ class EegOptimizerPanel extends HTMLElement {
           this._showValidationError(`Bitte eine gültige OpenADR-Adresse (http:// oder https://) eintragen: ${adresseFehlt.join(", ")}.`);
           return false;
         }
+        if (energyAgentLuecke(this._wizardData)) {
+          this._showValidationError("Bitte den API-Schlüssel von energy agent eintragen.");
+          return false;
+        }
         return true;
       }
       default:
@@ -4080,6 +4094,7 @@ class EegOptimizerPanel extends HTMLElement {
     }
     for (const name of quoteLuecken(d)) fehlt.push(`Abnahmequote der Gemeinschaft ${name}`);
     for (const name of openadrLuecken(d)) fehlt.push(`gültige OpenADR-Adresse (http/https) der Gemeinschaft ${name}`);
+    if (energyAgentLuecke(d)) fehlt.push("API-Schlüssel von energy agent");
     for (const luecke of netzladenLuecken(d, this._serverBezug(d))) fehlt.push(luecke);
     return fehlt;
   }

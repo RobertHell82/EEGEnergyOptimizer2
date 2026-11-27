@@ -1324,6 +1324,29 @@ class TestSchreibfehlerGrund:
         assert ok is True
         assert inverter.last_write_error is None
 
+    async def test_ladelimit_ohne_wchamax_nennt_den_grund(
+        self, inverter, mock_modbus_client
+    ):
+        """Vienna 26.11.2026: Die Diagnose meldete beim Ladelimit nur
+        „Treiber meldet Fehlschlag" — dieser Pfad gab False ohne Grund."""
+        inverter._read_wchamax = AsyncMock(return_value=None)
+
+        ok = await inverter.async_set_charge_limit(1.0)
+
+        assert ok is False
+        assert inverter.last_write_error == "WChaMax unbekannt oder null"
+
+    async def test_ladelimit_erfolg_loescht_den_grund(
+        self, inverter, mock_modbus_client
+    ):
+        inverter.last_write_error = "alt"
+        mock_modbus_client.write_register = AsyncMock(return_value=_ok_response())
+
+        ok = await inverter.async_set_charge_limit(1.0)
+
+        assert ok is True
+        assert inverter.last_write_error is None
+
 
 class TestDiagnoseNachAblehnung:
     """Grünbach, 22./23.09.2026: Das Gerät nimmt ein negatives InWRte an und

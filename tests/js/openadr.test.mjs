@@ -115,3 +115,16 @@ test("eine Adresse ohne http(s) zählt als fehlend", () => {
   p._settingsData.openadr_url = "https://vtn.at/oa";
   assert.doesNotMatch(p._settingsPflichtLuecken().join(" "), /OpenADR/);
 });
+
+test("energy agent ohne API-Schlüssel zählt als fehlend", () => {
+  // Vienna 26.11.2026: Quelle auf energy agent, Name von PeakShare
+  // stehen geblieben, kein Schlüssel — gespeichert wurde trotzdem.
+  const p = panel({ eeg_demand_source: "energy_agent" });
+  p._settingsData = { ...p._wizardData };
+  assert.match(p._settingsPflichtLuecken().join(" "), /API-Schlüssel von energy agent/);
+  p._settingsData.energy_agent_api_key = "ea_123";
+  assert.doesNotMatch(p._settingsPflichtLuecken().join(" "), /energy agent/);
+  // Ohne aktive Gemeinschaft kein Pflichtfeld.
+  p._settingsData = { eeg_demand_source: "energy_agent" };
+  assert.doesNotMatch(p._settingsPflichtLuecken().join(" "), /energy agent/);
+});
