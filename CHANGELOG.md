@@ -12,6 +12,12 @@ Versionierung folgt [SemVer](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+## [2.1.92] - 2026-11-27
+
+### Behoben
+
+- **Fronius: Große Batterien über 25 kWh werden wieder gesteuert.** Der Gen24 meldet im Register WChaMax die Kapazität der Batterie in Wh. Die Integration verwarf Werte über 25 000 als Lesefehler. Bei einer Anlage mit 33,2 kWh war WChaMax deshalb „unbekannt“, und jedes Ladelimit, jede Entladung und jede Netzladung scheiterte; die Diagnose am 26.11. zeigte das. Die Grenze liegt jetzt bei 100 000.
+
 ## [2.1.91] - 2026-11-27
 
 ### Behoben
